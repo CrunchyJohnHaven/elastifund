@@ -40,6 +40,7 @@ try:
         ResolutionGateResult,
         is_tradable_outcome,
         normalize_market,
+        normalize_outcome_name,
         resolution_equivalence_gate,
     )
 except ImportError:  # pragma: no cover - direct script mode
@@ -49,6 +50,7 @@ except ImportError:  # pragma: no cover - direct script mode
         ResolutionGateResult,
         is_tradable_outcome,
         normalize_market,
+        normalize_outcome_name,
         resolution_equivalence_gate,
     )
 
@@ -69,6 +71,8 @@ RELATION_LABELS = {
     "A_implies_B",
     "B_implies_A",
     "mutually_exclusive",
+    "complementary",
+    "subset",
     "conditional_chain",
     "independent",
     "ambiguous_do_not_trade",
@@ -95,6 +99,13 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 
 def _clamp_price(value: float) -> float:
     return max(0.0, min(1.0, float(value)))
+
+
+def _floor_to_tick(value: float, tick_size: float) -> float:
+    if tick_size <= 0:
+        return float(value)
+    steps = math.floor((float(value) + 1e-12) / float(tick_size))
+    return round(steps * float(tick_size), 10)
 
 
 @dataclass(frozen=True)
@@ -1338,9 +1349,11 @@ class ConstraintArbEngine:
         *,
         db_path: str | Path = Path("data") / "constraint_arb.db",
         buy_threshold: float = 0.97,
+        execute_threshold: float = 0.95,
         unwind_threshold: float = 1.03,
         implication_threshold: float = 0.02,
         stale_quote_seconds: int = 30,
+        max_leg_spread: float = 0.03,
         vpin_veto_threshold: float = 0.75,
         snapshot_dedupe_seconds: int = 15,
         relation_classifier: RelationClassifier | None = None,
@@ -1352,9 +1365,11 @@ class ConstraintArbEngine:
         self.scorer = ViolationScorer()
 
         self.buy_threshold = buy_threshold
+        self.execute_threshold = execute_threshold
         self.unwind_threshold = unwind_threshold
         self.implication_threshold = implication_threshold
         self.stale_quote_seconds = stale_quote_seconds
+        self.max_leg_spread = max_leg_spread
         self.vpin_veto_threshold = vpin_veto_threshold
         self.snapshot_dedupe_seconds = snapshot_dedupe_seconds
 
@@ -1370,6 +1385,10 @@ class ConstraintArbEngine:
     @property
     def edges(self) -> dict[str, GraphEdge]:
         return dict(self._edges)
+
+    @property
+    def quotes(self) -> dict[str, MarketQuote]:
+        return dict(self._quotes)
 
     def register_markets(self, raw_markets: Sequence[Mapping[str, Any]]) -> list[NormalizedMarket]:
         normalized = [normalize_market(raw) for raw in raw_markets]
@@ -1403,6 +1422,9 @@ class ConstraintArbEngine:
             no_ask=float(no_ask),
             updated_ts=int(updated_ts or _now_ts()),
         )
+
+    def get_quote(self, market_id: str) -> MarketQuote | None:
+        return self._quotes.get(market_id)
 
     def _quote_fresh(self, quote: MarketQuote, now_ts: int) -> bool:
         return now_ts - quote.updated_ts <= self.stale_quote_seconds
@@ -1586,6 +1608,8 @@ class ConstraintArbEngine:
                 "A_implies_B",
                 "B_implies_A",
                 "mutually_exclusive",
+                "complementary",
+                "subset",
                 "conditional_chain",
             }:
                 continue
