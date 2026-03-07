@@ -246,16 +246,31 @@ class MarketScanner:
                 category=category,
             )
 
+            # Compute hours_to_resolution for Kelly dampener
+            estimated_days = resolution_est["estimated_days"]
+            hours_to_resolution = estimated_days * 24.0
+
+            # Approximate per-outcome volume from total volume and prices
+            total_volume = float(market.get("volume", 0) or 0)
+            yes_price = prices.get("YES", 0.5)
+            no_price = prices.get("NO", 0.5)
+            price_sum = max(yes_price + no_price, 0.01)
+            volume_yes = total_volume * (yes_price / price_sum)
+            volume_no = total_volume * (no_price / price_sum)
+
             opportunities.append({
                 "market_id": market.get("id") or market.get("condition_id", ""),
                 "question": question,
                 "token_ids": token_ids,
                 "prices": prices,
-                "volume": float(market.get("volume", 0) or 0),
+                "volume": total_volume,
+                "volume_yes": volume_yes,
+                "volume_no": volume_no,
                 "liquidity": float(market.get("liquidity", 0) or 0),
                 "end_date": end_date,
                 "tags": tags,
-                "estimated_days": resolution_est["estimated_days"],
+                "estimated_days": estimated_days,
+                "hours_to_resolution": hours_to_resolution,
                 "resolution_bucket": resolution_est["bucket"],
                 "resolution_method": resolution_est["method"],
             })
