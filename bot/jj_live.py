@@ -693,6 +693,48 @@ def map_vps_signal_direction(result: dict, market_price: float) -> str:
     return "hold"
 
 
+def extract_probability_fields(result: dict) -> dict:
+    """Normalize raw/calibrated probability fields from mixed analyzer payloads."""
+    raw_prob = None
+    for key in (
+        "raw_prob",
+        "raw_probability",
+        "probability",
+        "estimated_probability",
+        "estimated_prob",
+        "prob",
+        "estimate",
+    ):
+        if result.get(key) is not None:
+            raw_prob = _safe_float(result.get(key), None)
+            break
+
+    calibrated_prob = None
+    for key in ("calibrated_probability", "calibrated_prob"):
+        if result.get(key) is not None:
+            calibrated_prob = _safe_float(result.get(key), None)
+            break
+
+    if raw_prob is not None and not (0.0 <= raw_prob <= 1.0):
+        raw_prob = None
+    if calibrated_prob is not None and not (0.0 <= calibrated_prob <= 1.0):
+        calibrated_prob = None
+
+    already_calibrated = raw_prob is None and calibrated_prob is not None
+    execution_prob = (
+        calibrated_prob
+        if calibrated_prob is not None
+        else raw_prob
+    )
+
+    return {
+        "raw_prob": raw_prob,
+        "calibrated_prob": calibrated_prob,
+        "execution_prob": execution_prob,
+        "already_calibrated": already_calibrated,
+    }
+
+
 def compute_calibrated_signal(
     raw_prob: float,
     market_price: float,
@@ -743,6 +785,67 @@ def compute_calibrated_signal(
             "raw_edge": raw_edge, "calibrated_prob": calibrated,
             "taker_fee": taker_fee, "category": category,
         }
+
+
+def build_trade_record(
+    signal: dict,
+    *,
+    market_id: str,
+    category: str,
+    entry_price: float,
+    position_size_usd: float,
+    token_id: str,
+    order_id: str = "",
+) -> dict:
+    """Build a normalized trade record with Stream 6 telemetry preserved."""
+    raw_prob = _safe_float(signal.get("raw_prob"), None)
+    calibrated_prob = _safe_float(signal.get("calibrated_prob"), None)
+    execution_prob = _safe_float(signal.get("estimated_prob"), None)
+
+    if raw_prob is None:
+        raw_prob = execution_prob
+    if calibrated_prob is None:
+        calibrated_prob = execution_prob if execution_prob is not None else raw_prob
+
+    def _as_bool(value) -> bool:
+        if isinstance(value, str):
+            return value.lower() in ("true", "yes", "1")
+        return bool(value)
+
+    return {
+        "market_id": market_id,
+        "question": signal.get("question", ""),
+        "direction": signal.get("direction", ""),
+        "entry_price": entry_price,
+        "raw_prob": raw_prob,
+        "calibrated_prob": calibrated_prob,
+        "edge": signal.get("edge", 0.0),
+        "taker_fee": signal.get("taker_fee", 0.0),
+        "position_size_usd": position_size_usd,
+        "kelly_fraction": signal.get("_kelly_override", KELLY_FRACTION),
+        "category": category,
+        "confidence": signal.get("confidence", 0.5),
+        "reasoning": signal.get("reasoning", ""),
+        "token_id": token_id,
+        "order_id": order_id,
+        "source": signal.get("source", "llm"),
+        "n_models": int(_safe_float(signal.get("n_models", 0), 0)),
+        "model_spread": _safe_float(signal.get("model_spread"), None),
+        "model_stddev": _safe_float(signal.get("model_stddev"), None),
+        "agreement": _safe_float(signal.get("agreement"), None),
+        "kelly_multiplier": _safe_float(signal.get("kelly_multiplier"), None),
+        "disagreement_kelly_fraction": _safe_float(
+            signal.get("disagreement_kelly_fraction"),
+            None,
+        ),
+        "models_agree": _as_bool(signal.get("models_agree", False)),
+        "search_context_used": _as_bool(signal.get("search_context_used", False)),
+        "counter_shift": _safe_float(signal.get("counter_shift"), None),
+        "counter_fragile": _as_bool(signal.get("counter_fragile", False)),
+        "platt_mode": signal.get("platt_mode"),
+        "platt_a": _safe_float(signal.get("platt_a"), None),
+        "platt_b": _safe_float(signal.get("platt_b"), None),
+    }
 
 
 class _DummyNotifier:
