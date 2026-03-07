@@ -178,6 +178,96 @@ class TestA6SumScanner(unittest.TestCase):
         self.assertFalse(batch[0].executable)
         self.assertAlmostEqual(batch[0].sum_yes_bid or 0.0, 1.06, places=6)
 
+    def test_prefers_binary_straddle_when_cheaper_than_full_basket(self) -> None:
+        scanner = A6SumScanner(A6ScannerConfig(buy_threshold=0.97))
+        outcomes = ["Alice", "Bob", "Carol"]
+        markets = [
+            normalize_market(
+                self._mk_market(
+                    market_id="alice",
+                    event_id="evt-4",
+                    outcome="Alice",
+                    outcomes=outcomes,
+                    token_ids='["alice-yes","alice-no"]',
+                )
+            ),
+            normalize_market(
+                self._mk_market(
+                    market_id="bob",
+                    event_id="evt-4",
+                    outcome="Bob",
+                    outcomes=outcomes,
+                    token_ids='["bob-yes","bob-no"]',
+                )
+            ),
+            normalize_market(
+                self._mk_market(
+                    market_id="carol",
+                    event_id="evt-4",
+                    outcome="Carol",
+                    outcomes=outcomes,
+                    token_ids='["carol-yes","carol-no"]',
+                )
+            ),
+        ]
+        now_ts = 1_700_000_300
+        quotes = {
+            "alice": MarketQuote("alice", 0.24, 0.25, 0.59, 0.60, now_ts),
+            "bob": MarketQuote("bob", 0.36, 0.37, 0.63, 0.64, now_ts),
+            "carol": MarketQuote("carol", 0.31, 0.32, 0.68, 0.69, now_ts),
+        }
+
+        batch = scanner.scan_snapshots(
+            scanner.build_event_snapshots(markets=markets, quotes=quotes, now_ts=now_ts),
+            now_ts=now_ts,
+        )
+
+        self.assertEqual(len(batch), 1)
+        self.assertEqual(batch[0].signal_type, "buy_yes_no_straddle")
+        self.assertEqual(batch[0].selected_construction, "binary_straddle")
+        self.assertEqual(tuple(leg.quote_side for leg in batch[0].legs), ("YES", "NO"))
+        self.assertAlmostEqual(batch[0].theoretical_edge, 0.15, places=6)
+
+    def test_augmented_event_blocks_full_basket_but_keeps_straddle(self) -> None:
+        scanner = A6SumScanner(A6ScannerConfig(buy_threshold=0.97))
+        outcomes = ["Alice", "Bob", "Other"]
+        markets = [
+            normalize_market(
+                self._mk_market(
+                    market_id="alice",
+                    event_id="evt-5",
+                    outcome="Alice",
+                    outcomes=outcomes,
+                    token_ids='["alice-yes","alice-no"]',
+                )
+                | {"negRiskAugmented": True}
+            ),
+            normalize_market(
+                self._mk_market(
+                    market_id="bob",
+                    event_id="evt-5",
+                    outcome="Bob",
+                    outcomes=outcomes,
+                    token_ids='["bob-yes","bob-no"]',
+                )
+                | {"negRiskAugmented": True}
+            ),
+        ]
+        now_ts = 1_700_000_320
+        quotes = {
+            "alice": MarketQuote("alice", 0.18, 0.19, 0.76, 0.77, now_ts),
+            "bob": MarketQuote("bob", 0.31, 0.32, 0.67, 0.68, now_ts),
+        }
+
+        snapshots = scanner.build_event_snapshots(markets=markets, quotes=quotes, now_ts=now_ts)
+        self.assertEqual(len(snapshots), 1)
+        self.assertFalse(snapshots[0].full_basket_guaranteed)
+        self.assertIsNone(snapshots[0].sum_yes_ask)
+
+        batch = scanner.scan_snapshots(snapshots, now_ts=now_ts)
+        self.assertEqual(len(batch), 1)
+        self.assertEqual(batch[0].selected_construction, "binary_straddle")
+
 
 if __name__ == "__main__":
     unittest.main()

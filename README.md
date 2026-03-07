@@ -16,12 +16,14 @@ This is also the most comprehensive open-source resource on agentic trading syst
 
 | | |
 |---|---|
-| **Capital deployed** | Live on Polymarket (USDC) + Kalshi (USD) |
-| **Strategies tested** | 20 (6 deployed, 3 building, 11 rejected) |
-| **Tests passing** | 345 |
-| **Signal sources** | 4 active + 2 gated (A-6 sum arb, B-1 dependency arb) |
-| **Research dispatches** | 74 original investigations |
+| **Capital deployed** | $347.51 ($247.51 Polymarket USDC + $100 Kalshi USD) |
+| **Strategies catalogued** | 131 (7 deployed, 8 building, 10 rejected, 8 pre-rejected, 98 pipeline) |
+| **Tests passing** | 223 (19 test files across bot/tests/ and tests/) |
+| **Bot modules** | 27 Python modules in bot/ |
+| **Signal sources** | 4 active + 2 building (A-6 guaranteed-dollar arb, B-1 templated dependency arb) |
+| **Research dispatches** | 82 original investigations |
 | **Backtest win rate** | 68.5% on 532 resolved markets |
+| **Live validated P&L** | $0.00 (pre-revenue, building structural alpha pipeline) |
 
 ## How the Agent Thinks
 
@@ -72,25 +74,35 @@ After 10 cycles, we've tested 50+ strategies. After 20, we've mapped the entire 
 
 ## What We've Honestly Failed At
 
-- **All 9 fast-trade edge hypotheses rejected.** Basis lag, mean reversion, vol regime, time-of-day, order book imbalance — all failed kill rules or had insufficient data.
-- **Latency arbitrage killed by fees.** 1.56% taker fee makes speed-based strategies unviable.
-- **Kalshi weather rounding killed.** The math is real but the model is only 27-35% accurate against real settlement data.
-- **No validated live P&L yet.** Everything is backtest or recently deployed.
+- **All 10 tested strategies rejected.** 0% survival rate through the kill battery. Every rejection documented with specific numbers in [research/what_doesnt_work_diary_v1.md](research/what_doesnt_work_diary_v1.md).
+- **Taker fees kill 60% of strategies.** 1.56% taker fee at 50/50 odds makes speed-based and most statistical strategies unviable. Maker-only (0% fees + 20% rebate) is the only viable execution path.
+- **Signal sparsity kills 25%.** Most strategies produce 0-30 signals/month. You need 100+ for preliminary validation.
+- **Kalshi weather rounding killed.** 27-35% accuracy on 4-bracket markets (chance is 25%). Edge too small.
+- **ML feature discovery: zero surviving features.** 83-feature pipeline found nothing that survived walk-forward validation.
+- **No validated live P&L yet.** Everything is backtest or shadow-tracking. We say this plainly.
 
-These failures are not embarrassments — they are the most valuable content in the repo. They map the territory.
+These failures are not embarrassments — they are the most valuable content in the repo. They map the territory. See the full [failure diary](research/what_doesnt_work_diary_v1.md) for details.
 
 ## The Stack
 
 ```
-bot/
-├── jj_live.py              Autonomous trading loop + confirmation layer
-├── btc_5min_maker.py        5-minute BTC T-10s maker execution runner
-├── combinatorial_integration.py  A-6/B-1 feature flags, routing, telemetry
-├── llm_ensemble.py          Multi-model probability estimation + agentic RAG
+bot/                         27 modules, 223 tests
+├── jj_live.py              Autonomous trading loop + 6-source confirmation layer
+├── llm_ensemble.py          Multi-model estimation (Claude + GPT + Groq) + agentic RAG
 ├── wallet_flow_detector.py  Smart wallet consensus signals
 ├── lmsr_engine.py           Bayesian pricing + market inefficiency detection
 ├── cross_platform_arb.py    Polymarket vs Kalshi arbitrage scanner
-└── tests/                   108 unit tests
+├── constraint_arb_engine.py Resolution-normalized structural arb engine
+├── a6_executor.py           Multi-leg state machine + deterministic rollback
+├── execution_readiness.py   Feed/restart/one-leg-loss gating for structural alpha
+├── dependency_graph.py      B-1 implication/exclusion graph pipeline
+├── b1_template_engine.py    Deterministic B-1 template families + compatibility matrices
+├── relation_classifier.py   LLM relation classification with caching
+├── ws_trade_stream.py       WebSocket CLOB feed + VPIN + OFI
+├── vpin_toxicity.py         Flow toxicity detection (informed trading gate)
+├── kill_rules.py            6 automated rejection criteria
+├── lead_lag_engine.py       Granger causality + semantic verification
+└── tests/                   223 unit + integration tests
 
 polymarket-bot/src/
 ├── claude_analyzer.py       Single-model LLM estimation + Platt calibration
@@ -164,8 +176,9 @@ This is a science experiment with real money at stake. We think the research met
 | Document | Purpose |
 |----------|---------|
 | [FLYWHEEL_STRATEGY.md](FLYWHEEL_STRATEGY.md) | The master project strategy — how the research cycle works |
-| [COMMAND_NODE_v1.0.2.md](COMMAND_NODE_v1.0.2.md) | Single source of truth for all system state (paste into AI sessions) |
-| [research/DEEP_RESEARCH_PROMPT_100_STRATEGIES.md](research/DEEP_RESEARCH_PROMPT_100_STRATEGIES.md) | 100-strategy research prompt for deep research tools |
+| [COMMAND_NODE_v1.1.0.md](COMMAND_NODE_v1.1.0.md) | Single source of truth for all system state (paste into AI sessions) |
+| [research/edge_backlog_ranked.md](research/edge_backlog_ranked.md) | 131 strategies ranked, tracked, and updated every cycle |
+| [research/what_doesnt_work_diary_v1.md](research/what_doesnt_work_diary_v1.md) | Comprehensive failure documentation — the most valuable doc in the repo |
 | [EDGE_DISCOVERY_SYSTEM.md](EDGE_DISCOVERY_SYSTEM.md) | Technical spec for the automated edge research pipeline |
 | [FastTradeEdgeAnalysis.md](FastTradeEdgeAnalysis.md) | Auto-generated status of all tested strategies |
 | [ProjectInstructions.md](ProjectInstructions.md) | Quick-start guide for AI coding sessions |

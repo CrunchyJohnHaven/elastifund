@@ -11,12 +11,15 @@
 |--------|-------|
 | Deployed (live/ready) | 7 |
 | Building (code written) | 6 |
-| Tested & Rejected | 9 |
+| **Building — Structural Alpha (A-6/B-1)** | **2** |
+| Tested & Rejected | 10 |
 | Pre-Rejected (v3, <10% P(Works) + impractical) | 8 |
 | Re-Evaluating (maker-only) | 1 |
-| Research Pipeline (pre-v3) | 38 |
-| Research Pipeline (v3 additions) | 62 |
+| Research Pipeline (pre-v3) | 37 |
+| Research Pipeline (v3 additions) | 60 |
 | **Total Tracked** | **131** |
+
+**Parallel Execution Sprint (2026-03-07):** 7 instances running simultaneously. A-6 and B-1 moved to BUILDING. See `research/dispatches/DISPATCH_082_parallel_sprint.md` and `research/dispatches/DISPATCH_083_structural_alpha_gating_v7.md`. Full failure documentation: `research/what_doesnt_work_diary_v1.md`.
 
 ---
 
@@ -42,6 +45,13 @@
 | B4 | Cross-Platform Arb Scanner | bot/cross_platform_arb.py | 29 passing | 7.2 |
 | B5 | Confirmation Layer | Wired in jj_live.py | — | 8.5 |
 | B6 | HFT Shadow Validator (Chainlink Barrier + Tie-Band) | Core module built | 13 passing | 7.8 |
+
+## BUILDING — STRUCTURAL ALPHA (Parallel Sprint, 2026-03-07)
+
+| # | Strategy | Modules | Tests | Status |
+|---|----------|---------|-------|--------|
+| SA-1 | A-6 Guaranteed Dollar Scanner | constraint_arb_engine, sum_violation_scanner, a6_sum_scanner, a6_executor, neg_risk_inventory, resolution_normalizer, signals/sum_violation/guaranteed_dollar.py | 223 total | Live-public-data audit: 92 allowed neg-risk events, 71 best as two-leg straddles, 21 as neg-risk-conversion variants, 0 below the initial 0.95 cost gate. |
+| SA-2 | B-1 Templated Dependency Engine | dependency_graph, relation_classifier, b1_executor, b1_monitor, relation_cache, bot/b1_template_engine.py | See above | Live-public-data template audit: 0 deterministic pairs in the first 1,000 active allowed markets. Keep scope narrow; do not widen graph yet. |
 
 ## RE-EVALUATING (Previously Rejected, New Evidence)
 
@@ -145,8 +155,8 @@ Each edge scored on four dimensions (1–5 scale):
 
 | v3 Rank | Strategy ID | Name | P(Works) | v3 Composite | JJ Tier | Notes |
 |---------|------------|------|----------|-------------|---------|-------|
-| 1 | A-6 | Multi-Outcome Sum Violation Scanner | 45% | 4.2 | TIER 2 | Current shipped lane = neg-risk YES-basket only. Binary YES+NO Dutch-book split into separate backlog until settlement path is verified. |
-| 2 | B-1 | LLM Combinatorial Dependency Graph | 45% | 4.1 | TIER 3 | Cross-market logical dependency arb. Promotion gate now requires a 50-pair gold set with >=85% precision; monitor at `tau >= 0.04` until the fill curve is measured. |
+| 1 | A-6 | Guaranteed Dollar Scanner | 45% | 4.2 | **BUILDING** | Current shipped lane now ranks straddles vs full baskets, but the live allowed-universe snapshot still shows 0 events below the initial 0.95 cost threshold. Fill/dwell study comes before more buildout. |
+| 2 | B-1 | Templated Dependency Engine | 45% | 4.1 | **BUILDING** | Broad graph work is frozen behind density. Promotion still requires a 50-pair gold set with >=85% precision, and the current template audit found 0 deterministic pairs in 1,000 allowed markets. |
 | 3 | D-12 | Adaptive Platt Calibration (Rolling) | 10% | 2.2 | TIER 4 | Validated negative on 2026-03-07. Static `A=0.5914`, `B=-0.3977` beat rolling windows 50/100/200 on the 532-market walk-forward holdout. Revisit only after 100+ live resolved trades. |
 | 4 | G-1 | WebSocket Upgrade (REST→WS) | 95%* | 3.9 | TIER 1 | *Infrastructure, not alpha. Prerequisite for 8+ strategies. |
 | 5 | D-9 | Ensemble Disagreement Signal | 30% | 3.8 | TIER 2 | 1 day. Simple std() on multi-model outputs. |

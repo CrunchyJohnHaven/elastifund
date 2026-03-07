@@ -20,6 +20,7 @@ from scripts.build_b1_gold_set import (
     RELATION_TARGETS,
     TOTAL_GOLD_SET,
     build_gold_set_json,
+    classify_template_pairs,
     run_threshold_analysis,
     select_gold_set,
     write_gold_set_json,
@@ -47,7 +48,18 @@ def _mk_market(market_id: str, question: str, event_id: str = "evt-1") -> Normal
             source="Associated Press",
             cutoff_ts=1700000000,
             scope_fingerprint=("politics", "election"),
+            geography_scope=(),
+            office_scope=(),
+            event_identity=(),
+            ontology=(),
+            named_outcomes=("Yes", "No"),
+            outcome_kind="binary",
             is_neg_risk=False,
+            is_augmented_neg_risk=False,
+            has_other_outcome=False,
+            has_placeholder_outcome=False,
+            has_catch_all_outcome=False,
+            has_ambiguous_named_mapping=False,
         ),
         resolution_key="test-key",
     )
@@ -156,11 +168,24 @@ class TestGoldSetJSON(unittest.TestCase):
             self.assertIn("market_b_title", record)
             self.assertIn("classified_relation", record)
             self.assertIn("confidence", record)
+            self.assertIn("compatibility_matrix", record)
             self.assertIn("human_label_placeholder", record)
             self.assertIn("labeled", record)
             self.assertFalse(record["labeled"])
             self.assertIsNone(record["human_label_placeholder"])
             self.assertEqual(record["classified_relation"], "mutually_exclusive")
+
+    def test_template_pairs_emit_compatibility_matrix(self) -> None:
+        markets = [
+            _mk_market("a-1", "Will Alice win Pennsylvania by 5 points or more?"),
+            _mk_market("b-1", "Will Alice win Pennsylvania?"),
+        ]
+
+        classified = classify_template_pairs(markets, max_pairs=10)
+
+        self.assertEqual(len(classified), 1)
+        self.assertEqual(classified[0]["template_family"], "state_winner_margin")
+        self.assertFalse(classified[0]["compatibility_matrix"]["YN"])
 
     def test_write_json_file(self) -> None:
         """Should write valid JSON file."""

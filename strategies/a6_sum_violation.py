@@ -1,4 +1,4 @@
-"""A-6 multi-outcome sum-violation watchlist and signal logic."""
+"""A-6 guaranteed-dollar watchlist and signal logic."""
 
 from __future__ import annotations
 
@@ -75,6 +75,9 @@ class EventWatch:
     neg_risk: bool
     is_augmented: bool
     legs: tuple[OutcomeLeg, ...]
+    all_outcomes: tuple[str, ...] = tuple()
+    excluded_outcomes: tuple[str, ...] = tuple()
+    full_market_count: int = 0
     raw_event: dict[str, Any] = field(default_factory=dict)
     a6_mode: str = "neg_risk_sum"
     settlement_path: str = "hold_to_resolution"
@@ -115,7 +118,7 @@ class A6Opportunity:
 
 
 class A6WatchlistBuilder:
-    """Build a safe v1 A-6 universe from Gamma event payloads."""
+    """Build a safe A-6 neg-risk universe from Gamma event payloads."""
 
     def __init__(self, *, min_event_markets: int = 3, max_legs: int = 12, exclude_augmented: bool = True) -> None:
         self.min_event_markets = max(3, int(min_event_markets))
@@ -134,7 +137,7 @@ class A6WatchlistBuilder:
         out: list[dict[str, Any]] = []
         for watch in self.build_watchlist(raw_events):
             event_meta = dict(watch.raw_event)
-            event_outcomes = [leg.outcome for leg in watch.legs]
+            event_outcomes = list(watch.all_outcomes or tuple(leg.outcome for leg in watch.legs))
             for leg in watch.legs:
                 out.append(
                     {
@@ -151,6 +154,8 @@ class A6WatchlistBuilder:
                         "enableOrderBook": leg.enable_order_book,
                         "negRisk": watch.neg_risk,
                         "negRiskAugmented": watch.is_augmented,
+                        "eventFullMarketCount": watch.full_market_count,
+                        "eventExcludedOutcomes": list(watch.excluded_outcomes),
                         "eventCategory": event_meta.get("eventCategory") or event_meta.get("category"),
                         "endDate": event_meta.get("endDate"),
                         "resolutionSource": event_meta.get("resolutionSource"),
@@ -166,7 +171,7 @@ class A6WatchlistBuilder:
             return None
 
         event_augmented = _as_bool(raw_event.get("negRiskAugmented"))
-        if self.exclude_augmented and event_augmented:
+        if self.exclude_augmented and event_augmented and not self._event_has_filterable_augmented_legs(raw_event):
             return None
 
         raw_markets = raw_event.get("markets")
@@ -179,12 +184,19 @@ class A6WatchlistBuilder:
             return None
 
         legs: list[OutcomeLeg] = []
+        all_outcomes: list[str] = []
+        excluded_outcomes: list[str] = []
         for raw_market in raw_markets:
             if not isinstance(raw_market, Mapping):
                 return None
             market_augmented = _as_bool(raw_market.get("negRiskAugmented")) or event_augmented
-            if self.exclude_augmented and market_augmented:
-                return None
+            outcome = self._market_outcome_label(raw_market)
+            if outcome:
+                all_outcomes.append(outcome)
+            if self.exclude_augmented and market_augmented and self._is_filtered_augmented_outcome(outcome):
+                if outcome:
+                    excluded_outcomes.append(outcome)
+                continue
             if _as_bool(raw_market.get("closed")):
                 return None
             if not _as_bool(raw_market.get("acceptingOrders", True)):
@@ -204,13 +216,7 @@ class A6WatchlistBuilder:
                 OutcomeLeg(
                     market_id=market_id,
                     question=str(raw_market.get("question") or raw_event.get("title") or "").strip(),
-                    outcome=str(
-                        raw_market.get("groupItemTitle")
-                        or raw_market.get("outcome")
-                        or raw_market.get("outcomeName")
-                        or raw_market.get("title")
-                        or market_id
-                    ).strip(),
+                    outcome=outcome or market_id,
                     yes_token_id=yes_token_id,
                     no_token_id=no_token_id,
                     tick_size=max(0.001, _as_float(raw_market.get("orderPriceMinTickSize"), 0.01)),
@@ -220,7 +226,8 @@ class A6WatchlistBuilder:
                 )
             )
 
-        if len(legs) < self.min_event_markets:
+        effective_min_markets = 2 if event_augmented and excluded_outcomes else self.min_event_markets
+        if len(legs) < effective_min_markets:
             return None
 
         event_id = str(raw_event.get("id") or raw_event.get("event_id") or "").strip()
@@ -234,8 +241,51 @@ class A6WatchlistBuilder:
             neg_risk=True,
             is_augmented=event_augmented,
             legs=tuple(legs),
+            all_outcomes=tuple(dict.fromkeys(outcome for outcome in all_outcomes if outcome)),
+            excluded_outcomes=tuple(dict.fromkeys(outcome for outcome in excluded_outcomes if outcome)),
+            full_market_count=len(raw_markets),
             raw_event=dict(raw_event),
         )
+
+    @staticmethod
+    def _market_outcome_label(raw_market: Mapping[str, Any]) -> str:
+        return str(
+            raw_market.get("groupItemTitle")
+            or raw_market.get("outcome")
+            or raw_market.get("outcomeName")
+            or raw_market.get("title")
+            or ""
+        ).strip()
+
+    @classmethod
+    def _is_filtered_augmented_outcome(cls, outcome: str) -> bool:
+        normalized = outcome.lower().strip()
+        return normalized in {
+            "other",
+            "all other",
+            "any other",
+            "rest of field",
+            "the field",
+            "field",
+            "none of the above",
+        } or "placeholder" in normalized or normalized.startswith("outcome ")
+
+    @classmethod
+    def _event_has_filterable_augmented_legs(cls, raw_event: Mapping[str, Any]) -> bool:
+        raw_markets = raw_event.get("markets")
+        if not isinstance(raw_markets, list):
+            return False
+        filtered = 0
+        safe = 0
+        for raw_market in raw_markets:
+            if not isinstance(raw_market, Mapping):
+                continue
+            outcome = cls._market_outcome_label(raw_market)
+            if cls._is_filtered_augmented_outcome(outcome):
+                filtered += 1
+            elif outcome:
+                safe += 1
+        return filtered > 0 and safe >= 2
 
 
 class A6SignalEngine:

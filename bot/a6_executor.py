@@ -80,6 +80,7 @@ class A6OrderCommand:
     signature_type: int = 1
     replaces_order_id: str | None = None
     reason: str = ""
+    neg_risk: bool = False
 
 
 @dataclass(frozen=True)
@@ -146,11 +147,13 @@ class A6BasketLeg:
     condition_id: str
     token_id: str
     outcome_name: str
+    quote_side: str
     target_quantity: float
     best_bid: float
     best_ask: float
     tick_size: float
     quote_price: float
+    neg_risk: bool = False
     order_id: str | None = None
     filled_quantity: float = 0.0
     avg_fill_price: float = 0.0
@@ -372,7 +375,7 @@ class A6BasketExecutor:
             self.inventory.record_fill(
                 event_id=basket.event_id,
                 outcome=leg.outcome_name,
-                side="YES",
+                side=leg.quote_side,
                 quantity=delta,
                 price=float(avg_price),
             )
@@ -500,8 +503,8 @@ class A6BasketExecutor:
         return A6ExecutorUpdate(basket=basket, commands=tuple(), events=tuple())
 
     def _validate_submission(self, opportunity: A6Opportunity) -> None:
-        if opportunity.signal_type != "buy_yes_basket" or not opportunity.executable:
-            raise ValueError("executor only accepts executable phase-1 buy_yes_basket opportunities")
+        if opportunity.signal_type not in {"buy_yes_basket", "buy_yes_no_straddle"} or not opportunity.executable:
+            raise ValueError("executor only accepts executable guaranteed-dollar opportunities")
         if len(self.active_baskets) >= int(self.config.max_open_baskets):
             raise ValueError("max active A-6 baskets reached")
         if self.remaining_daily_loss_usd <= 0.0:
@@ -536,11 +539,13 @@ class A6BasketExecutor:
                     condition_id=src.condition_id,
                     token_id=src.token_id,
                     outcome_name=src.outcome_name,
+                    quote_side=str(getattr(src, "quote_side", "YES")),
                     target_quantity=float(target_quantity),
                     best_bid=float(src.best_bid),
                     best_ask=float(src.best_ask),
                     tick_size=max(0.001, float(src.tick_size)),
                     quote_price=float(quote_price),
+                    neg_risk=bool(opportunity.neg_risk),
                 )
             )
         return legs
@@ -565,6 +570,7 @@ class A6BasketExecutor:
                     limit_price=float(leg.quote_price),
                     signature_type=int(self.config.signature_type),
                     reason="initial_quote",
+                    neg_risk=bool(leg.neg_risk),
                 )
             )
         return commands
@@ -601,6 +607,7 @@ class A6BasketExecutor:
                     signature_type=int(self.config.signature_type),
                     replaces_order_id=old_order_id,
                     reason="partial_timeout_reprice",
+                    neg_risk=bool(leg.neg_risk),
                 )
             )
 
@@ -633,6 +640,7 @@ class A6BasketExecutor:
                 signature_type=int(self.config.signature_type),
                 replaces_order_id=leg.order_id,
                 reason=reason,
+                neg_risk=bool(leg.neg_risk),
             )
             for leg in basket.open_legs
         ]
@@ -670,6 +678,7 @@ class A6BasketExecutor:
                     signature_type=int(self.config.signature_type),
                     replaces_order_id=leg.order_id,
                     reason=reason,
+                    neg_risk=bool(leg.neg_risk),
                 )
             )
             leg.cancel_count += 1
@@ -707,12 +716,13 @@ class A6BasketExecutor:
                     limit_price=float(rollback_order_price),
                     signature_type=int(self.config.signature_type),
                     reason=reason,
+                    neg_risk=bool(leg.neg_risk),
                 )
             )
             self.inventory.record_fill(
                 event_id=basket.event_id,
                 outcome=leg.outcome_name,
-                side="YES",
+                side=leg.quote_side,
                 quantity=-float(leg.filled_quantity),
                 price=float(leg.avg_fill_price),
             )
@@ -738,10 +748,18 @@ class A6BasketExecutor:
         by_market = {leg.market_id: leg for leg in snapshot.legs}
         for leg in basket.legs:
             snap_leg = by_market.get(leg.market_id)
-            if snap_leg is None or snap_leg.yes_bid is None or snap_leg.yes_ask is None:
+            if snap_leg is None:
                 continue
-            leg.best_bid = float(snap_leg.yes_bid)
-            leg.best_ask = float(snap_leg.yes_ask)
+            if leg.quote_side == "NO":
+                if snap_leg.no_bid is None or snap_leg.no_ask is None:
+                    continue
+                leg.best_bid = float(snap_leg.no_bid)
+                leg.best_ask = float(snap_leg.no_ask)
+            else:
+                if snap_leg.yes_bid is None or snap_leg.yes_ask is None:
+                    continue
+                leg.best_bid = float(snap_leg.yes_bid)
+                leg.best_ask = float(snap_leg.yes_ask)
             leg.tick_size = max(0.001, float(snap_leg.tick_size))
             leg.last_update_ts = int(snapshot.detected_at_ts)
 
@@ -788,6 +806,8 @@ class A6BasketExecutor:
 
     def _mergeable_quantity(self, basket: A6Basket) -> float:
         if not basket.legs:
+            return 0.0
+        if any(leg.quote_side != "YES" for leg in basket.legs):
             return 0.0
         quantities = [
             self.inventory.quantity(basket.event_id, leg.outcome_name, "YES")

@@ -6,7 +6,7 @@ from strategies.a6_sum_violation import A6SignalEngine, A6WatchlistBuilder
 
 
 class TestA6Strategy(unittest.TestCase):
-    def test_watchlist_excludes_augmented_events(self) -> None:
+    def test_watchlist_filters_augmented_other_outcomes(self) -> None:
         builder = A6WatchlistBuilder()
         events = [
             {
@@ -38,7 +38,10 @@ class TestA6Strategy(unittest.TestCase):
             },
         ]
         watches = builder.build_watchlist(events)
-        self.assertEqual([watch.event_id for watch in watches], ["evt-ok"])
+        self.assertEqual([watch.event_id for watch in watches], ["evt-ok", "evt-bad"])
+        filtered = next(watch for watch in watches if watch.event_id == "evt-bad")
+        self.assertEqual(tuple(leg.outcome for leg in filtered.legs), ("Alice", "Bob"))
+        self.assertEqual(filtered.excluded_outcomes, ("Other",))
 
     def test_signal_engine_marks_execute_ready_only_when_liquid(self) -> None:
         builder = A6WatchlistBuilder()

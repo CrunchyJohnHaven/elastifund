@@ -101,13 +101,14 @@ except ImportError:
 try:
     from py_clob_client.client import ClobClient as OfficialClobClient
     from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType
-    from py_clob_client.order_builder.constants import BUY
+    from py_clob_client.order_builder.constants import BUY, SELL
 except ImportError:
     OfficialClobClient = None
     ApiCreds = None
     OrderArgs = None
     OrderType = None
     BUY = None
+    SELL = None
 
 # Handle different Telegram class names across codebase versions
 try:
@@ -142,6 +143,15 @@ except ImportError:
         from cross_platform_arb import get_signals_for_engine as arb_get_signals
     except ImportError:
         arb_get_signals = None
+
+# Market quarantine for CLOB 404 handling
+try:
+    from bot.market_quarantine import MarketQuarantine
+except ImportError:
+    try:
+        from market_quarantine import MarketQuarantine
+    except ImportError:
+        MarketQuarantine = None
 
 # Signal source #5: WebSocket Trade Stream + VPIN/OFI microstructure defense
 try:
@@ -200,6 +210,20 @@ except ImportError:
     except ImportError:
         SumViolationScanner = None
 
+# A-6 live execution: state machine + order routing
+try:
+    from bot.a6_executor import A6BasketExecutor, A6ExecutorConfig, A6BasketState
+    from bot.a6_command_router import A6CommandRouter
+except ImportError:
+    try:
+        from a6_executor import A6BasketExecutor, A6ExecutorConfig, A6BasketState  # type: ignore
+        from a6_command_router import A6CommandRouter  # type: ignore
+    except ImportError:
+        A6BasketExecutor = None
+        A6ExecutorConfig = None
+        A6BasketState = None
+        A6CommandRouter = None
+
 try:
     from bot.kill_rules import run_combinatorial_promotion_battery
 except ImportError:
@@ -224,15 +248,15 @@ logger = logging.getLogger("JJ")
 # ---------------------------------------------------------------------------
 # JJ Configuration
 # ---------------------------------------------------------------------------
-MAX_POSITION_USD = float(os.environ.get("JJ_MAX_POSITION_USD", "0.50"))
-MAX_DAILY_LOSS_USD = float(os.environ.get("JJ_MAX_DAILY_LOSS_USD", "5"))
+MAX_POSITION_USD = float(os.environ.get("JJ_MAX_POSITION_USD", "2.00"))
+MAX_DAILY_LOSS_USD = float(os.environ.get("JJ_MAX_DAILY_LOSS_USD", "10"))
 MAX_EXPOSURE_PCT = float(os.environ.get("JJ_MAX_EXPOSURE_PCT", "0.90"))
 KELLY_FRACTION = float(os.environ.get("JJ_KELLY_FRACTION", "0.25"))
 MAX_KELLY_FRACTION = float(os.environ.get("JJ_MAX_KELLY_FRACTION", "0.25"))
 SCAN_INTERVAL = int(os.environ.get("JJ_SCAN_INTERVAL", "180"))
 MAX_OPEN_POSITIONS = int(os.environ.get("JJ_MAX_OPEN_POSITIONS", "30"))
 MIN_EDGE = float(os.environ.get("JJ_MIN_EDGE", "0.05"))
-INITIAL_BANKROLL = float(os.environ.get("JJ_INITIAL_BANKROLL", "1000"))
+INITIAL_BANKROLL = float(os.environ.get("JJ_INITIAL_BANKROLL", "247.51"))
 
 # Adaptive calibration and ensemble conviction controls (Instance 6)
 ADAPTIVE_PLATT_ENABLED = os.environ.get("JJ_ADAPTIVE_PLATT_ENABLED", "false").lower() in ("true", "1", "yes")
@@ -2042,6 +2066,13 @@ class JJLive:
         self.state = JJState()
         self.scanner = MarketScanner()
 
+        # Market quarantine: gracefully handle CLOB 404s with exponential backoff
+        if MarketQuarantine is not None:
+            self.quarantine = MarketQuarantine(db_path="data/edge_discovery.db")
+            logger.info("Market quarantine initialized (%d active)", self.quarantine.stats()["active_count"])
+        else:
+            self.quarantine = None
+
         # LLM Analyzer: prefer ensemble (multi-model + RAG) over single Claude
         self.ensemble_mode = False
         if LLMEnsemble is not None:
@@ -2181,6 +2212,43 @@ class JJLive:
                     logger.warning(f"A-6 embedded shadow scanner init failed: {e}")
                     self.a6_shadow_scanner = None
 
+        # A-6 live execution: basket state machine + order routing
+        self.a6_executor = None
+        self.a6_command_router = None
+        self._a6_order_map: dict[str, str] = {}
+        if (
+            A6BasketExecutor is not None
+            and A6CommandRouter is not None
+            and self.combinatorial_cfg is not None
+            and self.combinatorial_cfg.enable_a6_live
+        ):
+            try:
+                self.a6_executor = A6BasketExecutor(
+                    config=A6ExecutorConfig(
+                        max_leg_notional_usd=min(
+                            MAX_POSITION_USD,
+                            self.combinatorial_cfg.max_notional_per_leg_usd,
+                        ),
+                        max_open_baskets=5,
+                        max_daily_loss_usd=MAX_DAILY_LOSS_USD,
+                        fill_timeout_seconds=self.combinatorial_cfg.fill_timeout_seconds,
+                        signature_type=1,
+                    ),
+                )
+                if self.clob is not None:
+                    self.a6_command_router = A6CommandRouter(
+                        self.clob,
+                        order_args_cls=OrderArgs,
+                        order_type_cls=OrderType,
+                        buy_const=BUY,
+                        sell_const=SELL,
+                        paper_mode=self.paper_mode,
+                    )
+                logger.info("A-6 basket executor initialized (router=%s)", "live" if self.a6_command_router else "none")
+            except Exception as e:
+                logger.warning(f"A-6 executor init failed: {e}")
+                self.a6_executor = None
+
         mode_str = "PAPER" if self.paper_mode else "LIVE"
         logger.info("=" * 60)
         logger.info(f"JJ {mode_str} TRADING SYSTEM — INITIALIZED")
@@ -2257,23 +2325,200 @@ class JJLive:
                     logger.warning("Could not init Telegram — notifications disabled")
                     return _DummyNotifier()
 
-    def _run_embedded_a6_shadow_scan(self) -> dict:
-        """Optionally refresh the shared constraint DB with the built-in A-6 scanner."""
+    def _run_embedded_a6_shadow_scan(self) -> tuple[dict, list]:
+        """Refresh the shared constraint DB and extract A6Opportunity objects.
+
+        Returns (scan_metrics_dict, list_of_A6Opportunity).
+        """
         if self.a6_shadow_scanner is None:
-            return {}
+            return {}, []
         try:
             stats = self.a6_shadow_scanner.scan_once()
+            opportunities = list(getattr(self.a6_shadow_scanner, "_latest_opportunities", []))
             return {
-                "markets_fetched": stats.markets_fetched,
+                "events_fetched": stats.events_fetched,
                 "candidate_events": stats.candidate_events,
                 "candidate_markets": stats.candidate_markets,
                 "quotes_updated": stats.quotes_updated,
                 "violations_found": stats.violations_found,
+                "opportunities_found": len(opportunities),
                 "elapsed_seconds": stats.elapsed_seconds,
-            }
+            }, opportunities
         except Exception as e:
             logger.warning(f"A-6 embedded shadow scan failed: {e}")
-            return {"error": str(e)}
+            return {"error": str(e)}, []
+
+    def _execute_a6_live_cycle(self, new_opportunities: list) -> dict:
+        """Tick active A-6 baskets and submit new opportunities.
+
+        1. Poll fill status for all active basket legs.
+        2. Advance time on active baskets (handles timeout/reprice).
+        3. Filter and submit new executable opportunities.
+        4. Route resulting commands through A6CommandRouter.
+
+        Returns metrics dict for cycle logging.
+        """
+        if self.a6_executor is None or self.a6_command_router is None:
+            return {}
+
+        now_ts = int(time.time())
+        stats = {
+            "active_baskets": len(self.a6_executor.active_baskets),
+            "fills_detected": 0,
+            "commands_routed": 0,
+            "submitted": 0,
+            "completed": 0,
+            "rolled_back": 0,
+            "expired": 0,
+        }
+
+        # Step 1: Poll fills for active baskets
+        for basket_id, basket in list(self.a6_executor.active_baskets.items()):
+            for leg in basket.legs:
+                if leg.order_id is None or leg.remaining_quantity <= 1e-9:
+                    continue
+                clob_id = self.a6_command_router.get_clob_order_id(leg.leg_id)
+                if not clob_id:
+                    continue
+                fill = self.a6_command_router.poll_fill_status(clob_id)
+                if fill is None or fill.size_matched <= 0:
+                    continue
+                if fill.size_matched > leg.filled_quantity + 1e-9:
+                    delta = fill.size_matched - leg.filled_quantity
+                    update = self.a6_executor.apply_fill(
+                        basket_id,
+                        leg_id=leg.leg_id,
+                        filled_quantity=delta,
+                        avg_price=fill.avg_price if fill.avg_price > 0 else leg.quote_price,
+                        now_ts=now_ts,
+                    )
+                    stats["fills_detected"] += 1
+                    self._process_a6_update(update, stats)
+
+        # Step 2: Advance time on active baskets (timeout/reprice)
+        for basket_id in list(self.a6_executor.active_baskets.keys()):
+            update = self.a6_executor.advance_time(basket_id, now_ts=now_ts)
+            self._process_a6_update(update, stats)
+
+        # Step 3: Submit new opportunities
+        min_depth_usd = 10.0
+        for opp in new_opportunities:
+            if not opp.executable or opp.signal_type not in {"buy_yes_basket", "buy_yes_no_straddle"}:
+                continue
+            if opp.theoretical_edge <= 0.0 or opp.readiness_status != "ready":
+                continue
+            # Check depth: all legs need >$10 at best ask
+            depth_ok = all(
+                leg.best_ask > 0 and (min_depth_usd / max(leg.best_ask, 0.01)) <= 1000
+                for leg in opp.legs
+            )
+            if not depth_ok:
+                continue
+            try:
+                update = self.a6_executor.submit_opportunity(opp, now_ts=now_ts)
+                stats["submitted"] += 1
+                self._process_a6_update(update, stats)
+                logger.info(
+                    "A-6 SUBMITTED: basket=%s event=%s edge=%.3f legs=%d construction=%s",
+                    opp.basket_id[:16],
+                    opp.event_id[:16],
+                    opp.theoretical_edge,
+                    len(opp.legs),
+                    opp.selected_construction,
+                )
+            except ValueError as e:
+                logger.debug("A-6 submission rejected: %s", e)
+            except Exception as e:
+                logger.warning("A-6 submission failed: %s", e)
+
+        stats["active_baskets"] = len(self.a6_executor.active_baskets)
+        return stats
+
+    def _process_a6_update(self, update, stats: dict) -> None:
+        """Route commands from an A6ExecutorUpdate and handle lifecycle events."""
+        if not update.commands and not update.events:
+            return
+
+        # Route commands to CLOB
+        if update.commands and self.a6_command_router is not None:
+            results = self.a6_command_router.execute_commands(update.commands)
+            stats["commands_routed"] += len(results)
+            for result in results:
+                if result.success:
+                    logger.info(
+                        "A-6 %s OK: basket=%s leg=%s order=%s",
+                        result.command_action,
+                        result.basket_id[:12],
+                        result.leg_id[:12] if result.leg_id else "?",
+                        result.order_id[:16] if result.order_id else "?",
+                    )
+                else:
+                    logger.warning(
+                        "A-6 %s FAILED: basket=%s leg=%s error=%s",
+                        result.command_action,
+                        result.basket_id[:12],
+                        result.leg_id[:12] if result.leg_id else "?",
+                        result.error,
+                    )
+
+        # Handle lifecycle events (state transitions, completions, rollbacks)
+        for event in update.events:
+            if not hasattr(event, "state"):
+                continue
+            if hasattr(A6BasketState, "COMPLETE") and event.state == A6BasketState.COMPLETE.value:
+                stats["completed"] += 1
+                self._on_a6_basket_complete(update.basket, event)
+            elif hasattr(A6BasketState, "ROLLED_BACK") and event.state == A6BasketState.ROLLED_BACK.value:
+                stats["rolled_back"] += 1
+                self._on_a6_basket_rollback(update.basket, event)
+            elif hasattr(A6BasketState, "EXPIRED") and event.state == A6BasketState.EXPIRED.value:
+                stats["expired"] += 1
+
+    async def _send_a6_notification(self, message: str) -> None:
+        """Send A-6 event notification via Telegram."""
+        try:
+            await self.notifier.send_message(message)
+        except Exception:
+            pass
+
+    def _on_a6_basket_complete(self, basket, event) -> None:
+        """Handle A-6 basket completion: log fill, update position tracking."""
+        profit = getattr(basket, "realized_profit_usd", 0.0)
+        logger.info(
+            "A-6 COMPLETE: basket=%s event=%s profit=$%.4f legs=%d",
+            basket.basket_id[:16],
+            basket.event_id[:16],
+            profit,
+            len(basket.legs),
+        )
+        # Position tracking: fills already recorded by executor's internal
+        # NegRiskInventory.  Log to constraint_arb.db for historical analysis.
+        try:
+            self.db.log_trade({
+                "market_id": basket.event_id,
+                "question": f"A-6 basket {basket.basket_id[:16]}",
+                "direction": "buy_yes_basket",
+                "price": sum(leg.avg_fill_price for leg in basket.filled_legs) / max(1, len(basket.filled_legs)),
+                "size_usd": basket.filled_notional_usd,
+                "edge": basket.theoretical_edge,
+                "confidence": 1.0,
+                "order_id": basket.basket_id,
+                "source": "a6",
+            })
+        except Exception as e:
+            logger.debug("A-6 trade log failed: %s", e)
+
+    def _on_a6_basket_rollback(self, basket, event) -> None:
+        """Handle A-6 basket rollback: log loss."""
+        loss = getattr(basket, "rollback_loss_usd", 0.0)
+        logger.warning(
+            "A-6 ROLLBACK: basket=%s event=%s loss=$%.4f filled=%d/%d legs",
+            basket.basket_id[:16],
+            basket.event_id[:16],
+            loss,
+            len(basket.filled_legs),
+            len(basket.legs),
+        )
 
     def _evaluate_combinatorial_health(self) -> dict:
         summary = self.db.get_combinatorial_summary(hours=24 * 14)
@@ -2387,9 +2632,15 @@ class JJLive:
             return [], empty_summary
 
         cycle_metrics: dict[str, Any] = {}
-        embedded_scan = self._run_embedded_a6_shadow_scan()
+        embedded_scan, a6_opportunities = self._run_embedded_a6_shadow_scan()
         if embedded_scan:
             cycle_metrics["embedded_a6_scan"] = embedded_scan
+
+        # Execute A-6 live cycle: tick active baskets + submit new opportunities
+        a6_live_stats = self._execute_a6_live_cycle(a6_opportunities)
+        if a6_live_stats:
+            cycle_metrics["a6_live"] = a6_live_stats
+            empty_summary["live_attempted"] += a6_live_stats.get("submitted", 0)
 
         now_ts = int(time.time())
         opportunities = self.constraint_signal_store.poll_new_opportunities(
@@ -2443,16 +2694,30 @@ class JJLive:
                 continue
 
             if opportunity.live_eligible and self.combinatorial_cfg.live_enabled(lane) and not self.paper_mode:
-                summary["blocked"] += 1
-                summary["kill_triggers"].append("executor_unavailable")
-                self._record_combinatorial_basket(
-                    signal,
-                    execution_mode="blocked",
-                    state="EXECUTOR_PENDING",
-                    state_reason="executor adapter not wired",
-                    budget_usd=0.0,
-                    kill_rule_trigger="executor_unavailable",
-                )
+                if self.a6_executor is None or self.a6_command_router is None or lane != "a6":
+                    # Executor not available for this lane — block
+                    summary["blocked"] += 1
+                    summary["kill_triggers"].append("executor_unavailable")
+                    self._record_combinatorial_basket(
+                        signal,
+                        execution_mode="blocked",
+                        state="EXECUTOR_PENDING",
+                        state_reason="executor adapter not wired" if lane != "a6" else "b1 executor pending",
+                        budget_usd=0.0,
+                        kill_rule_trigger="executor_unavailable",
+                    )
+                else:
+                    # A-6 live execution: opportunity will be handled by
+                    # _execute_a6_live_cycle via scanner-produced A6Opportunity
+                    # objects.  Record as live-routed for tracking.
+                    summary["live_attempted"] += 1
+                    self._record_combinatorial_basket(
+                        signal,
+                        execution_mode="live",
+                        state="LIVE_ROUTED",
+                        state_reason="a6_executor_active",
+                        budget_usd=decision.reserved_budget_usd,
+                    )
                 self._seen_combinatorial_baskets.add(opportunity.basket_id)
                 continue
 
@@ -2712,6 +2977,29 @@ class JJLive:
                 combinatorial_cycle["arb_budget_in_use_usd"],
             )
 
+        # A-6 Telegram notifications
+        a6_live = combinatorial_cycle.get("metrics", {}).get("a6_live", {})
+        if a6_live.get("submitted", 0) > 0:
+            await self._send_a6_notification(
+                f"A-6 EXEC: {a6_live['submitted']} baskets submitted, "
+                f"{a6_live.get('commands_routed', 0)} orders routed, "
+                f"{a6_live.get('active_baskets', 0)} active"
+            )
+        if a6_live.get("completed", 0) > 0:
+            await self._send_a6_notification(
+                f"A-6 COMPLETE: {a6_live['completed']} baskets filled"
+            )
+        if a6_live.get("rolled_back", 0) > 0:
+            await self._send_a6_notification(
+                f"A-6 ROLLBACK: {a6_live['rolled_back']} baskets rolled back"
+            )
+        a6_scan = combinatorial_cycle.get("metrics", {}).get("embedded_a6_scan", {})
+        if a6_scan.get("violations_found", 0) > 0:
+            await self._send_a6_notification(
+                f"A-6 SCAN: {a6_scan['violations_found']} violations found, "
+                f"{a6_scan.get('opportunities_found', 0)} executable opportunities"
+            )
+
         # 1. SCAN
         try:
             result = self.scanner.fetch_active_markets(limit=100)
@@ -2732,8 +3020,16 @@ class JJLive:
         skipped_category = 0
         skipped_too_slow = 0
         skipped_no_resolution = 0
+        skipped_quarantined = 0
         for m in markets:
             try:
+                # Quarantine filter: skip markets with recent CLOB errors
+                if self.quarantine is not None:
+                    mid = m.get("id", m.get("condition_id", ""))
+                    if mid and self.quarantine.is_quarantined(mid):
+                        skipped_quarantined += 1
+                        continue
+
                 # Category filter: skip sports/crypto where LLM has low edge
                 question = m.get("question", "")
                 if is_low_edge_category(question):
@@ -2741,11 +3037,16 @@ class JJLive:
                     continue
 
                 # Velocity filter: skip markets that resolve too slowly
+                # NOTE: If resolution time is unknown, ALLOW the market through
+                # with a default estimate. Rejecting unknowns killed all markets
+                # because most Polymarket markets lack parseable endDate fields.
                 if MAX_RESOLUTION_HOURS > 0:
                     res_hours = estimate_resolution_hours(m)
                     if res_hours is None:
-                        skipped_no_resolution += 1
-                        continue
+                        # Default: assume 24h resolution for unknown markets
+                        # This lets them through the filter while deprioritizing
+                        # them in velocity scoring vs markets with known times.
+                        res_hours = 24.0
                     if res_hours > MAX_RESOLUTION_HOURS:
                         skipped_too_slow += 1
                         continue
@@ -2825,6 +3126,8 @@ class JJLive:
                 logger.debug(f"Skip market: {e}")
                 continue
 
+        if skipped_quarantined:
+            logger.info(f"Skipped {skipped_quarantined} quarantined markets (CLOB errors)")
         if skipped_category:
             logger.info(f"Skipped {skipped_category} low-edge-category markets (sports/crypto)")
         if skipped_too_slow or skipped_no_resolution:

@@ -25,6 +25,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from bot.constraint_arb_engine import CandidateGenerator, CandidatePair, fetch_gamma_markets
+from bot.b1_template_engine import filter_template_candidates
 from bot.relation_classifier import RelationClassifier, RelationResult
 from bot.resolution_normalizer import NormalizedMarket, normalize_market
 
@@ -104,6 +105,40 @@ def classify_pairs(
     return results
 
 
+def classify_template_pairs(
+    markets: Sequence[NormalizedMarket],
+    *,
+    max_pairs: int = 100,
+) -> list[dict[str, Any]]:
+    """Build deterministic template classifications before any LLM pass."""
+    results: list[dict[str, Any]] = []
+    template_rows = filter_template_candidates(markets)[:max_pairs]
+    for market_a, market_b, match in template_rows:
+        results.append(
+            {
+                "market_a": market_a,
+                "market_b": market_b,
+                "pair_signature": f"{market_a.market_id}:{market_b.market_id}",
+                "candidate_score": match.confidence,
+                "sample_bucket": match.family,
+                "template_family": match.family,
+                "compatibility_matrix": dict(match.compatibility_matrix),
+                "classification": RelationResult(
+                    relation_type=match.relation_type,
+                    confidence=match.confidence,
+                    reason=match.rationale,
+                    ambiguous=False,
+                    needs_human_review=False,
+                    short_rationale=match.rationale,
+                    source="template_engine",
+                    prompt_version="template-v1",
+                    cache_hit=False,
+                ),
+            }
+        )
+    return results
+
+
 def select_gold_set(
     classified: list[dict[str, Any]],
     *,
@@ -167,6 +202,11 @@ def build_gold_set_json(
             "short_rationale": cls.short_rationale,
             "source": cls.source,
             "cache_hit": cls.cache_hit,
+            "template_family": entry.get("template_family"),
+            "compatibility_matrix": entry.get(
+                "compatibility_matrix",
+                {"YY": None, "YN": None, "NY": None, "NN": None},
+            ),
             "human_label_placeholder": None,
             "labeled": False,
             "generated_at": generated_at,
@@ -334,6 +374,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-json", default="data/b1_gold_set.json")
     parser.add_argument("--output-md", default="research/b1_gold_set_candidates.md")
     parser.add_argument("--tuning-report", default="reports/b1_classifier_tuning.md")
+    parser.add_argument("--compat-output", default="data/b1_template_compatibility.json")
     parser.add_argument("--input-jsonl", default="", help="Local market JSON instead of Gamma fetch")
     parser.add_argument("--log-level", default="INFO")
     return parser.parse_args()
@@ -360,7 +401,12 @@ def main() -> int:
         logger.error("Too few markets (%d) to build gold set", len(markets))
         return 1
 
-    # Step 2: Generate candidate pairs
+    # Step 2: Build deterministic template candidates first
+    template_classified = classify_template_pairs(markets, max_pairs=args.max_classify)
+    template_signatures = {row["pair_signature"] for row in template_classified}
+    logger.info("Template engine classified %d pairs", len(template_classified))
+
+    # Step 3: Generate candidate pairs for residual ambiguity only
     generator = CandidateGenerator()
     candidates = generator.generate_candidates(markets, max_pairs=4000, include_rejected=True)
     passed = [c for c in candidates if c.passed]
@@ -374,21 +420,40 @@ def main() -> int:
         logger.warning("Few passed pairs (%d), using all candidates", len(passed))
         passed = candidates
 
-    # Step 3: Classify pairs
+    residual_candidates = [
+        pair for pair in passed
+        if pair.pair_signature not in template_signatures
+    ]
+
+    # Step 4: Classify residual pairs
     classifier = RelationClassifier()
-    classified = classify_pairs(passed, classifier, max_classify=args.max_classify)
+    residual_budget = max(0, int(args.max_classify) - len(template_classified))
+    classified = list(template_classified)
+    if residual_budget > 0:
+        classified.extend(classify_pairs(residual_candidates, classifier, max_classify=residual_budget))
     logger.info("Classified %d pairs", len(classified))
 
-    # Step 4: Select gold set
+    # Step 5: Select gold set
     gold_set = select_gold_set(classified, target_count=args.gold_set_size)
     logger.info("Selected %d gold set pairs", len(gold_set))
 
-    # Step 5: Write outputs
+    # Step 6: Write outputs
     records = build_gold_set_json(gold_set, generated_at=generated_at)
     write_gold_set_json(records, Path(args.output_json))
     write_gold_set_markdown(records, Path(args.output_md))
+    write_gold_set_json(
+        [
+            {
+                "pair_id": record["pair_id"],
+                "template_family": record.get("template_family"),
+                "compatibility_matrix": record.get("compatibility_matrix"),
+            }
+            for record in records
+        ],
+        Path(args.compat_output),
+    )
 
-    # Step 6: Threshold analysis
+    # Step 7: Threshold analysis
     run_threshold_analysis(classified, Path(args.tuning_report))
 
     # Summary
@@ -399,6 +464,7 @@ def main() -> int:
     print(f"\nOutputs:")
     print(f"  Gold set JSON: {args.output_json}")
     print(f"  Gold set MD:   {args.output_md}")
+    print(f"  Compat JSON:   {args.compat_output}")
     print(f"  Tuning report: {args.tuning_report}")
 
     return 0
