@@ -345,7 +345,10 @@ def recommend_a6_thresholds(rows: Sequence[ReplayViolationRow]) -> dict[str, Any
         bucket_rows = by_bucket.get(bucket, [])
         positive_rows = [row for row in bucket_rows if row.score > 0.0]
         drag_values = [row.slippage_est + row.fill_risk for row in bucket_rows]
-        if positive_rows:
+        if len(bucket_rows) < 3 and bucket_rows:
+            required_edge = (quantile(drag_values, 0.75) or 0.0) + 0.01
+            basis = "thin_sample_execution_drag_plus_buffer"
+        elif positive_rows:
             required_edge = max(
                 min(row.gross_edge for row in positive_rows),
                 quantile(drag_values, 0.75) or 0.0,

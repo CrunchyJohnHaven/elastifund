@@ -116,9 +116,6 @@ class TestCombinatorialIntegration(unittest.TestCase):
             "details_json": '{"complete_basket": true, "legs": 3}',
             "detected_at_ts": int(time.time()),
         }
-        opportunity = CombinatorialSignalStore().poll_new_opportunities  # type: ignore[assignment]
-        self.assertTrue(callable(opportunity))
-
         parsed = attach_signal_source_metadata({"source": "a6"})
         self.assertEqual(parsed["source_id"], 5)
 

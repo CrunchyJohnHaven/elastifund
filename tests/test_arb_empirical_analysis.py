@@ -81,7 +81,7 @@ class TestArbEmpiricalAnalysis(unittest.TestCase):
         self.assertEqual(episodes[0].duration_seconds, 50)
         self.assertEqual(episodes[1].duration_seconds, 0)
 
-    def test_recommend_a6_thresholds_uses_positive_score_floor(self) -> None:
+    def test_recommend_a6_thresholds_uses_drag_fallback_for_thin_samples(self) -> None:
         rows = [
             ReplayViolationRow(
                 violation_id="a",
@@ -122,8 +122,9 @@ class TestArbEmpiricalAnalysis(unittest.TestCase):
         recs = recommend_a6_thresholds(rows)
         bucket = recs["by_leg_bucket"]["3_5_legs"]
         self.assertEqual(bucket["sample_count"], 2)
-        self.assertAlmostEqual(bucket["recommended_min_gross_edge"], 0.04)
-        self.assertAlmostEqual(bucket["recommended_sum_yes_ask_threshold"], 0.96)
+        self.assertAlmostEqual(bucket["recommended_min_gross_edge"], 0.0318)
+        self.assertAlmostEqual(bucket["recommended_sum_yes_ask_threshold"], 0.9682)
+        self.assertEqual(bucket["basis"], "thin_sample_execution_drag_plus_buffer")
 
     def test_trade_matches_passive_yes_buy_handles_yes_sell_and_no_buy(self) -> None:
         probe = PassiveOrderProbe(
