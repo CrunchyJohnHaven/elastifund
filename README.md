@@ -19,7 +19,7 @@ This is also the most comprehensive open-source resource on agentic trading syst
 | **Capital deployed** | Live on Polymarket (USDC) + Kalshi (USD) |
 | **Strategies tested** | 20 (6 deployed, 3 building, 11 rejected) |
 | **Tests passing** | 345 |
-| **Signal sources** | 4 (LLM Ensemble, Smart Wallet Flow, LMSR Bayesian, Cross-Platform Arb) |
+| **Signal sources** | 4 active + 2 gated (A-6 sum arb, B-1 dependency arb) |
 | **Research dispatches** | 74 original investigations |
 | **Backtest win rate** | 68.5% on 532 resolved markets |
 
@@ -85,6 +85,7 @@ These failures are not embarrassments — they are the most valuable content in 
 bot/
 ├── jj_live.py              Autonomous trading loop + confirmation layer
 ├── btc_5min_maker.py        5-minute BTC T-10s maker execution runner
+├── combinatorial_integration.py  A-6/B-1 feature flags, routing, telemetry
 ├── llm_ensemble.py          Multi-model probability estimation + agentic RAG
 ├── wallet_flow_detector.py  Smart wallet consensus signals
 ├── lmsr_engine.py           Bayesian pricing + market inefficiency detection

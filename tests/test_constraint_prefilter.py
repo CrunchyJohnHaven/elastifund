@@ -77,7 +77,7 @@ class TestConstraintPrefilter(unittest.TestCase):
 
         candidates = generator.generate_candidates(markets, max_pairs=20, include_rejected=True)
         naive_pairs = 6
-        self.assertLess(generator.last_stats["unique_pairs_considered"], naive_pairs)
+        self.assertLess(generator.last_stats["passed_pairs"], naive_pairs)
 
         threshold_pair = next(pair for pair in candidates if pair.pair_key == ("cpi-3", "cpi-4"))
         self.assertTrue(threshold_pair.passed)

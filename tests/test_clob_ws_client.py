@@ -77,7 +77,7 @@ async def test_clob_client_quarantines_404_tokens_and_retries_slowly() -> None:
     client = CLOBWebSocketClient(
         rest_book_fetcher=fetch_book,
         clock=lambda: clock[0],
-        stale_book_seconds=30.0,
+        stale_book_seconds=5.0,
         quarantine_retry_seconds=20.0,
     )
     client.sync_tokens({"tok-404": "market-404"})

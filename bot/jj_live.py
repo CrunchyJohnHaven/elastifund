@@ -897,7 +897,21 @@ class TradeDatabase:
                 resolution_price REAL, -- 1.0 (YES) or 0.0 (NO)
                 pnl REAL,
                 resolved_at TEXT,
-                bankroll_level INTEGER DEFAULT 1000
+                bankroll_level INTEGER DEFAULT 1000,
+                source TEXT,
+                n_models INTEGER,
+                model_spread REAL,
+                model_stddev REAL,
+                agreement REAL,
+                kelly_multiplier REAL,
+                disagreement_kelly_fraction REAL,
+                models_agree INTEGER DEFAULT 0,
+                search_context_used INTEGER DEFAULT 0,
+                counter_shift REAL,
+                counter_fragile INTEGER DEFAULT 0,
+                platt_mode TEXT,
+                platt_a REAL,
+                platt_b REAL
             );
 
             CREATE TABLE IF NOT EXISTS cycles (
@@ -994,7 +1008,38 @@ class TradeDatabase:
             CREATE INDEX IF NOT EXISTS idx_comb_baskets_updated ON combinatorial_baskets(updated_at);
             CREATE INDEX IF NOT EXISTS idx_comb_cycle_ts ON combinatorial_cycle_metrics(timestamp);
         """)
+        self._ensure_columns(
+            "trades",
+            {
+                "source": "TEXT",
+                "n_models": "INTEGER",
+                "model_spread": "REAL",
+                "model_stddev": "REAL",
+                "agreement": "REAL",
+                "kelly_multiplier": "REAL",
+                "disagreement_kelly_fraction": "REAL",
+                "models_agree": "INTEGER DEFAULT 0",
+                "search_context_used": "INTEGER DEFAULT 0",
+                "counter_shift": "REAL",
+                "counter_fragile": "INTEGER DEFAULT 0",
+                "platt_mode": "TEXT",
+                "platt_a": "REAL",
+                "platt_b": "REAL",
+            },
+        )
         self.conn.commit()
+
+    def _ensure_columns(self, table_name: str, columns: dict[str, str]) -> None:
+        """Backfill additive columns for existing SQLite databases."""
+        c = self.conn.cursor()
+        existing = {
+            row[1]
+            for row in c.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
+        for column_name, ddl in columns.items():
+            if column_name in existing:
+                continue
+            c.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl}")
 
     def log_trade(self, trade: dict, bankroll_level: int = 1000) -> str:
         """Log a trade to the database. Returns trade_id."""
@@ -1004,8 +1049,12 @@ class TradeDatabase:
             INSERT INTO trades (id, timestamp, market_id, question, direction,
                 entry_price, raw_prob, calibrated_prob, edge, taker_fee,
                 position_size_usd, kelly_fraction, category, confidence,
-                reasoning, token_id, order_id, paper, bankroll_level)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                reasoning, token_id, order_id, paper, bankroll_level, source,
+                n_models, model_spread, model_stddev, agreement,
+                kelly_multiplier, disagreement_kelly_fraction, models_agree,
+                search_context_used, counter_shift, counter_fragile, platt_mode,
+                platt_a, platt_b)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             trade_id,
             datetime.now(timezone.utc).isoformat(),
@@ -1026,6 +1075,20 @@ class TradeDatabase:
             trade.get("order_id", ""),
             1 if PAPER_TRADING else 0,
             bankroll_level,
+            trade.get("source", "llm"),
+            trade.get("n_models"),
+            trade.get("model_spread"),
+            trade.get("model_stddev"),
+            trade.get("agreement"),
+            trade.get("kelly_multiplier"),
+            trade.get("disagreement_kelly_fraction"),
+            1 if trade.get("models_agree") else 0,
+            1 if trade.get("search_context_used") else 0,
+            trade.get("counter_shift"),
+            1 if trade.get("counter_fragile") else 0,
+            trade.get("platt_mode"),
+            trade.get("platt_a"),
+            trade.get("platt_b"),
         ))
         self.conn.commit()
         return trade_id
@@ -1439,6 +1502,7 @@ class AdaptivePlattCalibrator:
         self.rolling_brier = None
 
     def _recent_resolved_rows(self) -> list[tuple[float, int]]:
+        """Load only LLM-calibrated trades with trustworthy raw probabilities."""
         c = self.db.conn.cursor()
         rows = c.execute(
             """
@@ -1447,6 +1511,7 @@ class AdaptivePlattCalibrator:
             WHERE outcome IS NOT NULL
               AND raw_prob IS NOT NULL
               AND resolution_price IS NOT NULL
+              AND platt_mode IS NOT NULL
             ORDER BY resolved_at DESC
             LIMIT ?
             """,
@@ -2901,22 +2966,11 @@ class JJLive:
                 # If result doesn't have mispriced/direction/edge, compute them
                 # using full calibration pipeline (Platt scaling + fees + thresholds)
                 if "mispriced" not in r:
-                    # Prefer raw probability fields first to avoid double-calibration.
-                    raw_prob = (r.get("probability")
-                                or r.get("estimated_probability")
-                                or r.get("estimated_prob")
-                                or r.get("prob")
-                                or r.get("estimate"))
-                    calibrated_prob = (r.get("calibrated_probability")
-                                       or r.get("calibrated_prob"))
-
-                    prob = None
-                    already_calibrated = False
-                    if raw_prob is not None:
-                        prob = _safe_float(raw_prob, None)
-                    elif calibrated_prob is not None:
-                        prob = _safe_float(calibrated_prob, None)
-                        already_calibrated = prob is not None
+                    prob_fields = extract_probability_fields(r)
+                    prob = prob_fields["raw_prob"]
+                    already_calibrated = prob_fields["already_calibrated"]
+                    if prob is None and prob_fields["calibrated_prob"] is not None:
+                        prob = prob_fields["calibrated_prob"]
 
                     if prob is not None and market_price > 0:
                         # Classify category for fee calculation
@@ -2941,6 +2995,17 @@ class JJLive:
                             f"already_calibrated={already_calibrated}"
                         )
 
+                prob_fields = extract_probability_fields(r)
+                raw_prob = prob_fields["raw_prob"]
+                calibrated_prob = prob_fields["calibrated_prob"]
+                execution_prob = prob_fields["execution_prob"]
+                if execution_prob is None:
+                    execution_prob = 0.5
+                if raw_prob is None:
+                    raw_prob = execution_prob
+                if calibrated_prob is None:
+                    calibrated_prob = execution_prob
+
                 # Also handle case where "mispriced" key exists but uses different
                 # truthy representations (string "True", 1, etc.)
                 is_mispriced = r.get("mispriced", False)
@@ -2959,13 +3024,6 @@ class JJLive:
 
                 # Convert confidence string to float
                 confidence = normalize_confidence(r.get("confidence", 0.5))
-
-                # Get estimated probability from various field names
-                est_prob = (r.get("calibrated_prob")
-                            or r.get("calibrated_probability")
-                            or r.get("estimated_prob")
-                            or r.get("probability")
-                            or 0.5)
 
                 # Get resolution hours for velocity scoring
                 res_hours = mdata_lookup.get("resolution_hours")
@@ -3026,7 +3084,9 @@ class JJLive:
                     "question": r.get("question", ""),
                     "direction": direction,
                     "market_price": market_price,
-                    "estimated_prob": _safe_float(est_prob, 0.5),
+                    "estimated_prob": execution_prob,
+                    "raw_prob": raw_prob,
+                    "calibrated_prob": calibrated_prob,
                     "edge": edge,
                     "confidence": confidence,
                     "reasoning": r.get("reasoning", ""),
@@ -3035,12 +3095,18 @@ class JJLive:
                     "resolution_hours": res_hours,
                     "velocity_score": vel_score,
                     "n_models": n_models,
+                    "model_spread": model_spread,
                     "model_stddev": model_stddev,
                     "agreement": agreement,
                     "kelly_multiplier": kelly_multiplier,
                     "disagreement_kelly_fraction": disagreement_kelly_fraction,
+                    "models_agree": bool(models_agree),
+                    "search_context_used": bool(rag_used),
                     "counter_shift": counter_shift,
                     "counter_fragile": bool(counter_fragile),
+                    "platt_mode": self.adaptive_platt.active_mode,
+                    "platt_a": self.adaptive_platt.active_a,
+                    "platt_b": self.adaptive_platt.active_b,
                 }
                 self._attach_microstructure_context(signal_payload, market_lookup)
                 signals.append(signal_payload)
@@ -3332,23 +3398,14 @@ class JJLive:
                 f"cat={category} | {signal['question'][:50]}..."
             )
 
-            # Build trade record for database
-            trade_record = {
-                "market_id": market_id,
-                "question": signal["question"],
-                "direction": signal["direction"],
-                "entry_price": price,
-                "raw_prob": signal.get("estimated_prob"),
-                "calibrated_prob": signal.get("estimated_prob"),
-                "edge": signal["edge"],
-                "taker_fee": signal.get("taker_fee", 0.0),
-                "position_size_usd": size_usd,
-                "kelly_fraction": signal.get("_kelly_override", KELLY_FRACTION),
-                "category": category,
-                "confidence": signal["confidence"],
-                "reasoning": signal.get("reasoning", ""),
-                "token_id": token_id,
-            }
+            trade_record = build_trade_record(
+                signal,
+                market_id=market_id,
+                category=category,
+                entry_price=price,
+                position_size_usd=size_usd,
+                token_id=token_id,
+            )
 
             if self.paper_mode:
                 # ---- PAPER TRADING: simulate locally ----

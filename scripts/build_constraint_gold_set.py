@@ -262,6 +262,9 @@ def build_triples(
     markets: Sequence[NormalizedMarket],
     pair_lookup: dict[str, CandidatePair],
     generator: CandidateGenerator,
+    *,
+    max_group_markets: int = 12,
+    max_triples_per_group: int = 36,
 ) -> list[TripleCandidate]:
     triples: dict[str, TripleCandidate] = {}
 
@@ -272,7 +275,11 @@ def build_triples(
     for event_id, event_markets in by_event.items():
         if len(event_markets) < 3:
             continue
-        for combo in combinations(sorted(event_markets, key=lambda market: market.market_id), 3):
+        limited_markets = sorted(event_markets, key=lambda market: market.market_id)[:max_group_markets]
+        built_for_group = 0
+        for combo in combinations(limited_markets, 3):
+            if built_for_group >= max_triples_per_group:
+                break
             pairwise = tuple(
                 pair_lookup.get(build_pair_signature(left, right)) or generator.score_pair(left, right)
                 for left, right in combinations(combo, 2)
@@ -289,6 +296,7 @@ def build_triples(
                 pairwise=pairwise,
                 reason_codes=tuple(sorted({reason for pair in pairwise for reason in pair.reason_codes})),
             )
+            built_for_group += 1
 
     by_anchor: dict[str, list[NormalizedMarket]] = {}
     for market in markets:
@@ -301,7 +309,11 @@ def build_triples(
         unique_events = {market.event_id for market in anchor_markets}
         if len(unique_events) < 2:
             continue
-        for combo in combinations(sorted(anchor_markets, key=lambda market: market.market_id), 3):
+        limited_markets = sorted(anchor_markets, key=lambda market: market.market_id)[:max_group_markets]
+        built_for_group = 0
+        for combo in combinations(limited_markets, 3):
+            if built_for_group >= max_triples_per_group:
+                break
             signature = hashlib.sha1("|".join(market.market_id for market in combo).encode("utf-8")).hexdigest()
             if signature in triples:
                 continue
@@ -326,6 +338,7 @@ def build_triples(
                 pairwise=pairwise,
                 reason_codes=tuple(sorted({anchor, *(reason for pair in pairwise for reason in pair.reason_codes)})),
             )
+            built_for_group += 1
     return list(triples.values())
 
 
@@ -458,6 +471,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pair-count", type=int, default=100)
     parser.add_argument("--triple-count", type=int, default=25)
     parser.add_argument("--candidate-cap", type=int, default=4000)
+    parser.add_argument("--triple-group-market-cap", type=int, default=12)
+    parser.add_argument("--triple-group-combo-cap", type=int, default=36)
     parser.add_argument("--seed", type=int, default=20260307)
     parser.add_argument("--output", default="data/constraint_gold_set.jsonl")
     parser.add_argument("--report", default="reports/constraint_gold_set_sampling.md")
@@ -489,7 +504,13 @@ def main() -> int:
 
     selected_pairs = select_pairs(candidate_pairs, target_count=int(args.pair_count), seed=int(args.seed))
     pair_lookup = {pair.pair_signature: pair for pair in candidate_pairs}
-    triple_candidates = build_triples(normalized, pair_lookup, generator)
+    triple_candidates = build_triples(
+        normalized,
+        pair_lookup,
+        generator,
+        max_group_markets=int(args.triple_group_market_cap),
+        max_triples_per_group=int(args.triple_group_combo_cap),
+    )
     selected_triples = select_triples(triple_candidates, target_count=int(args.triple_count), seed=int(args.seed))
 
     rows: list[dict[str, Any]] = []

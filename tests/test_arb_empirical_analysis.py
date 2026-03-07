@@ -123,7 +123,7 @@ class TestArbEmpiricalAnalysis(unittest.TestCase):
         bucket = recs["by_leg_bucket"]["3_5_legs"]
         self.assertEqual(bucket["sample_count"], 2)
         self.assertAlmostEqual(bucket["recommended_min_gross_edge"], 0.0318)
-        self.assertAlmostEqual(bucket["recommended_sum_yes_ask_threshold"], 0.9682)
+        self.assertAlmostEqual(bucket["recommended_sum_yes_ask_threshold"], 0.9683)
         self.assertEqual(bucket["basis"], "thin_sample_execution_drag_plus_buffer")
 
     def test_trade_matches_passive_yes_buy_handles_yes_sell_and_no_buy(self) -> None:

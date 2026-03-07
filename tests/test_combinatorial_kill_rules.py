@@ -1,4 +1,8 @@
+import sys
 import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from bot.kill_rules import KillReason, run_combinatorial_promotion_battery
 

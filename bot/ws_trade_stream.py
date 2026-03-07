@@ -191,9 +191,9 @@ class TradeStreamManager:
         token_ids: Optional[list[str]] = None,
         vpin_bucket_size: float = 500.0,
         vpin_window_size: int = 10,
-        on_regime_change: Optional[Callable[[str, FlowRegime], None]] = None,
+        on_regime_change: Optional[Callable[[str, FlowRegime, FlowRegime], None]] = None,
         on_ofi_update: Optional[Callable[[str, OFISnapshot], None]] = None,
-        on_ofi_alert: Optional[Callable[[OFISnapshot], None]] = None,
+        on_ofi_alert: Optional[Callable[[str, OFISnapshot], None]] = None,
         on_fallback: Optional[Callable[[dict[str, Any]], None]] = None,
         websocket_connect: Optional[Callable[..., Any]] = None,
         rest_book_fetcher: Optional[Callable[[str], Any]] = None,
@@ -496,7 +496,7 @@ class TradeStreamManager:
                     trade["timestamp"],
                 )
                 if after != before and self.on_regime_change is not None:
-                    self.on_regime_change(trade["token_id"], after)
+                    self.on_regime_change(trade["token_id"], before, after)
 
             updated_token = self._parse_book_message(message)
             if updated_token is not None:
@@ -509,7 +509,7 @@ class TradeStreamManager:
                     if self.on_ofi_update is not None:
                         self.on_ofi_update(updated_token, snapshot)
                     if self.ofi.should_kill(snapshot) and self.on_ofi_alert is not None:
-                        self.on_ofi_alert(snapshot)
+                        self.on_ofi_alert(updated_token, snapshot)
 
         self._record_processing_latency(started_at)
 
@@ -534,7 +534,7 @@ class TradeStreamManager:
                 if self.on_ofi_update is not None:
                     self.on_ofi_update(token_id, snapshot)
                 if self.ofi.should_kill(snapshot) and self.on_ofi_alert is not None:
-                    self.on_ofi_alert(snapshot)
+                    self.on_ofi_alert(token_id, snapshot)
 
     async def _connect_and_stream(self) -> None:
         connector = self.websocket_connect
@@ -611,13 +611,20 @@ class TradeStreamManager:
         book = self._books.get(token_id)
         if book is None:
             return None
+        ofi = self._last_ofi.get(token_id)
+        latency = self.get_latency_stats()
         return {
             "token_id": token_id,
             "vpin": self.vpin.get_vpin(token_id),
             "regime": self.get_regime(token_id).value,
-            "ofi": self._last_ofi.get(token_id),
+            "ofi": ofi.normalized_ofi if ofi is not None else None,
+            "ofi_raw": ofi.raw_ofi if ofi is not None else None,
+            "ofi_skew": ofi.directional_skew if ofi is not None else None,
             "midpoint": book.midpoint,
             "spread": book.spread,
+            "connection_mode": self.get_status()["connection_mode"],
+            "fallback_active": self._fallback_active,
+            "latency_p99_ms": latency["processing_p99_ms"],
         }
 
     def get_status(self) -> dict[str, Any]:

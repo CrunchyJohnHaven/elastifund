@@ -27,6 +27,7 @@ import sqlite3
 import time
 from collections import deque
 from dataclasses import dataclass
+from decimal import Decimal, ROUND_FLOOR
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -80,6 +81,27 @@ def current_window_start(ts: float | None = None) -> int:
     return now - (now % WINDOW_SECONDS)
 
 
+def _round_down_to_tick(price: float, tick_size: float) -> float:
+    if tick_size <= 0:
+        return round(price, 4)
+    tick = Decimal(str(tick_size))
+    steps = (Decimal(str(price)) / tick).to_integral_value(rounding=ROUND_FLOOR)
+    return float(steps * tick)
+
+
+def _parse_order_size(value: Any) -> float | None:
+    parsed = _safe_float(value, None)
+    if parsed is None:
+        return None
+    text = str(value).strip().lower()
+    if text and "." not in text and "e" not in text and abs(parsed) > 1000:
+        # Official docs have shown both human-readable strings and 1e6-scaled
+        # integers for order sizes. This bot only trades a few shares, so very
+        # large integer payloads are safely treated as fixed-point quantities.
+        return float(parsed) / 1_000_000.0
+    return float(parsed)
+
+
 def market_slug_for_window(window_start_ts: int) -> str:
     return f"btc-updown-5m-{int(window_start_ts)}"
 
@@ -108,16 +130,17 @@ def choose_maker_buy_price(
     if best_ask <= 0 or best_bid < 0:
         return None
 
-    # Stay maker: bid below best ask. Improve by one tick from current best bid.
-    candidate = best_bid + tick_size
-    ceiling = min(max_price, best_ask - tick_size)
-    if ceiling <= 0:
+    min_valid = _round_down_to_tick(min_price, tick_size)
+    max_valid = _round_down_to_tick(min(max_price, best_ask - tick_size), tick_size)
+    if max_valid <= 0 or max_valid < min_valid:
         return None
-    price = min(candidate, ceiling)
-    price = max(min_price, price)
+
+    # Stay maker: bid below best ask. Improve by one tick from current best bid.
+    candidate = _round_down_to_tick(best_bid + tick_size, tick_size)
+    price = min(max(candidate, min_valid), max_valid)
     if price >= best_ask:
         return None
-    return round(price, 4)
+    return price
 
 
 def calc_trade_size_usd(bankroll_usd: float, risk_fraction: float, max_trade_usd: float) -> float:
@@ -212,6 +235,49 @@ class MakerConfig:
         "https://clob.polymarket.com/book",
     )
     db_path: Path = Path(os.environ.get("BTC5_DB_PATH", str(DEFAULT_DB_PATH)))
+
+
+@dataclass(frozen=True)
+class PlacementResult:
+    order_id: str | None
+    success: bool
+    status: str | None
+    error_msg: str | None = None
+    raw: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class LiveOrderState:
+    order_id: str
+    status: str | None
+    original_size: float | None
+    size_matched: float
+    price: float | None
+    raw: dict[str, Any] | None = None
+
+    @property
+    def normalized_status(self) -> str:
+        return (self.status or "").strip().lower()
+
+    @property
+    def is_cancelled(self) -> bool:
+        return self.normalized_status in {"cancelled", "canceled"}
+
+    @property
+    def is_live(self) -> bool:
+        return self.normalized_status in {"live", "open", "delayed", "unmatched", "pending"}
+
+    @property
+    def fully_filled(self) -> bool:
+        if self.normalized_status in {"matched", "filled", "completed"}:
+            return self.size_matched > 0
+        if self.original_size is None:
+            return False
+        return self.size_matched + 1e-9 >= self.original_size and self.size_matched > 0
+
+    @property
+    def partially_filled(self) -> bool:
+        return self.size_matched > 0 and not self.fully_filled
 
 
 class TradeDB:
@@ -627,7 +693,7 @@ class CLOBExecutor:
             self.client = self._init_client()
         return self.client
 
-    def place_post_only_buy(self, token_id: str, price: float, shares: float) -> str | None:
+    def place_post_only_buy(self, token_id: str, price: float, shares: float) -> PlacementResult:
         client = self.ensure_client()
         try:
             from py_clob_client.clob_types import OrderArgs, OrderType
@@ -655,8 +721,23 @@ class CLOBExecutor:
             resp = client.post_order(signed, OrderType.GTC)
 
         if isinstance(resp, dict):
-            return str(resp.get("orderID") or resp.get("id") or "")
-        return None
+            order_id = str(resp.get("orderID") or resp.get("id") or "").strip() or None
+            status = str(resp.get("status") or resp.get("orderStatus") or "").strip().lower() or None
+            error_msg = str(resp.get("errorMsg") or resp.get("error") or "").strip() or None
+            success = not bool(resp.get("error")) and bool(order_id)
+            return PlacementResult(
+                order_id=order_id,
+                success=success,
+                status=status,
+                error_msg=error_msg,
+                raw=resp,
+            )
+        return PlacementResult(
+            order_id=None,
+            success=bool(resp),
+            status=None,
+            raw={"response": resp},
+        )
 
     def cancel_order(self, order_id: str) -> bool:
         if not order_id:
@@ -672,6 +753,35 @@ class CLOBExecutor:
             return True
         except Exception:
             return False
+
+    def get_order_state(self, order_id: str) -> LiveOrderState | None:
+        if not order_id:
+            return None
+        client = self.ensure_client()
+        try:
+            resp = client.get_order(order_id)
+        except Exception:
+            return None
+        if not isinstance(resp, dict):
+            return None
+
+        payload = resp.get("order") if isinstance(resp.get("order"), dict) else resp
+        status = str(payload.get("status") or payload.get("order_status") or "").strip() or None
+        original_size = _parse_order_size(
+            payload.get("original_size") or payload.get("size") or payload.get("order_size")
+        )
+        size_matched = _parse_order_size(
+            payload.get("size_matched") or payload.get("filled_size") or payload.get("size_filled") or 0.0
+        ) or 0.0
+        price = _safe_float(payload.get("price") or payload.get("avg_price"), None)
+        return LiveOrderState(
+            order_id=order_id,
+            status=status,
+            original_size=original_size,
+            size_matched=size_matched,
+            price=price,
+            raw=payload,
+        )
 
 
 class BTC5MinMakerBot:
@@ -754,6 +864,49 @@ class BTC5MinMakerBot:
             current_price = await http.fetch_binance_spot()
 
         return open_price, current_price
+
+    async def _reconcile_live_order(
+        self,
+        *,
+        order_id: str,
+        requested_shares: float,
+        window_end_ts: int,
+    ) -> tuple[str, int | None, float | None, str | None]:
+        cancel_at = window_end_ts - self.cfg.cancel_seconds_before_close
+        wait_seconds = max(0.0, cancel_at - time.time())
+        if wait_seconds > 0:
+            await asyncio.sleep(wait_seconds)
+
+        before_cancel = self.clob.get_order_state(order_id)
+        if before_cancel and before_cancel.fully_filled:
+            return "live_filled", 1, before_cancel.size_matched or requested_shares, None
+        if before_cancel and before_cancel.partially_filled and before_cancel.is_cancelled:
+            return "live_partial_fill_cancelled", 1, before_cancel.size_matched, None
+        if before_cancel and before_cancel.is_cancelled and before_cancel.size_matched <= 0:
+            return "live_cancelled_unfilled", 0, 0.0, None
+
+        cancelled = self.clob.cancel_order(order_id)
+        after_cancel = self.clob.get_order_state(order_id)
+        final_state = after_cancel or before_cancel
+
+        if final_state:
+            if final_state.fully_filled:
+                return "live_filled", 1, final_state.size_matched or requested_shares, None
+            if final_state.partially_filled:
+                return (
+                    "live_partial_fill_cancelled" if cancelled or final_state.is_cancelled else "live_partial_fill_open",
+                    1,
+                    final_state.size_matched,
+                    None,
+                )
+            if final_state.is_cancelled:
+                return "live_cancelled_unfilled", 0, 0.0, None
+            if final_state.is_live:
+                return "live_cancel_unknown", None, None, f"status={final_state.normalized_status}"
+
+        if cancelled:
+            return "live_cancelled_unfilled", 0, 0.0, None
+        return "live_cancel_unknown", None, None, "order_status_unavailable"
 
     async def _process_window(self, *, window_start_ts: int, http: MarketHttpClient) -> dict[str, Any]:
         window_end_ts = window_start_ts + WINDOW_SECONDS
@@ -900,32 +1053,42 @@ class BTC5MinMakerBot:
         order_id = None
         filled: int | None = None
         order_status = "order_error"
+        reason: str | None = None
+        executed_shares = shares
 
         if self.cfg.paper_trading:
             order_id = f"paper-{window_start_ts}"
             filled = 1 if deterministic_fill(window_start_ts, self.cfg.paper_fill_probability) else 0
             order_status = "paper_filled" if filled == 1 else "paper_unfilled"
+            if filled == 0:
+                executed_shares = 0.0
         else:
             try:
-                order_id = self.clob.place_post_only_buy(token_id=token_id, price=order_price, shares=shares)
-                order_status = "live_order_placed" if order_id else "live_order_failed"
+                placement = self.clob.place_post_only_buy(token_id=token_id, price=order_price, shares=shares)
+                order_id = placement.order_id
+                order_status = f"live_{placement.status}" if placement.status else "live_order_placed"
+                reason = placement.error_msg
             except Exception as exc:
                 logger.error("Live order placement failed: %s", exc)
+                placement = PlacementResult(
+                    order_id=None,
+                    success=False,
+                    status="order_failed",
+                    error_msg=str(exc),
+                )
                 order_status = "live_order_failed"
+                reason = str(exc)
 
-            if order_id:
-                cancel_at = window_end_ts - self.cfg.cancel_seconds_before_close
-                wait_seconds = max(0.0, cancel_at - time.time())
-                if wait_seconds > 0:
-                    await asyncio.sleep(wait_seconds)
-                # If cancel succeeds we treat as unfilled. If cancel fails, likely filled or already closed.
-                cancelled = self.clob.cancel_order(order_id)
-                if cancelled:
-                    filled = 0
-                    order_status = "live_cancelled_unfilled"
-                else:
-                    filled = None
-                    order_status = "live_cancel_unknown"
+            if order_id and placement.success:
+                order_status, filled, executed_shares, reconcile_reason = await self._reconcile_live_order(
+                    order_id=order_id,
+                    requested_shares=shares,
+                    window_end_ts=window_end_ts,
+                )
+                reason = reason or reconcile_reason
+            else:
+                filled = 0
+                executed_shares = 0.0
 
         row = {
             "window_start_ts": window_start_ts,
@@ -939,11 +1102,12 @@ class BTC5MinMakerBot:
             "best_bid": best_bid,
             "best_ask": best_ask,
             "order_price": order_price,
-            "trade_size_usd": size_usd,
-            "shares": shares,
+            "trade_size_usd": round((executed_shares or 0.0) * order_price, 4) if filled == 1 else 0.0,
+            "shares": executed_shares if filled == 1 else 0.0,
             "order_id": order_id,
             "filled": filled,
             "order_status": order_status,
+            "reason": reason,
         }
         self.db.upsert_window(row)
         return {
@@ -953,8 +1117,9 @@ class BTC5MinMakerBot:
             "delta": delta,
             "order_id": order_id,
             "price": order_price,
-            "size_usd": size_usd,
+            "size_usd": row["trade_size_usd"],
             "filled": filled,
+            "reason": reason,
         }
 
     async def run_windows(self, *, count: int, continuous: bool) -> None:
@@ -990,7 +1155,7 @@ class BTC5MinMakerBot:
                 stop_event.set()
                 await asyncio.sleep(0)
                 feed_task.cancel()
-                with contextlib.suppress(Exception):
+                with contextlib.suppress(asyncio.CancelledError):
                     await feed_task
 
         # Resolve the most recent completed window if possible.

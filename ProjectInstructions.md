@@ -257,7 +257,7 @@ Elastifund/
 9. [x] Handle CLOB `/prices` 404s as hard no-orderbook blocks and suspend those events from the active A-6 watchlist for that scan.
 10. [x] Add generic maker-only multi-leg state handling in `execution/multileg_executor.py` with fill TTL, rollback, unwind TTL, and freeze-on-unhedged-exposure semantics.
 11. [x] Land event watchlist + execution-aware threshold logic in `strategies/a6_sum_violation.py`.
-12. [x] Land B-1 graph cache, prompt scaffolding, validation, monitor, and execution-planner modules in `signals/dep_graph/`.
+12. [x] Land B-1 graph cache, prompt scaffolding, validation, monitor, and execution-planner modules in `strategies/b1_dependency_graph.py` and `strategies/b1_violation_monitor.py`.
 13. [ ] Add live user-channel fill handling + real order submission on top of the shared multi-leg executor.
 14. [ ] Add resolved-market dependency audit and manual 50-pair validation loop for B-1.
 15. [ ] Integrate A-6 and B-1 into the live confirmation/execution stack in `bot/jj_live.py` once the multi-leg routing path is ready.
