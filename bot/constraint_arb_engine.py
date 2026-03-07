@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
+import contextlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
@@ -52,12 +54,28 @@ except ImportError:  # pragma: no cover - direct script mode
     )
 
 try:
-    from bot.ws_trade_stream import TradeStreamManager
+    from bot.clob_ws_client import CLOBWebSocketClient
+    from bot.gamma_market_cache import (
+        GammaEventRecord,
+        GammaMarketCache,
+        GammaMarketRecord,
+        GammaMarketUniverseSnapshot,
+    )
 except ImportError:  # pragma: no cover - direct script mode
     try:
-        from ws_trade_stream import TradeStreamManager  # type: ignore
+        from clob_ws_client import CLOBWebSocketClient  # type: ignore
+        from gamma_market_cache import (  # type: ignore
+            GammaEventRecord,
+            GammaMarketCache,
+            GammaMarketRecord,
+            GammaMarketUniverseSnapshot,
+        )
     except ImportError:  # pragma: no cover - optional dependency
-        TradeStreamManager = None  # type: ignore[assignment]
+        CLOBWebSocketClient = None  # type: ignore[assignment]
+        GammaEventRecord = None  # type: ignore[assignment]
+        GammaMarketCache = None  # type: ignore[assignment]
+        GammaMarketRecord = None  # type: ignore[assignment]
+        GammaMarketUniverseSnapshot = None  # type: ignore[assignment]
 
 
 logger = logging.getLogger("JJ.constraint_arb")
@@ -186,6 +204,58 @@ def _clamp_price(value: float) -> float:
     return max(0.0, min(1.0, float(value)))
 
 
+def _canonical_pair(market_a: NormalizedMarket, market_b: NormalizedMarket) -> tuple[NormalizedMarket, NormalizedMarket]:
+    if (market_a.market_id, market_a.resolution_key) <= (market_b.market_id, market_b.resolution_key):
+        return market_a, market_b
+    return market_b, market_a
+
+
+def build_pair_signature(market_a: NormalizedMarket, market_b: NormalizedMarket) -> str:
+    left, right = _canonical_pair(market_a, market_b)
+    payload = "|".join([left.market_id, right.market_id, left.resolution_key, right.resolution_key])
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+
+def _slug_tokens(value: str) -> set[str]:
+    if not value:
+        return set()
+    normalized = re.sub(r"[^a-z0-9]+", " ", value.lower())
+    return {tok for tok in normalized.split() if tok and tok not in ANCHOR_STOPWORDS}
+
+
+def _extract_named_entities(text: str) -> tuple[str, ...]:
+    entities: set[str] = set()
+    for match in ENTITY_RE.findall(text or ""):
+        normalized = re.sub(r"\s+", " ", match.strip().lower())
+        if normalized and normalized not in ENTITY_STOPWORDS:
+            entities.add(normalized)
+    return tuple(sorted(entities))
+
+
+def _extract_date_tokens(text: str) -> tuple[str, ...]:
+    return tuple(sorted({token.lower() for token in DATE_TOKEN_RE.findall(text or "")}))
+
+
+def _extract_office_tokens(text: str) -> set[str]:
+    lowered = (text or "").lower()
+    return {office for office in OFFICE_TOKENS if office in lowered}
+
+
+def _office_hierarchy_cues(market_a: NormalizedMarket, market_b: NormalizedMarket) -> tuple[str, ...]:
+    shared_offices = _extract_office_tokens(market_a.question) & _extract_office_tokens(market_b.question)
+    if not shared_offices:
+        return tuple()
+
+    cues: list[str] = ["shared_office_scope"]
+    tokens_a = extract_keywords(market_a.question) | _slug_tokens(market_a.event_id)
+    tokens_b = extract_keywords(market_b.question) | _slug_tokens(market_b.event_id)
+    if (tokens_a & PARTY_TOKENS and _extract_named_entities(market_b.question)) or (
+        tokens_b & PARTY_TOKENS and _extract_named_entities(market_a.question)
+    ):
+        cues.append("party_candidate_hierarchy")
+    return tuple(cues)
+
+
 def _floor_to_tick(value: float, tick_size: float) -> float:
     if tick_size <= 0:
         return float(value)
@@ -201,6 +271,54 @@ class MarketQuote:
     no_bid: float
     no_ask: float
     updated_ts: int
+    complete: bool = True
+    blocked_reasons: tuple[str, ...] = field(default_factory=tuple)
+    freshness_seconds: float | None = None
+    source: str = "unknown"
+
+
+@dataclass(frozen=True)
+class LiveConstraintMarket:
+    market_id: str
+    event_id: str
+    slug: str
+    question: str
+    condition_id: str
+    yes_token_id: str
+    no_token_id: str
+    outcome_name: str | None
+    category: str
+    tags: tuple[str, ...]
+    normalized_market: NormalizedMarket
+    quote: MarketQuote | None
+    freshness_seconds: float | None
+    executable: bool
+    blocked_reasons: tuple[str, ...]
+    multi_outcome_event_id: str | None
+    multi_outcome_size: int
+
+
+@dataclass(frozen=True)
+class LiveConstraintEvent:
+    event_id: str
+    slug: str
+    title: str
+    category: str
+    tags: tuple[str, ...]
+    market_ids: tuple[str, ...]
+    outcome_names: tuple[str, ...]
+    is_multi_outcome: bool
+    executable: bool
+    blocked_reasons: tuple[str, ...]
+    freshness_seconds: float | None
+
+
+@dataclass(frozen=True)
+class ConstraintRuntimeSnapshot:
+    updated_ts: int
+    markets: tuple[LiveConstraintMarket, ...]
+    events: tuple[LiveConstraintEvent, ...]
+    metrics: dict[str, Any]
 
 
 @dataclass(frozen=True)

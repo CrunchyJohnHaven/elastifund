@@ -426,6 +426,7 @@ class TestTradeStreamManager:
                 backoff_max=0.01,
                 heartbeat_interval=1.0,
             )
+            manager.fetch_initial_books = lambda: asyncio.sleep(0)
 
             task = asyncio.create_task(manager.start())
             await asyncio.wait_for(factory.reconnected.wait(), timeout=1.0)
@@ -463,6 +464,7 @@ class TestTradeStreamManager:
                 backoff_max=0.01,
                 heartbeat_interval=1.0,
             )
+            manager.fetch_initial_books = lambda: asyncio.sleep(0)
 
             task = asyncio.create_task(manager.start())
             await asyncio.wait_for(fallback_hit.wait(), timeout=1.0)
