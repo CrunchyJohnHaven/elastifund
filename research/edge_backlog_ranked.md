@@ -1,8 +1,62 @@
 # Edge Strategy Discovery System — Ranked Backlog
 
-**Version:** 1.0.0
-**Date:** 2026-03-05
-**Purpose:** 30 concrete, implementable edge strategies ranked by expected impact. Top 10 include full one-page deep dives. Claude Code can pick the top 3 and begin implementation immediately.
+**Version:** 2.0.0
+**Date:** 2026-03-07
+**Flywheel Cycle:** 0 (pre-flywheel baseline)
+**Purpose:** Master list of every strategy evaluated, tested, or queued. Updated every flywheel cycle. Part of the Elastifund research flywheel — see `FLYWHEEL_STRATEGY.md`.
+
+## Current Counts
+| Status | Count |
+|--------|-------|
+| Deployed (live/ready) | 6 |
+| Building (code written) | 5 |
+| Tested & Rejected | 10 |
+| Research Pipeline | 30 |
+| **Total Tracked** | **51** |
+
+---
+
+## DEPLOYED STRATEGIES (Live or Ready)
+
+| # | Strategy | Status | Evidence |
+|---|----------|--------|----------|
+| D1 | LLM Probability (Anti-Anchoring + Platt) | DEPLOYED | 71.2% win rate, 532 markets |
+| D2 | Asymmetric YES/NO Thresholds | DEPLOYED | 76.2% NO-only win rate |
+| D3 | Category Routing | DEPLOYED | Skip sports/crypto for LLM |
+| D4 | Fee-Aware Edge Gating | DEPLOYED | Maker-only on fee markets |
+| D5 | Quarter-Kelly Sizing | DEPLOYED | 1/16 Kelly on fast markets |
+| D6 | Velocity Scoring | DEPLOYED | Annualized edge / lockup |
+
+## BUILDING (Code Complete, Not Live)
+
+| # | Strategy | Module | Tests | Composite |
+|---|----------|--------|-------|-----------|
+| B1 | Smart Wallet Flow Detector | bot/wallet_flow_detector.py | Integration pending | 8.1 |
+| B2 | LLM Multi-Model Ensemble | bot/llm_ensemble.py | 34 passing | 7.5 |
+| B3 | LMSR Bayesian Engine | bot/lmsr_engine.py | 45 passing | 6.8 |
+| B4 | Cross-Platform Arb Scanner | bot/cross_platform_arb.py | 29 passing | 7.2 |
+| B5 | Confirmation Layer | Wired in jj_live.py | — | 8.5 |
+
+## TESTED & REJECTED (10)
+
+| # | Strategy | Tested | Kill Reason |
+|---|----------|--------|-------------|
+| R1 | Residual Horizon Fair Value | 2026-03-06 | Insufficient signal count |
+| R2 | Volatility Regime Mismatch | 2026-03-06 | No edge post-costs |
+| R3 | Cross-Timeframe Constraint | 2026-03-06 | Insufficient data (needs 5-14d more) |
+| R4 | Chainlink vs Binance Basis Lag | 2026-03-06 | 1.56% taker fee exceeds spread |
+| R5 | Mean Reversion After Extreme | 2026-03-06 | Insufficient signal count |
+| R6 | Time-of-Day Session Effects | 2026-03-06 | No significant pattern |
+| R7 | Order Book Imbalance | 2026-03-06 | Partial data (CLOB 404s) |
+| R8 | ML Feature Discovery | 2026-03-06 | No features survived walk-forward |
+| R9 | Latency Arb (Crypto Candles) | 2026-03-06 | 1.56% taker fee kills edge |
+| R10 | NOAA Weather Bracket Arb (Kalshi) | 2026-03-07 | NWS rounding 27-35% accuracy, EV negative |
+
+---
+
+## RESEARCH PIPELINE (30 Strategies, Ranked by Composite Score)
+
+*Strategies 31+ will be added after first Deep Research cycle (DEEP_RESEARCH_PROMPT_v1.md).*
 
 ---
 

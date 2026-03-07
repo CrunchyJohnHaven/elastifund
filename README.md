@@ -1,105 +1,136 @@
 # Elastifund
 
-**An open-source AI trading system that exploits mispricings in prediction markets — and sends 20% of every dollar earned to veteran suicide prevention.**
+**An open-source, agent-run trading system. The AI makes every decision. I build the machine. 20% of all profits go to veteran suicide prevention.**
 
 ---
 
-## The Thesis
+## What This Is
 
-Prediction markets like Polymarket let people bet real money on real-world events. The price of each outcome *should* represent the crowd's best guess at the probability. But crowds are systematically wrong — they anchor on headlines, overweight favorites, and ignore base rates.
+Elastifund is not a trading bot. It's a **research engine** that systematically discovers, tests, and documents trading strategies on prediction markets (Polymarket, Kalshi). The system runs autonomously — AI agents make all trading decisions. The human (John Bradley) builds the infrastructure, runs the research flywheel, and publishes every result openly.
 
-We built an AI system that thinks independently. It reads the question, reasons from first principles, and estimates the *true* probability — without seeing the market price, so it can't anchor on the crowd's mistakes.
+This is also the most comprehensive open-source resource on agentic trading systems in existence. We document everything: what we built, what we tested, what worked, and — more importantly — what didn't. The diary of failures maps the territory of prediction market trading in a way nobody has done publicly before.
 
-When our AI disagrees with the market by enough, we trade. When the event resolves, the market pays out $1 or $0. If we're right more often than the market expects, we make money. Consistently.
+**Website:** [johnbradleytrading.com](https://johnbradleytrading.com) (coming soon)
 
-## The Evidence
-
-We backtested against 532 resolved Polymarket events. The system identified 372 trades.
+## Current Status (March 7, 2026)
 
 | | |
 |---|---|
-| **Win rate** | **68.5%** (vs 50% random) |
-| **NO-side win rate** | **70.2%** (exploiting favorite-longshot bias) |
-| **Ruin probability** | **0%** across 10,000 Monte Carlo simulations |
-| **Brier score** | **0.217** (well-calibrated probability estimates) |
+| **Capital deployed** | $247 Polymarket (live) + $100 Kalshi (connected) |
+| **Strategies tested** | 20 (6 deployed, 3 building, 11 rejected) |
+| **Tests passing** | 345 |
+| **Signal sources** | 4 (LLM Ensemble, Smart Wallet Flow, LMSR Bayesian, Cross-Platform Arb) |
+| **Research dispatches** | 74 original investigations |
+| **Backtest win rate** | 68.5% on 532 resolved markets |
 
-The system is live now — paper trading 24/7 on a VPS in Frankfurt, 21 open positions across politics, sports, entertainment, and crypto markets. 436 cycles completed. 7,887 signals generated. Waiting for first batch of markets to resolve for live validation.
-
-## How It Works
+## How the Agent Thinks
 
 ```
-Every 5 minutes:
+Every 3 minutes, the system:
 
-  1. SCAN      Pull 100 active markets from Polymarket
-  2. ESTIMATE  Claude AI estimates true probability (anti-anchoring prompt)
-  3. CALIBRATE Category-specific Platt scaling corrects for known AI biases
-  4. DETECT    Compare calibrated estimate vs market price → find edge
-  5. SIZE      Kelly criterion determines optimal bet size
-  6. EXECUTE   Place order via Polymarket's CLOB (central limit order book)
-  7. LEARN     Bayesian belief updating as new evidence arrives
+  1. SCAN       100+ active markets from Polymarket
+  2. FILTER     Skip categories where AI has no edge (crypto, sports)
+  3. SEARCH     Web search for recent context (agentic RAG)
+  4. ESTIMATE   3 LLMs estimate probability independently (Claude + GPT + Groq)
+               The AI never sees the market price. This prevents anchoring.
+  5. CALIBRATE  Platt scaling corrects for known LLM overconfidence
+  6. COMPARE    Calibrated estimate vs market price — is there an edge?
+  7. SIZE       Kelly criterion determines optimal bet (quarter-Kelly, conservative)
+  8. CONFIRM    If 2+ signal sources agree, boost confidence
+  9. EXECUTE    Place maker order (0% fees) on Polymarket CLOB
 ```
 
-The AI doesn't see the market price before estimating. This is critical — it prevents the AI from just agreeing with the crowd. It thinks independently, then we compare.
+## The Research Flywheel
 
-## What Makes This Different
+This is not "build a bot and hope." It's a systematic, repeating research cycle:
 
-**vs. "I'll just bet on stuff"** — We're systematic. Every trade has a measured edge, sized by Kelly criterion, risk-controlled by 6 safety layers. No gut feelings, no FOMO, no tilt.
+```
+┌────────────┐     ┌────────────┐     ┌────────────┐
+│  RESEARCH  │────►│ IMPLEMENT  │────►│    TEST     │
+│  Generate  │     │ Code top   │     │ Run through │
+│  hypotheses│     │ strategies │     │ kill rules  │
+└────────────┘     └────────────┘     └────────────┘
+      ▲                                      │
+      │                                      ▼
+┌────────────┐     ┌────────────┐     ┌────────────┐
+│   REPEAT   │◄────│  PUBLISH   │◄────│   RECORD   │
+│  Feed into │     │ GitHub +   │     │ Document   │
+│  next cycle│     │ website    │     │ everything │
+└────────────┘     └────────────┘     └────────────┘
+```
 
-**vs. Trading bots that use technical analysis** — We don't look at price charts. We reason about events: *what is the actual probability that Sweden qualifies for the World Cup?* Then we trade the gap between our answer and the market's.
+**Each 3-5 day cycle:** Generate 10-100 strategy hypotheses, implement the top 3-5, run them through the edge discovery pipeline (83 features, 10 strategy modules, 6 model types, automated kill rules), record every result (pass or fail), publish to GitHub and the website, and feed findings into the next research prompt.
 
-**vs. Other AI approaches** — Our AI never sees the market price (anti-anchoring). We calibrate per category (politics =/= crypto =/= sports). We use LMSR pricing models to detect AMM inefficiencies. We update beliefs in real-time with Bayesian inference.
+After 10 cycles, we've tested 50+ strategies. After 20, we've mapped the entire territory of what works and what doesn't in AI prediction market trading — in public, with code.
+
+## What We've Proven
+
+- **LLM anti-anchoring works.** Hiding the market price from the AI and asking it to estimate independently produces calibrated probability estimates (Brier 0.217).
+- **NO-side structural edge.** YES contracts are systematically overpriced. NO-side win rate: 70.2% across 532 markets (cf. jbecker.dev 72.1M trade analysis).
+- **Calibration matters.** Raw LLM confidence at 90% is really ~71%. Platt scaling corrects this.
+- **Makers win, takers lose.** +1.12% excess return for makers, -1.12% for takers across 72.1M Polymarket trades.
+
+## What We've Honestly Failed At
+
+- **All 9 fast-trade edge hypotheses rejected.** Basis lag, mean reversion, vol regime, time-of-day, order book imbalance — all failed kill rules or had insufficient data.
+- **Latency arbitrage killed by fees.** 1.56% taker fee makes speed-based strategies unviable.
+- **Kalshi weather rounding killed.** The math is real but the model is only 27-35% accurate against real settlement data.
+- **No validated live P&L yet.** Everything is backtest or recently deployed.
+
+These failures are not embarrassments — they are the most valuable content in the repo. They map the territory.
 
 ## The Stack
 
 ```
+bot/
+├── jj_live.py              Autonomous trading loop + confirmation layer
+├── llm_ensemble.py          Multi-model probability estimation + agentic RAG
+├── wallet_flow_detector.py  Smart wallet consensus signals
+├── lmsr_engine.py           Bayesian pricing + market inefficiency detection
+├── cross_platform_arb.py    Polymarket vs Kalshi arbitrage scanner
+└── tests/                   108 unit tests
+
 polymarket-bot/src/
-  engine/loop.py          Main trading loop
-  claude_analyzer.py      AI probability estimation (Claude Haiku)
-  bayesian_signal.py      Sequential Bayesian belief updating (log-space)
-  lmsr.py                 LMSR pricing + AMM inefficiency detection
-  scanner.py              Polymarket Gamma API market scanner
-  risk/sizing.py          Kelly criterion + time-aware dampener
-  calibration/            Category-specific Platt scaling
-  broker/                 CLOB execution (paper + live modes)
-  safety.py               Kill switch, drawdown limits, exposure caps
-  app/                    FastAPI monitoring dashboard (9 endpoints)
+├── claude_analyzer.py       Single-model LLM estimation + Platt calibration
+├── scanner.py               Gamma API market discovery
+├── ensemble.py              Multi-model framework
+├── safety.py                Kill switch, drawdown limits, exposure caps
+├── risk/                    Kelly sizing, risk management
+├── broker/                  Paper + live execution
+├── calibration/             Category-specific Platt scaling
+└── app/                     FastAPI monitoring dashboard
 
-backtest/                 Strategy validation + Monte Carlo simulation
-simulator/                Fill model + sensitivity analysis
-research_dispatch/        90+ prioritized research tasks
+src/                         Edge Discovery Pipeline
+├── data_pipeline.py         Market data collection (83 features)
+├── strategies/              10 hypothesis families
+├── models/                  6 competing model types
+├── backtest.py              Walk-forward validation + kill rules
+└── reporting.py             Auto-generated strategy reports
+
+backtest/                    Backtesting + Monte Carlo simulation
+simulator/                   Fill model + sensitivity analysis
+research/                    74+ research dispatches + strategy docs
 ```
-
-98 tests. 0 regressions. Paper mode by default — no real money moves until you explicitly flip the switch.
 
 ## The Mission
 
-**20% of all net trading profits go to veteran suicide prevention.** This is non-negotiable. It's the reason this project exists. The more the system earns, the more veterans get helped.
+**20% of all net trading profits go to veteran suicide prevention.** Non-negotiable.
 
-Organizations we support:
 - [Veterans Crisis Line](https://www.veteranscrisisline.net/)
 - [Stop Soldier Suicide](https://stopsoldiersuicide.org/)
 - [22Until None](https://www.22untilnone.org/)
 
 ## Get Involved
 
-We're looking for contributors who want to build something that matters.
+We're building this in public because the open-source approach makes the system better. Contributors get scrutiny, collaboration, and credibility that a closed system can't match.
 
-**The deal is simple:**
-1. You contribute — code, research, backtests, edge strategies, bug fixes
-2. You can run your own instance of the system
-3. 20% of your net trading profits go to veterans
-
-That's the social contract. Not a legal obligation. A handshake between people who care.
-
-### What You Can Work On
-
-- **Edge research** — Find new categories or signals where AI beats the crowd
-- **Model improvement** — Better prompts, ensemble methods, calibration tuning
-- **Infrastructure** — Faster scanning, better execution, monitoring dashboards
-- **Data science** — Backtest analysis, Monte Carlo simulation, portfolio optimization
-- **Market expansion** — Kalshi integration, Metaculus, new platforms
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions.
+**What you can work on:**
+- **Edge research** — Find strategies where AI beats the crowd. We have 100 hypotheses queued.
+- **Model improvement** — Better prompts, ensemble methods, calibration techniques
+- **Infrastructure** — Faster scanning, better execution, monitoring, dashboards
+- **Data science** — Backtest analysis, Monte Carlo, portfolio optimization
+- **Market expansion** — Kalshi, Metaculus, new platforms
+- **Education** — Write explanations that make this accessible to beginners
 
 ### Quick Start
 
@@ -108,18 +139,34 @@ git clone git@github.com:CrunchyJohnHaven/elastifund.git
 cd elastifund/polymarket-bot
 cp .env.example .env        # Edit with your API keys
 pip install -e .             # Install dependencies
-python -m pytest tests/ -v   # Verify everything works
+python -m pytest tests/ -v   # Verify (345 tests should pass)
 python -m src.main           # Start paper trading
 ```
 
-## Risks (We're Honest About These)
+### The Social Contract
 
-- **Regulatory** — CFTC is watching prediction markets. Polymarket could face restrictions.
-- **Competition** — As more traders use AI, edges compress. We need to stay ahead.
-- **Live vs backtest gap** — Backtests look great. Live results are unproven until markets resolve.
-- **Scale limits** — At large sizes, our orders move the market. Edge shrinks with capital.
+You contribute. You can run your own instance. 20% of your trading profits go to veterans. Not a legal obligation — a handshake between people who care about building something that matters.
 
-This is a science experiment with real money implications. We believe the hypothesis is strong. But we haven't proven it in live markets yet — that proof comes when the first batch of positions resolve.
+## Risks (We're Honest)
+
+- **Competition:** Jump Trading, Susquehanna, Jane Street have dedicated prediction market teams. We're one person with $350.
+- **Efficiency:** Only 7.6% of Polymarket wallets are profitable. The base rate is brutal.
+- **Regulatory:** CFTC oversight of prediction markets is evolving.
+- **Live vs backtest:** Backtests look great. Live results are unproven.
+- **Scale:** At large sizes, orders move the market. Edge shrinks with capital.
+
+This is a science experiment with real money at stake. We think the research methodology is sound. But we document our honest uncertainty alongside our confident results.
+
+## Key Documents
+
+| Document | Purpose |
+|----------|---------|
+| [FLYWHEEL_STRATEGY.md](FLYWHEEL_STRATEGY.md) | The master project strategy — how the research cycle works |
+| [COMMAND_NODE_v1.0.2.md](COMMAND_NODE_v1.0.2.md) | Single source of truth for all system state (paste into AI sessions) |
+| [research/DEEP_RESEARCH_PROMPT_100_STRATEGIES.md](research/DEEP_RESEARCH_PROMPT_100_STRATEGIES.md) | 100-strategy research prompt for deep research tools |
+| [EDGE_DISCOVERY_SYSTEM.md](EDGE_DISCOVERY_SYSTEM.md) | Technical spec for the automated edge research pipeline |
+| [FastTradeEdgeAnalysis.md](FastTradeEdgeAnalysis.md) | Auto-generated status of all tested strategies |
+| [ProjectInstructions.md](ProjectInstructions.md) | Quick-start guide for AI coding sessions |
 
 ## License
 
@@ -127,4 +174,4 @@ MIT — use it, fork it, improve it, run it. Just remember the mission.
 
 ---
 
-Built by [John Bradley](https://github.com/CrunchyJohnHaven) and contributors.
+Built by [John Bradley](https://github.com/CrunchyJohnHaven). The AI makes the trades. I build the machine.

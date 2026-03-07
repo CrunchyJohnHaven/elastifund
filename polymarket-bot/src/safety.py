@@ -42,6 +42,7 @@ class SafetyRails:
         bankroll: float,
         total_exposure_usd: float,
         daily_pnl: float,
+        open_positions_count: int = 0,
     ) -> tuple[bool, str]:
         """Run all safety checks before placing a trade.
 
@@ -50,6 +51,7 @@ class SafetyRails:
             bankroll: Current total bankroll (cash + positions).
             total_exposure_usd: Sum of all open position notional values.
             daily_pnl: Realized P&L for today (negative = losses).
+            open_positions_count: Current number of open positions.
 
         Returns:
             (allowed, reason) — if not allowed, reason explains why.
@@ -87,6 +89,13 @@ class SafetyRails:
         max_daily = settings.rollout_max_trades_per_day
         if max_daily >= 0 and self._daily_trade_count >= max_daily:
             return False, f"Rollout daily limit: {self._daily_trade_count} >= {max_daily} trades/day"
+
+        # 5. Max concurrent open positions
+        if open_positions_count >= settings.max_open_positions:
+            return False, (
+                f"Max open positions reached: {open_positions_count} "
+                f">= {settings.max_open_positions}"
+            )
 
         return True, "OK"
 
@@ -155,6 +164,7 @@ class SafetyRails:
                 "max_daily_drawdown_usd": settings.max_daily_drawdown_usd,
                 "max_per_trade_usd": settings.max_per_trade_usd,
                 "max_exposure_pct": settings.max_exposure_pct,
+                "max_open_positions": settings.max_open_positions,
                 "cooldown_consecutive_losses": settings.cooldown_consecutive_losses,
                 "cooldown_seconds": settings.cooldown_seconds,
                 "rollout_max_per_trade_usd": settings.rollout_max_per_trade_usd,

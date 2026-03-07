@@ -1,7 +1,7 @@
 """Category-specific Platt scaling calibration for Polymarket probability estimates.
 
 Research context (March 2026):
-- Global Platt scaling (A=0.5914, B=-0.3977) improves Brier from 0.286 → 0.245
+- Global Platt scaling improves Brier from 0.286 → 0.245
 - Different market categories show different bias patterns:
   * Politics: Claude overestimates YES most (better target: A=0.65, B=-0.45)
   * Weather: Best calibrated (A=0.50, B=-0.30)
@@ -41,7 +41,7 @@ DEFAULT_CATEGORY_PARAMS = {
     "crypto": {"A": 0.60, "B": -0.40},        # Moderate-to-high bias
     "sports": {"A": 0.58, "B": -0.38},        # Moderate bias
     "fed_rates": {"A": 0.62, "B": -0.42},     # High bias on monetary policy
-    "unknown": {"A": 0.5914, "B": -0.3977},   # Global default fallback
+    "unknown": {"A": 0.55, "B": -0.40},        # Global default fallback (set exact values in .env)
 }
 
 # Asymmetric edge thresholds per category

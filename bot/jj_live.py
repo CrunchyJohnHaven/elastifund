@@ -1,0 +1,2448 @@
+#!/usr/bin/env python3
+"""
+JJ LIVE TRADING LOOP — Autonomous Polymarket Trader
+====================================================
+Bridges the signal-finding brain (MarketScanner + ClaudeAnalyzer)
+with real order execution via Polymarket CLOB.
+
+Designed to run on VPS (AWS Lightsail Dublin) as systemd service.
+
+Features (March 7, 2026):
+  - Velocity filtering: only trade markets resolving within MAX_RESOLUTION_HOURS
+  - Velocity scoring: rank signals by annualized edge/lockup (faster = higher priority)
+  - Geoblock check on startup (fail-fast if in restricted country)
+  - Platt scaling calibration (reduces overconfidence: 90% → 71%, 80% → 60%)
+  - Category filtering (skip crypto/sports, prioritize politics/weather/economic)
+  - Taker fee awareness (subtract fees from edge before trading)
+  - Post-only orders on fee-enabled markets (zero fees + maker rebates)
+  - Asymmetric thresholds (YES: 15% edge, NO: 5% edge)
+  - Anti-anchoring (market price NOT shown to Claude)
+  - Half-Kelly position sizing with daily loss limits
+
+Usage:
+    python jj_live.py                # single cycle (test)
+    python jj_live.py --continuous   # 24/7 daemon mode
+    python jj_live.py --status       # show current state
+
+Environment Variables (from .env):
+    POLY_PRIVATE_KEY or POLYMARKET_PK  — wallet private key
+    POLY_SAFE_ADDRESS                  — funder wallet address
+    POLY_BUILDER_API_KEY/SECRET/PASSPHRASE — CLOB API creds
+    ANTHROPIC_API_KEY                  — Claude AI key
+    TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID — notifications
+
+JJ Parameters (override via env):
+    JJ_MAX_POSITION_USD       — max per trade (default: 15)
+    JJ_MAX_DAILY_LOSS_USD     — daily loss limit (default: 25)
+    JJ_MAX_EXPOSURE_PCT       — max % of bankroll deployed (default: 0.90)
+    JJ_KELLY_FRACTION         — Kelly multiplier (default: 0.50)
+    JJ_SCAN_INTERVAL          — seconds between cycles (default: 180)
+    JJ_MAX_OPEN_POSITIONS     — max concurrent positions (default: 30)
+    JJ_MIN_EDGE               — min edge to trade (default: 0.05)
+    JJ_INITIAL_BANKROLL       — starting bankroll (default: 1000)
+    JJ_MAX_RESOLUTION_HOURS   — max hours to resolution (default: 1.0 = 60min)
+"""
+
+import os
+import sys
+import json
+import time
+import math
+import asyncio
+import logging
+import argparse
+import sqlite3
+import uuid
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+
+# Auto-load .env
+from dotenv import load_dotenv
+load_dotenv()
+
+# Ensure POLY_PRIVATE_KEY is set (VPS may use POLYMARKET_PK instead)
+if not os.environ.get("POLY_PRIVATE_KEY"):
+    pk = os.environ.get("POLYMARKET_PK", "")
+    if pk:
+        # Add 0x prefix if missing
+        if not pk.startswith("0x"):
+            pk = "0x" + pk
+        os.environ["POLY_PRIVATE_KEY"] = pk
+
+repo_root = Path(__file__).parent
+sys.path.insert(0, str(repo_root))
+# Support this repository layout where src lives under polymarket-bot/src.
+poly_root = repo_root / "polymarket-bot"
+if (poly_root / "src").exists():
+    sys.path.insert(0, str(poly_root))
+
+from src.scanner import MarketScanner
+from src.claude_analyzer import ClaudeAnalyzer
+
+# LLM Ensemble: multi-model + agentic RAG (preferred over single Claude)
+try:
+    from bot.llm_ensemble import LLMEnsemble
+except ImportError:
+    try:
+        from llm_ensemble import LLMEnsemble
+    except ImportError:
+        LLMEnsemble = None
+
+# Use official py-clob-client for order placement (the custom src/bot.py
+# has HMAC body mismatch and wrong EIP-712 domain bugs that cause 403s)
+from py_clob_client.client import ClobClient as OfficialClobClient
+from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType
+from py_clob_client.order_builder.constants import BUY
+
+# Handle different Telegram class names across codebase versions
+try:
+    from src.telegram import TelegramNotifier
+except ImportError:
+    try:
+        from src.telegram import TelegramBot as TelegramNotifier
+    except ImportError:
+        TelegramNotifier = None
+
+# Signal sources #2 and #3
+try:
+    from bot.lmsr_engine import LMSREngine
+except ImportError:
+    try:
+        from lmsr_engine import LMSREngine
+    except ImportError:
+        LMSREngine = None
+
+try:
+    from bot.wallet_flow_detector import get_signals_for_engine as wallet_flow_get_signals
+except ImportError:
+    try:
+        from wallet_flow_detector import get_signals_for_engine as wallet_flow_get_signals
+    except ImportError:
+        wallet_flow_get_signals = None
+
+try:
+    from bot.cross_platform_arb import get_signals_for_engine as arb_get_signals
+except ImportError:
+    try:
+        from cross_platform_arb import get_signals_for_engine as arb_get_signals
+    except ImportError:
+        arb_get_signals = None
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler("/tmp/jj_live.log"),
+    ],
+)
+logger = logging.getLogger("JJ")
+
+# ---------------------------------------------------------------------------
+# JJ Configuration
+# ---------------------------------------------------------------------------
+MAX_POSITION_USD = float(os.environ.get("JJ_MAX_POSITION_USD", "15"))
+MAX_DAILY_LOSS_USD = float(os.environ.get("JJ_MAX_DAILY_LOSS_USD", "25"))
+MAX_EXPOSURE_PCT = float(os.environ.get("JJ_MAX_EXPOSURE_PCT", "0.90"))
+KELLY_FRACTION = float(os.environ.get("JJ_KELLY_FRACTION", "0.50"))
+SCAN_INTERVAL = int(os.environ.get("JJ_SCAN_INTERVAL", "180"))
+MAX_OPEN_POSITIONS = int(os.environ.get("JJ_MAX_OPEN_POSITIONS", "30"))
+MIN_EDGE = float(os.environ.get("JJ_MIN_EDGE", "0.05"))
+INITIAL_BANKROLL = float(os.environ.get("JJ_INITIAL_BANKROLL", "1000"))
+
+# Velocity filter — maximum hours until resolution (default: 48 = 2 days)
+# Slow-market edge: LLM ensemble + RAG on politics/weather/economics
+# Set to 0 to disable (allow all markets regardless of resolution time)
+MAX_RESOLUTION_HOURS = float(os.environ.get("JJ_MAX_RESOLUTION_HOURS", "48"))
+
+# Paper trading mode — simulate trades without posting to CLOB
+PAPER_TRADING = os.environ.get("PAPER_TRADING", "true").lower() in ("true", "1", "yes")
+
+# Multi-bankroll simulation levels
+BANKROLL_LEVELS = [1_000, 10_000, 100_000]
+
+STATE_FILE = Path("jj_state.json")
+DB_FILE = Path("data/jj_trades.db")
+
+# ---------------------------------------------------------------------------
+# Platt Scaling Calibration (ported from local claude_analyzer.py)
+# Fitted on 70% of 532 resolved markets, validated on 30% test set
+# Test-set Brier: 0.286 (raw) → 0.245 (Platt) — improvement of +0.041
+# ---------------------------------------------------------------------------
+PLATT_A = float(os.environ.get("PLATT_A", "0.55"))
+PLATT_B = float(os.environ.get("PLATT_B", "-0.40"))
+
+
+def calibrate_probability(raw_prob: float) -> float:
+    """Apply Platt scaling. Maps: 90% → 71%, 80% → 60%, 70% → 53%."""
+    raw_prob = max(0.001, min(0.999, raw_prob))
+    if abs(raw_prob - 0.5) < 1e-9:
+        return 0.5
+    if raw_prob < 0.5:
+        return 1.0 - calibrate_probability(1.0 - raw_prob)
+    logit_input = math.log(raw_prob / (1 - raw_prob))
+    logit_output = PLATT_A * logit_input + PLATT_B
+    logit_output = max(-30, min(30, logit_output))
+    calibrated = 1.0 / (1.0 + math.exp(-logit_output))
+    return max(0.01, min(0.99, calibrated))
+
+
+# ---------------------------------------------------------------------------
+# Category Classification (ported from local claude_analyzer.py)
+# ---------------------------------------------------------------------------
+CATEGORY_KEYWORDS = {
+    "politics": ["election", "president", "congress", "senate", "governor", "vote",
+                 "democrat", "republican", "trump", "biden", "party", "primary",
+                 "legislation", "bill", "law", "executive order", "cabinet",
+                 "impeach", "poll", "ballot", "nominee", "campaign"],
+    "weather": ["temperature", "rain", "snow", "weather", "hurricane", "storm",
+                "heat", "cold", "wind", "flood", "drought", "celsius", "fahrenheit",
+                "high of", "low of", "degrees"],
+    "crypto": ["bitcoin", "btc", "ethereum", "eth", "crypto", "solana", "sol",
+               "token", "defi", "nft", "blockchain", "altcoin", "dogecoin", "xrp",
+               "up or down", "above", "below", "hit $", "reach $", "price",
+               "market cap", "memecoin", "meme coin", "cardano", "ada",
+               "polkadot", "litecoin",
+               "cex", "dex", "binance", "coinbase", "kraken exchange",
+               "insolvent"],
+    "sports": ["nba", "nfl", "mlb", "nhl", "mls", "soccer", "football", "basketball",
+               "baseball", "tennis", "golf", "championship", "playoff", "world cup",
+               "super bowl", "mvp", "draft", "stanley cup", "series", "ufc",
+               "boxing", "grand slam", "formula 1", "f1", "premier league",
+               "champions league", "serie a", "la liga", "bundesliga", "ncaab",
+               "ncaaf", "ligue 1", "eredivisie", "wnba", "atp", "wta",
+               " vs ", " vs. ", "moneyline", "spread", "o/u ", "over/under",
+               "rebounds", "assists", "points", "touchdowns", "goals",
+               "win on 202", "win the 202", "qualify",
+               # MMA/UFC/Fighting
+               "fight", "fighter", "bout", "knockout", "mma", "bellator",
+               "middleweight", "heavyweight", "lightweight", "featherweight",
+               "welterweight", "bantamweight", "flyweight",
+               # Soccer leagues and terms
+               "epl", "top 4", "top four", "relegat", "promoted",
+               "brentford", "wolves", "everton", "aston villa", "west ham",
+               "brighton", "fulham", "bournemouth", "crystal palace",
+               "nottingham forest", "leicester", "newcastle", "ipswich",
+               "southampton",
+               # NHL teams
+               "bruins", "celtics", "penguins", "rangers", "blackhawks", "canadiens",
+               "maple leafs", "red wings", "flyers", "capitals", "lightning",
+               "avalanche", "oilers", "flames", "canucks", "kraken", "predators",
+               "blue jackets", "hurricanes", "panthers", "devils", "islanders",
+               "sabres", "senators", "jets", "wild", "coyotes", "sharks", "ducks",
+               "golden knights", "blues", "stars",
+               # NBA teams
+               "lakers", "warriors", "celtics", "nets", "knicks", "bucks",
+               "76ers", "sixers", "suns", "mavericks", "nuggets", "cavaliers",
+               "timberwolves", "clippers", "grizzlies", "pelicans", "pacers",
+               "hawks", "heat", "magic", "raptors", "spurs", "rockets", "pistons",
+               "wizards", "hornets", "trail blazers", "blazers", "thunder",
+               # Soccer
+               "galatasaray", "fenerbahce", "besiktas", "real madrid", "barcelona",
+               "manchester", "liverpool", "chelsea", "arsenal", "tottenham",
+               "juventus", "ac milan", "inter milan", "bayern", "dortmund",
+               "psg", "atletico", "benfica", "porto", "ajax",
+               "charlotte fc", "smouha", "modern sport",
+               # Tennis
+               "bnp paribas", "roland garros", "wimbledon", "us open tennis",
+               "australian open",
+               # Other
+               "super league", "copa america", "euro 202", "nations league"],
+    "geopolitical": ["war", "invasion", "nato", "china", "russia", "taiwan",
+                     "sanctions", "ceasefire", "nuclear", "military", "conflict"],
+    "financial_speculation": ["dip to", "drop to", "fall to", "rise to",
+                              "stock price", "share price", "ipo",
+                              "close above", "close below",
+                              "market close", "all-time high", "ath",
+                              "52-week", "s&p 500", "nasdaq", "dow jones"],
+    "fed_rates": ["fed", "federal reserve", "interest rate", "fomc",
+                  "recession", "treasury"],
+    "economic": ["inflation", "cpi", "gdp", "unemployment rate", "jobs report",
+                 "nonfarm", "payroll", "retail sales", "housing starts",
+                 "consumer confidence", "pmi", "manufacturing", "trade deficit",
+                 "economic growth", "bls", "bureau of labor"],
+}
+
+# Category priority: higher = better expected LLM edge
+CATEGORY_PRIORITY = {
+    "politics": 3,      # Best LLM category (Lu 2025)
+    "weather": 3,       # Structural arbitrage (NOAA/GFS data)
+    "economic": 2,      # Scheduled releases, consensus alignment
+    "crypto": 0,        # No LLM edge — skip
+    "sports": 0,        # No LLM edge — skip
+    "financial_speculation": 0,  # No LLM edge on precise price movements
+    "geopolitical": 1,  # ~30% worse than experts (RAND)
+    "fed_rates": 0,     # Worst category — systematic overconfidence
+    "unknown": 2,       # Default — still analyze
+}
+
+# Polymarket taker fee rates (introduced Feb 18, 2026)
+TAKER_FEE_RATES = {
+    "crypto": 0.025,    # ~1.56% max at p=0.50
+    "sports": 0.007,    # ~0.44% max at p=0.50
+    "default": 0.0,     # Other categories: no taker fee
+}
+
+# Asymmetric thresholds (from 532-market backtest)
+YES_THRESHOLD = 0.15    # Higher bar — 56% historical win rate on YES
+NO_THRESHOLD = 0.05     # Lower bar — 76% historical win rate on NO
+
+# Minimum category priority to analyze (0=skip, 1=cautious, 2+=analyze)
+MIN_CATEGORY_PRIORITY = 1
+
+
+import re
+
+
+# ---------------------------------------------------------------------------
+# Resolution Time Estimation (ported from VPS scanner_velocity_v2)
+# ---------------------------------------------------------------------------
+def estimate_resolution_hours(market: dict) -> float | None:
+    """Estimate hours until market resolves.
+
+    Uses endDate from API if available, otherwise keyword matching.
+    Returns None if cannot estimate.
+    Returns None for past endDates (market already expired / awaiting resolution).
+    """
+    end_date_str = market.get("endDate") or market.get("end_date_iso")
+    if end_date_str:
+        try:
+            for fmt in ["%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d"]:
+                try:
+                    end_dt = datetime.strptime(end_date_str, fmt).replace(tzinfo=timezone.utc)
+                    hours = (end_dt - datetime.now(timezone.utc)).total_seconds() / 3600
+                    if hours <= 0:
+                        # Past endDate — awaiting resolution, treat as unknown
+                        return None
+                    return hours
+                except ValueError:
+                    continue
+        except Exception:
+            pass
+
+    # Keyword-based estimation from question text
+    question = (market.get("question") or "").lower()
+
+    # Crypto 5m/15m/1h time-windowed markets
+    if re.search(r'up or down.*\d{1,2}:\d{2}', question):
+        return 0.25  # 15 minutes
+    if "5m" in question or "5-minute" in question or "5 minute" in question:
+        return 0.083  # 5 minutes
+    if "15m" in question or "15-minute" in question or "15 minute" in question:
+        return 0.25
+
+    # Time-based keywords
+    if any(kw in question for kw in ["today", "tonight"]):
+        return 12.0
+    if "tomorrow" in question:
+        return 36.0
+    if any(kw in question for kw in ["this week", "this weekend"]):
+        return 120.0
+
+    # Date patterns like "March 7", "March 8", etc.
+    now = datetime.now(timezone.utc)
+    month_names = {
+        "january": 1, "february": 2, "march": 3, "april": 4,
+        "may": 5, "june": 6, "july": 7, "august": 8,
+        "september": 9, "october": 10, "november": 11, "december": 12,
+        "jan": 1, "feb": 2, "mar": 3, "apr": 4,
+        "jun": 6, "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+    }
+    for month_name, month_num in month_names.items():
+        date_match = re.search(rf'{month_name}\s+(\d{{1,2}})', question)
+        if date_match:
+            day = int(date_match.group(1))
+            try:
+                year = now.year
+                target = datetime(year, month_num, day, 23, 59, tzinfo=timezone.utc)
+                hours = (target - now).total_seconds() / 3600
+                if 0 < hours < 8760:  # Within a year
+                    return hours
+            except ValueError:
+                pass
+
+    # ISO date patterns like "2026-03-08"
+    iso_match = re.search(r'(\d{4})-(\d{2})-(\d{2})', question)
+    if iso_match:
+        try:
+            target = datetime(
+                int(iso_match.group(1)), int(iso_match.group(2)),
+                int(iso_match.group(3)), 23, 59, tzinfo=timezone.utc,
+            )
+            hours = (target - now).total_seconds() / 3600
+            if 0 < hours < 8760:
+                return hours
+        except ValueError:
+            pass
+
+    # "by [Month] [Year]" patterns → long-dated, use end of month
+    by_match = re.search(r'by\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{4})', question)
+    if by_match:
+        month_num = month_names.get(by_match.group(1))
+        year = int(by_match.group(2))
+        if month_num:
+            try:
+                if month_num == 12:
+                    target = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+                else:
+                    target = datetime(year, month_num + 1, 1, tzinfo=timezone.utc)
+                hours = (target - now).total_seconds() / 3600
+                if hours > 0:
+                    return hours
+            except ValueError:
+                pass
+
+    # "by [Month] [Day]" or "by [Month] [Day], [Year]"
+    by_day_match = re.search(r'by\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})', question)
+    if by_day_match:
+        month_num = month_names.get(by_day_match.group(1))
+        day = int(by_day_match.group(2))
+        if month_num:
+            try:
+                target = datetime(now.year, month_num, day, 23, 59, tzinfo=timezone.utc)
+                hours = (target - now).total_seconds() / 3600
+                if hours > 0:
+                    return hours
+            except ValueError:
+                pass
+
+    return None
+
+
+def velocity_score(edge: float, resolution_hours: float) -> float:
+    """Capital velocity: annualized edge per unit of lockup time.
+
+    Higher = better. A 5% edge on a 1-hour market beats a 20% edge
+    on a 1-month market for capital efficiency.
+    """
+    if resolution_hours <= 0:
+        resolution_hours = 1.0
+    resolution_days = resolution_hours / 24.0
+    return abs(edge) / max(resolution_days, 0.01) * 365
+
+
+# Regex patterns for categories that keyword matching misses
+SPORTS_REGEX_PATTERNS = [
+    re.compile(r'\bvs\.?\b.*\b(FC|SC|SK|CF|AC|CD|RC)\b', re.IGNORECASE),
+    re.compile(r'\b(FC|SC|SK|CF|AC|CD|RC)\b.*\bvs\.?\b', re.IGNORECASE),
+    re.compile(r'(Spread|O/U|Over/Under|Moneyline)\s*[:\(]', re.IGNORECASE),  # Spread: or Spread(
+    re.compile(r'(Rebounds|Assists|Points|Touchdowns|Goals|Strikeouts)\s+O/U', re.IGNORECASE),
+    re.compile(r'\b\d+:\d+\s*[AP]M\s*(ET|PT|CT|EST|PST|CST)', re.IGNORECASE),  # Time-windowed sports
+    re.compile(r'\bSet\s+(Handicap|Winner|\d)', re.IGNORECASE),  # Tennis set handicap/winner
+    re.compile(r'\bGames?\s+Total\b', re.IGNORECASE),  # Games total O/U
+    re.compile(r'\bBO\d\b', re.IGNORECASE),  # Best of N (esports)
+    re.compile(r'\bFirst\s+Round\s+Pool\b', re.IGNORECASE),  # Tournament pools
+    re.compile(r'\b(Bulldogs|Panthers|Wolfpack|Eagles|Tigers|Bears|Cardinals|Hawks|Wildcats|Blue\s+Hens|Camels|Fighting)\b.*\bvs\.?\b', re.IGNORECASE),  # College sports mascots
+    re.compile(r'\bvs\.?\b.*\b(Bulldogs|Panthers|Wolfpack|Eagles|Tigers|Bears|Cardinals|Hawks|Wildcats|Blue\s+Hens|Camels|Fighting)\b', re.IGNORECASE),
+    re.compile(r'\b(Flyers|Penguins|Blues|Ducks|Mavericks|Bucks|Giants|Diamondbacks)\s+vs\.?\b', re.IGNORECASE),  # NHL/NBA/MLB team names
+    re.compile(r'\bvs\.?\s+(Flyers|Penguins|Blues|Ducks|Mavericks|Bucks|Giants|Diamondbacks)\b', re.IGNORECASE),
+    re.compile(r'\b(Stanley Cup|Super Bowl|World Series|Champions League|Premier League|EPL|La Liga|Serie A|Bundesliga|Ligue 1)\b', re.IGNORECASE),  # Major leagues
+    re.compile(r'\b(T20|World Cup|Grand Prix|F1|Formula 1|NASCAR|MLS|WNBA|ATP|WTA)\b', re.IGNORECASE),  # More leagues
+    re.compile(r'\btop\s+goal\s+scorer\b', re.IGNORECASE),  # Sports scoring
+    re.compile(r'\b(Norris|Hart|MVP|Cy Young|Ballon d.Or)\s+(Trophy|Memorial|Award)\b', re.IGNORECASE),  # Sports awards
+]
+
+CRYPTO_REGEX_PATTERNS = [
+    re.compile(r'(Bitcoin|Ethereum|Solana|XRP|BTC|ETH|SOL)\s+(Up|Down)', re.IGNORECASE),
+    re.compile(r'\d+:\d+\s*[AP]M.*ET.*\b(Up|Down)\b', re.IGNORECASE),  # Time-windowed crypto
+    re.compile(r'price of (Bitcoin|Ethereum|Solana|XRP|BTC|ETH|SOL)', re.IGNORECASE),  # Crypto price brackets
+    re.compile(r'\b(Chainlink|Ethena|MetaMask|CEX)\b.*\b(dip|token|insolvent)\b', re.IGNORECASE),  # Crypto projects
+]
+
+FINANCIAL_SPEC_REGEX_PATTERNS = [
+    re.compile(r'(dip|drop|fall|rise|rally|crash)\s+to\s+\$\d+', re.IGNORECASE),
+    re.compile(r'\$(AAPL|GOOG|GOOGL|AMZN|MSFT|META|TSLA|NVDA|AMD|NFLX)\b', re.IGNORECASE),
+    re.compile(r'\b(Apple|Google|Amazon|Microsoft|Tesla|Nvidia|Netflix|Meta)\s+(dip|drop|fall|rise|stock)', re.IGNORECASE),
+]
+
+
+def _keyword_match(keyword: str, text: str) -> bool:
+    """Match keyword in text, using word boundaries for short keywords (<=4 chars)
+    to avoid false positives like 'nfl' matching 'inflation'."""
+    if len(keyword) <= 4:
+        return bool(re.search(r'\b' + re.escape(keyword) + r'\b', text))
+    return keyword in text
+
+
+def classify_market_category(question: str) -> str:
+    """Classify a market question into a category based on keywords and regex."""
+    question_lower = question.lower()
+    scores = {}
+    for category, keywords in CATEGORY_KEYWORDS.items():
+        scores[category] = sum(1 for kw in keywords if _keyword_match(kw, question_lower))
+
+    # Regex-based boost for sports/crypto/financial patterns
+    for pattern in SPORTS_REGEX_PATTERNS:
+        if pattern.search(question):
+            scores["sports"] = scores.get("sports", 0) + 3
+    for pattern in CRYPTO_REGEX_PATTERNS:
+        if pattern.search(question):
+            scores["crypto"] = scores.get("crypto", 0) + 3
+    for pattern in FINANCIAL_SPEC_REGEX_PATTERNS:
+        if pattern.search(question):
+            scores["financial_speculation"] = scores.get("financial_speculation", 0) + 3
+
+    best = max(scores, key=scores.get)
+    return best if scores[best] > 0 else "unknown"
+
+
+def calculate_taker_fee(price: float, category: str) -> float:
+    """Calculate Polymarket taker fee. Fee formula: p * (1-p) * rate."""
+    rate = TAKER_FEE_RATES.get(category, TAKER_FEE_RATES["default"])
+    return price * (1 - price) * rate
+
+
+def is_low_edge_category(question: str) -> bool:
+    """Return True if question is in a category where LLMs have low edge."""
+    category = classify_market_category(question)
+    priority = CATEGORY_PRIORITY.get(category, 2)
+    return priority < MIN_CATEGORY_PRIORITY
+
+
+def _safe_float(value, default: float = 0.5) -> float:
+    """Parse a float from mixed analyzer payloads."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def normalize_confidence(value) -> float:
+    """Normalize confidence into [0, 1] float."""
+    if isinstance(value, str):
+        conf_map = {"high": 0.85, "medium": 0.6, "med": 0.6, "low": 0.3}
+        return conf_map.get(value.lower().strip(), 0.5)
+    return max(0.0, min(1.0, _safe_float(value, 0.5)))
+
+
+def map_vps_signal_direction(result: dict, market_price: float) -> str:
+    """Map VPS analyzer output into internal buy_yes/buy_no/hold."""
+    direction = str(result.get("direction", "") or "").strip().lower()
+    if direction in ("buy_yes", "buy_no", "hold"):
+        return direction
+
+    signal = str(result.get("signal", result.get("action", "hold")) or "").strip().upper()
+    if signal in ("NO", "BUY_NO", "SELL", "SHORT"):
+        return "buy_no"
+    if signal in ("BUY", "YES", "BUY_YES"):
+        est_prob = _safe_float(
+            result.get("estimated_prob", result.get("probability", 0.5)),
+            0.5,
+        )
+        return "buy_yes" if est_prob >= market_price else "buy_no"
+    return "hold"
+
+
+def compute_calibrated_signal(
+    raw_prob: float,
+    market_price: float,
+    category: str,
+    *,
+    already_calibrated: bool = False,
+) -> dict:
+    """Full signal computation: calibrate → fee → threshold → direction.
+
+    This is the core improvement over the VPS analyzer: applies Platt scaling,
+    taker fee subtraction, and asymmetric thresholds.
+    """
+    # 1. Calibrate (or pass-through when upstream already calibrated)
+    calibrated = raw_prob if already_calibrated else calibrate_probability(raw_prob)
+    calibrated = max(0.01, min(0.99, calibrated))
+
+    # 2. Raw edge
+    raw_edge = calibrated - market_price
+
+    # 3. Taker fee
+    buy_price = market_price if raw_edge > 0 else (1 - market_price)
+    taker_fee = calculate_taker_fee(buy_price, category)
+
+    # 4. Net edge after fees
+    net_edge = abs(raw_edge) - taker_fee
+
+    # 5. Asymmetric thresholds
+    if raw_edge > 0 and net_edge >= YES_THRESHOLD:
+        return {
+            "mispriced": True, "direction": "buy_yes", "edge": net_edge,
+            "raw_edge": raw_edge, "calibrated_prob": calibrated,
+            "taker_fee": taker_fee, "category": category,
+        }
+    elif raw_edge < 0 and net_edge >= NO_THRESHOLD:
+        return {
+            "mispriced": True, "direction": "buy_no", "edge": net_edge,
+            "raw_edge": raw_edge, "calibrated_prob": calibrated,
+            "taker_fee": taker_fee, "category": category,
+        }
+    else:
+        return {
+            "mispriced": False, "direction": "hold", "edge": 0.0,
+            "raw_edge": raw_edge, "calibrated_prob": calibrated,
+            "taker_fee": taker_fee, "category": category,
+        }
+
+
+class _DummyNotifier:
+    """Fallback when Telegram is not available."""
+    is_configured = False
+    async def send_message(self, *a, **kw): return False
+    async def send_trade_signal(self, *a, **kw): return False
+    async def send_error(self, *a, **kw): return False
+    async def send_startup(self, *a, **kw): return False
+    async def close(self): pass
+
+
+# ---------------------------------------------------------------------------
+# SQLite Data Pipeline
+# ---------------------------------------------------------------------------
+class TradeDatabase:
+    """SQLite database for trade logging, multi-bankroll tracking, and resolution."""
+
+    def __init__(self, db_path: Path = DB_FILE):
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.db_path = db_path
+        self.conn = sqlite3.connect(str(db_path))
+        self.conn.row_factory = sqlite3.Row
+        self._create_tables()
+
+    def _create_tables(self):
+        c = self.conn.cursor()
+        c.executescript("""
+            CREATE TABLE IF NOT EXISTS trades (
+                id TEXT PRIMARY KEY,
+                timestamp TEXT NOT NULL,
+                market_id TEXT NOT NULL,
+                question TEXT,
+                direction TEXT,
+                entry_price REAL,
+                raw_prob REAL,
+                calibrated_prob REAL,
+                edge REAL,
+                taker_fee REAL,
+                position_size_usd REAL,
+                kelly_fraction REAL,
+                category TEXT,
+                confidence REAL,
+                reasoning TEXT,
+                token_id TEXT,
+                order_id TEXT,
+                paper INTEGER DEFAULT 1,
+                outcome TEXT,          -- 'won', 'lost', NULL (unresolved)
+                resolution_price REAL, -- 1.0 (YES) or 0.0 (NO)
+                pnl REAL,
+                resolved_at TEXT,
+                bankroll_level INTEGER DEFAULT 1000
+            );
+
+            CREATE TABLE IF NOT EXISTS cycles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                cycle_number INTEGER,
+                markets_scanned INTEGER,
+                markets_filtered INTEGER,
+                markets_analyzed INTEGER,
+                signals_found INTEGER,
+                trades_placed INTEGER,
+                elapsed_seconds REAL,
+                bankroll REAL,
+                daily_pnl REAL,
+                open_positions INTEGER,
+                paper INTEGER DEFAULT 1
+            );
+
+            CREATE TABLE IF NOT EXISTS multi_bankroll (
+                id TEXT PRIMARY KEY,
+                trade_id TEXT REFERENCES trades(id),
+                bankroll_level INTEGER,
+                position_size_usd REAL,
+                kelly_fraction REAL,
+                running_bankroll REAL,
+                running_pnl REAL,
+                timestamp TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS daily_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT UNIQUE NOT NULL,
+                trades_placed INTEGER DEFAULT 0,
+                trades_resolved INTEGER DEFAULT 0,
+                wins INTEGER DEFAULT 0,
+                losses INTEGER DEFAULT 0,
+                daily_pnl REAL DEFAULT 0.0,
+                cumulative_pnl REAL DEFAULT 0.0,
+                brier_score REAL,
+                best_trade_id TEXT,
+                worst_trade_id TEXT,
+                best_trade_pnl REAL,
+                worst_trade_pnl REAL,
+                report_sent INTEGER DEFAULT 0
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_trades_market ON trades(market_id);
+            CREATE INDEX IF NOT EXISTS idx_trades_outcome ON trades(outcome);
+            CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_multi_bankroll_level ON multi_bankroll(bankroll_level);
+        """)
+        self.conn.commit()
+
+    def log_trade(self, trade: dict, bankroll_level: int = 1000) -> str:
+        """Log a trade to the database. Returns trade_id."""
+        trade_id = str(uuid.uuid4())[:12]
+        c = self.conn.cursor()
+        c.execute("""
+            INSERT INTO trades (id, timestamp, market_id, question, direction,
+                entry_price, raw_prob, calibrated_prob, edge, taker_fee,
+                position_size_usd, kelly_fraction, category, confidence,
+                reasoning, token_id, order_id, paper, bankroll_level)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            trade_id,
+            datetime.now(timezone.utc).isoformat(),
+            trade.get("market_id", ""),
+            trade.get("question", ""),
+            trade.get("direction", ""),
+            trade.get("entry_price", 0.0),
+            trade.get("raw_prob"),
+            trade.get("calibrated_prob"),
+            trade.get("edge", 0.0),
+            trade.get("taker_fee", 0.0),
+            trade.get("position_size_usd", 0.0),
+            trade.get("kelly_fraction", KELLY_FRACTION),
+            trade.get("category", "unknown"),
+            trade.get("confidence", 0.5),
+            trade.get("reasoning", ""),
+            trade.get("token_id", ""),
+            trade.get("order_id", ""),
+            1 if PAPER_TRADING else 0,
+            bankroll_level,
+        ))
+        self.conn.commit()
+        return trade_id
+
+    def log_multi_bankroll(self, trade_id: str, bankroll_level: int,
+                            position_size: float, running_bankroll: float,
+                            running_pnl: float):
+        """Log a multi-bankroll simulation entry."""
+        c = self.conn.cursor()
+        c.execute("""
+            INSERT INTO multi_bankroll (id, trade_id, bankroll_level,
+                position_size_usd, kelly_fraction, running_bankroll,
+                running_pnl, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            str(uuid.uuid4())[:12],
+            trade_id,
+            bankroll_level,
+            position_size,
+            KELLY_FRACTION,
+            running_bankroll,
+            running_pnl,
+            datetime.now(timezone.utc).isoformat(),
+        ))
+        self.conn.commit()
+
+    def log_cycle(self, cycle_data: dict):
+        """Log a cycle summary."""
+        c = self.conn.cursor()
+        c.execute("""
+            INSERT INTO cycles (timestamp, cycle_number, markets_scanned,
+                markets_filtered, markets_analyzed, signals_found,
+                trades_placed, elapsed_seconds, bankroll, daily_pnl,
+                open_positions, paper)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            datetime.now(timezone.utc).isoformat(),
+            cycle_data.get("cycle", 0),
+            cycle_data.get("scanned", 0),
+            cycle_data.get("filtered", 0),
+            cycle_data.get("analyzed", 0),
+            cycle_data.get("signals", 0),
+            cycle_data.get("trades_placed", 0),
+            cycle_data.get("elapsed_seconds", 0.0),
+            cycle_data.get("bankroll", INITIAL_BANKROLL),
+            cycle_data.get("daily_pnl", 0.0),
+            cycle_data.get("open_positions", 0),
+            1 if PAPER_TRADING else 0,
+        ))
+        self.conn.commit()
+
+    def get_unresolved_trades(self) -> list:
+        """Get all trades that haven't been resolved yet."""
+        c = self.conn.cursor()
+        c.execute("SELECT * FROM trades WHERE outcome IS NULL ORDER BY timestamp")
+        return [dict(row) for row in c.fetchall()]
+
+    def resolve_trade(self, trade_id: str, won: bool, resolution_price: float):
+        """Mark a trade as resolved."""
+        c = self.conn.cursor()
+        row = c.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
+        if not row:
+            return
+
+        trade = dict(row)
+        direction = trade["direction"]
+        entry_price = trade["entry_price"]
+        size_usd = trade["position_size_usd"]
+
+        # Calculate P&L
+        if won:
+            # Winner fee is 2%
+            payout = size_usd / entry_price * (1.0 - 0.02)
+            pnl = payout - size_usd
+        else:
+            pnl = -size_usd
+
+        outcome = "won" if won else "lost"
+        c.execute("""
+            UPDATE trades
+            SET outcome = ?, resolution_price = ?, pnl = ?, resolved_at = ?
+            WHERE id = ?
+        """, (outcome, resolution_price, pnl,
+              datetime.now(timezone.utc).isoformat(), trade_id))
+        self.conn.commit()
+        return pnl
+
+    def get_stats(self) -> dict:
+        """Get overall trading statistics."""
+        c = self.conn.cursor()
+        total = c.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+        resolved = c.execute("SELECT COUNT(*) FROM trades WHERE outcome IS NOT NULL").fetchone()[0]
+        wins = c.execute("SELECT COUNT(*) FROM trades WHERE outcome = 'won'").fetchone()[0]
+        losses = c.execute("SELECT COUNT(*) FROM trades WHERE outcome = 'lost'").fetchone()[0]
+        total_pnl = c.execute("SELECT COALESCE(SUM(pnl), 0) FROM trades WHERE pnl IS NOT NULL").fetchone()[0]
+
+        # Brier score: average (calibrated_prob - outcome)^2
+        brier_rows = c.execute("""
+            SELECT calibrated_prob, resolution_price
+            FROM trades
+            WHERE outcome IS NOT NULL AND calibrated_prob IS NOT NULL
+        """).fetchall()
+        brier = None
+        if brier_rows:
+            brier = sum((row[0] - row[1]) ** 2 for row in brier_rows) / len(brier_rows)
+
+        return {
+            "total_trades": total,
+            "resolved": resolved,
+            "unresolved": total - resolved,
+            "wins": wins,
+            "losses": losses,
+            "win_rate": wins / resolved if resolved > 0 else 0,
+            "total_pnl": total_pnl,
+            "brier_score": brier,
+        }
+
+    def close(self):
+        self.conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Multi-Bankroll Simulator
+# ---------------------------------------------------------------------------
+class MultiBankrollSimulator:
+    """Runs parallel paper portfolios at different bankroll levels."""
+
+    def __init__(self, db: TradeDatabase, levels: list = None):
+        self.db = db
+        self.levels = levels or BANKROLL_LEVELS
+        # Load running state from file
+        self._state_file = Path("data/multi_bankroll_state.json")
+        self._state_file.parent.mkdir(parents=True, exist_ok=True)
+        self.state = self._load_state()
+
+    def _load_state(self) -> dict:
+        if self._state_file.exists():
+            try:
+                with open(self._state_file) as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {str(level): {"bankroll": level, "pnl": 0.0, "trades": 0}
+                for level in self.levels}
+
+    def _save_state(self):
+        with open(self._state_file, "w") as f:
+            json.dump(self.state, f, indent=2)
+
+    def simulate_trade(self, signal: dict, base_trade_id: str):
+        """Simulate this trade at all bankroll levels."""
+        for level in self.levels:
+            key = str(level)
+            if key not in self.state:
+                self.state[key] = {"bankroll": level, "pnl": 0.0, "trades": 0}
+
+            current_bankroll = self.state[key]["bankroll"]
+
+            # Scale position by bankroll level
+            size = kelly_size(
+                edge=signal["edge"],
+                market_price=signal["market_price"],
+                direction=signal["direction"],
+                bankroll=current_bankroll,
+            )
+            # Scale max position proportionally
+            max_pos = MAX_POSITION_USD * (level / 1000)
+            size = min(size, max_pos)
+
+            if size <= 0:
+                continue
+
+            self.state[key]["trades"] += 1
+
+            self.db.log_multi_bankroll(
+                trade_id=base_trade_id,
+                bankroll_level=level,
+                position_size=size,
+                running_bankroll=current_bankroll,
+                running_pnl=self.state[key]["pnl"],
+            )
+
+        self._save_state()
+
+    def get_summary(self) -> dict:
+        return {int(k): v for k, v in self.state.items()}
+
+# ---------------------------------------------------------------------------
+# Kelly Sizing
+# ---------------------------------------------------------------------------
+def kelly_size(edge: float, market_price: float, direction: str,
+               bankroll: float) -> float:
+    """Half-Kelly position sizing for binary prediction markets.
+
+    Args:
+        edge: Net edge after fees (e.g., 0.15 = 15%)
+        market_price: Current YES price (0-1)
+        direction: 'buy_yes' or 'buy_no'
+        bankroll: Current total bankroll
+
+    Returns:
+        Position size in USD, clamped to limits.
+    """
+    if edge <= 0 or bankroll <= 0:
+        return 0.0
+
+    # Cost basis
+    if direction == "buy_yes":
+        cost = market_price
+    else:  # buy_no
+        cost = 1.0 - market_price
+
+    if cost <= 0 or cost >= 1.0:
+        return 0.0
+
+    # Payout (after 2% winner fee)
+    payout = 1.0 - 0.02
+    odds = (payout - cost) / cost
+
+    if odds <= 0:
+        return 0.0
+
+    # Kelly fraction
+    p_win = cost + edge  # rough estimate
+    p_win = max(0.01, min(0.99, p_win))
+
+    kelly_f = (p_win * odds - (1.0 - p_win)) / odds
+    kelly_f = max(0.0, kelly_f)
+
+    # Apply half-Kelly
+    raw_size = kelly_f * KELLY_FRACTION * bankroll
+
+    # Clamp
+    final_size = min(raw_size, MAX_POSITION_USD)
+    final_size = max(0.0, final_size)
+
+    # Floor: minimum viable trade
+    if final_size < 0.50:
+        return 0.0
+
+    return round(final_size, 2)
+
+
+# ---------------------------------------------------------------------------
+# State Management
+# ---------------------------------------------------------------------------
+class JJState:
+    """Persistent state for JJ trading system."""
+
+    def __init__(self, state_file: Path = STATE_FILE):
+        self.state_file = state_file
+        self.state = self._load()
+
+    def _load(self) -> dict:
+        if self.state_file.exists():
+            try:
+                with open(self.state_file) as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {
+            "bankroll": INITIAL_BANKROLL,
+            "total_deployed": 0.0,
+            "total_pnl": 0.0,
+            "daily_pnl": 0.0,
+            "daily_pnl_date": "",
+            "trades_today": 0,
+            "total_trades": 0,
+            "winning_trades": 0,
+            "open_positions": {},  # market_id -> position info
+            "trade_log": [],      # last 100 trades
+            "cycles_completed": 0,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "veterans_allocation": 0.0,  # 20% of net profits
+        }
+
+    def save(self):
+        with open(self.state_file, "w") as f:
+            json.dump(self.state, f, indent=2, default=str)
+
+    def reset_daily(self):
+        """Reset daily counters if new day."""
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if self.state["daily_pnl_date"] != today:
+            self.state["daily_pnl"] = 0.0
+            self.state["trades_today"] = 0
+            self.state["daily_pnl_date"] = today
+
+    def check_daily_loss_limit(self) -> bool:
+        """Returns True if trading is allowed (not at daily loss limit)."""
+        self.reset_daily()
+        return self.state["daily_pnl"] > -MAX_DAILY_LOSS_USD
+
+    def check_exposure_limit(self) -> bool:
+        """Returns True if we can take more positions."""
+        max_exposure = self.state["bankroll"] * MAX_EXPOSURE_PCT
+        return self.state["total_deployed"] < max_exposure
+
+    def has_position(self, market_id: str) -> bool:
+        return market_id in self.state["open_positions"]
+
+    def record_trade(self, market_id: str, question: str, direction: str,
+                     price: float, size_usd: float, edge: float,
+                     confidence: float, order_id: str = ""):
+        """Record a new trade."""
+        self.state["open_positions"][market_id] = {
+            "question": question,
+            "direction": direction,
+            "entry_price": price,
+            "size_usd": size_usd,
+            "edge": edge,
+            "confidence": confidence,
+            "order_id": order_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        self.state["total_deployed"] += size_usd
+        self.state["total_trades"] += 1
+        self.state["trades_today"] += 1
+
+        # Trade log (keep last 100)
+        self.state["trade_log"].append({
+            "market_id": market_id,
+            "question": question[:80],
+            "direction": direction,
+            "price": price,
+            "size_usd": size_usd,
+            "edge": edge,
+            "order_id": order_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+        self.state["trade_log"] = self.state["trade_log"][-100:]
+
+        self.save()
+
+    def get_category_counts(self) -> dict:
+        """Count open positions by rough category."""
+        counts = {}
+        for pos in self.state["open_positions"].values():
+            q = pos.get("question", "").lower()
+            if any(w in q for w in ["world cup", "nba", "nhl", "nfl", "sports"]):
+                cat = "sports"
+            elif any(w in q for w in ["trump", "president", "congress", "elect"]):
+                cat = "politics"
+            elif any(w in q for w in ["bitcoin", "eth", "crypto", "token"]):
+                cat = "crypto"
+            else:
+                cat = "other"
+            counts[cat] = counts.get(cat, 0) + 1
+        return counts
+
+    def sync_resolved_positions(self, db: 'TradeDatabase'):
+        """Remove resolved trades from open_positions and update bankroll/P&L.
+
+        Called at the start of each cycle to keep jj_state.json in sync with
+        the SQLite DB (where resolution tracker marks trades as won/lost).
+        Without this, resolved positions accumulate and hit MAX_OPEN_POSITIONS.
+        """
+        if not self.state["open_positions"]:
+            return 0
+
+        # Get all resolved trade market_ids from DB
+        c = db.conn.cursor()
+        resolved_rows = c.execute("""
+            SELECT DISTINCT market_id, outcome, pnl, position_size_usd
+            FROM trades
+            WHERE outcome IS NOT NULL
+        """).fetchall()
+
+        if not resolved_rows:
+            return 0
+
+        resolved_market_ids = {row[0] for row in resolved_rows}
+
+        # Find open positions that have been resolved
+        to_remove = []
+        for market_id in list(self.state["open_positions"].keys()):
+            if market_id in resolved_market_ids:
+                to_remove.append(market_id)
+
+        if not to_remove:
+            return 0
+
+        # Get aggregate P&L for resolved markets
+        for market_id in to_remove:
+            pos = self.state["open_positions"].pop(market_id)
+
+            # Look up actual P&L from DB
+            pnl_row = c.execute("""
+                SELECT COALESCE(SUM(pnl), 0), outcome
+                FROM trades
+                WHERE market_id = ? AND outcome IS NOT NULL
+                GROUP BY market_id
+            """, (market_id,)).fetchone()
+
+            if pnl_row:
+                pnl = pnl_row[0]
+                won = pnl_row[1] == "won"
+
+                # Update bankroll and P&L tracking
+                self.state["bankroll"] += pnl
+                self.state["total_pnl"] += pnl
+                self.state["daily_pnl"] += pnl
+                self.state["total_deployed"] -= pos.get("size_usd", 0)
+                if won:
+                    self.state["winning_trades"] += 1
+
+                # Update veterans allocation (20% of net profits)
+                if self.state["total_pnl"] > 0:
+                    self.state["veterans_allocation"] = self.state["total_pnl"] * 0.20
+
+        # Clamp total_deployed to non-negative
+        self.state["total_deployed"] = max(0, self.state["total_deployed"])
+
+        self.save()
+        logger.info(f"Synced {len(to_remove)} resolved positions from state "
+                    f"(open: {len(self.state['open_positions'])} remaining)")
+        return len(to_remove)
+
+
+# ---------------------------------------------------------------------------
+# Geoblock Check
+# ---------------------------------------------------------------------------
+def check_geoblock() -> dict:
+    """Check if current IP is geo-blocked by Polymarket.
+
+    Returns:
+        Dict with 'blocked', 'country', 'ip' keys.
+
+    Raises:
+        RuntimeError if blocked.
+    """
+    import requests as _req
+    try:
+        resp = _req.get("https://polymarket.com/api/geoblock", timeout=10).json()
+        if resp.get("blocked"):
+            raise RuntimeError(
+                f"GEO-BLOCKED: country={resp.get('country')} ip={resp.get('ip')} "
+                f"— Polymarket trading not available from this region"
+            )
+        logger.info(f"Geoblock check PASSED: country={resp.get('country')} ip={resp.get('ip')}")
+        return resp
+    except RuntimeError:
+        raise
+    except Exception as e:
+        logger.warning(f"Geoblock check failed (non-fatal): {e}")
+        return {"blocked": None, "country": "unknown", "ip": "unknown"}
+
+
+# ---------------------------------------------------------------------------
+# JJ Live Trading Engine
+# ---------------------------------------------------------------------------
+class JJLive:
+    """JJ Autonomous Live Trading System."""
+
+    def __init__(self):
+        # Early geoblock check — fail fast if in restricted region
+        check_geoblock()
+
+        self.paper_mode = PAPER_TRADING
+        self.state = JJState()
+        self.scanner = MarketScanner()
+
+        # LLM Analyzer: prefer ensemble (multi-model + RAG) over single Claude
+        self.ensemble_mode = False
+        if LLMEnsemble is not None:
+            try:
+                self.analyzer = LLMEnsemble(enable_rag=True, enable_brier=True)
+                self.ensemble_mode = True
+                logger.info(f"LLM Ensemble initialized: {len(self.analyzer.models)} models, RAG=ON, Brier=ON")
+            except Exception as e:
+                logger.warning(f"LLM Ensemble init failed, falling back to Claude-only: {e}")
+                self.analyzer = ClaudeAnalyzer()
+        else:
+            self.analyzer = ClaudeAnalyzer()
+            logger.info("Using single-model ClaudeAnalyzer (LLM Ensemble not available)")
+
+        self.notifier = self._init_telegram()
+        self.db = TradeDatabase()
+        self.multi_sim = MultiBankrollSimulator(self.db)
+
+        # Only init CLOB client for live trading
+        if not self.paper_mode:
+            self.clob = self._init_clob_client()
+        else:
+            self.clob = None
+            logger.info("PAPER TRADING MODE — orders will be simulated locally")
+
+        # Signal source #2: LMSR Bayesian Engine
+        if LMSREngine is not None:
+            self.lmsr_engine = LMSREngine(
+                entry_threshold=float(os.environ.get("JJ_LMSR_THRESHOLD", "0.05")),
+            )
+            logger.info("LMSR Bayesian Engine initialized")
+        else:
+            self.lmsr_engine = None
+            logger.warning("LMSR engine not available — running without")
+
+        # Signal source #3: Smart Wallet Flow Detector
+        self.wallet_flow_available = wallet_flow_get_signals is not None
+        if self.wallet_flow_available:
+            logger.info("Smart Wallet Flow Detector available")
+        else:
+            logger.warning("Wallet flow detector not available — running without")
+
+        # Signal source #4: Cross-Platform Arbitrage Scanner
+        self.arb_available = arb_get_signals is not None
+        if self.arb_available:
+            logger.info("Cross-platform arb scanner available")
+        else:
+            logger.warning("Cross-platform arb scanner not available — running without")
+
+        mode_str = "PAPER" if self.paper_mode else "LIVE"
+        logger.info("=" * 60)
+        logger.info(f"JJ {mode_str} TRADING SYSTEM — INITIALIZED")
+        logger.info(f"  Mode: {mode_str}")
+        logger.info(f"  Bankroll: ${self.state.state['bankroll']:.2f}")
+        logger.info(f"  Multi-bankroll: {BANKROLL_LEVELS}")
+        logger.info(f"  Open positions: {len(self.state.state['open_positions'])}")
+        logger.info(f"  Max per trade: ${MAX_POSITION_USD}")
+        logger.info(f"  Daily loss limit: ${MAX_DAILY_LOSS_USD}")
+        logger.info(f"  Kelly fraction: {KELLY_FRACTION}")
+        logger.info(f"  Scan interval: {SCAN_INTERVAL}s")
+        logger.info(f"  Platt calibration: A={PLATT_A}, B={PLATT_B}")
+        logger.info(f"  Thresholds: YES={YES_THRESHOLD:.0%}, NO={NO_THRESHOLD:.0%}")
+        logger.info(f"  Category filter: skip priority < {MIN_CATEGORY_PRIORITY}")
+        logger.info(f"  Database: {DB_FILE}")
+        logger.info("=" * 60)
+
+    def _init_telegram(self):
+        """Initialize Telegram notifier (handles both class versions)."""
+        if TelegramNotifier is None:
+            logger.warning("Telegram module not available — notifications disabled")
+            return _DummyNotifier()
+
+        token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+
+        try:
+            # Try keyword args (local codebase style)
+            return TelegramNotifier(bot_token=token, chat_id=chat_id)
+        except TypeError:
+            try:
+                # Try positional args (VPS codebase style)
+                return TelegramNotifier(token, chat_id)
+            except TypeError:
+                try:
+                    # Try no-arg constructor (reads from env)
+                    return TelegramNotifier()
+                except Exception:
+                    logger.warning("Could not init Telegram — notifications disabled")
+                    return _DummyNotifier()
+
+    def _init_clob_client(self) -> OfficialClobClient:
+        """Initialize CLOB client using official py-clob-client library.
+
+        Derives L2 API credentials on startup and caches them for the session.
+        """
+        private_key = os.environ.get("POLY_PRIVATE_KEY", "")
+        safe_address = os.environ.get("POLY_SAFE_ADDRESS", "")
+
+        if not private_key:
+            logger.error("NO PRIVATE KEY — cannot trade")
+            sys.exit(1)
+        if not safe_address:
+            logger.error("NO SAFE ADDRESS — cannot trade")
+            sys.exit(1)
+
+        if not private_key.startswith("0x"):
+            private_key = "0x" + private_key
+
+        # Create client without creds first to derive them
+        # signature_type=1 (POLY_PROXY) — Polymarket proxy wallet
+        # signature_type=2 (Gnosis Safe) causes "invalid signature" on orders
+        client = OfficialClobClient(
+            host="https://clob.polymarket.com",
+            key=private_key,
+            chain_id=137,
+            signature_type=1,
+            funder=safe_address,
+        )
+
+        # Derive L2 API credentials (the .env builder creds are NOT valid L2 creds)
+        try:
+            derived = client.derive_api_key()
+            logger.info(f"Derived L2 API key: {derived.api_key[:12]}...")
+        except Exception:
+            try:
+                derived = client.create_api_key()
+                logger.info(f"Created L2 API key: {derived.api_key[:12]}...")
+            except Exception as e:
+                logger.error(f"Failed to get L2 API credentials: {e}")
+                sys.exit(1)
+
+        # Re-create client with derived credentials
+        creds = ApiCreds(
+            api_key=derived.api_key,
+            api_secret=derived.api_secret,
+            api_passphrase=derived.api_passphrase,
+        )
+        client = OfficialClobClient(
+            host="https://clob.polymarket.com",
+            key=private_key,
+            chain_id=137,
+            creds=creds,
+            signature_type=1,
+            funder=safe_address,
+        )
+
+        # Verify auth works
+        try:
+            client.get_orders()
+            logger.info("CLOB auth verified — orders endpoint accessible")
+        except Exception as e:
+            logger.warning(f"Auth verification warning: {e}")
+
+        return client
+
+    async def run_cycle(self) -> dict:
+        """Run one scan → analyze → trade cycle.
+
+        Returns:
+            Cycle summary dict.
+        """
+        cycle_start = time.time()
+        cycle_num = self.state.state["cycles_completed"] + 1
+        logger.info(f"=== JJ Cycle {cycle_num} starting ===")
+
+        # Sync resolved positions: remove closed trades from state to free
+        # position slots.  Without this, open_positions grows forever and
+        # the bot stops at MAX_OPEN_POSITIONS.
+        try:
+            synced = self.state.sync_resolved_positions(self.db)
+            if synced > 0:
+                logger.info(f"Cleared {synced} resolved positions")
+        except Exception as e:
+            logger.warning(f"Position sync failed (non-fatal): {e}")
+
+        # Safety check: daily loss limit
+        if not self.state.check_daily_loss_limit():
+            logger.warning(f"DAILY LOSS LIMIT HIT: ${self.state.state['daily_pnl']:.2f}")
+            await self.notifier.send_message(
+                f"⛔ JJ DAILY LOSS LIMIT — P&L: ${self.state.state['daily_pnl']:.2f}\n"
+                f"Pausing until tomorrow."
+            )
+            return {"status": "paused", "reason": "daily_loss_limit"}
+
+        # 1. SCAN
+        try:
+            result = self.scanner.fetch_active_markets(limit=100)
+            # Handle both sync and async scanners
+            if asyncio.iscoroutine(result):
+                markets = await result
+            else:
+                markets = result
+            logger.info(f"Scanned {len(markets)} active markets")
+        except Exception as e:
+            logger.error(f"Scanner failed: {e}")
+            return {"status": "error", "reason": f"scanner: {e}"}
+
+        # Filter actionable (price between 10-90%)
+        actionable = []
+        market_lookup = {}  # market_id -> market data
+
+        skipped_category = 0
+        skipped_too_slow = 0
+        skipped_no_resolution = 0
+        for m in markets:
+            try:
+                # Category filter: skip sports/crypto where LLM has low edge
+                question = m.get("question", "")
+                if is_low_edge_category(question):
+                    skipped_category += 1
+                    continue
+
+                # Velocity filter: skip markets that resolve too slowly
+                if MAX_RESOLUTION_HOURS > 0:
+                    res_hours = estimate_resolution_hours(m)
+                    if res_hours is None:
+                        skipped_no_resolution += 1
+                        continue
+                    if res_hours > MAX_RESOLUTION_HOURS:
+                        skipped_too_slow += 1
+                        continue
+                    # Store for later use in velocity scoring
+                    m["_resolution_hours"] = res_hours
+
+                # Extract YES price — handle multiple formats
+                yes_price = None
+
+                # Method 1: Use scanner's extract_prices if available
+                try:
+                    prices = self.scanner.extract_prices(m)
+                    yes_price = prices.get("YES", prices.get("yes", None))
+                except Exception:
+                    pass
+
+                # Method 2: Parse outcomePrices directly (Gamma API format)
+                if yes_price is None:
+                    raw_prices = m.get("outcomePrices", "")
+                    if isinstance(raw_prices, str) and raw_prices:
+                        try:
+                            parsed = json.loads(raw_prices)
+                            if isinstance(parsed, list) and len(parsed) >= 1:
+                                yes_price = float(parsed[0])
+                        except (json.JSONDecodeError, ValueError):
+                            pass
+                    elif isinstance(raw_prices, list) and len(raw_prices) >= 1:
+                        yes_price = float(raw_prices[0])
+
+                # Method 3: Check for 'price' or 'yes_price' fields
+                if yes_price is None:
+                    yes_price = m.get("price", m.get("yes_price", None))
+                    if yes_price is not None:
+                        yes_price = float(yes_price)
+
+                if yes_price is None:
+                    continue
+
+                if not (0.10 <= yes_price <= 0.90):
+                    continue
+
+                # Extract token IDs
+                token_ids = []
+                try:
+                    token_ids = self.scanner.extract_token_ids(m)
+                except Exception:
+                    pass
+
+                if not token_ids:
+                    raw_tokens = m.get("clobTokenIds", "")
+                    if isinstance(raw_tokens, str) and raw_tokens:
+                        try:
+                            token_ids = json.loads(raw_tokens)
+                        except json.JSONDecodeError:
+                            pass
+                    elif isinstance(raw_tokens, list):
+                        token_ids = raw_tokens
+
+                # Extract market ID
+                market_id = m.get("id", m.get("condition_id", m.get("market_id", "")))
+
+                if not market_id or not token_ids:
+                    continue
+
+                res_hours = m.get("_resolution_hours")
+                actionable.append(m)
+                market_lookup[market_id] = {
+                    "question": m.get("question", ""),
+                    "token_ids": token_ids,
+                    "yes_price": yes_price,
+                    "volume": float(m.get("volume", 0) or 0),
+                    "liquidity": float(m.get("liquidity", 0) or 0),
+                    "tags": m.get("tags", []) or [],
+                    "resolution_hours": res_hours,
+                }
+            except Exception as e:
+                logger.debug(f"Skip market: {e}")
+                continue
+
+        if skipped_category:
+            logger.info(f"Skipped {skipped_category} low-edge-category markets (sports/crypto)")
+        if skipped_too_slow or skipped_no_resolution:
+            logger.info(
+                f"Velocity filter: skipped {skipped_too_slow} too slow "
+                f"(>{MAX_RESOLUTION_HOURS}h) + {skipped_no_resolution} unknown resolution"
+            )
+        logger.info(f"Found {len(actionable)} actionable markets (resolve within {MAX_RESOLUTION_HOURS}h)")
+
+        # 2. ANALYZE with Claude (batch mode — matches VPS paper_trader)
+        signals = []
+
+        # Build batch for analyzer — skip markets we already hold
+        markets_for_analysis = []
+        for m in actionable[:20]:
+            market_id = m.get("id", m.get("condition_id", ""))
+
+            if self.state.has_position(market_id):
+                continue
+
+            if len(self.state.state["open_positions"]) + len(markets_for_analysis) >= MAX_OPEN_POSITIONS:
+                logger.info(f"Position limit reached ({MAX_OPEN_POSITIONS})")
+                break
+
+            if not self.state.check_exposure_limit():
+                logger.info("Exposure limit reached")
+                break
+
+            mdata_lookup = market_lookup.get(market_id, {})
+            markets_for_analysis.append({
+                "market_id": str(market_id),
+                "question": m.get("question", ""),
+                "current_price": mdata_lookup.get("yes_price", 0.5),
+            })
+
+        if markets_for_analysis:
+            analyzer_label = "ensemble" if self.ensemble_mode else "Claude"
+            logger.info(f"Sending {len(markets_for_analysis)} markets to {analyzer_label} for analysis...")
+
+            # Auto-discover analyzer methods
+            analyzer_methods = [m for m in dir(self.analyzer) if not m.startswith('_')]
+
+            results = []
+            try:
+                # Strategy 1: batch_analyze (local codebase — returns dicts)
+                if hasattr(self.analyzer, 'batch_analyze'):
+                    r = self.analyzer.batch_analyze(markets_for_analysis, delay_between=2.0)
+                    if asyncio.iscoroutine(r):
+                        r = await r
+                    results = r
+
+                # Strategy 2: analyze_market one at a time (proven to work on VPS)
+                elif hasattr(self.analyzer, 'analyze_market'):
+                    import inspect
+                    sig = inspect.signature(self.analyzer.analyze_market)
+                    params = list(sig.parameters.keys())
+
+                    for mkt in markets_for_analysis:
+                        try:
+                            # Try various call signatures
+                            if 'current_price' in params:
+                                r = self.analyzer.analyze_market(
+                                    question=mkt["question"],
+                                    current_price=mkt["current_price"],
+                                )
+                            elif 'market_price' in params:
+                                r = self.analyzer.analyze_market(
+                                    question=mkt["question"],
+                                    market_price=mkt["current_price"],
+                                )
+                            elif 'price' in params:
+                                r = self.analyzer.analyze_market(
+                                    question=mkt["question"],
+                                    price=mkt["current_price"],
+                                )
+                            else:
+                                # Just pass question, let it figure it out
+                                r = self.analyzer.analyze_market(mkt["question"])
+
+                            if asyncio.iscoroutine(r):
+                                r = await r
+
+                            # Convert AnalysisResult/dataclass to dict
+                            if not isinstance(r, dict):
+                                try:
+                                    r = vars(r)
+                                except TypeError:
+                                    r = {k: getattr(r, k) for k in dir(r) if not k.startswith('_')}
+
+                            r["market_id"] = mkt["market_id"]
+                            r["question"] = mkt["question"]
+                            results.append(r)
+
+                            await asyncio.sleep(2.0)
+                        except Exception as e:
+                            logger.error(f"Single analysis failed: {e}")
+                            continue
+
+                # Strategy 3: generic analyze method
+                elif hasattr(self.analyzer, 'analyze'):
+                    for mkt in markets_for_analysis:
+                        try:
+                            r = self.analyzer.analyze(mkt["question"], mkt["current_price"])
+                            if asyncio.iscoroutine(r):
+                                r = await r
+                            r["market_id"] = mkt["market_id"]
+                            r["question"] = mkt["question"]
+                            results.append(r)
+                            await asyncio.sleep(2.0)
+                        except Exception as e:
+                            logger.error(f"Analyze failed: {e}")
+                            continue
+
+                else:
+                    logger.error(f"No usable analyze method found! Available: {analyzer_methods}")
+
+            except Exception as e:
+                logger.error(f"Analysis failed: {e}", exc_info=True)
+
+            # Process results into signals
+            # Handle both LOCAL analyzer (returns dicts with mispriced/direction/edge)
+            # and VPS analyzer (returns AnalysisResult with different field names)
+            for r in results:
+                mid = r.get("market_id", "")
+                mdata_lookup = market_lookup.get(mid, {})
+                if not mdata_lookup:
+                    try:
+                        mdata_lookup = market_lookup.get(int(mid), {})
+                    except (ValueError, TypeError):
+                        pass
+
+                market_price = mdata_lookup.get("yes_price", 0.5)
+
+                # Try format_result if available (VPS analyzer may need this)
+                if hasattr(self.analyzer, 'format_result') and "mispriced" not in r:
+                    try:
+                        formatted = self.analyzer.format_result(r)
+                        if isinstance(formatted, dict):
+                            r.update(formatted)
+                        elif isinstance(formatted, str):
+                            logger.info(f"format_result returned string: {formatted[:100]}")
+                    except Exception as e:
+                        logger.debug(f"format_result failed: {e}")
+
+                # If result doesn't have mispriced/direction/edge, compute them
+                # using full calibration pipeline (Platt scaling + fees + thresholds)
+                if "mispriced" not in r:
+                    # Prefer raw probability fields first to avoid double-calibration.
+                    raw_prob = (r.get("probability")
+                                or r.get("estimated_probability")
+                                or r.get("estimated_prob")
+                                or r.get("prob")
+                                or r.get("estimate"))
+                    calibrated_prob = (r.get("calibrated_probability")
+                                       or r.get("calibrated_prob"))
+
+                    prob = None
+                    already_calibrated = False
+                    if raw_prob is not None:
+                        prob = _safe_float(raw_prob, None)
+                    elif calibrated_prob is not None:
+                        prob = _safe_float(calibrated_prob, None)
+                        already_calibrated = prob is not None
+
+                    if prob is not None and market_price > 0:
+                        # Classify category for fee calculation
+                        question = r.get("question", "")
+                        category = classify_market_category(question)
+
+                        # Full calibrated signal: Platt + fees + thresholds
+                        sig = compute_calibrated_signal(
+                            prob,
+                            market_price,
+                            category,
+                            already_calibrated=already_calibrated,
+                        )
+                        r.update(sig)
+
+                        logger.info(
+                            f"Calibrated signal: prob_in={prob:.3f} cal={sig['calibrated_prob']:.3f} "
+                            f"market={market_price:.3f} edge={sig['edge']:.3f} "
+                            f"fee={sig['taker_fee']:.4f} dir={sig['direction']} "
+                            f"cat={category} mispriced={sig['mispriced']} "
+                            f"already_calibrated={already_calibrated}"
+                        )
+
+                # Also handle case where "mispriced" key exists but uses different
+                # truthy representations (string "True", 1, etc.)
+                is_mispriced = r.get("mispriced", False)
+                if isinstance(is_mispriced, str):
+                    is_mispriced = is_mispriced.lower() in ("true", "yes", "1")
+
+                # Map direction from various VPS formats
+                direction = map_vps_signal_direction(r, market_price)
+
+                if direction == "hold" or not is_mispriced:
+                    continue
+
+                edge = abs(_safe_float(r.get("edge", 0.0), 0.0))
+                if edge < MIN_EDGE:
+                    continue
+
+                # Convert confidence string to float
+                confidence = normalize_confidence(r.get("confidence", 0.5))
+
+                # Get estimated probability from various field names
+                est_prob = (r.get("calibrated_prob")
+                            or r.get("calibrated_probability")
+                            or r.get("estimated_prob")
+                            or r.get("probability")
+                            or 0.5)
+
+                # Get resolution hours for velocity scoring
+                res_hours = mdata_lookup.get("resolution_hours")
+                vel_score = velocity_score(edge, res_hours) if res_hours else 0.0
+
+                # Ensemble metadata (if available)
+                n_models = r.get("n_models", 1)
+                models_agree = r.get("models_agree", True)
+                model_spread = r.get("model_spread", 0.0)
+                rag_used = r.get("search_context_used", False)
+
+                if n_models > 1:
+                    logger.info(
+                        f"  Ensemble: {n_models} models, spread={model_spread:.3f}, "
+                        f"agree={models_agree}, RAG={rag_used}"
+                    )
+
+                signals.append({
+                    "market_id": mid,
+                    "question": r.get("question", ""),
+                    "direction": direction,
+                    "market_price": market_price,
+                    "estimated_prob": _safe_float(est_prob, 0.5),
+                    "edge": edge,
+                    "confidence": confidence,
+                    "reasoning": r.get("reasoning", ""),
+                    "taker_fee": float(r.get("taker_fee", 0.0)),
+                    "category": r.get("category", "unknown"),
+                    "resolution_hours": res_hours,
+                    "velocity_score": vel_score,
+                })
+
+        # Tag LLM signals with source
+        for s in signals:
+            s.setdefault("source", "llm")
+
+        # --- SIGNAL SOURCE #2: Smart Wallet Flow Detector ---
+        wallet_signals = []
+        if self.wallet_flow_available:
+            try:
+                wallet_signals = wallet_flow_get_signals()
+                if wallet_signals:
+                    logger.info(f"Wallet flow: {len(wallet_signals)} signals")
+                    for ws in wallet_signals:
+                        ws["source"] = "wallet_flow"
+            except Exception as e:
+                logger.warning(f"Wallet flow scan failed (non-fatal): {e}")
+
+        # --- SIGNAL SOURCE #3: LMSR Bayesian Engine ---
+        lmsr_signals = []
+        if self.lmsr_engine is not None and actionable:
+            try:
+                lmsr_signals = self.lmsr_engine.get_signals(actionable)
+                if lmsr_signals:
+                    logger.info(f"LMSR engine: {len(lmsr_signals)} signals")
+            except Exception as e:
+                logger.warning(f"LMSR scan failed (non-fatal): {e}")
+
+        # --- SIGNAL SOURCE #4: Cross-Platform Arbitrage ---
+        arb_signals = []
+        if self.arb_available:
+            try:
+                arb_signals = arb_get_signals()
+                if arb_signals:
+                    logger.info(f"Cross-platform arb: {len(arb_signals)} signals")
+                    for asig in arb_signals:
+                        asig["source"] = "cross_platform_arb"
+            except Exception as e:
+                logger.warning(f"Cross-platform arb scan failed (non-fatal): {e}")
+
+        # --- CONFIRMATION LAYER: blend all signal sources ---
+        # Group all signals by market_id + direction
+        from collections import defaultdict as _defaultdict
+        signal_groups = _defaultdict(list)
+        all_signals = signals + wallet_signals + lmsr_signals + arb_signals
+        for s in all_signals:
+            key = (s["market_id"], s["direction"])
+            signal_groups[key].append(s)
+
+        # Apply confirmation logic
+        confirmed_signals = []
+        for (mid, direction), group in signal_groups.items():
+            sources = set(s.get("source", "unknown") for s in group)
+            n_sources = len(sources)
+
+            # Pick the signal with the highest edge as the primary
+            primary = max(group, key=lambda s: s.get("edge", 0))
+            primary["source"] = "+".join(sorted(sources))
+            primary["n_sources"] = n_sources
+
+            # Confirmation boost: 2+ sources agree → higher confidence sizing
+            res_hours = primary.get("resolution_hours")
+            if n_sources >= 2:
+                # Boosted: highest confidence, use quarter-Kelly even on fast markets
+                primary["_kelly_override"] = MAX_KELLY_FRACTION
+                primary["_confirmation"] = True
+                logger.info(
+                    f"  CONFIRMED ({n_sources} sources: {primary['source']}): "
+                    f"{primary['question'][:50]} → {direction} edge={primary['edge']:.3f}"
+                )
+            elif "llm" in sources and res_hours and res_hours > 12:
+                # LLM alone on slow market → standard quarter-Kelly
+                primary["_kelly_override"] = KELLY_FRACTION
+                primary["_confirmation"] = False
+            elif "wallet_flow" in sources and res_hours and res_hours < 1:
+                # Wallet flow alone on fast market → 1/16 Kelly
+                primary["_kelly_override"] = 1.0 / 16.0
+                primary["_confirmation"] = False
+            elif "lmsr" in sources:
+                # LMSR alone → 1/16 Kelly
+                primary["_kelly_override"] = 1.0 / 16.0
+                primary["_confirmation"] = False
+            else:
+                # Single source, default Kelly
+                primary["_kelly_override"] = KELLY_FRACTION
+                primary["_confirmation"] = False
+
+            confirmed_signals.append(primary)
+
+        signals = confirmed_signals
+
+        # Sort by velocity score (capital efficiency), not raw edge
+        # Velocity = annualized edge / lockup time — faster resolution wins
+        signals.sort(key=lambda s: s.get("velocity_score", 0), reverse=True)
+        for s in signals[:5]:
+            res_str = f"{s['resolution_hours']:.1f}h" if s.get('resolution_hours') else "?"
+            src = s.get("source", "?")
+            conf = " [CONFIRMED]" if s.get("_confirmation") else ""
+            logger.info(
+                f"  SIGNAL: {s['question'][:50]} | edge={s['edge']:.3f} "
+                f"| res={res_str} | vel={s.get('velocity_score', 0):.0f} "
+                f"| dir={s['direction']} | src={src}{conf}"
+            )
+        logger.info(
+            f"Found {len(signals)} tradeable signals "
+            f"(LLM:{len([s for s in signals if 'llm' in s.get('source', '')])} "
+            f"wallet:{len(wallet_signals)} lmsr:{len(lmsr_signals)})"
+        )
+
+        # 3. EXECUTE TRADES
+        trades_placed = 0
+
+        for signal in signals:
+            market_id = signal["market_id"]
+            mdata = market_lookup.get(market_id)
+
+            if not mdata:
+                continue
+
+            # Position sizing
+            size_usd = kelly_size(
+                edge=signal["edge"],
+                market_price=signal["market_price"],
+                direction=signal["direction"],
+                bankroll=self.state.state["bankroll"],
+            )
+
+            if size_usd <= 0:
+                logger.info(f"  SKIP (size=0): {signal['question'][:50]}...")
+                continue
+
+            # Determine token and price
+            if signal["direction"] == "buy_yes":
+                token_id = mdata["token_ids"][0]  # YES token
+                price = signal["market_price"]
+                side = "BUY"
+            elif signal["direction"] == "buy_no":
+                token_id = mdata["token_ids"][1] if len(mdata["token_ids"]) > 1 else mdata["token_ids"][0]
+                price = 1.0 - signal["market_price"]  # NO token price
+                side = "BUY"
+            else:
+                continue
+
+            # Calculate shares
+            if price <= 0 or price >= 1:
+                continue
+            shares = size_usd / price
+
+            category = classify_market_category(signal.get("question", ""))
+            mode_tag = "PAPER" if self.paper_mode else "LIVE"
+
+            logger.info(
+                f"  [{mode_tag}] {signal['direction']} ${size_usd:.2f} "
+                f"@ {price:.3f} | edge={signal['edge']:.1%} | "
+                f"cat={category} | {signal['question'][:50]}..."
+            )
+
+            # Build trade record for database
+            trade_record = {
+                "market_id": market_id,
+                "question": signal["question"],
+                "direction": signal["direction"],
+                "entry_price": price,
+                "raw_prob": signal.get("estimated_prob"),
+                "calibrated_prob": signal.get("estimated_prob"),
+                "edge": signal["edge"],
+                "taker_fee": signal.get("taker_fee", 0.0),
+                "position_size_usd": size_usd,
+                "kelly_fraction": KELLY_FRACTION,
+                "category": category,
+                "confidence": signal["confidence"],
+                "reasoning": signal.get("reasoning", ""),
+                "token_id": token_id,
+            }
+
+            if self.paper_mode:
+                # ---- PAPER TRADING: simulate locally ----
+                paper_order_id = f"paper-{uuid.uuid4().hex[:8]}"
+                trade_record["order_id"] = paper_order_id
+
+                # Log to SQLite
+                trade_id = self.db.log_trade(trade_record)
+
+                # Multi-bankroll simulation
+                self.multi_sim.simulate_trade(signal, trade_id)
+
+                # Record in state tracker
+                self.state.record_trade(
+                    market_id=market_id,
+                    question=signal["question"],
+                    direction=signal["direction"],
+                    price=price,
+                    size_usd=size_usd,
+                    edge=signal["edge"],
+                    confidence=signal["confidence"],
+                    order_id=paper_order_id,
+                )
+
+                logger.info(f"  PAPER TRADE LOGGED: {paper_order_id} (db: {trade_id})")
+
+                try:
+                    src = signal.get('source', 'llm')
+                    conf_tag = " [CONFIRMED]" if signal.get('_confirmation') else ""
+                    await self.notifier.send_message(
+                        f"JJ PAPER TRADE{conf_tag}\n"
+                        f"{signal['direction'].upper()} ${size_usd:.2f}\n"
+                        f"{signal['question'][:60]}\n"
+                        f"Edge: {signal['edge']:.1%} | Price: {price:.3f}\n"
+                        f"Source: {src} | Cat: {category}\n"
+                        f"ID: {paper_order_id}"
+                    )
+                except Exception:
+                    pass
+
+                trades_placed += 1
+
+            else:
+                # ---- LIVE TRADING: post to CLOB ----
+                use_post_only = category in ("crypto", "sports")
+
+                try:
+                    order_args = OrderArgs(
+                        token_id=token_id,
+                        price=round(price, 2),
+                        size=round(shares, 2),
+                        side=BUY,
+                    )
+                    signed_order = self.clob.create_order(order_args)
+                    result = self.clob.post_order(
+                        signed_order, OrderType.GTC,
+                        post_only=use_post_only,
+                    )
+
+                    order_id = ""
+                    if isinstance(result, dict):
+                        order_id = result.get("orderID", result.get("id", ""))
+                        success = not result.get("error")
+                    else:
+                        success = bool(result)
+
+                    if success:
+                        logger.info(f"  ORDER PLACED: {order_id}")
+                        trade_record["order_id"] = order_id
+                        trade_id = self.db.log_trade(trade_record)
+                        self.multi_sim.simulate_trade(signal, trade_id)
+
+                        self.state.record_trade(
+                            market_id=market_id,
+                            question=signal["question"],
+                            direction=signal["direction"],
+                            price=price,
+                            size_usd=size_usd,
+                            edge=signal["edge"],
+                            confidence=signal["confidence"],
+                            order_id=order_id,
+                        )
+
+                        try:
+                            res_h = signal.get('resolution_hours')
+                            res_str = f"{res_h:.1f}h" if res_h else "?"
+                            vel = signal.get('velocity_score', 0)
+                            src = signal.get('source', 'llm')
+                            conf_tag = " [CONFIRMED]" if signal.get('_confirmation') else ""
+                            await self.notifier.send_message(
+                                f"JJ LIVE TRADE{conf_tag}\n"
+                                f"{signal['direction'].upper()} ${size_usd:.2f}\n"
+                                f"{signal['question'][:60]}\n"
+                                f"Edge: {signal['edge']:.1%} | Price: {price:.3f}\n"
+                                f"Resolves: {res_str} | Velocity: {vel:.0f}\n"
+                                f"Source: {src} | Cat: {category} | Fee: {signal['taker_fee']:.4f}\n"
+                                f"Order: {order_id[:16]}..."
+                            )
+                        except Exception:
+                            pass
+
+                        trades_placed += 1
+                    else:
+                        err_msg = result.get("error", str(result)) if isinstance(result, dict) else str(result)
+                        logger.warning(f"  ORDER FAILED: {err_msg}")
+
+                except Exception as e:
+                    logger.error(f"  ORDER ERROR: {e}")
+                    try:
+                        await self.notifier.send_error(str(e), context="place_order")
+                    except Exception:
+                        pass
+
+            # Small delay between orders
+            await asyncio.sleep(0.5)
+
+        # Update cycle count
+        self.state.state["cycles_completed"] = cycle_num
+        self.state.save()
+
+        elapsed = time.time() - cycle_start
+        summary = {
+            "status": "ok",
+            "cycle": cycle_num,
+            "scanned": len(markets),
+            "filtered_category": skipped_category,
+            "filtered_too_slow": skipped_too_slow,
+            "filtered_no_resolution": skipped_no_resolution,
+            "analyzed": len(markets_for_analysis) if markets_for_analysis else 0,
+            "actionable": len(actionable),
+            "signals": len(signals),
+            "trades_placed": trades_placed,
+            "open_positions": len(self.state.state["open_positions"]),
+            "bankroll": self.state.state["bankroll"],
+            "max_resolution_hours": MAX_RESOLUTION_HOURS,
+            "daily_pnl": self.state.state["daily_pnl"],
+            "elapsed_seconds": round(elapsed, 1),
+        }
+
+        # Log cycle to database
+        self.db.log_cycle(summary)
+
+        mode_tag = "PAPER" if self.paper_mode else "LIVE"
+        logger.info(
+            f"=== JJ [{mode_tag}] Cycle {cycle_num} complete in {elapsed:.1f}s | "
+            f"scanned={len(markets)} cat_skip={skipped_category} "
+            f"slow_skip={skipped_too_slow} no_res={skipped_no_resolution} "
+            f"actionable={len(actionable)} signals={len(signals)} "
+            f"trades={trades_placed} (max_res={MAX_RESOLUTION_HOURS}h) ==="
+        )
+
+        return summary
+
+    async def run_continuous(self):
+        """Run JJ continuously (daemon mode)."""
+        mode_tag = "PAPER" if self.paper_mode else "LIVE"
+        logger.info(f"JJ {mode_tag} — Starting continuous mode")
+
+        try:
+            if self.ensemble_mode:
+                sources = [f"LLM Ensemble ({len(self.analyzer.models)} models + RAG)"]
+            else:
+                sources = ["LLM (Claude-only)"]
+            if self.lmsr_engine:
+                sources.append("LMSR")
+            if self.wallet_flow_available:
+                sources.append("WalletFlow")
+            if self.arb_available:
+                sources.append("CrossPlatformArb")
+            await self.notifier.send_message(
+                f"JJ {mode_tag} TRADING ONLINE\n"
+                f"Bankroll: ${self.state.state['bankroll']:.2f}\n"
+                f"Signal sources: {' + '.join(sources)}\n"
+                f"Max/trade: ${MAX_POSITION_USD}\n"
+                f"Kelly: {KELLY_FRACTION}\n"
+                f"Scan every {SCAN_INTERVAL}s\n"
+                f"Daily loss limit: ${MAX_DAILY_LOSS_USD}"
+            )
+        except Exception:
+            pass
+
+        while True:
+            try:
+                summary = await self.run_cycle()
+
+                if summary.get("status") == "paused":
+                    # Daily loss limit — sleep until midnight UTC
+                    now = datetime.now(timezone.utc)
+                    tomorrow = (now + timedelta(days=1)).replace(
+                        hour=0, minute=5, second=0, microsecond=0
+                    )
+                    sleep_seconds = (tomorrow - now).total_seconds()
+                    logger.info(f"Paused — sleeping {sleep_seconds:.0f}s until tomorrow")
+                    await asyncio.sleep(sleep_seconds)
+                else:
+                    logger.info(f"Sleeping {SCAN_INTERVAL}s...")
+                    await asyncio.sleep(SCAN_INTERVAL)
+
+            except KeyboardInterrupt:
+                logger.info("JJ shutting down (KeyboardInterrupt)")
+                break
+            except Exception as e:
+                logger.error(f"Cycle error: {e}", exc_info=True)
+                try:
+                    await self.notifier.send_error(str(e), context="cycle_error")
+                except Exception:
+                    pass
+                # Back off on errors
+                await asyncio.sleep(60)
+
+    async def show_status(self):
+        """Print current JJ state with database stats."""
+        s = self.state.state
+        db_stats = self.db.get_stats()
+        multi = self.multi_sim.get_summary()
+
+        mode_str = "PAPER" if self.paper_mode else "LIVE"
+        print(f"\n{'='*50}")
+        print(f"JJ {mode_str} TRADING STATUS")
+        print(f"{'='*50}")
+        print(f"Bankroll:         ${s['bankroll']:.2f}")
+        print(f"Total deployed:   ${s['total_deployed']:.2f}")
+        print(f"Total P&L:        ${s['total_pnl']:.2f}")
+        print(f"Daily P&L:        ${s['daily_pnl']:.2f}")
+        print(f"Total trades:     {s['total_trades']}")
+        print(f"Trades today:     {s['trades_today']}")
+        print(f"Open positions:   {len(s['open_positions'])}")
+        print(f"Cycles completed: {s['cycles_completed']}")
+        print(f"Veterans fund:    ${s['veterans_allocation']:.2f}")
+        print(f"Started:          {s['started_at']}")
+
+        print(f"\nDatabase Stats:")
+        print(f"  Total trades (DB): {db_stats['total_trades']}")
+        print(f"  Resolved:          {db_stats['resolved']}")
+        print(f"  Unresolved:        {db_stats['unresolved']}")
+        print(f"  Wins:              {db_stats['wins']}")
+        print(f"  Losses:            {db_stats['losses']}")
+        print(f"  Win rate:          {db_stats['win_rate']:.1%}")
+        print(f"  Total P&L (DB):    ${db_stats['total_pnl']:.2f}")
+        if db_stats['brier_score'] is not None:
+            print(f"  Brier score:       {db_stats['brier_score']:.4f}")
+
+        if multi:
+            print(f"\nMulti-Bankroll Simulation:")
+            for level in sorted(multi.keys()):
+                data = multi[level]
+                print(f"  ${level:>7,}: bankroll=${data['bankroll']:,.2f} "
+                      f"pnl=${data['pnl']:,.2f} trades={data['trades']}")
+
+        if s["open_positions"]:
+            print(f"\nOpen Positions:")
+            for mid, pos in list(s["open_positions"].items())[:10]:
+                print(f"  {pos['direction']:8s} ${pos['size_usd']:6.2f} "
+                      f"@ {pos['entry_price']:.3f} | "
+                      f"edge={pos['edge']:.1%} | "
+                      f"{pos['question'][:50]}...")
+
+        if s["trade_log"]:
+            print(f"\nLast 5 trades:")
+            for t in s["trade_log"][-5:]:
+                print(f"  [{t['timestamp'][:19]}] {t['direction']:8s} "
+                      f"${t['size_usd']:6.2f} | {t['question'][:50]}...")
+
+        print(f"{'='*50}\n")
+
+
+# ---------------------------------------------------------------------------
+# Resolution Tracker — checks resolved markets and marks trades won/lost
+# ---------------------------------------------------------------------------
+def run_resolution_tracker():
+    """Check for resolved markets and update trade outcomes.
+
+    Run as: python jj_live.py --resolve
+    Or via cron every 15 minutes.
+    """
+    import requests as _req
+
+    db = TradeDatabase()
+    unresolved = db.get_unresolved_trades()
+
+    if not unresolved:
+        print("No unresolved trades to check.")
+        return
+
+    print(f"Checking {len(unresolved)} unresolved trades...")
+
+    # Batch fetch resolved markets from Gamma API
+    market_ids = list(set(t["market_id"] for t in unresolved))
+
+    resolved_count = 0
+    for market_id in market_ids:
+        try:
+            resp = _req.get(
+                f"https://gamma-api.polymarket.com/markets/{market_id}",
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                continue
+
+            mkt = resp.json()
+            is_closed = mkt.get("closed", False)
+            if not is_closed:
+                continue
+
+            # Get resolution: outcomePrices shows final prices
+            outcome_prices = mkt.get("outcomePrices", "")
+            if isinstance(outcome_prices, str) and outcome_prices:
+                try:
+                    prices = json.loads(outcome_prices)
+                except json.JSONDecodeError:
+                    continue
+            elif isinstance(outcome_prices, list):
+                prices = outcome_prices
+            else:
+                continue
+
+            if not prices:
+                continue
+
+            yes_resolved = float(prices[0])  # 1.0 = YES won, 0.0 = NO won
+
+            # Resolve all trades on this market
+            for trade in unresolved:
+                if trade["market_id"] != market_id:
+                    continue
+
+                direction = trade["direction"]
+                if direction == "buy_yes":
+                    won = yes_resolved >= 0.99
+                elif direction == "buy_no":
+                    won = yes_resolved <= 0.01
+                else:
+                    continue
+
+                pnl = db.resolve_trade(trade["id"], won, yes_resolved)
+                outcome = "WON" if won else "LOST"
+                print(f"  [{outcome}] {trade['question'][:60]} | P&L: ${pnl:.2f}")
+                resolved_count += 1
+
+        except Exception as e:
+            logger.debug(f"Resolution check failed for {market_id}: {e}")
+            continue
+
+        time.sleep(0.3)  # Rate limiting
+
+    # Sync resolved positions to jj_state.json so the main loop knows
+    # these slots are free.  This is critical — without it, the bot
+    # hits MAX_OPEN_POSITIONS and stops trading.
+    if resolved_count > 0:
+        try:
+            state = JJState()
+            synced = state.sync_resolved_positions(db)
+            print(f"Synced {synced} resolved positions from state file "
+                  f"(open: {len(state.state['open_positions'])} remaining)")
+        except Exception as e:
+            print(f"Warning: state sync failed: {e}")
+
+    stats = db.get_stats()
+    print(f"\nResolved {resolved_count} trades this run.")
+    print(f"Overall: {stats['wins']}W / {stats['losses']}L "
+          f"({stats['win_rate']:.1%}) | P&L: ${stats['total_pnl']:.2f}")
+    if stats['brier_score'] is not None:
+        print(f"Brier score: {stats['brier_score']:.4f}")
+
+    db.close()
+
+
+# ---------------------------------------------------------------------------
+# Daily Report Generator
+# ---------------------------------------------------------------------------
+async def generate_daily_report():
+    """Generate and send daily trading summary.
+
+    Run as: python jj_live.py --daily-report
+    """
+    db = TradeDatabase()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    c = db.conn.cursor()
+
+    # Trades placed today
+    trades_today = c.execute(
+        "SELECT COUNT(*) FROM trades WHERE timestamp LIKE ?",
+        (f"{today}%",)
+    ).fetchone()[0]
+
+    # Trades resolved today
+    resolved_today = c.execute(
+        "SELECT COUNT(*) FROM trades WHERE resolved_at LIKE ?",
+        (f"{today}%",)
+    ).fetchone()[0]
+
+    wins_today = c.execute(
+        "SELECT COUNT(*) FROM trades WHERE resolved_at LIKE ? AND outcome = 'won'",
+        (f"{today}%",)
+    ).fetchone()[0]
+
+    losses_today = c.execute(
+        "SELECT COUNT(*) FROM trades WHERE resolved_at LIKE ? AND outcome = 'lost'",
+        (f"{today}%",)
+    ).fetchone()[0]
+
+    daily_pnl = c.execute(
+        "SELECT COALESCE(SUM(pnl), 0) FROM trades WHERE resolved_at LIKE ?",
+        (f"{today}%",)
+    ).fetchone()[0]
+
+    # Cumulative stats
+    stats = db.get_stats()
+
+    # Best/worst trade today
+    best = c.execute(
+        "SELECT question, pnl FROM trades WHERE resolved_at LIKE ? AND pnl IS NOT NULL ORDER BY pnl DESC LIMIT 1",
+        (f"{today}%",)
+    ).fetchone()
+
+    worst = c.execute(
+        "SELECT question, pnl FROM trades WHERE resolved_at LIKE ? AND pnl IS NOT NULL ORDER BY pnl ASC LIMIT 1",
+        (f"{today}%",)
+    ).fetchone()
+
+    # Cycles today
+    cycles_today = c.execute(
+        "SELECT COUNT(*) FROM cycles WHERE timestamp LIKE ?",
+        (f"{today}%",)
+    ).fetchone()[0]
+
+    # Unresolved positions
+    unresolved = stats["unresolved"]
+
+    # Multi-bankroll state
+    multi_sim = MultiBankrollSimulator(db)
+    multi = multi_sim.get_summary()
+
+    # Build report
+    report_lines = [
+        f"JJ DAILY REPORT - {today}",
+        f"{'=' * 40}",
+        f"",
+        f"Cycles run: {cycles_today}",
+        f"Trades placed: {trades_today}",
+        f"Trades resolved: {resolved_today}",
+        f"  Wins: {wins_today} | Losses: {losses_today}",
+        f"  Win rate: {wins_today / resolved_today:.0%}" if resolved_today > 0 else "  Win rate: N/A",
+        f"",
+        f"Daily P&L: ${daily_pnl:+.2f}",
+        f"Cumulative P&L: ${stats['total_pnl']:+.2f}",
+        f"Open positions: {unresolved}",
+    ]
+
+    if stats['brier_score'] is not None:
+        report_lines.append(f"Brier score: {stats['brier_score']:.4f}")
+
+    if best:
+        report_lines.append(f"\nBest trade: ${best[1]:+.2f} | {best[0][:50]}")
+    if worst:
+        report_lines.append(f"Worst trade: ${worst[1]:+.2f} | {worst[0][:50]}")
+
+    report_lines.append(f"\nMulti-Bankroll Simulation:")
+    for level in sorted(multi.keys()):
+        data = multi[level]
+        report_lines.append(
+            f"  ${level:>7,}: bankroll=${data['bankroll']:,.2f} "
+            f"pnl=${data['pnl']:,.2f} trades={data['trades']}"
+        )
+
+    report_text = "\n".join(report_lines)
+    print(report_text)
+
+    # Save to markdown file
+    reports_dir = Path("data/reports")
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    report_file = reports_dir / f"{today}.md"
+    with open(report_file, "w") as f:
+        f.write(f"# {report_lines[0]}\n\n")
+        f.write("```\n")
+        f.write(report_text)
+        f.write("\n```\n")
+    print(f"\nReport saved to {report_file}")
+
+    # Send via Telegram
+    from dotenv import load_dotenv as _ld
+    _ld()
+    try:
+        from src.telegram import TelegramBot
+        bot = TelegramBot()
+        if bot.enabled:
+            bot.send(report_text, parse_mode="")
+            print("Report sent via Telegram")
+    except Exception as e:
+        print(f"Telegram send failed: {e}")
+
+    # Save to daily_reports table
+    c.execute("""
+        INSERT OR REPLACE INTO daily_reports
+            (date, trades_placed, trades_resolved, wins, losses,
+             daily_pnl, cumulative_pnl, brier_score, report_sent)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+    """, (today, trades_today, resolved_today, wins_today, losses_today,
+          daily_pnl, stats['total_pnl'], stats['brier_score']))
+    db.conn.commit()
+    db.close()
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+def main():
+    parser = argparse.ArgumentParser(description="JJ Live Trading System")
+    parser.add_argument("--continuous", action="store_true",
+                        help="Run continuously (daemon mode)")
+    parser.add_argument("--status", action="store_true",
+                        help="Show current trading state")
+    parser.add_argument("--resolve", action="store_true",
+                        help="Check resolved markets and update trade outcomes")
+    parser.add_argument("--daily-report", action="store_true",
+                        help="Generate and send daily report")
+    parser.add_argument("--sync", action="store_true",
+                        help="Sync resolved positions from DB to state file")
+    args = parser.parse_args()
+
+    if args.sync:
+        db = TradeDatabase()
+        state = JJState()
+        before = len(state.state["open_positions"])
+        synced = state.sync_resolved_positions(db)
+        after = len(state.state["open_positions"])
+        print(f"Synced: {synced} positions cleared ({before} → {after} open)")
+        stats = db.get_stats()
+        print(f"DB: {stats['total_trades']} trades, {stats['resolved']} resolved, "
+              f"{stats['unresolved']} unresolved")
+        db.close()
+    elif args.resolve:
+        run_resolution_tracker()
+    elif args.daily_report:
+        asyncio.run(generate_daily_report())
+    else:
+        jj = JJLive()
+
+        if args.status:
+            asyncio.run(jj.show_status())
+        elif args.continuous:
+            asyncio.run(jj.run_continuous())
+        else:
+            # Single cycle (test mode)
+            summary = asyncio.run(jj.run_cycle())
+            print(json.dumps(summary, indent=2))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nJJ terminated.")
+        sys.exit(0)

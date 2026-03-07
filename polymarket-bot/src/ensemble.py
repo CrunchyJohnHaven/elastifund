@@ -8,6 +8,12 @@ Estimators:
 - ClaudeEstimator: Anthropic Claude (fully implemented)
 - GPTEstimator: OpenAI GPT-4o via openai SDK
 - GrokEstimator: xAI Grok-3 via OpenAI-compatible API
+- GroqEstimator: Groq free-tier models (Llama 3.3 70B, Llama 3.1 8B)
+
+Aggregation:
+- Trimmed mean (drop highest + lowest, average rest) — more robust than mean
+- Bridgewater blending: 67% market price / 33% AI forecast
+- Consensus gating: require 75%+ models to agree on direction
 
 Usage:
     estimators = build_available_estimators()
@@ -28,8 +34,8 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 # CalibrationV2 Platt scaling parameters (same as claude_analyzer.py)
-PLATT_A = 0.5914
-PLATT_B = -0.3977
+PLATT_A = float(os.environ.get("PLATT_A", "0.55"))
+PLATT_B = float(os.environ.get("PLATT_B", "-0.40"))
 
 # Anti-anchoring prompt — identical structure across all models.
 # Market price NOT shown. Base-rate-first. Explicit debiasing.
@@ -52,6 +58,10 @@ REASONING: <1-2 sentences>"""
 def platt_calibrate(raw_prob: float) -> float:
     """Apply Platt scaling calibration to a raw probability estimate."""
     raw_prob = max(0.001, min(0.999, raw_prob))
+    if abs(raw_prob - 0.5) < 1e-9:
+        return 0.5
+    if raw_prob < 0.5:
+        return 1.0 - platt_calibrate(1.0 - raw_prob)
     logit_input = math.log(raw_prob / (1 - raw_prob))
     logit_output = PLATT_A * logit_input + PLATT_B
     logit_output = max(-30, min(30, logit_output))
@@ -126,7 +136,7 @@ class ClaudeEstimator(BaseEstimator):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "claude-haiku-4-5-20251001",
+        model: str = "claude-sonnet-4-6",
     ):
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY", "")
         self.model = model
@@ -250,42 +260,153 @@ class GrokEstimator(BaseEstimator):
 
 
 # ---------------------------------------------------------------------------
+# Groq Estimator (free tier — Llama + Qwen models via OpenAI-compatible API)
+# ---------------------------------------------------------------------------
+
+class GroqEstimator(BaseEstimator):
+    """Probability estimator using Groq free tier.
+
+    Groq exposes an OpenAI-compatible API at https://api.groq.com/openai/v1.
+    Free tier: Llama 3.3 70B = 1,000 req/day, Llama 3.1 8B = 14,400 req/day.
+    Requires: GROQ_API_KEY env var (free signup at console.groq.com).
+    """
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: str = "llama-3.3-70b-versatile",
+    ):
+        self.api_key = api_key or os.getenv("GROQ_API_KEY", "")
+        self.model = model
+        self._client = None
+
+    def _get_client(self):
+        if self._client is None:
+            from openai import OpenAI
+            self._client = OpenAI(
+                api_key=self.api_key,
+                base_url="https://api.groq.com/openai/v1",
+            )
+        return self._client
+
+    async def estimate_probability(
+        self, market_question: str, category: str
+    ) -> EstimatorResult:
+        prompt = ENSEMBLE_PROMPT.format(question=market_question)
+        try:
+            client = self._get_client()
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: client.chat.completions.create(
+                    model=self.model,
+                    max_tokens=300,
+                    temperature=0.3,  # Low temp for calibrated estimates
+                    messages=[{"role": "user", "content": prompt}],
+                ),
+            )
+            text = response.choices[0].message.content.strip()
+            return _parse_response(text, f"groq:{self.model}")
+        except Exception as e:
+            logger.error("groq_estimator_error", model=self.model, error=str(e))
+            return EstimatorResult(0.5, "low", f"groq:{self.model}", f"API error: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Aggregation Utilities
+# ---------------------------------------------------------------------------
+
+def trimmed_mean(values: list[float]) -> float:
+    """Drop highest and lowest, average the rest.
+
+    With 4 models: drops 1 highest + 1 lowest, averages remaining 2.
+    With 2-3 models: standard mean (no trimming possible).
+    With 5+ models: drops top/bottom 20%.
+    """
+    if not values:
+        return 0.5
+    n = len(values)
+    if n <= 3:
+        return statistics.mean(values)
+    sorted_vals = sorted(values)
+    trim = max(1, n // 5)  # 20% trim
+    trimmed = sorted_vals[trim:-trim] if trim > 0 else sorted_vals
+    return statistics.mean(trimmed)
+
+
+def consensus_score(probabilities: list[float], threshold: float = 0.5) -> float:
+    """What fraction of models agree on direction (YES vs NO)?
+
+    Returns 0.0-1.0. 1.0 = all models agree. 0.5 = split.
+    """
+    if not probabilities:
+        return 0.0
+    above = sum(1 for p in probabilities if p > threshold)
+    return max(above, len(probabilities) - above) / len(probabilities)
+
+
+def bridgewater_blend(ai_forecast: float, market_price: float,
+                      ai_weight: float = 0.33) -> float:
+    """Blend AI forecast with market price.
+
+    Bridgewater AIA finding: 67% market / 33% AI is optimal.
+    Even when AI trails market accuracy, it adds independent information.
+    """
+    return (1 - ai_weight) * market_price + ai_weight * ai_forecast
+
+
+# ---------------------------------------------------------------------------
 # Ensemble Aggregator
 # ---------------------------------------------------------------------------
 
 class EnsembleAggregator:
     """Aggregates probability estimates from multiple models.
 
-    Rules:
+    Upgraded pipeline (March 7, 2026):
     - Runs all estimators in parallel (asyncio.gather)
     - Falls back gracefully if any API fails (uses whichever succeed)
-    - Mean probability across all successful estimators
-    - Signal only when stdev < max_stdev (models agree)
-    - Applies CalibrationV2 Platt scaling to the ensemble average
+    - Trimmed mean aggregation (drops highest + lowest outliers)
+    - Consensus gating: require 75%+ models to agree on direction
+    - Platt scaling calibration on ensemble average
+    - Bridgewater blending: 67% market price / 33% AI forecast
     """
 
     def __init__(
         self,
         estimators: list[BaseEstimator],
         max_stdev: float = 0.15,
+        min_consensus: float = 0.75,
         apply_calibration: bool = True,
+        bridgewater_ai_weight: float = 0.33,
     ):
         if not estimators:
             raise ValueError("At least one estimator required")
         self.estimators = estimators
         self.max_stdev = max_stdev
+        self.min_consensus = min_consensus
         self.apply_calibration = apply_calibration
+        self.bridgewater_ai_weight = bridgewater_ai_weight
 
     async def estimate(
-        self, market_question: str, category: str
+        self, market_question: str, category: str,
+        market_price: Optional[float] = None,
     ) -> dict:
         """Run all estimators in parallel and aggregate results.
 
+        Args:
+            market_question: The market question (no price shown to models).
+            category: Market category for fee/priority routing.
+            market_price: Current YES price. If provided, Bridgewater
+                          blending is applied.
+
         Returns:
             {
-                "mean_probability": float (raw ensemble mean),
+                "mean_probability": float (raw trimmed mean),
                 "calibrated_probability": float (after Platt scaling),
+                "blended_probability": float (after Bridgewater blend, if market_price given),
                 "stdev": float,
+                "spread": float (max - min model estimate),
+                "consensus": float (fraction of models agreeing on direction),
                 "models_agree": bool,
                 "n_models": int,
                 "individual_results": list[dict],
@@ -306,7 +427,10 @@ class EnsembleAggregator:
             return {
                 "mean_probability": 0.5,
                 "calibrated_probability": 0.5,
+                "blended_probability": 0.5,
                 "stdev": 1.0,
+                "spread": 1.0,
+                "consensus": 0.0,
                 "models_agree": False,
                 "n_models": 0,
                 "individual_results": [],
@@ -314,34 +438,51 @@ class EnsembleAggregator:
             }
 
         probs = [r.probability for r in results]
-        mean_prob = statistics.mean(probs)
+
+        # Trimmed mean (robust to outliers)
+        mean_prob = trimmed_mean(probs)
 
         if len(probs) >= 2:
             stdev = statistics.stdev(probs)
         else:
             stdev = 0.0
 
-        models_agree = stdev < self.max_stdev
+        spread = max(probs) - min(probs)
+        consensus = consensus_score(probs)
+        models_agree = stdev < self.max_stdev and consensus >= self.min_consensus
         signal_valid = models_agree and len(results) > 0
 
         # Apply Platt calibration to ensemble average
         calibrated = platt_calibrate(mean_prob) if self.apply_calibration else mean_prob
+
+        # Apply Bridgewater blending if market price available
+        if market_price is not None and 0 < market_price < 1:
+            blended = bridgewater_blend(calibrated, market_price,
+                                         self.bridgewater_ai_weight)
+        else:
+            blended = calibrated
 
         logger.info(
             "ensemble_estimate",
             n_models=len(results),
             models=[r.model for r in results],
             probs=[round(p, 3) for p in probs],
-            mean=round(mean_prob, 4),
+            trimmed_mean=round(mean_prob, 4),
             calibrated=round(calibrated, 4),
+            blended=round(blended, 4),
             stdev=round(stdev, 4),
+            spread=round(spread, 4),
+            consensus=round(consensus, 3),
             agree=models_agree,
         )
 
         return {
             "mean_probability": round(mean_prob, 4),
             "calibrated_probability": round(calibrated, 4),
+            "blended_probability": round(blended, 4),
             "stdev": round(stdev, 4),
+            "spread": round(spread, 4),
+            "consensus": round(consensus, 3),
             "models_agree": models_agree,
             "n_models": len(results),
             "individual_results": [r.to_dict() for r in results],
@@ -371,27 +512,189 @@ class EnsembleAggregator:
 def build_available_estimators() -> list[BaseEstimator]:
     """Build list of estimators based on which API keys are available.
 
-    Always includes Claude (required). GPT and Grok are added if their
-    respective API keys are set. Missing keys are silently skipped.
+    Priority order:
+    1. Groq Llama 3.3 70B (free, primary workhorse)
+    2. Groq Llama 3.1 8B (free, fast, high daily limit)
+    3. Claude Haiku (Anthropic reasoning style)
+    4. GPT-4o Mini (OpenAI perspective)
+    5. Grok-3 (xAI, if key available)
+
+    Missing keys are silently skipped. At minimum, Claude is expected.
     """
     estimators: list[BaseEstimator] = []
 
+    # Groq free tier (highest priority — $0 cost)
+    groq_key = os.getenv("GROQ_API_KEY", "")
+    if groq_key:
+        estimators.append(GroqEstimator(api_key=groq_key, model="llama-3.3-70b-versatile"))
+        logger.info("ensemble_estimator_added", model="groq:llama-3.3-70b")
+        estimators.append(GroqEstimator(api_key=groq_key, model="llama-3.1-8b-instant"))
+        logger.info("ensemble_estimator_added", model="groq:llama-3.1-8b")
+
+    # Anthropic Claude
     anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
     if anthropic_key:
         estimators.append(ClaudeEstimator(api_key=anthropic_key))
         logger.info("ensemble_estimator_added", model="claude")
 
+    # OpenAI GPT-4o Mini (cheap diversity)
     openai_key = os.getenv("OPENAI_API_KEY", "")
     if openai_key:
-        estimators.append(GPTEstimator(api_key=openai_key))
-        logger.info("ensemble_estimator_added", model="gpt-4o")
+        estimators.append(GPTEstimator(api_key=openai_key, model="gpt-4o-mini"))
+        logger.info("ensemble_estimator_added", model="gpt-4o-mini")
 
+    # xAI Grok (if available)
     xai_key = os.getenv("XAI_API_KEY", "")
     if xai_key:
         estimators.append(GrokEstimator(api_key=xai_key))
         logger.info("ensemble_estimator_added", model="grok-3")
 
     if not estimators:
-        logger.warning("no_estimators_available", hint="Set ANTHROPIC_API_KEY")
+        logger.warning("no_estimators_available",
+                        hint="Set GROQ_API_KEY (free) or ANTHROPIC_API_KEY")
+
+    logger.info("ensemble_built", n_estimators=len(estimators),
+                models=[type(e).__name__ for e in estimators])
 
     return estimators
+
+
+class LLMEnsemble:
+    """Multi-model probability estimator with trimmed-mean aggregation."""
+
+    models = [
+        ("claude-sonnet-4-6", "anthropic", 3.00, 15.00),
+        ("llama-3.3-70b-versatile", "groq", 0.59, 0.79),
+        ("qwen-qwq-32b", "groq", 0.29, 0.59),
+        ("gpt-4o-mini", "openai", 0.15, 0.60),
+    ]
+
+    def __init__(self, timeout_seconds: float = 30.0):
+        self.timeout_seconds = timeout_seconds
+        self.total_cost_usd = 0.0
+
+    @staticmethod
+    def _estimate_cost_usd(prompt: str, completion: str, in_per_m: float, out_per_m: float) -> float:
+        # Fast token estimate for budget tracking.
+        in_tokens = max(1, len(prompt) // 4)
+        out_tokens = max(1, len(completion) // 4)
+        return (in_tokens / 1_000_000.0) * in_per_m + (out_tokens / 1_000_000.0) * out_per_m
+
+    @staticmethod
+    def _build_prompt(question: str, context: str) -> str:
+        return (
+            "Estimate the probability this event resolves YES.\n\n"
+            f"Question: {question}\n"
+            f"Context: {context or 'None provided'}\n\n"
+            "1) First give the historical/base rate for similar events.\n"
+            "2) List factors for and against YES.\n"
+            "3) Give one final probability between 0.01 and 0.99.\n"
+            "4) Do not use or assume a market price.\n\n"
+            "Format:\n"
+            "PROBABILITY: <0.01 to 0.99>\n"
+            "CONFIDENCE: <low|medium|high>\n"
+            "REASONING: <brief>"
+        )
+
+    def _build_estimator_specs(self) -> list[tuple[str, BaseEstimator, float, float]]:
+        specs: list[tuple[str, BaseEstimator, float, float]] = []
+        keys = {
+            "anthropic": os.getenv("ANTHROPIC_API_KEY", ""),
+            "groq": os.getenv("GROQ_API_KEY", ""),
+            "openai": os.getenv("OPENAI_API_KEY", ""),
+        }
+        groq_free_available = os.getenv("GROQ_FREE_TIER_AVAILABLE", "true").lower() in ("1", "true", "yes")
+
+        for model_name, provider, in_price, out_price in self.models:
+            if provider == "anthropic" and keys["anthropic"]:
+                specs.append((model_name, ClaudeEstimator(model= model_name, api_key=keys["anthropic"]), in_price, out_price))
+            elif provider == "openai" and keys["openai"]:
+                specs.append((model_name, GPTEstimator(model=model_name, api_key=keys["openai"]), in_price, out_price))
+            elif provider == "groq" and keys["groq"] and groq_free_available:
+                specs.append((model_name, GroqEstimator(model=model_name, api_key=keys["groq"]), 0.0, 0.0))
+            elif provider == "groq" and keys["groq"]:
+                specs.append((model_name, GroqEstimator(model=model_name, api_key=keys["groq"]), in_price, out_price))
+
+        return specs
+
+    async def estimate_probability(self, question: str, context: str, category: str) -> dict:
+        prompt = self._build_prompt(question, context)
+        specs = self._build_estimator_specs()
+        if not specs:
+            raise RuntimeError("No ensemble model credentials configured")
+
+        async def _one(model_name: str, est: BaseEstimator, in_price: float, out_price: float):
+            try:
+                result = await asyncio.wait_for(
+                    est.estimate_probability(question, category),
+                    timeout=self.timeout_seconds,
+                )
+                calibrated = platt_calibrate(result.probability)
+                cost = self._estimate_cost_usd(prompt, result.reasoning, in_price, out_price)
+                return {
+                    "model": model_name,
+                    "raw_prob": result.probability,
+                    "calibrated_prob": calibrated,
+                    "reasoning": result.reasoning,
+                    "cost": cost,
+                }
+            except asyncio.TimeoutError:
+                logger.warning("ensemble_model_timeout", model=model_name)
+                return None
+            except Exception as exc:
+                logger.warning("ensemble_model_failed", model=model_name, error=str(exc))
+                return None
+
+        results = await asyncio.gather(*[_one(name, est, in_price, out_price) for name, est, in_price, out_price in specs])
+        valid = [r for r in results if r is not None]
+        if len(valid) < 3:
+            raise RuntimeError(f"Need at least 3 model responses, got {len(valid)}")
+
+        calibrated_probs = [r["calibrated_prob"] for r in valid]
+        ensemble_prob = trimmed_mean(calibrated_probs)
+        agreement = consensus_score(calibrated_probs)
+        cost_usd = sum(r["cost"] for r in valid)
+        self.total_cost_usd += cost_usd
+
+        return {
+            "ensemble_prob": round(ensemble_prob, 4),
+            "model_probs": {r["model"]: round(r["raw_prob"], 4) for r in valid},
+            "calibrated_probs": {r["model"]: round(r["calibrated_prob"], 4) for r in valid},
+            "agreement_score": round(agreement, 4),
+            "cost_usd": round(cost_usd, 6),
+            "reasoning": {r["model"]: r["reasoning"] for r in valid},
+            "needs_human_review": agreement < 0.5,
+            "total_cost_usd": round(self.total_cost_usd, 6),
+        }
+
+
+async def _run_standalone_test() -> int:
+    ensemble = LLMEnsemble()
+    question = "Will US CPI year-over-year be below 3.0% in the next release?"
+    context = "Focus on macro trend, labor market cooling, and energy base effects."
+    try:
+        result = await ensemble.estimate_probability(question, context, category="economic")
+    except Exception as exc:
+        print(f"Ensemble test failed: {exc}")
+        return 1
+
+    print("LLM Ensemble Test")
+    print(f"Question: {question}")
+    print(f"Ensemble probability: {result['ensemble_prob']}")
+    print(f"Agreement: {result['agreement_score']}")
+    print(f"Estimate cost (USD): {result['cost_usd']}")
+    print(f"Needs human review: {result['needs_human_review']}")
+    print("Model probabilities:")
+    for model, prob in result["calibrated_probs"].items():
+        print(f"  - {model}: {prob}")
+    return 0
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="LLM ensemble utility")
+    parser.add_argument("--test", action="store_true", help="Run one ensemble estimate")
+    args = parser.parse_args()
+
+    if args.test:
+        raise SystemExit(asyncio.run(_run_standalone_test()))

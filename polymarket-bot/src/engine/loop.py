@@ -359,6 +359,7 @@ class EngineLoop:
             bankroll=bankroll,
             total_exposure_usd=total_exposure,
             daily_pnl=daily_pnl,
+            open_positions_count=len(all_positions),
         )
         if not safe:
             logger.warning("safety_rail_blocked", market_id=market_id, reason=reason)

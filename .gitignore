@@ -1,10 +1,40 @@
 # Secrets & credentials
 .env
+.env.*
+!.env.example
+!.env.live.template
 *.env
 polymarket-bot.env
 Polymarket_Bot_Credentials.docx
 *.pem
 *.key
+jj_state.json
+
+# Handoff docs containing live credentials — never commit
+CLAUDE_CODE_HANDOFF.md
+JJ_CONTEXT.md
+JJ_DEPLOY.md
+MIGRATION_BRIEFING.md
+COMMAND_NODE_*.md
+JJ_RESOURCE_INVENTORY.md
+
+# Investor documents — private
+*Investor*.docx
+*investor*.docx
+*Subscription*.docx
+*Private_Placement*.docx
+*Fund_Pitch*.docx
+*Fund_Overview*.pdf
+*Credentials*.docx
+
+# Spec docs with implementation details — keep private until ready
+LLM_ENSEMBLE_SPEC.md
+SMART_WALLET_SPEC.md
+SystemDesignResearch_*.md
+STRATEGY_REPORT.md
+REPLIT_DASHBOARD*.md
+REPLIT_BUILD*.md
+DISPATCH_LIBRARY.md
 
 # Databases
 *.db
@@ -54,8 +84,19 @@ docker-compose.override.yml
 # Claude Code internal
 .claude/
 
+# Archive (may contain old .env copies)
+archive/
+
 # Large binary outputs
 simulator/output/*.json
 simulator/output/*.csv
 backtest/results/*.json
 backtest/charts/*.png
+polymarket-bot/backtest_output/
+research/dispatches/
+research/prompts/
+
+# Logs and runtime data
+logs/
+reports/
+data/

@@ -115,6 +115,10 @@ class Settings(BaseSettings):
         default=0.80,
         description="Maximum exposure as fraction of bankroll (keep 20% cash reserve)",
     )
+    max_open_positions: int = Field(
+        default=30,
+        description="Maximum number of concurrent open positions",
+    )
     cooldown_consecutive_losses: int = Field(
         default=3,
         description="Number of consecutive losses before cooldown triggers",
@@ -247,7 +251,25 @@ class Settings(BaseSettings):
 
     # Claude model
     claude_model: str = Field(
-        default="claude-haiku-4-5-20241022", description="Claude model for analysis"
+        default="claude-sonnet-4-6", description="Claude model for analysis"
+    )
+    ensemble_enabled: bool = Field(
+        default=False,
+        description="Enable multi-model ensemble for probability estimation",
+    )
+
+    # Scanner controls
+    scanner_min_volume: float = Field(
+        default=500.0,
+        description="Minimum market volume (USD) for scanner opportunity filtering",
+    )
+    scanner_min_liquidity: float = Field(
+        default=50.0,
+        description="Minimum market liquidity (USD) for scanner opportunity filtering",
+    )
+    scanner_max_pages: int = Field(
+        default=25,
+        description="Maximum Gamma pages to fetch per scan (100 markets/page)",
     )
 
     # News sentiment enrichment (NewsData.io)

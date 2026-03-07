@@ -27,8 +27,8 @@ logger = structlog.get_logger(__name__)
 # Fitted on 70% train set, validated on 30% test set (out-of-sample)
 # Test-set Brier: 0.286 (raw) → 0.245 (Platt) — improvement of +0.041
 # A and B map: calibrated = sigmoid(A * logit(raw) + B)
-PLATT_A = 0.5914
-PLATT_B = -0.3977
+PLATT_A = float(os.environ.get("PLATT_A", "0.55"))
+PLATT_B = float(os.environ.get("PLATT_B", "-0.40"))
 
 # Market category keywords for routing
 CATEGORY_KEYWORDS = {
@@ -107,6 +107,14 @@ def calibrate_probability(raw_prob: float) -> float:
     90% → 71%, 80% → 60%, 70% → 53%.
     """
     raw_prob = max(0.001, min(0.999, raw_prob))
+    if abs(raw_prob - 0.5) < 1e-9:
+        return 0.5
+
+    # Preserve symmetry around 50% so underconfidence/overconfidence are treated
+    # consistently on YES and NO sides.
+    if raw_prob < 0.5:
+        return 1.0 - calibrate_probability(1.0 - raw_prob)
+
     logit_input = math.log(raw_prob / (1 - raw_prob))
     logit_output = PLATT_A * logit_input + PLATT_B
     logit_output = max(-30, min(30, logit_output))
@@ -130,12 +138,13 @@ class ClaudeAnalyzer:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "claude-haiku-4-5-20241022",
+        model: str = "claude-sonnet-4-6",
         yes_threshold: float = 0.15,
         no_threshold: float = 0.05,
         min_category_priority: int = 1,
         use_calibration: bool = True,
         account_for_fees: bool = True,
+        use_ensemble: bool = False,
     ):
         """Initialize the Claude analyzer.
 
@@ -147,6 +156,7 @@ class ClaudeAnalyzer:
             min_category_priority: Minimum category priority to analyze (0=skip, 1=cautious, 2+=analyze)
             use_calibration: Whether to apply post-hoc calibration
             account_for_fees: Whether to subtract taker fees from edge
+            use_ensemble: Whether to use multi-model ensemble when available
         """
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY", "")
         self.model = model
@@ -155,7 +165,9 @@ class ClaudeAnalyzer:
         self.min_category_priority = min_category_priority
         self.use_calibration = use_calibration
         self.account_for_fees = account_for_fees
+        self.use_ensemble = use_ensemble
         self._client = None
+        self._ensemble = None
 
         if self.api_key:
             try:
@@ -168,6 +180,15 @@ class ClaudeAnalyzer:
                 logger.error("anthropic_package_not_installed")
         else:
             logger.warning("claude_analyzer_no_api_key")
+
+        if self.use_ensemble:
+            try:
+                from src.ensemble import LLMEnsemble
+                self._ensemble = LLMEnsemble()
+                logger.info("claude_analyzer_ensemble_enabled")
+            except Exception as e:
+                logger.warning("claude_analyzer_ensemble_init_failed", error=str(e))
+                self._ensemble = None
 
     @property
     def is_available(self) -> bool:
@@ -229,12 +250,12 @@ class ClaudeAnalyzer:
                 "skipped": True,
             }
 
-        if not self._client:
+        if not self._client and not self._ensemble:
             return {
                 "probability": current_price,
                 "calibrated_probability": current_price,
                 "confidence": 0.0,
-                "reasoning": "Claude API not available",
+                "reasoning": "Analyzer not available (Claude and ensemble unavailable)",
                 "mispriced": False,
                 "direction": "hold",
                 "edge": 0.0,
@@ -249,13 +270,26 @@ class ClaudeAnalyzer:
         prompt = self._build_prompt(question, context, news_section=news_section)
 
         try:
-            message = self._client.messages.create(
-                model=self.model,
-                max_tokens=300,
-                messages=[{"role": "user", "content": prompt}],
-            )
+            response_text: Optional[str] = None
 
-            response_text = message.content[0].text.strip()
+            # Ensemble path (optional): falls back to Claude if unavailable/failed.
+            if self._ensemble:
+                response_text = await self._analyze_with_ensemble(
+                    question=question,
+                    context=context,
+                    category=category,
+                )
+
+            if response_text is None:
+                if not self._client:
+                    raise RuntimeError("Claude API not available and ensemble failed")
+                message = self._client.messages.create(
+                    model=self.model,
+                    max_tokens=300,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                response_text = message.content[0].text.strip()
+
             result = self._parse_response(response_text, current_price, category)
 
             logger.info(
@@ -289,6 +323,49 @@ class ClaudeAnalyzer:
                 "taker_fee": 0.0,
                 "skipped": False,
             }
+
+    async def _analyze_with_ensemble(
+        self, question: str, context: str, category: str
+    ) -> Optional[str]:
+        """Run ensemble estimate and return parser-compatible response text."""
+        if not self._ensemble:
+            return None
+
+        try:
+            ensemble_result = await self._ensemble.estimate_probability(
+                question=question,
+                context=context,
+                category=category,
+            )
+            probability = float(ensemble_result.get("ensemble_prob", 0.5))
+            agreement = float(ensemble_result.get("agreement_score", 0.0))
+            confidence = "high" if agreement >= 0.75 else "medium" if agreement >= 0.55 else "low"
+
+            reasons = ensemble_result.get("reasoning", {})
+            reasoning = ""
+            if isinstance(reasons, dict) and reasons:
+                # Keep reasoning short and deterministic.
+                first_key = sorted(reasons.keys())[0]
+                reasoning = str(reasons.get(first_key, "")).strip()
+
+            if not reasoning:
+                reasoning = "Ensemble estimate generated from available models."
+
+            logger.info(
+                "ensemble_analysis_used",
+                agreement=agreement,
+                probability=probability,
+                models=len(ensemble_result.get("model_probs", {})),
+            )
+
+            return (
+                f"PROBABILITY: {probability:.4f}\n"
+                f"CONFIDENCE: {confidence}\n"
+                f"REASONING: {reasoning}"
+            )
+        except Exception as e:
+            logger.warning("ensemble_analysis_failed_fallback_to_claude", error=str(e))
+            return None
 
     async def batch_analyze(
         self,
@@ -447,12 +524,20 @@ REASONING: <1-2 sentences>"""
         Returns:
             Estimated monthly cost in USD
         """
-        # Claude Haiku: $1/MTok input, $5/MTok output
+        # Approximate model rates ($/MTok input/output).
+        # Defaults to Haiku pricing for unknown model names.
+        model = self.model.lower()
+        in_rate = 1.0
+        out_rate = 5.0
+        if "sonnet" in model:
+            in_rate = 3.0
+            out_rate = 15.0
+
         avg_input_tokens = 500
         avg_output_tokens = 100
         calls_per_month = analyses_per_day * 30
 
-        input_cost = (avg_input_tokens * calls_per_month / 1_000_000) * 1.0
-        output_cost = (avg_output_tokens * calls_per_month / 1_000_000) * 5.0
+        input_cost = (avg_input_tokens * calls_per_month / 1_000_000) * in_rate
+        output_cost = (avg_output_tokens * calls_per_month / 1_000_000) * out_rate
 
         return input_cost + output_cost
