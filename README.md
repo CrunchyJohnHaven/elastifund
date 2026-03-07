@@ -16,7 +16,7 @@ This is also the most comprehensive open-source resource on agentic trading syst
 
 | | |
 |---|---|
-| **Capital deployed** | $247 Polymarket (live) + $100 Kalshi (connected) |
+| **Capital deployed** | Live on Polymarket (USDC) + Kalshi (USD) |
 | **Strategies tested** | 20 (6 deployed, 3 building, 11 rejected) |
 | **Tests passing** | 345 |
 | **Signal sources** | 4 (LLM Ensemble, Smart Wallet Flow, LMSR Bayesian, Cross-Platform Arb) |
@@ -84,6 +84,7 @@ These failures are not embarrassments — they are the most valuable content in 
 ```
 bot/
 ├── jj_live.py              Autonomous trading loop + confirmation layer
+├── btc_5min_maker.py        5-minute BTC T-10s maker execution runner
 ├── llm_ensemble.py          Multi-model probability estimation + agentic RAG
 ├── wallet_flow_detector.py  Smart wallet consensus signals
 ├── lmsr_engine.py           Bayesian pricing + market inefficiency detection
@@ -149,7 +150,7 @@ You contribute. You can run your own instance. 20% of your trading profits go to
 
 ## Risks (We're Honest)
 
-- **Competition:** Jump Trading, Susquehanna, Jane Street have dedicated prediction market teams. We're one person with $350.
+- **Competition:** Jump Trading, Susquehanna, Jane Street have dedicated prediction market teams. We're a lean operation competing on methodology, not capital.
 - **Efficiency:** Only 7.6% of Polymarket wallets are profitable. The base rate is brutal.
 - **Regulatory:** CFTC oversight of prediction markets is evolving.
 - **Live vs backtest:** Backtests look great. Live results are unproven.

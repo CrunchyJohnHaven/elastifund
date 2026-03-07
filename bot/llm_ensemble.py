@@ -51,13 +51,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
+
 logger = logging.getLogger("JJ.ensemble")
 
 # ---------------------------------------------------------------------------
 # Calibration (same Platt params as jj_live.py / claude_analyzer.py)
 # ---------------------------------------------------------------------------
-PLATT_A = float(os.environ.get("PLATT_A", "0.55"))
-PLATT_B = float(os.environ.get("PLATT_B", "-0.40"))
+PLATT_A = float(os.environ.get("PLATT_A", "0.5914"))
+PLATT_B = float(os.environ.get("PLATT_B", "-0.3977"))
+DISAGREEMENT_LOW_STD = float(os.environ.get("JJ_DISAGREEMENT_LOW_STD", "0.05"))
+DISAGREEMENT_HIGH_STD = float(os.environ.get("JJ_DISAGREEMENT_HIGH_STD", "0.15"))
+DISAGREEMENT_MIN_KELLY = float(os.environ.get("JJ_DISAGREEMENT_MIN_KELLY", f"{1.0 / 32.0:.5f}"))
+DISAGREEMENT_MAX_KELLY = float(os.environ.get("JJ_DISAGREEMENT_MAX_KELLY", "0.25"))
 
 
 def calibrate_probability(raw_prob: float) -> float:
@@ -105,6 +111,40 @@ def build_prompt(question: str, search_context: str = "") -> str:
     else:
         context_section = ""
     return BASE_PROMPT.format(question=question, context_section=context_section)
+
+
+COUNTER_NARRATIVE_PROMPT = """You previously estimated this event's YES probability at {initial_prob:.2f}.
+
+Question: {question}
+
+{context_section}
+
+Argue the strongest possible case for the OPPOSITE side of your initial view.
+Then provide a revised final YES probability after considering that counter-case.
+
+Respond in this exact format:
+PROBABILITY: <number between 0.01 and 0.99>
+CONFIDENCE: <low, medium, or high>
+REASONING: <1-2 sentences>"""
+
+
+def build_counter_narrative_prompt(
+    question: str,
+    initial_prob: float,
+    search_context: str = "",
+) -> str:
+    """Build a prompt that forces an adversarial re-think of the base estimate."""
+    context_section = ""
+    if search_context:
+        context_section = (
+            f"RECENT CONTEXT (from web search):\n"
+            f"{search_context}\n"
+        )
+    return COUNTER_NARRATIVE_PROMPT.format(
+        question=question,
+        initial_prob=max(0.01, min(0.99, initial_prob)),
+        context_section=context_section,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -434,9 +474,16 @@ class EnsembleResult:
     # Ensemble metadata
     n_models: int = 0            # How many models succeeded
     model_spread: float = 0.0    # Max - min estimate (disagreement)
+    model_stddev: float = 0.0    # Stddev of model estimates (disagreement sizing)
     consensus: float = 0.0       # Fraction agreeing on YES/NO direction
-    models_agree: bool = False   # consensus >= 0.75 AND spread < 0.20
+    agreement: float = 0.0       # 0-1 score using spread + consensus
+    kelly_multiplier: float = 1.0  # Relative to quarter-Kelly (1.0 = full quarter-Kelly)
+    disagreement_kelly_fraction: float = DISAGREEMENT_MAX_KELLY
+    models_agree: bool = False   # consensus >= 0.75 AND stddev < high-disagreement threshold
     search_context_used: bool = False  # Was RAG context injected?
+    counter_probability: Optional[float] = None  # Post counter-narrative re-estimate
+    counter_shift: float = 0.0   # |counter_probability - base_probability|
+    counter_fragile: bool = False  # True when conviction shift exceeds threshold
 
     # Individual model outputs
     model_estimates: list = field(default_factory=list)
@@ -467,6 +514,15 @@ def trimmed_mean(values: list[float]) -> float:
     return sum(trimmed) / len(trimmed)
 
 
+def aggregate_probability_stats(values: list[float]) -> tuple[float, float]:
+    """Return trimmed-mean probability plus explicit std-dev disagreement."""
+    if not values:
+        return 0.5, 0.0
+    mean_prob = trimmed_mean(values)
+    stddev = float(np.std(np.asarray(values, dtype=float))) if len(values) > 1 else 0.0
+    return mean_prob, stddev
+
+
 def compute_consensus(estimates: list[ModelEstimate]) -> float:
     """Fraction of models agreeing on direction (> 0.5 = YES, < 0.5 = NO)."""
     if not estimates:
@@ -474,6 +530,11 @@ def compute_consensus(estimates: list[ModelEstimate]) -> float:
     yes_count = sum(1 for e in estimates if e.probability > 0.5)
     no_count = sum(1 for e in estimates if e.probability < 0.5)
     return max(yes_count, no_count) / len(estimates)
+
+
+def compute_stddev(values: list[float]) -> float:
+    """Population stddev of model probabilities."""
+    return aggregate_probability_stats(values)[1]
 
 
 def confidence_from_spread(spread: float, consensus: float) -> str:
@@ -484,6 +545,45 @@ def confidence_from_spread(spread: float, consensus: float) -> str:
         return "medium"
     else:
         return "low"
+
+
+def compute_agreement_score(spread: float, consensus: float) -> float:
+    """Convert model spread + consensus into a 0-1 agreement score."""
+    spread = max(0.0, min(1.0, float(spread)))
+    consensus = max(0.0, min(1.0, float(consensus)))
+    spread_component = 1.0 - min(1.0, spread / 0.25)
+    return max(0.0, min(1.0, spread_component * consensus))
+
+
+def kelly_multiplier_from_agreement(agreement: float) -> float:
+    """Map agreement score to size multiplier: 0.25x (weak) to 1.5x (strong)."""
+    agreement = max(0.0, min(1.0, float(agreement)))
+    return max(0.25, min(1.5, 0.25 + 1.25 * agreement))
+
+
+def kelly_multiplier_from_stddev(stddev: float) -> float:
+    """Map ensemble disagreement to Kelly scaling.
+
+    Stream 6 sizing rule:
+    - stddev < 0.05  -> allow full base Kelly (1.0x)
+    - stddev > 0.15  -> cut to 1/32 Kelly relative to quarter-Kelly base (0.125x)
+    - otherwise      -> linearly interpolate between those bounds
+    """
+    return max(
+        0.0,
+        min(1.0, kelly_fraction_from_stddev(stddev) / max(DISAGREEMENT_MAX_KELLY, 1e-9)),
+    )
+
+
+def kelly_fraction_from_stddev(stddev: float) -> float:
+    """Map ensemble disagreement to an absolute Kelly cap."""
+    stddev = max(0.0, float(stddev))
+    if stddev <= DISAGREEMENT_LOW_STD:
+        return DISAGREEMENT_MAX_KELLY
+    if stddev >= DISAGREEMENT_HIGH_STD:
+        return DISAGREEMENT_MIN_KELLY
+    frac = (stddev - DISAGREEMENT_LOW_STD) / (DISAGREEMENT_HIGH_STD - DISAGREEMENT_LOW_STD)
+    return DISAGREEMENT_MAX_KELLY - frac * (DISAGREEMENT_MAX_KELLY - DISAGREEMENT_MIN_KELLY)
 
 
 # ---------------------------------------------------------------------------
@@ -679,9 +779,26 @@ class LLMEnsemble:
     Drop-in replacement for single-Claude estimation.
     """
 
-    def __init__(self, enable_rag: bool = True, enable_brier: bool = True):
+    def __init__(
+        self,
+        enable_rag: bool = True,
+        enable_brier: bool = True,
+        enable_counter_narrative: Optional[bool] = None,
+        counter_shift_threshold: Optional[float] = None,
+    ):
         self.enable_rag = enable_rag
         self.brier = BrierTracker() if enable_brier else None
+        if enable_counter_narrative is None:
+            enable_counter_narrative = os.environ.get(
+                "JJ_COUNTER_NARRATIVE_ENABLED",
+                "true",
+            ).lower() in ("true", "1", "yes")
+        self.enable_counter_narrative = enable_counter_narrative
+        self.counter_shift_threshold = (
+            float(counter_shift_threshold)
+            if counter_shift_threshold is not None
+            else float(os.environ.get("JJ_COUNTER_NARRATIVE_MAX_SHIFT", "0.15"))
+        )
 
         # Detect available models
         self.models = []
@@ -698,11 +815,49 @@ class LLMEnsemble:
             f"LLM Ensemble initialized: {len(self.models)} models available "
             f"({', '.join(self.models) or 'NONE'}), "
             f"RAG={'ON' if enable_rag else 'OFF'}, "
-            f"Brier={'ON' if enable_brier else 'OFF'}"
+            f"Brier={'ON' if enable_brier else 'OFF'}, "
+            f"CounterNarrative={'ON' if self.enable_counter_narrative else 'OFF'} "
+            f"(shift>{self.counter_shift_threshold:.2f} => skip)"
         )
 
         if not self.models:
             logger.warning("No LLM API keys found! Set ANTHROPIC_API_KEY at minimum.")
+
+    async def _run_counter_narrative(
+        self,
+        question: str,
+        initial_prob: float,
+        search_context: str,
+        timeout: float,
+    ) -> tuple[Optional[float], str]:
+        """Re-estimate after forcing an opposite-case argument."""
+        prompt = build_counter_narrative_prompt(
+            question=question,
+            initial_prob=initial_prob,
+            search_context=search_context,
+        )
+
+        model_order = []
+        if "claude-haiku" in self.models:
+            model_order.append(("claude-haiku", lambda: call_claude(prompt, timeout=min(timeout, 25.0))))
+        if "gpt-4.1-mini" in self.models:
+            model_order.append(("gpt-4.1-mini", lambda: call_gpt(prompt, model="gpt-4.1-mini", timeout=min(timeout, 25.0))))
+        if "grok" in self.models:
+            model_order.append(("grok", lambda: call_grok(prompt, timeout=min(timeout, 25.0))))
+        if "groq-llama-3.3-70b" in self.models:
+            model_order.append(("groq-llama-3.3-70b", lambda: call_groq(prompt, timeout=min(timeout, 25.0))))
+
+        errors: list[str] = []
+        for model_name, caller in model_order:
+            try:
+                est = await caller()
+                if not est.error:
+                    return est.probability, ""
+                errors.append(f"{model_name}:{est.error}")
+            except Exception as e:
+                errors.append(f"{model_name}:{e}")
+
+        return None, "; ".join(errors)
 
     async def estimate(self, question: str, category: str = "",
                        market_id: str = "", timeout: float = 45.0) -> EnsembleResult:
@@ -769,14 +924,17 @@ class LLMEnsemble:
                 model_estimates=estimates,
             )
 
-        # Trimmed mean
+        # Trimmed mean + explicit std-dev disagreement
         probs = [e.probability for e in good_estimates]
-        mean_prob = trimmed_mean(probs)
+        mean_prob, stddev = aggregate_probability_stats(probs)
 
         # Spread and consensus
         spread = max(probs) - min(probs) if len(probs) > 1 else 0.0
         consensus = compute_consensus(good_estimates)
-        models_agree = consensus >= 0.75 and spread < 0.20
+        agreement = compute_agreement_score(spread, consensus)
+        kelly_multiplier = kelly_multiplier_from_stddev(stddev)
+        disagreement_kelly_fraction = kelly_fraction_from_stddev(stddev)
+        models_agree = consensus >= 0.75 and stddev < DISAGREEMENT_HIGH_STD
 
         # Confidence
         confidence = confidence_from_spread(spread, consensus)
@@ -789,6 +947,31 @@ class LLMEnsemble:
         if search_context:
             combined_reasoning = f"[RAG context used] {combined_reasoning}"
 
+        # Counter-narrative conviction test (I-6)
+        counter_probability = None
+        counter_shift = 0.0
+        counter_fragile = False
+        if self.enable_counter_narrative:
+            try:
+                counter_probability, counter_error = await self._run_counter_narrative(
+                    question=question,
+                    initial_prob=mean_prob,
+                    search_context=search_context,
+                    timeout=timeout,
+                )
+                if counter_probability is not None:
+                    counter_shift = abs(counter_probability - mean_prob)
+                    counter_fragile = counter_shift > self.counter_shift_threshold
+                    if counter_fragile:
+                        confidence = "low"
+                        combined_reasoning = (
+                            f"{combined_reasoning} | [Counter shift={counter_shift:.3f}, fragile conviction]"
+                        )
+                elif counter_error:
+                    errors.append(f"counter_narrative: {counter_error}")
+            except Exception as e:
+                errors.append(f"counter_narrative: {e}")
+
         # Step 5: Platt calibration on ensemble mean
         calibrated = calibrate_probability(mean_prob)
 
@@ -799,9 +982,16 @@ class LLMEnsemble:
             reasoning=combined_reasoning,
             n_models=len(good_estimates),
             model_spread=round(spread, 4),
+            model_stddev=round(stddev, 4),
             consensus=round(consensus, 4),
+            agreement=round(agreement, 4),
+            kelly_multiplier=round(kelly_multiplier, 4),
+            disagreement_kelly_fraction=round(disagreement_kelly_fraction, 4),
             models_agree=models_agree,
             search_context_used=bool(search_context),
+            counter_probability=counter_probability,
+            counter_shift=round(counter_shift, 4),
+            counter_fragile=counter_fragile,
             model_estimates=good_estimates,
             errors=errors,
         )
@@ -835,9 +1025,16 @@ class LLMEnsemble:
             "reasoning": result.reasoning,
             "n_models": result.n_models,
             "model_spread": result.model_spread,
+            "model_stddev": result.model_stddev,
             "consensus": result.consensus,
+            "agreement": result.agreement,
+            "kelly_multiplier": result.kelly_multiplier,
+            "disagreement_kelly_fraction": result.disagreement_kelly_fraction,
             "models_agree": result.models_agree,
             "search_context_used": result.search_context_used,
+            "counter_probability": result.counter_probability,
+            "counter_shift": result.counter_shift,
+            "counter_fragile": result.counter_fragile,
         }
 
     def get_brier_summary(self) -> dict:
@@ -878,9 +1075,17 @@ async def main():
         print(f"Confidence:             {result.confidence}")
         print(f"Models used:            {result.n_models}")
         print(f"Model spread:           {result.model_spread:.3f}")
+        print(f"Model stddev:           {result.model_stddev:.3f}")
         print(f"Consensus:              {result.consensus:.2f}")
+        print(f"Agreement score:        {result.agreement:.2f}")
+        print(f"Kelly multiplier:       {result.kelly_multiplier:.2f}x")
+        print(f"Kelly cap:              {result.disagreement_kelly_fraction:.4f}")
         print(f"Models agree:           {result.models_agree}")
         print(f"RAG context used:       {result.search_context_used}")
+        if result.counter_probability is not None:
+            print(f"Counter probability:    {result.counter_probability:.3f}")
+            print(f"Counter shift:          {result.counter_shift:.3f}")
+            print(f"Counter fragile:        {result.counter_fragile}")
         print(f"\nIndividual estimates:")
         for est in result.model_estimates:
             status = f"p={est.probability:.3f}" if not est.error else f"ERROR: {est.error}"

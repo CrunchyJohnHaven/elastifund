@@ -51,7 +51,10 @@ async def test_analyzer(markets: list) -> dict:
     """
     from src.claude_analyzer import ClaudeAnalyzer, classify_market_category
 
-    analyzer = ClaudeAnalyzer()  # No API key = dry-run mode
+    analyzer = ClaudeAnalyzer(
+        model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6"),
+        use_ensemble=os.getenv("ENSEMBLE_ENABLED", "false").lower() in ("1", "true", "yes"),
+    )  # No API key = dry-run mode
 
     if not markets:
         record("analyzer", False, "No markets to analyze")

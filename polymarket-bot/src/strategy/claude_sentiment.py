@@ -259,7 +259,7 @@ DAYS: 7"""
 
         try:
             message = self._client.messages.create(
-                model="claude-3-5-haiku-20241022",
+                model="claude-sonnet-4-6",
                 max_tokens=20,
                 messages=[{"role": "user", "content": prompt}],
             )

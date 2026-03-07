@@ -1,0 +1,78 @@
+{
+  "system": {
+    "timezone": "UTC",
+    "db_path": "data/edge_discovery.db",
+    "log_path": "logs/edge_discovery.log",
+    "report_root": "reports",
+    "analysis_path": "FastTradeEdgeAnalysis.md"
+  },
+  "sources": {
+    "gamma_api": "https://gamma-api.polymarket.com/markets",
+    "trade_api": "https://data-api.polymarket.com/trades",
+    "clob_api": "https://clob.polymarket.com/book",
+    "binance_ws": "wss://stream.binance.com:9443/ws/btcusdt@trade",
+    "binance_ticker_api": "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT",
+    "binance_klines_api": "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=2"
+  },
+  "collector": {
+    "http_timeout_seconds": 15,
+    "http_retries": 3,
+    "retry_backoff_seconds": 1.5,
+    "market_poll_seconds": 30,
+    "trade_poll_seconds": 30,
+    "book_poll_seconds": 30,
+    "btc_poll_seconds": 1,
+    "max_recent_trades": 500,
+    "snapshot_every_minutes": 30,
+    "slug_probe_windows": 6
+  },
+  "markets": {
+    "target_slugs": ["btc-updown-5m", "btc-updown-15m", "btc-updown-4h"],
+    "required_resolution_source_contains": "chain.link"
+  },
+  "research": {
+    "run_interval_minutes": 30,
+    "ml_interval_hours": 6,
+    "lookback_resolved_markets": 500,
+    "min_signals_candidate": 100,
+    "min_signals_validated": 300
+  },
+  "backtest": {
+    "position_size_usd": 100,
+    "maker_fill_rate": 0.6,
+    "maker_fill_rate_sensitivity": [0.4, 0.6, 0.8],
+    "maker_fill_model": "trade_through",
+    "queue_aware_maker_fill": true,
+    "maker_fill_floor": 0.05,
+    "maker_fill_ceiling": 0.95,
+    "maker_fill_horizon_sec": 900,
+    "maker_fill_trade_through_buffer": 0.001,
+    "maker_fill_liquidity_trade_count_scale": 30.0,
+    "maker_fill_edge_scale": 0.12,
+    "maker_fill_logit_urgency": 0.9,
+    "maker_fill_logit_liquidity": 0.8,
+    "maker_fill_logit_edge_penalty": 1.1,
+    "maker_fill_logit_alignment_penalty": 0.7,
+    "maker_fill_logit_confidence": 0.4,
+    "maker_fill_fallback_penalty": 0.4,
+    "confidence_calibration_enabled": true,
+    "confidence_calibration_bins": 10,
+    "confidence_calibration_prior_strength": 8.0,
+    "confidence_calibration_min_history": 30,
+    "confidence_calibration_floor": 0.02,
+    "confidence_calibration_ceiling": 0.98,
+    "default_spread": 0.02,
+    "execution_delay_seconds": 2,
+    "slippage_taker": 0.005,
+    "cost_stress_pct": 0.2,
+    "edge_thresholds": [0.03, 0.05, 0.08, 0.10, 0.15]
+  },
+  "models": {
+    "mc_default_paths": 10000,
+    "mc_final_paths": 50000,
+    "mc_seed": 42,
+    "mc_jump_lambda": 0.05,
+    "mc_jump_mu": -0.02,
+    "mc_jump_sigma": 0.03
+  }
+}

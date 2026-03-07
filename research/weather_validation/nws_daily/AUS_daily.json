@@ -1,0 +1,487 @@
+[
+  {
+    "station": "AUS",
+    "day": "2025-12-01",
+    "max_tmpf": 45.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-02",
+    "max_tmpf": 55.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-03",
+    "max_tmpf": 56.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-04",
+    "max_tmpf": 55.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-05",
+    "max_tmpf": 52.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-06",
+    "max_tmpf": 78.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-07",
+    "max_tmpf": 73.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-08",
+    "max_tmpf": 60.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-09",
+    "max_tmpf": 69.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-10",
+    "max_tmpf": 73.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-11",
+    "max_tmpf": 71.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-12",
+    "max_tmpf": 77.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-13",
+    "max_tmpf": 79.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-14",
+    "max_tmpf": 65.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-15",
+    "max_tmpf": 55.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-16",
+    "max_tmpf": 63.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-17",
+    "max_tmpf": 66.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-18",
+    "max_tmpf": 77.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-19",
+    "max_tmpf": 69.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-20",
+    "max_tmpf": 74.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-21",
+    "max_tmpf": 72.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-22",
+    "max_tmpf": 77.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-23",
+    "max_tmpf": 81.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-24",
+    "max_tmpf": 81.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-25",
+    "max_tmpf": 78.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-26",
+    "max_tmpf": 84.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-27",
+    "max_tmpf": 82.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-28",
+    "max_tmpf": 79.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-29",
+    "max_tmpf": 53.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-30",
+    "max_tmpf": 58.0
+  },
+  {
+    "station": "AUS",
+    "day": "2025-12-31",
+    "max_tmpf": 71.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-01",
+    "max_tmpf": 74.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-02",
+    "max_tmpf": 89.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-03",
+    "max_tmpf": 76.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-04",
+    "max_tmpf": 72.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-05",
+    "max_tmpf": 77.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-06",
+    "max_tmpf": 84.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-07",
+    "max_tmpf": 80.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-08",
+    "max_tmpf": 80.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-09",
+    "max_tmpf": 72.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-10",
+    "max_tmpf": 60.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-11",
+    "max_tmpf": 63.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-12",
+    "max_tmpf": 65.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-13",
+    "max_tmpf": 61.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-14",
+    "max_tmpf": 69.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-15",
+    "max_tmpf": 67.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-16",
+    "max_tmpf": 76.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-17",
+    "max_tmpf": 56.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-18",
+    "max_tmpf": 64.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-19",
+    "max_tmpf": 68.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-20",
+    "max_tmpf": 60.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-21",
+    "max_tmpf": 76.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-22",
+    "max_tmpf": 70.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-23",
+    "max_tmpf": 68.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-24",
+    "max_tmpf": 45.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-25",
+    "max_tmpf": 29.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-26",
+    "max_tmpf": 37.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-27",
+    "max_tmpf": 50.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-28",
+    "max_tmpf": 58.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-29",
+    "max_tmpf": 73.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-30",
+    "max_tmpf": 55.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-01-31",
+    "max_tmpf": 45.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-01",
+    "max_tmpf": 57.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-02",
+    "max_tmpf": 69.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-03",
+    "max_tmpf": 72.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-04",
+    "max_tmpf": 65.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-05",
+    "max_tmpf": 70.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-06",
+    "max_tmpf": 83.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-07",
+    "max_tmpf": 84.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-08",
+    "max_tmpf": 80.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-09",
+    "max_tmpf": 85.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-10",
+    "max_tmpf": 69.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-11",
+    "max_tmpf": 76.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-12",
+    "max_tmpf": 81.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-13",
+    "max_tmpf": 82.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-14",
+    "max_tmpf": 75.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-15",
+    "max_tmpf": 74.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-16",
+    "max_tmpf": 78.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-17",
+    "max_tmpf": 84.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-18",
+    "max_tmpf": 77.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-19",
+    "max_tmpf": 85.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-20",
+    "max_tmpf": 68.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-21",
+    "max_tmpf": 74.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-22",
+    "max_tmpf": 63.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-23",
+    "max_tmpf": 67.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-24",
+    "max_tmpf": 75.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-25",
+    "max_tmpf": 88.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-26",
+    "max_tmpf": 85.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-27",
+    "max_tmpf": 87.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-02-28",
+    "max_tmpf": 87.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-03-01",
+    "max_tmpf": 86.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-03-02",
+    "max_tmpf": 86.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-03-03",
+    "max_tmpf": 89.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-03-04",
+    "max_tmpf": 88.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-03-05",
+    "max_tmpf": 88.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-03-06",
+    "max_tmpf": 86.0
+  },
+  {
+    "station": "AUS",
+    "day": "2026-03-07",
+    "max_tmpf": 76.0
+  }
+]

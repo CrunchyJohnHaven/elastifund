@@ -1,5 +1,6 @@
 """Gamma API market scanner for discovering tradeable markets."""
 import asyncio
+import os
 from typing import Any, Optional
 
 import httpx
@@ -86,21 +87,31 @@ class MarketScanner:
         )
         return markets
 
-    async def fetch_all_active_markets(self, max_pages: int = 5) -> list[dict]:
+    async def fetch_all_active_markets(
+        self,
+        max_pages: Optional[int] = None,
+        page_size: int = 100,
+    ) -> list[dict]:
         """Fetch all active markets across multiple pages.
 
         Args:
-            max_pages: Maximum number of pages to fetch
+            max_pages: Maximum number of pages to fetch. If None, uses
+                SCANNER_MAX_PAGES env var (default 25).
+            page_size: Page size per request (Gamma API max 100).
 
         Returns:
             Combined list of all active markets
         """
+        if max_pages is None:
+            max_pages = int(os.getenv("SCANNER_MAX_PAGES", "25"))
+        page_size = max(1, min(page_size, 100))
+
         all_markets = []
         for page in range(max_pages):
-            offset = page * 100
-            markets = await self.fetch_active_markets(limit=100, offset=offset)
+            offset = page * page_size
+            markets = await self.fetch_active_markets(limit=page_size, offset=offset)
             all_markets.extend(markets)
-            if len(markets) < 100:
+            if len(markets) < page_size:
                 break
             await asyncio.sleep(0.2)  # Rate limit courtesy
 
@@ -211,13 +222,14 @@ class MarketScanner:
         self,
         min_volume: float = 1000.0,
         min_liquidity: float = 500.0,
+        max_pages: Optional[int] = None,
     ) -> list[dict]:
         """Full scan: fetch markets, filter for liquidity, extract trading info.
 
         Returns:
             List of opportunity dicts with market info and token IDs
         """
-        all_markets = await self.fetch_all_active_markets()
+        all_markets = await self.fetch_all_active_markets(max_pages=max_pages)
         liquid_markets = await self.filter_liquid_markets(
             all_markets, min_volume, min_liquidity
         )

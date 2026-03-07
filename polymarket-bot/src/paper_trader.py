@@ -168,8 +168,13 @@ class PaperTrader:
 
         # 1. Scan for liquid markets
         try:
+            min_volume = float(os.getenv("SCANNER_MIN_VOLUME", "500"))
+            min_liquidity = float(os.getenv("SCANNER_MIN_LIQUIDITY", "50"))
+            max_pages = int(os.getenv("SCANNER_MAX_PAGES", "25"))
             opportunities = await self.scanner.scan_for_opportunities(
-                min_volume=500.0, min_liquidity=200.0
+                min_volume=min_volume,
+                min_liquidity=min_liquidity,
+                max_pages=max_pages,
             )
         except Exception as e:
             logger.error("market_scan_failed", error=str(e))

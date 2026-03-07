@@ -5,8 +5,8 @@ from __future__ import annotations
 import math
 import os
 
-PLATT_A = float(os.environ.get("PLATT_A", "0.55"))
-PLATT_B = float(os.environ.get("PLATT_B", "-0.40"))
+PLATT_A = float(os.environ.get("PLATT_A", "0.5914"))
+PLATT_B = float(os.environ.get("PLATT_B", "-0.3977"))
 
 YES_THRESHOLD = 0.15
 NO_THRESHOLD = 0.05

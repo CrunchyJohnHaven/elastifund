@@ -56,6 +56,8 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+import numpy as np
+
 # Auto-load .env
 from dotenv import load_dotenv
 load_dotenv()
@@ -69,10 +71,12 @@ if not os.environ.get("POLY_PRIVATE_KEY"):
             pk = "0x" + pk
         os.environ["POLY_PRIVATE_KEY"] = pk
 
-repo_root = Path(__file__).parent
-sys.path.insert(0, str(repo_root))
+bot_root = Path(__file__).resolve().parent
+project_root = bot_root.parent
+sys.path.insert(0, str(bot_root))
+sys.path.insert(0, str(project_root))
 # Support this repository layout where src lives under polymarket-bot/src.
-poly_root = repo_root / "polymarket-bot"
+poly_root = project_root / "polymarket-bot"
 if (poly_root / "src").exists():
     sys.path.insert(0, str(poly_root))
 
@@ -90,9 +94,16 @@ except ImportError:
 
 # Use official py-clob-client for order placement (the custom src/bot.py
 # has HMAC body mismatch and wrong EIP-712 domain bugs that cause 403s)
-from py_clob_client.client import ClobClient as OfficialClobClient
-from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType
-from py_clob_client.order_builder.constants import BUY
+try:
+    from py_clob_client.client import ClobClient as OfficialClobClient
+    from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType
+    from py_clob_client.order_builder.constants import BUY
+except ImportError:
+    OfficialClobClient = None
+    ApiCreds = None
+    OrderArgs = None
+    OrderType = None
+    BUY = None
 
 # Handle different Telegram class names across codebase versions
 try:
@@ -128,6 +139,25 @@ except ImportError:
     except ImportError:
         arb_get_signals = None
 
+# Signal source #5: WebSocket Trade Stream + VPIN/OFI microstructure defense
+try:
+    from bot.ws_trade_stream import TradeStreamManager, FlowRegime
+except ImportError:
+    try:
+        from ws_trade_stream import TradeStreamManager, FlowRegime
+    except ImportError:
+        TradeStreamManager = None
+        FlowRegime = None
+
+# Signal source #6: Semantic Lead-Lag Arbitrage Engine
+try:
+    from bot.lead_lag_engine import LeadLagEngine
+except ImportError:
+    try:
+        from lead_lag_engine import LeadLagEngine
+    except ImportError:
+        LeadLagEngine = None
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -144,14 +174,29 @@ logger = logging.getLogger("JJ")
 # ---------------------------------------------------------------------------
 # JJ Configuration
 # ---------------------------------------------------------------------------
-MAX_POSITION_USD = float(os.environ.get("JJ_MAX_POSITION_USD", "15"))
-MAX_DAILY_LOSS_USD = float(os.environ.get("JJ_MAX_DAILY_LOSS_USD", "25"))
+MAX_POSITION_USD = float(os.environ.get("JJ_MAX_POSITION_USD", "0.50"))
+MAX_DAILY_LOSS_USD = float(os.environ.get("JJ_MAX_DAILY_LOSS_USD", "5"))
 MAX_EXPOSURE_PCT = float(os.environ.get("JJ_MAX_EXPOSURE_PCT", "0.90"))
-KELLY_FRACTION = float(os.environ.get("JJ_KELLY_FRACTION", "0.50"))
+KELLY_FRACTION = float(os.environ.get("JJ_KELLY_FRACTION", "0.25"))
+MAX_KELLY_FRACTION = float(os.environ.get("JJ_MAX_KELLY_FRACTION", "0.25"))
 SCAN_INTERVAL = int(os.environ.get("JJ_SCAN_INTERVAL", "180"))
 MAX_OPEN_POSITIONS = int(os.environ.get("JJ_MAX_OPEN_POSITIONS", "30"))
 MIN_EDGE = float(os.environ.get("JJ_MIN_EDGE", "0.05"))
 INITIAL_BANKROLL = float(os.environ.get("JJ_INITIAL_BANKROLL", "1000"))
+
+# Adaptive calibration and ensemble conviction controls (Instance 6)
+ADAPTIVE_PLATT_ENABLED = os.environ.get("JJ_ADAPTIVE_PLATT_ENABLED", "false").lower() in ("true", "1", "yes")
+ADAPTIVE_PLATT_MIN_SAMPLES = int(os.environ.get("JJ_ADAPTIVE_PLATT_MIN_SAMPLES", "50"))
+ADAPTIVE_PLATT_WINDOW = int(os.environ.get("JJ_ADAPTIVE_PLATT_WINDOW", "100"))
+ADAPTIVE_PLATT_REFIT_SECONDS = int(os.environ.get("JJ_ADAPTIVE_PLATT_REFIT_SECONDS", "300"))
+ENSEMBLE_MIN_AGREEMENT = float(os.environ.get("JJ_ENSEMBLE_MIN_AGREEMENT", "0.25"))
+DISAGREEMENT_LOW_STD = float(os.environ.get("JJ_DISAGREEMENT_LOW_STD", "0.05"))
+DISAGREEMENT_HIGH_STD = float(os.environ.get("JJ_DISAGREEMENT_HIGH_STD", "0.15"))
+DISAGREEMENT_MIN_KELLY = float(os.environ.get("JJ_DISAGREEMENT_MIN_KELLY", f"{1.0 / 32.0:.5f}"))
+ENSEMBLE_SKIP_FRAGILE_CONVICTION = os.environ.get(
+    "JJ_ENSEMBLE_SKIP_FRAGILE_CONVICTION",
+    "true",
+).lower() in ("true", "1", "yes")
 
 # Velocity filter — maximum hours until resolution (default: 48 = 2 days)
 # Slow-market edge: LLM ensemble + RAG on politics/weather/economics
@@ -159,7 +204,7 @@ INITIAL_BANKROLL = float(os.environ.get("JJ_INITIAL_BANKROLL", "1000"))
 MAX_RESOLUTION_HOURS = float(os.environ.get("JJ_MAX_RESOLUTION_HOURS", "48"))
 
 # Paper trading mode — simulate trades without posting to CLOB
-PAPER_TRADING = os.environ.get("PAPER_TRADING", "true").lower() in ("true", "1", "yes")
+PAPER_TRADING = os.environ.get("PAPER_TRADING", "false").lower() in ("true", "1", "yes")
 
 # Multi-bankroll simulation levels
 BANKROLL_LEVELS = [1_000, 10_000, 100_000]
@@ -172,22 +217,78 @@ DB_FILE = Path("data/jj_trades.db")
 # Fitted on 70% of 532 resolved markets, validated on 30% test set
 # Test-set Brier: 0.286 (raw) → 0.245 (Platt) — improvement of +0.041
 # ---------------------------------------------------------------------------
-PLATT_A = float(os.environ.get("PLATT_A", "0.55"))
-PLATT_B = float(os.environ.get("PLATT_B", "-0.40"))
+PLATT_A = float(os.environ.get("PLATT_A", "0.5914"))
+PLATT_B = float(os.environ.get("PLATT_B", "-0.3977"))
 
 
-def calibrate_probability(raw_prob: float) -> float:
+def calibrate_probability_with_params(raw_prob: float, a: float, b: float) -> float:
     """Apply Platt scaling. Maps: 90% → 71%, 80% → 60%, 70% → 53%."""
     raw_prob = max(0.001, min(0.999, raw_prob))
     if abs(raw_prob - 0.5) < 1e-9:
         return 0.5
     if raw_prob < 0.5:
-        return 1.0 - calibrate_probability(1.0 - raw_prob)
+        return 1.0 - calibrate_probability_with_params(1.0 - raw_prob, a, b)
     logit_input = math.log(raw_prob / (1 - raw_prob))
-    logit_output = PLATT_A * logit_input + PLATT_B
+    logit_output = a * logit_input + b
     logit_output = max(-30, min(30, logit_output))
     calibrated = 1.0 / (1.0 + math.exp(-logit_output))
     return max(0.01, min(0.99, calibrated))
+
+
+def calibrate_probability(raw_prob: float) -> float:
+    """Apply static Platt scaling with configured global params."""
+    return calibrate_probability_with_params(raw_prob, PLATT_A, PLATT_B)
+
+
+def fit_platt_parameters(raw_probs: list[float], outcomes: list[int]) -> tuple[float, float]:
+    """Fit Platt A/B on logit(raw_prob) via simple L2-regularized gradient descent."""
+    if len(raw_probs) < 20 or len(raw_probs) != len(outcomes):
+        return PLATT_A, PLATT_B
+
+    x = np.array(
+        [
+            math.log(max(0.001, min(0.999, p)) / (1.0 - max(0.001, min(0.999, p))))
+            for p in raw_probs
+        ],
+        dtype=float,
+    )
+    y = np.array([1.0 if int(v) == 1 else 0.0 for v in outcomes], dtype=float)
+
+    a = float(PLATT_A)
+    b = float(PLATT_B)
+    lr = 0.08
+    l2 = 1e-3
+    prev_loss = float("inf")
+
+    for _ in range(300):
+        z = np.clip(a * x + b, -30.0, 30.0)
+        p = 1.0 / (1.0 + np.exp(-z))
+        eps = 1e-9
+        loss = -np.mean(y * np.log(p + eps) + (1.0 - y) * np.log(1.0 - p + eps)) + l2 * (a * a + b * b)
+
+        grad_a = float(np.mean((p - y) * x) + 2.0 * l2 * a)
+        grad_b = float(np.mean(p - y) + 2.0 * l2 * b)
+
+        cand_a = a - lr * grad_a
+        cand_b = b - lr * grad_b
+
+        cand_z = np.clip(cand_a * x + cand_b, -30.0, 30.0)
+        cand_p = 1.0 / (1.0 + np.exp(-cand_z))
+        cand_loss = -np.mean(y * np.log(cand_p + eps) + (1.0 - y) * np.log(1.0 - cand_p + eps)) + l2 * (
+            cand_a * cand_a + cand_b * cand_b
+        )
+
+        if cand_loss <= loss:
+            a, b = cand_a, cand_b
+            if abs(prev_loss - float(cand_loss)) < 1e-7:
+                break
+            prev_loss = float(cand_loss)
+        else:
+            lr *= 0.5
+            if lr < 1e-4:
+                break
+
+    return float(a), float(b)
 
 
 # ---------------------------------------------------------------------------
@@ -280,10 +381,19 @@ CATEGORY_PRIORITY = {
 }
 
 # Polymarket taker fee rates (introduced Feb 18, 2026)
+# NOTE: With universal post-only (Dispatch #75), these are only used for
+# logging/comparison. Maker orders pay 0% fee and earn rebates.
 TAKER_FEE_RATES = {
-    "crypto": 0.025,    # ~1.56% max at p=0.50
-    "sports": 0.007,    # ~0.44% max at p=0.50
+    "crypto": 0.025,    # ~1.56% max at p=0.50 (polynomial: rate=0.25, exp=2)
+    "sports": 0.007,    # ~0.44% max at p=0.50 (linear: rate=0.0175, exp=1)
     "default": 0.0,     # Other categories: no taker fee
+}
+
+# Maker rebate rates by category (Dispatch #75)
+MAKER_REBATE_RATES = {
+    "crypto": 0.20,     # 20% of taker fee pool
+    "sports": 0.25,     # 25% of taker fee pool — BEST for maker strategies
+    "default": 0.0,     # No fee = no rebate pool
 }
 
 # Asymmetric thresholds (from 532-market backtest)
@@ -542,6 +652,7 @@ def compute_calibrated_signal(
     category: str,
     *,
     already_calibrated: bool = False,
+    calibrate_fn=calibrate_probability,
 ) -> dict:
     """Full signal computation: calibrate → fee → threshold → direction.
 
@@ -549,18 +660,22 @@ def compute_calibrated_signal(
     taker fee subtraction, and asymmetric thresholds.
     """
     # 1. Calibrate (or pass-through when upstream already calibrated)
-    calibrated = raw_prob if already_calibrated else calibrate_probability(raw_prob)
+    calibrated = raw_prob if already_calibrated else calibrate_fn(raw_prob)
     calibrated = max(0.01, min(0.99, calibrated))
 
     # 2. Raw edge
     raw_edge = calibrated - market_price
 
-    # 3. Taker fee
+    # 3. Fee calculation
+    # DISPATCH #75: All orders are now post-only (maker). Maker fee = 0%.
+    # We still calculate the hypothetical taker fee for logging/comparison,
+    # but net_edge is no longer reduced by it. Maker rebate (20%, 25% sports)
+    # is a bonus not yet modeled — conservative.
     buy_price = market_price if raw_edge > 0 else (1 - market_price)
-    taker_fee = calculate_taker_fee(buy_price, category)
+    taker_fee = calculate_taker_fee(buy_price, category)  # for logging only
 
-    # 4. Net edge after fees
-    net_edge = abs(raw_edge) - taker_fee
+    # 4. Net edge (maker orders pay zero fees)
+    net_edge = abs(raw_edge)
 
     # 5. Asymmetric thresholds
     if raw_edge > 0 and net_edge >= YES_THRESHOLD:
@@ -838,6 +953,127 @@ class TradeDatabase:
 
 
 # ---------------------------------------------------------------------------
+# Adaptive Rolling Platt Calibration (Instance 6 / D-12)
+# ---------------------------------------------------------------------------
+class AdaptivePlattCalibrator:
+    """Select between static and rolling Platt params using recent Brier."""
+
+    def __init__(
+        self,
+        db: TradeDatabase,
+        *,
+        enabled: bool = ADAPTIVE_PLATT_ENABLED,
+        min_samples: int = ADAPTIVE_PLATT_MIN_SAMPLES,
+        window: int = ADAPTIVE_PLATT_WINDOW,
+        refit_seconds: int = ADAPTIVE_PLATT_REFIT_SECONDS,
+    ):
+        self.db = db
+        self.enabled = enabled
+        self.min_samples = max(20, int(min_samples))
+        self.window = max(self.min_samples, int(window))
+        self.refit_seconds = max(30, int(refit_seconds))
+
+        self.active_a = float(PLATT_A)
+        self.active_b = float(PLATT_B)
+        self.active_mode = "static"
+        self.last_refit_ts = 0.0
+        self.sample_size = 0
+        self.static_brier = None
+        self.rolling_brier = None
+
+    def _recent_resolved_rows(self) -> list[tuple[float, int]]:
+        c = self.db.conn.cursor()
+        rows = c.execute(
+            """
+            SELECT raw_prob, resolution_price
+            FROM trades
+            WHERE outcome IS NOT NULL
+              AND raw_prob IS NOT NULL
+              AND resolution_price IS NOT NULL
+            ORDER BY resolved_at DESC
+            LIMIT ?
+            """,
+            (self.window,),
+        ).fetchall()
+        parsed: list[tuple[float, int]] = []
+        for row in rows:
+            raw_prob = _safe_float(row[0], None)
+            resolved_price = _safe_float(row[1], None)
+            if raw_prob is None or resolved_price is None:
+                continue
+            if not (0.0 <= raw_prob <= 1.0):
+                continue
+            outcome = 1 if resolved_price >= 0.5 else 0
+            parsed.append((raw_prob, outcome))
+        return parsed
+
+    def _brier(self, rows: list[tuple[float, int]], a: float, b: float) -> float:
+        if not rows:
+            return float("inf")
+        errs = [
+            (calibrate_probability_with_params(raw, a, b) - float(outcome)) ** 2
+            for raw, outcome in rows
+        ]
+        return float(sum(errs) / len(errs))
+
+    def refresh(self, force: bool = False) -> None:
+        """Refit rolling Platt and choose static vs rolling by recent Brier."""
+        if not self.enabled:
+            self.active_mode = "static"
+            self.active_a = float(PLATT_A)
+            self.active_b = float(PLATT_B)
+            return
+
+        now_ts = time.time()
+        if not force and (now_ts - self.last_refit_ts) < self.refit_seconds:
+            return
+
+        rows = self._recent_resolved_rows()
+        self.sample_size = len(rows)
+        self.last_refit_ts = now_ts
+
+        if len(rows) < self.min_samples:
+            self.active_mode = "static"
+            self.active_a = float(PLATT_A)
+            self.active_b = float(PLATT_B)
+            self.static_brier = self._brier(rows, PLATT_A, PLATT_B) if rows else None
+            self.rolling_brier = None
+            return
+
+        raw_probs = [r[0] for r in rows]
+        outcomes = [r[1] for r in rows]
+        rolling_a, rolling_b = fit_platt_parameters(raw_probs, outcomes)
+
+        static_brier = self._brier(rows, PLATT_A, PLATT_B)
+        rolling_brier = self._brier(rows, rolling_a, rolling_b)
+        self.static_brier = static_brier
+        self.rolling_brier = rolling_brier
+
+        if rolling_brier + 1e-6 < static_brier:
+            self.active_mode = "rolling"
+            self.active_a = rolling_a
+            self.active_b = rolling_b
+        else:
+            self.active_mode = "static"
+            self.active_a = float(PLATT_A)
+            self.active_b = float(PLATT_B)
+
+    def calibrate(self, raw_prob: float) -> float:
+        return calibrate_probability_with_params(raw_prob, self.active_a, self.active_b)
+
+    def summary(self) -> dict:
+        return {
+            "enabled": self.enabled,
+            "mode": self.active_mode,
+            "a": self.active_a,
+            "b": self.active_b,
+            "samples": self.sample_size,
+            "static_brier": self.static_brier,
+            "rolling_brier": self.rolling_brier,
+        }
+
+
+# ---------------------------------------------------------------------------
 # Multi-Bankroll Simulator
 # ---------------------------------------------------------------------------
 class MultiBankrollSimulator:
@@ -880,6 +1116,7 @@ class MultiBankrollSimulator:
                 market_price=signal["market_price"],
                 direction=signal["direction"],
                 bankroll=current_bankroll,
+                kelly_fraction_override=signal.get("_kelly_override"),
             )
             # Scale max position proportionally
             max_pos = MAX_POSITION_USD * (level / 1000)
@@ -906,8 +1143,14 @@ class MultiBankrollSimulator:
 # ---------------------------------------------------------------------------
 # Kelly Sizing
 # ---------------------------------------------------------------------------
-def kelly_size(edge: float, market_price: float, direction: str,
-               bankroll: float) -> float:
+def kelly_size(
+    edge: float,
+    market_price: float,
+    direction: str,
+    bankroll: float,
+    *,
+    kelly_fraction_override: float | None = None,
+) -> float:
     """Half-Kelly position sizing for binary prediction markets.
 
     Args:
@@ -945,8 +1188,13 @@ def kelly_size(edge: float, market_price: float, direction: str,
     kelly_f = (p_win * odds - (1.0 - p_win)) / odds
     kelly_f = max(0.0, kelly_f)
 
-    # Apply half-Kelly
-    raw_size = kelly_f * KELLY_FRACTION * bankroll
+    # Apply configurable Kelly fraction
+    kelly_fraction = (
+        max(0.0, float(kelly_fraction_override))
+        if kelly_fraction_override is not None
+        else KELLY_FRACTION
+    )
+    raw_size = kelly_f * kelly_fraction * bankroll
 
     # Clamp
     final_size = min(raw_size, MAX_POSITION_USD)
@@ -1194,6 +1442,19 @@ class JJLive:
 
         self.notifier = self._init_telegram()
         self.db = TradeDatabase()
+        self.adaptive_platt = AdaptivePlattCalibrator(self.db)
+        self.adaptive_platt.refresh(force=True)
+        if self.adaptive_platt.enabled:
+            cal = self.adaptive_platt.summary()
+            logger.info(
+                "Adaptive Platt: mode=%s A=%.4f B=%.4f samples=%d static_brier=%s rolling_brier=%s",
+                cal["mode"],
+                cal["a"],
+                cal["b"],
+                cal["samples"],
+                f"{cal['static_brier']:.4f}" if cal["static_brier"] is not None else "n/a",
+                f"{cal['rolling_brier']:.4f}" if cal["rolling_brier"] is not None else "n/a",
+            )
         self.multi_sim = MultiBankrollSimulator(self.db)
 
         # Only init CLOB client for live trading
@@ -1227,6 +1488,38 @@ class JJLive:
         else:
             logger.warning("Cross-platform arb scanner not available — running without")
 
+        # Signal source #5: WebSocket Trade Stream + VPIN/OFI defense
+        self.trade_stream = None
+        self._trade_stream_task = None
+        if TradeStreamManager is not None:
+            try:
+                self.trade_stream = TradeStreamManager(
+                    vpin_bucket_size=float(os.environ.get("JJ_VPIN_BUCKET_SIZE", "500")),
+                    vpin_window_size=int(os.environ.get("JJ_VPIN_WINDOW", "10")),
+                    on_regime_change=self._on_regime_change,
+                    on_ofi_alert=self._on_ofi_alert,
+                    heartbeat_interval=float(os.environ.get("JJ_WS_HEARTBEAT_INTERVAL", "10")),
+                    rest_poll_interval=float(os.environ.get("JJ_WS_REST_POLL_INTERVAL", "5")),
+                )
+                logger.info("WebSocket Trade Stream + VPIN/OFI initialized")
+            except Exception as e:
+                logger.warning(f"Trade stream init failed: {e}")
+                self.trade_stream = None
+        else:
+            logger.warning("Trade stream not available — running without microstructure defense")
+
+        # Signal source #6: Semantic Lead-Lag Arbitrage Engine
+        self.lead_lag = None
+        if LeadLagEngine is not None:
+            try:
+                self.lead_lag = LeadLagEngine()
+                logger.info("Semantic Lead-Lag Engine initialized")
+            except Exception as e:
+                logger.warning(f"Lead-lag engine init failed: {e}")
+                self.lead_lag = None
+        else:
+            logger.warning("Lead-lag engine not available — running without")
+
         mode_str = "PAPER" if self.paper_mode else "LIVE"
         logger.info("=" * 60)
         logger.info(f"JJ {mode_str} TRADING SYSTEM — INITIALIZED")
@@ -1236,9 +1529,24 @@ class JJLive:
         logger.info(f"  Open positions: {len(self.state.state['open_positions'])}")
         logger.info(f"  Max per trade: ${MAX_POSITION_USD}")
         logger.info(f"  Daily loss limit: ${MAX_DAILY_LOSS_USD}")
-        logger.info(f"  Kelly fraction: {KELLY_FRACTION}")
+        logger.info(f"  Kelly fraction: {KELLY_FRACTION} (max {MAX_KELLY_FRACTION})")
         logger.info(f"  Scan interval: {SCAN_INTERVAL}s")
         logger.info(f"  Platt calibration: A={PLATT_A}, B={PLATT_B}")
+        if self.adaptive_platt.enabled:
+            logger.info(
+                f"  Adaptive Platt: EXPERIMENTAL ON (window={ADAPTIVE_PLATT_WINDOW}, "
+                f"min={ADAPTIVE_PLATT_MIN_SAMPLES}, refit={ADAPTIVE_PLATT_REFIT_SECONDS}s)"
+            )
+        else:
+            logger.info("  Adaptive Platt: OFF (static params preserved)")
+        logger.info(
+            f"  Ensemble agreement floor: {ENSEMBLE_MIN_AGREEMENT:.2f} "
+            f"(fragile conviction skip={'ON' if ENSEMBLE_SKIP_FRAGILE_CONVICTION else 'OFF'})"
+        )
+        logger.info(
+            f"  Disagreement Kelly: std<={DISAGREEMENT_LOW_STD:.2f} => {MAX_KELLY_FRACTION:.4f}, "
+            f"std>={DISAGREEMENT_HIGH_STD:.2f} => {DISAGREEMENT_MIN_KELLY:.5f}"
+        )
         logger.info(f"  Thresholds: YES={YES_THRESHOLD:.0%}, NO={NO_THRESHOLD:.0%}")
         logger.info(f"  Category filter: skip priority < {MIN_CATEGORY_PRIORITY}")
         logger.info(f"  Database: {DB_FILE}")
@@ -1268,11 +1576,119 @@ class JJLive:
                     logger.warning("Could not init Telegram — notifications disabled")
                     return _DummyNotifier()
 
+    def _on_regime_change(self, token_id: str, prev_regime, new_regime):
+        """Callback when VPIN regime changes for a market."""
+        logger.info(f"VPIN regime change: {token_id[:12]}... {prev_regime.value} → {new_regime.value}")
+        if new_regime.value == "toxic":
+            logger.warning(f"TOXIC FLOW detected on {token_id[:12]}... — should pull maker quotes")
+            # In live mode, cancel resting orders on this token
+            if self.clob and not self.paper_mode:
+                try:
+                    self.clob.cancel_all()
+                    logger.info("Cancelled all resting orders due to toxic flow")
+                except Exception as e:
+                    logger.error(f"Failed to cancel orders on toxic flow: {e}")
+
+    def _on_ofi_alert(self, token_id: str, ofi_snapshot):
+        """Callback when OFI kill switch triggers."""
+        logger.warning(
+            f"OFI KILL SWITCH: {token_id[:12]}... "
+            f"skew={ofi_snapshot.directional_skew:.2f} z={ofi_snapshot.normalized_ofi:.2f}"
+        )
+
+    def _get_market_microstructure(self, market_id: str, market_lookup: dict) -> dict | None:
+        """Aggregate token-level VPIN/OFI state into a market-level snapshot."""
+        if self.trade_stream is None:
+            return None
+
+        market_data = market_lookup.get(market_id)
+        if market_data is None:
+            market_data = market_lookup.get(str(market_id))
+        if market_data is None:
+            try:
+                market_data = market_lookup.get(int(market_id))
+            except (TypeError, ValueError):
+                market_data = None
+        if not isinstance(market_data, dict):
+            return None
+
+        token_ids = [str(token_id) for token_id in market_data.get("token_ids", []) if token_id]
+        if not token_ids:
+            return None
+
+        snapshots = [self.trade_stream.get_microstructure(token_id) for token_id in token_ids]
+        snapshots = [snapshot for snapshot in snapshots if snapshot]
+        if not snapshots:
+            return None
+
+        worst_vpin = max(snapshots, key=lambda snapshot: _safe_float(snapshot.get("vpin"), 0.5))
+        strongest_ofi = max(
+            snapshots,
+            key=lambda snapshot: abs(_safe_float(snapshot.get("ofi"), 0.0)),
+        )
+        status = self.trade_stream.get_status()
+        latency = status.get("latency", {}) if isinstance(status.get("latency", {}), dict) else {}
+
+        return {
+            "tokens": token_ids,
+            "vpin": _safe_float(worst_vpin.get("vpin"), 0.5),
+            "regime": worst_vpin.get("regime", "neutral"),
+            "ofi": strongest_ofi.get("ofi"),
+            "ofi_skew": strongest_ofi.get("ofi_skew"),
+            "connection_mode": strongest_ofi.get("connection_mode", status.get("connection_mode", "unknown")),
+            "fallback_active": bool(
+                strongest_ofi.get("fallback_active", status.get("fallback_active", False))
+            ),
+            "latency_p99_ms": _safe_float(
+                strongest_ofi.get("latency_p99_ms"),
+                _safe_float(latency.get("processing_p99_ms"), 0.0),
+            ),
+        }
+
+    def _attach_microstructure_context(self, signal: dict, market_lookup: dict) -> dict:
+        """Attach VPIN/OFI context to a signal and log it alongside the LLM probability."""
+        micro = self._get_market_microstructure(signal.get("market_id", ""), market_lookup)
+        if not micro:
+            return signal
+
+        signal.update(
+            {
+                "vpin": micro["vpin"],
+                "flow_regime": micro["regime"],
+                "ofi": micro["ofi"],
+                "ofi_skew": micro["ofi_skew"],
+                "microstructure_mode": micro["connection_mode"],
+                "microstructure_fallback": micro["fallback_active"],
+                "ws_latency_p99_ms": micro["latency_p99_ms"],
+            }
+        )
+
+        est_prob = _safe_float(signal.get("estimated_prob"), 0.5)
+        ofi_val = micro.get("ofi")
+        ofi_skew = micro.get("ofi_skew")
+        ofi_str = f"{ofi_val:.3f}" if isinstance(ofi_val, (int, float)) else "n/a"
+        skew_str = f"{ofi_skew:.3f}" if isinstance(ofi_skew, (int, float)) else "n/a"
+        logger.info(
+            "LLM+Microstructure: prob=%.3f vpin=%.3f regime=%s ofi=%s skew=%s mode=%s p99=%.2fms | %s",
+            est_prob,
+            micro["vpin"],
+            micro["regime"],
+            ofi_str,
+            skew_str,
+            micro["connection_mode"],
+            micro["latency_p99_ms"],
+            signal.get("question", "")[:60],
+        )
+        return signal
+
     def _init_clob_client(self) -> OfficialClobClient:
         """Initialize CLOB client using official py-clob-client library.
 
         Derives L2 API credentials on startup and caches them for the session.
         """
+        if OfficialClobClient is None or ApiCreds is None:
+            raise RuntimeError("py_clob_client is required for live trading mode")
+
         private_key = os.environ.get("POLY_PRIVATE_KEY", "")
         safe_address = os.environ.get("POLY_SAFE_ADDRESS", "")
 
@@ -1361,6 +1777,12 @@ class JJLive:
                 f"Pausing until tomorrow."
             )
             return {"status": "paused", "reason": "daily_loss_limit"}
+
+        # Refresh adaptive calibration window from latest resolved trades.
+        try:
+            self.adaptive_platt.refresh()
+        except Exception as e:
+            logger.warning(f"Adaptive Platt refresh failed (non-fatal): {e}")
 
         # 1. SCAN
         try:
@@ -1483,6 +1905,25 @@ class JJLive:
                 f"(>{MAX_RESOLUTION_HOURS}h) + {skipped_no_resolution} unknown resolution"
             )
         logger.info(f"Found {len(actionable)} actionable markets (resolve within {MAX_RESOLUTION_HOURS}h)")
+
+        # Register actionable market tokens with the trade stream
+        if self.trade_stream:
+            for m in actionable:
+                mid = m.get("id", m.get("condition_id", ""))
+                mdata = market_lookup.get(mid, {})
+                for tid in mdata.get("token_ids", []):
+                    self.trade_stream.add_token(tid)
+            stream_status = self.trade_stream.get_status()
+            latency = stream_status.get("latency", {}) if isinstance(stream_status.get("latency", {}), dict) else {}
+            logger.info(
+                "Trade stream status: mode=%s connected=%s fallback=%s reconnects=%s p99=%.2fms tokens=%s",
+                stream_status.get("connection_mode", "unknown"),
+                stream_status.get("connected", False),
+                stream_status.get("fallback_active", False),
+                stream_status.get("reconnect_count", 0),
+                _safe_float(latency.get("processing_p99_ms"), 0.0),
+                stream_status.get("tokens_tracked", 0),
+            )
 
         # 2. ANALYZE with Claude (batch mode — matches VPS paper_trader)
         signals = []
@@ -1650,6 +2091,7 @@ class JJLive:
                             market_price,
                             category,
                             already_calibrated=already_calibrated,
+                            calibrate_fn=self.adaptive_platt.calibrate,
                         )
                         r.update(sig)
 
@@ -1692,18 +2134,56 @@ class JJLive:
                 vel_score = velocity_score(edge, res_hours) if res_hours else 0.0
 
                 # Ensemble metadata (if available)
-                n_models = r.get("n_models", 1)
+                n_models = int(_safe_float(r.get("n_models", 1), 1))
                 models_agree = r.get("models_agree", True)
-                model_spread = r.get("model_spread", 0.0)
+                model_spread = _safe_float(r.get("model_spread", 0.0), 0.0)
+                model_stddev = _safe_float(
+                    r.get("model_stddev", r.get("stdev", 0.0)),
+                    0.0,
+                )
                 rag_used = r.get("search_context_used", False)
+                agreement = _safe_float(
+                    r.get("agreement"),
+                    max(0.0, 1.0 - min(1.0, model_spread / 0.25)),
+                )
+                kelly_multiplier = _safe_float(
+                    r.get("kelly_multiplier"),
+                    1.0 if model_stddev <= DISAGREEMENT_LOW_STD else DISAGREEMENT_MIN_KELLY / MAX_KELLY_FRACTION,
+                )
+                disagreement_kelly_fraction = _safe_float(
+                    r.get("disagreement_kelly_fraction"),
+                    min(MAX_KELLY_FRACTION, max(0.0, MAX_KELLY_FRACTION * kelly_multiplier)),
+                )
+                counter_shift = _safe_float(r.get("counter_shift", 0.0), 0.0)
+                counter_fragile = r.get("counter_fragile", False)
+                if isinstance(counter_fragile, str):
+                    counter_fragile = counter_fragile.lower() in ("true", "yes", "1")
 
                 if n_models > 1:
                     logger.info(
-                        f"  Ensemble: {n_models} models, spread={model_spread:.3f}, "
-                        f"agree={models_agree}, RAG={rag_used}"
+                        f"  Ensemble: {n_models} models, spread={model_spread:.3f}, std={model_stddev:.3f}, "
+                        f"agree={models_agree}, agreement={agreement:.3f}, "
+                        f"kelly_mult={kelly_multiplier:.2f}, kelly_cap={disagreement_kelly_fraction:.4f}, "
+                        f"counter_shift={counter_shift:.3f}, "
+                        f"fragile={counter_fragile}, RAG={rag_used}"
                     )
 
-                signals.append({
+                if n_models > 1 and agreement < ENSEMBLE_MIN_AGREEMENT:
+                    logger.info(
+                        f"  SKIP weak ensemble agreement: {agreement:.3f} "
+                        f"< floor {ENSEMBLE_MIN_AGREEMENT:.3f} | "
+                        f"{r.get('question', '')[:60]}"
+                    )
+                    continue
+
+                if ENSEMBLE_SKIP_FRAGILE_CONVICTION and counter_fragile:
+                    logger.info(
+                        f"  SKIP fragile conviction (shift={counter_shift:.3f}) | "
+                        f"{r.get('question', '')[:60]}"
+                    )
+                    continue
+
+                signal_payload = {
                     "market_id": mid,
                     "question": r.get("question", ""),
                     "direction": direction,
@@ -1716,7 +2196,16 @@ class JJLive:
                     "category": r.get("category", "unknown"),
                     "resolution_hours": res_hours,
                     "velocity_score": vel_score,
-                })
+                    "n_models": n_models,
+                    "model_stddev": model_stddev,
+                    "agreement": agreement,
+                    "kelly_multiplier": kelly_multiplier,
+                    "disagreement_kelly_fraction": disagreement_kelly_fraction,
+                    "counter_shift": counter_shift,
+                    "counter_fragile": bool(counter_fragile),
+                }
+                self._attach_microstructure_context(signal_payload, market_lookup)
+                signals.append(signal_payload)
 
         # Tag LLM signals with source
         for s in signals:
@@ -1756,11 +2245,86 @@ class JJLive:
             except Exception as e:
                 logger.warning(f"Cross-platform arb scan failed (non-fatal): {e}")
 
+        # --- SIGNAL SOURCE #5: Lead-Lag Arbitrage Engine ---
+        lead_lag_signals = []
+        if self.lead_lag is not None and actionable:
+            try:
+                # Feed current prices to the lead-lag engine
+                now = time.time()
+                for m in actionable:
+                    mid = m.get("id", m.get("condition_id", ""))
+                    mdata = market_lookup.get(mid, {})
+                    price = mdata.get("yes_price", 0.5)
+                    question = mdata.get("question", "")
+                    if mid and price:
+                        self.lead_lag.update_price(mid, now, price, question)
+
+                # Check for actionable signals from validated pairs
+                ll_sigs = self.lead_lag.get_signals()
+                for ll in ll_sigs:
+                    follower_data = market_lookup.get(ll.follower_id, {})
+                    if not follower_data:
+                        continue
+
+                    # Convert lead-lag signal to standard signal format
+                    follower_price = follower_data.get("yes_price", 0.5)
+                    direction = "buy_yes" if ll.expected_follower_move > 0 else "buy_no"
+                    edge = abs(ll.expected_follower_move) * 0.5  # Conservative: 50% of expected move
+                    edge = min(edge, 0.15)  # Cap at 15%
+
+                    if edge >= MIN_EDGE:
+                        lead_lag_signals.append({
+                            "market_id": ll.follower_id,
+                            "question": follower_data.get("question", ""),
+                            "direction": direction,
+                            "market_price": follower_price,
+                            "estimated_prob": follower_price + (edge if direction == "buy_yes" else -edge),
+                            "edge": edge,
+                            "confidence": ll.confidence,
+                            "reasoning": f"Lead-lag: {ll.leader_id[:12]} leads this market",
+                            "taker_fee": 0.0,  # Maker only
+                            "category": "lead_lag",
+                            "resolution_hours": follower_data.get("resolution_hours"),
+                            "velocity_score": velocity_score(edge, follower_data.get("resolution_hours")),
+                            "source": "lead_lag",
+                        })
+
+                if lead_lag_signals:
+                    logger.info(f"Lead-lag engine: {len(lead_lag_signals)} signals")
+            except Exception as e:
+                logger.warning(f"Lead-lag scan failed (non-fatal): {e}")
+
+        # --- VPIN GATE: filter signals where flow is toxic ---
+        if self.trade_stream:
+            pre_vpin = len(signals)
+            filtered_signals = []
+            for s in signals:
+                mid = s["market_id"]
+                # Check all token IDs for this market
+                mdata = market_lookup.get(mid, {})
+                token_ids = mdata.get("token_ids", [])
+                is_toxic = False
+                for tid in token_ids:
+                    if not self.trade_stream.should_quote(tid):
+                        is_toxic = True
+                        vpin_val = self.trade_stream.vpin.get_vpin(tid)
+                        logger.info(
+                            f"VPIN GATE: blocking {s['question'][:40]}... "
+                            f"(VPIN={vpin_val:.3f}, toxic)"
+                        )
+                        break
+                if not is_toxic:
+                    filtered_signals.append(s)
+
+            if pre_vpin > len(filtered_signals):
+                logger.info(f"VPIN gate: blocked {pre_vpin - len(filtered_signals)} signals due to toxic flow")
+            signals = filtered_signals
+
         # --- CONFIRMATION LAYER: blend all signal sources ---
         # Group all signals by market_id + direction
         from collections import defaultdict as _defaultdict
         signal_groups = _defaultdict(list)
-        all_signals = signals + wallet_signals + lmsr_signals + arb_signals
+        all_signals = signals + wallet_signals + lmsr_signals + arb_signals + lead_lag_signals
         for s in all_signals:
             key = (s["market_id"], s["direction"])
             signal_groups[key].append(s)
@@ -1794,6 +2358,10 @@ class JJLive:
                 # Wallet flow alone on fast market → 1/16 Kelly
                 primary["_kelly_override"] = 1.0 / 16.0
                 primary["_confirmation"] = False
+            elif "lead_lag" in sources:
+                # Lead-lag alone → 1/8 Kelly (structural alpha, moderate sizing)
+                primary["_kelly_override"] = 1.0 / 8.0
+                primary["_confirmation"] = False
             elif "lmsr" in sources:
                 # LMSR alone → 1/16 Kelly
                 primary["_kelly_override"] = 1.0 / 16.0
@@ -1802,6 +2370,25 @@ class JJLive:
                 # Single source, default Kelly
                 primary["_kelly_override"] = KELLY_FRACTION
                 primary["_confirmation"] = False
+
+            # Ensemble disagreement sizing: cap Kelly by std-dev disagreement.
+            base_kelly = _safe_float(primary.get("_kelly_override", KELLY_FRACTION), KELLY_FRACTION)
+            disagreement_kelly_fraction = _safe_float(
+                primary.get("disagreement_kelly_fraction"),
+                None,
+            )
+            effective_kelly = min(MAX_KELLY_FRACTION, max(0.0, base_kelly))
+            if disagreement_kelly_fraction is not None:
+                effective_kelly = min(effective_kelly, max(0.0, disagreement_kelly_fraction))
+                if int(_safe_float(primary.get("n_models", 0), 0)) > 1:
+                    logger.info(
+                        "  Kelly cap applied: std=%.3f base=%.4f cap=%.4f final=%.4f",
+                        _safe_float(primary.get("model_stddev", 0.0), 0.0),
+                        base_kelly,
+                        disagreement_kelly_fraction,
+                        effective_kelly,
+                    )
+            primary["_kelly_override"] = effective_kelly
 
             confirmed_signals.append(primary)
 
@@ -1841,6 +2428,7 @@ class JJLive:
                 market_price=signal["market_price"],
                 direction=signal["direction"],
                 bankroll=self.state.state["bankroll"],
+                kelly_fraction_override=signal.get("_kelly_override"),
             )
 
             if size_usd <= 0:
@@ -1884,7 +2472,7 @@ class JJLive:
                 "edge": signal["edge"],
                 "taker_fee": signal.get("taker_fee", 0.0),
                 "position_size_usd": size_usd,
-                "kelly_fraction": KELLY_FRACTION,
+                "kelly_fraction": signal.get("_kelly_override", KELLY_FRACTION),
                 "category": category,
                 "confidence": signal["confidence"],
                 "reasoning": signal.get("reasoning", ""),
@@ -1934,7 +2522,11 @@ class JJLive:
 
             else:
                 # ---- LIVE TRADING: post to CLOB ----
-                use_post_only = category in ("crypto", "sports")
+                # DISPATCH #75 FIX: ALL orders must be post-only (maker).
+                # At $347 capital, taker fees (up to 1.56% at the money)
+                # are mathematically fatal. Maker orders = 0% fee + rebate.
+                # Previously only crypto/sports were post-only. Now universal.
+                use_post_only = True
 
                 try:
                     order_args = OrderArgs(
@@ -2025,6 +2617,7 @@ class JJLive:
             "open_positions": len(self.state.state["open_positions"]),
             "bankroll": self.state.state["bankroll"],
             "max_resolution_hours": MAX_RESOLUTION_HOURS,
+            "platt_mode": self.adaptive_platt.active_mode,
             "daily_pnl": self.state.state["daily_pnl"],
             "elapsed_seconds": round(elapsed, 1),
         }
@@ -2032,16 +2625,118 @@ class JJLive:
         # Log cycle to database
         self.db.log_cycle(summary)
 
+        # Write intel snapshot for SystemIntel.docx generation
+        self._write_intel_snapshot(summary, signals, actionable)
+
         mode_tag = "PAPER" if self.paper_mode else "LIVE"
         logger.info(
             f"=== JJ [{mode_tag}] Cycle {cycle_num} complete in {elapsed:.1f}s | "
             f"scanned={len(markets)} cat_skip={skipped_category} "
             f"slow_skip={skipped_too_slow} no_res={skipped_no_resolution} "
             f"actionable={len(actionable)} signals={len(signals)} "
-            f"trades={trades_placed} (max_res={MAX_RESOLUTION_HOURS}h) ==="
+            f"trades={trades_placed} (max_res={MAX_RESOLUTION_HOURS}h "
+            f"platt={self.adaptive_platt.active_mode}) ==="
         )
 
         return summary
+
+    def _write_intel_snapshot(self, summary: dict, signals: list, actionable: list):
+        """Write a JSON intel snapshot for SystemIntel.docx generation.
+
+        Captures per-cycle intelligence: what the bot saw, what it traded,
+        and what patterns emerged. Accumulates a rolling window of recent
+        cycles for trend analysis.
+        """
+        try:
+            snapshot_path = Path("data/intel_snapshot.json")
+            snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Load existing snapshot (accumulate rolling window)
+            existing = {}
+            if snapshot_path.exists():
+                try:
+                    with open(snapshot_path) as f:
+                        existing = json.load(f)
+                except (json.JSONDecodeError, OSError):
+                    existing = {}
+
+            # Current cycle intel
+            now = datetime.now(timezone.utc).isoformat()
+            cycle_intel = {
+                "timestamp": now,
+                "cycle": summary.get("cycle", 0),
+                "markets_scanned": summary.get("scanned", 0),
+                "markets_actionable": summary.get("actionable", 0),
+                "signals_generated": summary.get("signals", 0),
+                "trades_placed": summary.get("trades_placed", 0),
+                "bankroll": summary.get("bankroll", 0),
+                "daily_pnl": summary.get("daily_pnl", 0),
+                "open_positions": summary.get("open_positions", 0),
+            }
+
+            # Accumulate signal details (last 100 signals for pattern detection)
+            signal_records = existing.get("recent_signals", [])
+            for sig in signals:
+                if isinstance(sig, dict):
+                    signal_records.append({
+                        "timestamp": now,
+                        "market_id": sig.get("market_id", ""),
+                        "question": (sig.get("question", ""))[:80],
+                        "direction": sig.get("direction", ""),
+                        "edge": sig.get("edge", 0),
+                        "calibrated_prob": sig.get("calibrated_prob", 0),
+                        "category": sig.get("category", "unknown"),
+                        "confidence": sig.get("confidence", ""),
+                    })
+            signal_records = signal_records[-200:]  # Keep last 200
+
+            # Accumulate cycle summaries (last 100 cycles)
+            cycle_history = existing.get("cycle_history", [])
+            cycle_history.append(cycle_intel)
+            cycle_history = cycle_history[-100:]
+
+            # Category frequency tracking
+            cat_freq = existing.get("category_frequency", {})
+            for sig in signals:
+                if isinstance(sig, dict):
+                    cat = sig.get("category", "unknown")
+                    cat_freq[cat] = cat_freq.get(cat, 0) + 1
+
+            # Write snapshot
+            snapshot = {
+                "last_updated": now,
+                "total_cycles": self.state.state.get("cycles_completed", 0),
+                "total_signals": self.state.state.get("total_signals", 0),
+                "signals_by_confidence": self.state.state.get("signals_by_confidence", {}),
+                "current_bankroll": summary.get("bankroll", 0),
+                "current_daily_pnl": summary.get("daily_pnl", 0),
+                "open_positions": summary.get("open_positions", 0),
+                "cycle_history": cycle_history,
+                "recent_signals": signal_records,
+                "category_frequency": cat_freq,
+                "system_params": {
+                    "max_position_usd": MAX_POSITION_USD,
+                    "max_daily_loss_usd": MAX_DAILY_LOSS_USD,
+                    "kelly_fraction": KELLY_FRACTION,
+                    "max_kelly_fraction": MAX_KELLY_FRACTION,
+                    "max_resolution_hours": MAX_RESOLUTION_HOURS,
+                    "yes_threshold": YES_THRESHOLD,
+                    "no_threshold": NO_THRESHOLD,
+                    "adaptive_platt_enabled": ADAPTIVE_PLATT_ENABLED,
+                    "adaptive_platt_mode": self.adaptive_platt.active_mode,
+                    "adaptive_platt_a": self.adaptive_platt.active_a,
+                    "adaptive_platt_b": self.adaptive_platt.active_b,
+                    "ensemble_min_agreement": ENSEMBLE_MIN_AGREEMENT,
+                    "ensemble_skip_fragile_conviction": ENSEMBLE_SKIP_FRAGILE_CONVICTION,
+                    "paper_mode": self.paper_mode,
+                },
+            }
+
+            with open(snapshot_path, "w") as f:
+                json.dump(snapshot, f, indent=2)
+
+        except Exception as e:
+            logger.warning(f"Intel snapshot write failed: {e}")
 
     async def run_continuous(self):
         """Run JJ continuously (daemon mode)."""
@@ -2059,6 +2754,10 @@ class JJLive:
                 sources.append("WalletFlow")
             if self.arb_available:
                 sources.append("CrossPlatformArb")
+            if self.trade_stream:
+                sources.append("VPIN/OFI")
+            if self.lead_lag:
+                sources.append("LeadLag")
             await self.notifier.send_message(
                 f"JJ {mode_tag} TRADING ONLINE\n"
                 f"Bankroll: ${self.state.state['bankroll']:.2f}\n"
@@ -2070,6 +2769,11 @@ class JJLive:
             )
         except Exception:
             pass
+
+        # Start WebSocket trade stream as background task
+        if self.trade_stream:
+            self._trade_stream_task = asyncio.create_task(self.trade_stream.start())
+            logger.info("WebSocket trade stream started as background task")
 
         while True:
             try:

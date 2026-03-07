@@ -27,8 +27,8 @@ logger = structlog.get_logger(__name__)
 # Fitted on 70% train set, validated on 30% test set (out-of-sample)
 # Test-set Brier: 0.286 (raw) → 0.245 (Platt) — improvement of +0.041
 # A and B map: calibrated = sigmoid(A * logit(raw) + B)
-PLATT_A = float(os.environ.get("PLATT_A", "0.55"))
-PLATT_B = float(os.environ.get("PLATT_B", "-0.40"))
+PLATT_A = float(os.environ.get("PLATT_A", "0.5914"))
+PLATT_B = float(os.environ.get("PLATT_B", "-0.3977"))
 
 # Market category keywords for routing
 CATEGORY_KEYWORDS = {

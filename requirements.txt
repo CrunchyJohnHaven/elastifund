@@ -1,0 +1,10 @@
+aiohttp
+websockets
+sqlalchemy
+scipy
+numpy
+pandas
+scikit-learn
+xgboost
+pyyaml
+matplotlib

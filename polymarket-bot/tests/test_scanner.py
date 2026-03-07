@@ -58,6 +58,31 @@ class TestMarketScanner:
         result = await scanner.filter_liquid_markets([], min_volume=1000, min_liquidity=500)
         assert result == []
 
+    @pytest.mark.asyncio
+    async def test_fetch_all_active_markets_stops_on_short_page(self):
+        scanner = MarketScanner()
+        scanner.fetch_active_markets = AsyncMock(
+            side_effect=[
+                [{"id": "1"}] * 100,
+                [{"id": "2"}] * 25,
+            ]
+        )
+
+        result = await scanner.fetch_all_active_markets(max_pages=10, page_size=100)
+
+        assert len(result) == 125
+        assert scanner.fetch_active_markets.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_fetch_all_active_markets_respects_max_pages(self):
+        scanner = MarketScanner()
+        scanner.fetch_active_markets = AsyncMock(return_value=[{"id": "x"}] * 100)
+
+        result = await scanner.fetch_all_active_markets(max_pages=3, page_size=100)
+
+        assert len(result) == 300
+        assert scanner.fetch_active_markets.await_count == 3
+
     def test_weather_keywords_exist(self):
         assert len(WEATHER_KEYWORDS) > 0
         assert "temperature" in WEATHER_KEYWORDS

@@ -1,18 +1,22 @@
 # Edge Strategy Discovery System — Ranked Backlog
 
-**Version:** 2.0.0
+**Version:** 3.0.0
 **Date:** 2026-03-07
-**Flywheel Cycle:** 0 (pre-flywheel baseline)
+**Flywheel Cycle:** 1 (Post Deep Research v3 — 100 Strategies Assessed)
 **Purpose:** Master list of every strategy evaluated, tested, or queued. Updated every flywheel cycle. Part of the Elastifund research flywheel — see `FLYWHEEL_STRATEGY.md`.
+**Assessment:** See `JJ_ASSESSMENT_DISPATCH_v3.md` for execution orders.
 
 ## Current Counts
 | Status | Count |
 |--------|-------|
-| Deployed (live/ready) | 6 |
-| Building (code written) | 5 |
-| Tested & Rejected | 10 |
-| Research Pipeline | 30 |
-| **Total Tracked** | **51** |
+| Deployed (live/ready) | 7 |
+| Building (code written) | 6 |
+| Tested & Rejected | 9 |
+| Pre-Rejected (v3, <10% P(Works) + impractical) | 8 |
+| Re-Evaluating (maker-only) | 1 |
+| Research Pipeline (pre-v3) | 38 |
+| Research Pipeline (v3 additions) | 62 |
+| **Total Tracked** | **131** |
 
 ---
 
@@ -26,6 +30,7 @@
 | D4 | Fee-Aware Edge Gating | DEPLOYED | Maker-only on fee markets |
 | D5 | Quarter-Kelly Sizing | DEPLOYED | 1/16 Kelly on fast markets |
 | D6 | Velocity Scoring | DEPLOYED | Annualized edge / lockup |
+| D7 | Universal Post-Only Maker Enforcement | DEPLOYED | Dispatch #75: all orders now post_only=True. Zero taker fees + 20%/25% rebate. Previously only crypto/sports. |
 
 ## BUILDING (Code Complete, Not Live)
 
@@ -36,6 +41,13 @@
 | B3 | LMSR Bayesian Engine | bot/lmsr_engine.py | 45 passing | 6.8 |
 | B4 | Cross-Platform Arb Scanner | bot/cross_platform_arb.py | 29 passing | 7.2 |
 | B5 | Confirmation Layer | Wired in jj_live.py | — | 8.5 |
+| B6 | HFT Shadow Validator (Chainlink Barrier + Tie-Band) | Core module built | 13 passing | 7.8 |
+
+## RE-EVALUATING (Previously Rejected, New Evidence)
+
+| # | Strategy | Original Kill Reason | New Evidence | Next Step |
+|---|----------|---------------------|--------------|-----------|
+| RE1 | Chainlink vs Binance Basis Lag (MAKER-ONLY) | 1.56% taker fee exceeds spread (2026-03-06) | Maker orders = 0% fee + 20% rebate pool. Gemini dispatch #77 confirms maker-only execution revives this edge. RTDS_MAKER_EDGE_IMPLEMENTATION.md spec aligned. | Build Shadow Validator: 72h empirical data capture with maker fill-rate simulation. If fill rate >15% and EV positive post-costs, promote to BUILDING. |
 
 ## TESTED & REJECTED (10)
 
@@ -44,7 +56,7 @@
 | R1 | Residual Horizon Fair Value | 2026-03-06 | Insufficient signal count |
 | R2 | Volatility Regime Mismatch | 2026-03-06 | No edge post-costs |
 | R3 | Cross-Timeframe Constraint | 2026-03-06 | Insufficient data (needs 5-14d more) |
-| R4 | Chainlink vs Binance Basis Lag | 2026-03-06 | 1.56% taker fee exceeds spread |
+| R4 | ~~Chainlink vs Binance Basis Lag~~ | 2026-03-06 | **RECLASSIFIED → RE-EVALUATE (MAKER-ONLY)** — see below |
 | R5 | Mean Reversion After Extreme | 2026-03-06 | Insufficient signal count |
 | R6 | Time-of-Day Session Effects | 2026-03-06 | No significant pattern |
 | R7 | Order Book Imbalance | 2026-03-06 | Partial data (CLOB 404s) |
@@ -87,7 +99,7 @@ Each edge scored on four dimensions (1–5 scale):
 | 6 | News Sentiment Spike Detection | Politics/Econ | NewsData.io sentiment shift > 2σ from baseline | 4.2 | NewsData.io ($49/mo) | 8–18% |
 | 7 | Google Trends Surge Detector | All | Search volume spike > 3× 30d avg correlates with resolution direction | 4.1 | Google Trends API (free) | 5–15% |
 | 8 | Wikipedia Pageview Anomaly | Politics/Geopolitical | Pageview spike on entity precedes PM move by 4–12h | 4.0 | Wikimedia API (free) | 5–12% |
-| 9 | Resolution Rule Misread Arbitrage | All | Market price ignores exact resolution criteria wording | 4.0 | Gamma API (existing) | 10–40% (rare) |
+| 9 | Resolution Rule Misread Arbitrage + Tie-Band Convexity | All | Market price ignores exact resolution criteria wording; >= rule creates structural Up bias at discrete oracle ticks (Gemini #77) | 4.2 | Gamma API (existing) + RTDS Chainlink feed | 10–40% (rare, but persistent on crypto candles) |
 | 10 | Time Decay / Theta Harvesting | All | Markets near expiry converge; sell premium on far-OTM | 3.9 | Gamma API (existing) | 5–15% |
 | 11 | **Sentiment/Contrarian Dumb Money Fade** | **All (best: crypto, meme)** | **Monitor extreme retail sentiment (Reddit, AAII, CNN F&G, put/call) and fade the herd. Boost edge when Claude is contrarian to crowd; reduce when aligned.** | **3.5** | **Reddit API, AAII (free), CNN F&G (free), Twitter ($100/mo)** | **5–15%** |
 | 12  | Calibration Bin Specialization | All | Only trade in Claude's best-calibrated bins (10–30%, 40–50%) | 3.8 | Internal | 5–10% |
@@ -110,6 +122,90 @@ Each edge scored on four dimensions (1–5 scale):
 | 28 | Stale Market Detection | All | Markets with no volume for 48h+ are likely mispriced | 2.8 | Gamma API (existing) | 3–10% |
 | 29 | Deadline Convergence Trading | All | Markets converge to 0/100 as deadline approaches; trade momentum | 2.7 | Gamma API (existing) | 2–5% |
 | 30 | Prompt A/B Rotation | All | Rotate prompt variants; track which yields best calibration by category | 2.6 | Internal | 1–3% |
+| 31 | **VPIN-Guided Order Flow Toxicity Fade** | **Microstructure** | **VPIN detects toxic flow; pull maker orders when VPIN>0.8, tighten spread when VPIN<0.2. Protects rebate farming.** | **4.6** | **CLOB WebSocket (free)** | **15–30 bps** |
+| 32 | **Multi-Agent Debate + Conformal Calibration** | **AI/ML** | **Claude 4.5 vs GPT-5.1 adversarial debate, Gemini 3 Pro judge, conformal prediction intervals. Trade only outside interval.** | **4.4** | **LLM APIs** | **Brier -0.03 to -0.05** |
+| 33 | **Serie A/NCAAB Fee Asymmetry Maker** | **Sports/Microstructure** | **Sports fee curve (rate=0.0175, exp=1) is 3.5x cheaper than crypto. 25% maker rebate. Pinnacle true odds → maker orders.** | **4.2** | **Pinnacle API + CLOB** | **40–60 bps** |
+| 34 | Dynamic Risk Parity for Binary Markets | Portfolio | Inverse-volatility weighting adapted for binary options; equalize risk contribution across positions | 4.0 | 30-day rolling returns | 20% drawdown reduction |
+| 35 | Conformal Prediction Uncertainty Quantification | AI/ML | Map LLM outputs to strict statistical coverage guarantees; size inversely to interval width | 3.8 | Historical LLM predictions | Capital preservation |
+| 36 | Disposition Effect Fade (Loser's Hold) | Behavioral | Buy maker bids on 85%+ YES markets <24h to expiry where volume dried up | 3.5 | CLOB trade history | 50–100 bps |
+| 37 | Spread Asymmetry on Round Number Walls | Microstructure | Front-run liquidity walls >$5K at modulo-5 prices by placing at +$0.01 | 3.3 | CLOB depth | 10–15 bps |
+| 38 | USASpending.gov Contract Resolution | Alt Data | Monitor defense/infra contract awards for political/economic market signals | 3.6 | USASpending API (free) | 200 bps |
+
+---
+
+## DEEP RESEARCH v3 — TOP 30 ADDITIONS (Ranked by v3 Composite Score)
+
+*Source: DEEP_RESEARCH_OUTPUT_v3.md, 2026-03-07. See JJ_ASSESSMENT_DISPATCH_v3.md for execution priorities.*
+
+**JJ Execution Tiers:**
+- **TIER 1 (Days 1-7):** Go live + infrastructure
+- **TIER 2 (Days 7-14):** First alpha attempt
+- **TIER 3 (Days 14-21):** Second alpha attempt
+- **TIER 4 (Days 21+):** Only with 200+ live trades
+
+| v3 Rank | Strategy ID | Name | P(Works) | v3 Composite | JJ Tier | Notes |
+|---------|------------|------|----------|-------------|---------|-------|
+| 1 | A-6 | Multi-Outcome Sum Violation Scanner | 45% | 4.2 | TIER 2 | IMDEA: $40M proven arb. Infrastructure reusable for B-1, B-5, B-8 |
+| 2 | B-1 | LLM Combinatorial Dependency Graph | 45% | 4.1 | TIER 3 | Cross-market logical dependency arb. 5-7 days build. |
+| 3 | D-12 | Adaptive Platt Calibration (Rolling) | 10% | 2.2 | TIER 4 | Validated negative on 2026-03-07. Static `A=0.5914`, `B=-0.3977` beat rolling windows 50/100/200 on the 532-market walk-forward holdout. Revisit only after 100+ live resolved trades. |
+| 4 | G-1 | WebSocket Upgrade (REST→WS) | 95%* | 3.9 | TIER 1 | *Infrastructure, not alpha. Prerequisite for 8+ strategies. |
+| 5 | D-9 | Ensemble Disagreement Signal | 30% | 3.8 | TIER 2 | 1 day. Simple std() on multi-model outputs. |
+| 6 | A-1 | Information-Advantaged Market Making (IAMM) | 35% | 3.7 | TIER 4 | 1-2 weeks. Highest potential alpha. Needs fill rate data first. |
+| 7 | D-2 | Conformal Prediction Sizing | 30% | 3.7 | TIER 4 | 3-4 days. Uses 532-market dataset. |
+| 8 | D-5 | Active Learning Market Prioritization | 30% | 3.6 | TIER 4 | 1 day. Two-pass estimation with sorting. |
+| 9 | G-5 | Order Flow Toxicity Detection | 30% | 3.6 | TIER 4 | Safety mechanism for maker strategies. |
+| 10 | G-8 | Position Merging | 80% | 3.5 | TIER 1 | 1 day. Use poly_merger open-source. Operational necessity. |
+| 11 | H-3 | Drawdown-Contingent Strategy Switching | 35% | 3.5 | TIER 4 | Risk management overlay. |
+| 12 | G-2 | Smart Order Routing (Maker vs Taker) | 35% | 3.4 | TIER 4 | Dynamic maker/taker decision. |
+| 13 | H-5 | Capital Velocity Optimization | 25% | 3.4 | TIER 4 | Staggered resolution timing. |
+| 14 | B-10 | Kalshi Binary Weather (NWS PoP) | 25% | 3.3 | TIER 4 | Replaces killed bracket strategy with simpler binary rain/no-rain. |
+| 15 | D-1 | Multi-Agent Debate Architecture | 25% | 3.3 | TIER 4 | 3-round LLM debate for 30-70% price zone. |
+| 16 | H-2 | Strategy-Specific Bankroll Segmentation | 30% | 3.3 | TIER 1 | Simple allocation. $100 maker / $100 directional / $47 experimental. |
+| 17 | I-10 | Calibration Training Ground ($0.10 bets) | 80% | 3.2 | TIER 1 | NOT A STRATEGY — research investment. Generates calibration data. |
+| 18 | C-6 | News Wire Speed Advantage | 25% | 3.2 | TIER 4 | Agentic RAG implementation. Free tier too limited. |
+| 19 | I-6 | Counter-Narrative Conviction Testing | 20% | 3.2 | TIER 4 | 3-step adversarial prompt. |
+| 20 | E-3 | Partisan Bias Exploitation | 20% | 3.1 | TIER 4 | FiveThirtyEight vs PM divergence on political markets. |
+| 21 | B-6 | Metaculus→Polymarket Probability Transfer | 25% | 3.1 | TIER 4 | Third-party human forecaster signal. |
+| 22 | F-3 | Time-to-Resolution Theta Decay | 20% | 3.0 | TIER 4 | <48h markets with strong LLM conviction. |
+| 23 | I-9 | Resolution Oracle Latency Exploitation | 25% | 3.0 | TIER 4 | Buy at $0.95 when outcome is determined but not resolved. |
+| 24 | B-3 | PM→Options Market Implied Probability | 30% | 3.0 | TIER 4 | Fed Funds futures vs PM rate-cut markets. |
+| 25 | I-12 | Wallet Behavioral Classification | 20% | 2.9 | TIER 4 | Cluster wallets by type, weight flow signals. |
+| 26 | D-6 | Synthetic Calibration (Metaculus Training Data) | 25% | 2.9 | TIER 4 | Expand calibration from 532 to 5,000+ markets. |
+| 27 | D-4 | Chain-of-Verification | 20% | 2.8 | TIER 4 | Separate estimation from bias-checking. |
+| 28 | I-7 | Leaderboard Reverse Engineering | 20% | 2.8 | TIER 4 | Track top 50 wallet positions. Extension of wallet flow. |
+| 29 | C-7 | FRED Economic Consensus Divergence | 20% | 2.8 | TIER 4 | Non-LLM quant signal for econ markets. |
+| 30 | E-5 | Vivid Event Overreaction Mean-Reversion | 18% | 2.7 | TIER 4 | Fade >20% spikes on dramatic but unlikely events. |
+
+### v3 Strategies NOT in Top 30 (Queued, Unranked)
+
+Remaining 62 strategies from v3 are catalogued in DEEP_RESEARCH_OUTPUT_v3.md. Key ones worth noting:
+
+| ID | Name | P(Works) | Status |
+|----|------|----------|--------|
+| A-2 | Liquidity Reward Optimization | 25% | Queued — pairs with A-1 |
+| A-3 | New Market Listing Front-Running | 20% | Queued |
+| A-4 | YES/NO Depth Asymmetry | 20% | Queued — needs WebSocket |
+| A-5 | Resolution Boundary Maker Withdrawal | 15% | Queued |
+| A-8 | Post-Only Timing on 5m BTC (T-10s) | 30% | BUILDING — `bot/btc_5min_maker.py` runner + tests added (2026-03-07) |
+| A-9 | Spread Regime Classification | 25% | Queued — enhancement to A-1 |
+| B-2 | PM↔Kalshi Resolution Rule Divergence | 25% | Queued |
+| C-1 | Congressional Stock Disclosure (STOCK Act) | 15% | Queued |
+| C-2 | Court Docket Monitoring (PACER) | 20% | Queued |
+| H-10 | 20% Veteran Mission Fund Accounting | 100% | REQUIRED — implement with first live P&L |
+| I-5 | $POLY Token Airdrop Farming | 20% | Queued — passive benefit of active trading |
+
+### PRE-REJECTED (v3 Assessment — Do Not Build)
+
+| ID | Name | P(Works) | Kill Reason |
+|----|------|----------|-------------|
+| C-9 | Satellite Parking Lot Analysis | 3% | L complexity, $347 capital, absurd ROI |
+| C-14 | Domain Registration Monitoring | 3% | <1 event/quarter |
+| I-2 | Wayback Machine Change Detection | 3% | <2 events/quarter |
+| I-11 | Cross-Language Sentiment Divergence | 8% | L complexity, needs NLP pipeline |
+| I-13 | Automated Market Creation | 5% | PM creation is centralized |
+| F-9 | Intraday Volatility Smile | 5% | Theoretical framework doesn't hold for binary PM |
+| F-2 | Pre-Weekend Position Unwind | 8% | PM unlikely to exhibit equity patterns |
+| B-7 | Triangular 3-Platform Arb | 8% | <1 event/month, Betfair access uncertain |
 
 ---
 
@@ -407,21 +503,41 @@ for market in open_markets:
 
 ## Implementation Priority for Claude Code
 
-**Immediate (this sprint):**
-1. Edge #3 — Already implemented, optimize calibration bins
-2. Edge #5 — Multi-model ensemble (highest academic evidence)
-3. Edge #1 — Weather multi-model (already half-built)
+**Immediate (Days 1-3):**
+1. Restart live trading at $0.50/position to generate resolved calibration data (I-10 mode).
+2. Keep maker-only enforcement active across all markets.
 
-**Next sprint:**
-4. Edge #4 — FRED government data pipeline
-5. Edge #2 — Polling aggregator integration
-6. Edge #7 — Google Trends surge detector
+**Cycle 1 (Days 1-15):**
+3. G-1 WebSocket upgrade (prerequisite infrastructure).
+4. D-12 Adaptive Platt rolling calibration. Completed 2026-03-07: static beat rolling on the 532-market walk-forward holdout; keep static defaults for now.
+5. A-6 Multi-outcome sum-violation scanner.
+6. G-8 Position merging.
+7. D-9 Ensemble disagreement weighting.
+8. H-2 Bankroll segmentation.
+9. Gate: A-6 must detect >=5 qualifying events in 14 days.
 
-**Following sprint:**
-7. Edge #6 — News sentiment pipeline
-8. Edge #8 — Wikipedia pageview anomaly
-9. Edge #10 — Time decay harvesting
-10. Edge #9 — Resolution rule enhancement
+**Cycle 2 (Days 16-30):**
+10. B-1 LLM combinatorial dependency graph.
+11. B-6 Metaculus probability transfer.
+12. C-6 News-wire speed pipeline.
+13. D-1 Multi-agent debate A/B test.
+14. D-5 Active-learning market prioritization.
+15. E-3 Partisan-bias overlay.
+16. Gate: if B-1 and C-6 are both non-viable, pivot to maker-only concentration.
+
+**Cycle 3 (Days 31-45):**
+17. A-1 Information-advantaged market making.
+18. G-5 Order-flow toxicity detection.
+19. G-2 Smart order routing.
+20. A-9 Spread regime classification.
+21. D-2 Conformal sizing.
+22. H-3 Drawdown switching + F-1 day-of-week scheduling.
+
+**Cycle 4 (Days 46-60):**
+23. H-1 Correlation-aware Kelly.
+24. H-5 Capital-velocity optimization.
+25. H-8 Volatility targeting.
+26. Live validation and cull any strategy with negative P&L after 50+ trades.
 
 ---
 
