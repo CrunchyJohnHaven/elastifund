@@ -139,8 +139,9 @@ class TestNewsClient:
     @pytest.mark.asyncio
     async def test_fetch_news_for_market_no_key(self):
         client = NewsClient(api_key="")
-        result = await client.fetch_news_for_market("Will Bitcoin hit 100k?")
-        assert result["article_count"] == 0
+        with patch.object(client, "_fetch_google_news_rss", return_value=[]):
+            result = await client.fetch_news_for_market("Will Bitcoin hit 100k?")
+            assert result["article_count"] == 0
 
     @pytest.mark.asyncio
     async def test_fetch_news_success(self):
