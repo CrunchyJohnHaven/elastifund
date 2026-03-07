@@ -1,0 +1,12 @@
+{
+  "uncorrected": {
+    "trades": 470,
+    "win_rate": 0.648936170212766,
+    "total_pnl": 280.0
+  },
+  "corrected": {
+    "trades": 253,
+    "win_rate": 0.7430830039525692,
+    "total_pnl": 246.0
+  }
+}

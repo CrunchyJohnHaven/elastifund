@@ -1,0 +1,53 @@
+{
+  "hold_to_resolution": {
+    "label": "Hold to Resolution",
+    "trades": 470,
+    "wins": 305,
+    "win_rate": 0.6489,
+    "total_pnl": 280.0,
+    "avg_pnl": 0.5957,
+    "avg_hold_days": 13.8,
+    "total_capital_days": 12986.0,
+    "capital_efficiency": 0.021562,
+    "max_drawdown": 12.0,
+    "arr_pct": 1109.8
+  },
+  "early_exit": {
+    "label": "Early Exit Strategy",
+    "trades": 470,
+    "wins": 305,
+    "win_rate": 0.6489,
+    "total_pnl": 271.92,
+    "avg_pnl": 0.5786,
+    "avg_hold_days": 5.5,
+    "total_capital_days": 4672.0,
+    "capital_efficiency": 0.058202,
+    "max_drawdown": 1.22,
+    "arr_pct": 1068.5
+  },
+  "exit_reasons": {
+    "momentum": {
+      "count": 165,
+      "wins": 0,
+      "total_pnl": -41.36,
+      "avg_hold": 3.1,
+      "win_rate": 0.0,
+      "avg_pnl": -0.2506
+    },
+    "edge_captured": {
+      "count": 305,
+      "wins": 305,
+      "total_pnl": 313.28,
+      "avg_hold": 6.8,
+      "win_rate": 1.0,
+      "avg_pnl": 1.0271
+    }
+  },
+  "improvement": {
+    "pnl_delta": -8.08,
+    "win_rate_delta": 0.0,
+    "avg_hold_reduction_days": 8.3,
+    "capital_velocity_multiplier": 2.78,
+    "arr_delta": -41.3
+  }
+}

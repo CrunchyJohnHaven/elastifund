@@ -1,0 +1,394 @@
+{
+  "run_at": "2026-03-06T08:49:19Z",
+  "direction_calibration": {
+    "n_train": 1768,
+    "n_test": 760,
+    "test_brier_raw": 0.1436,
+    "test_brier_global_platt": 0.1277,
+    "test_brier_directional_platt": 0.1274,
+    "improvement_global_vs_raw": 0.0159,
+    "improvement_directional_vs_raw": 0.0162,
+    "improvement_directional_vs_global": 0.0003,
+    "global_platt": {
+      "A": 0.7811,
+      "B": -0.7352
+    },
+    "directional_platt": {
+      "yes_A": 0.4994,
+      "yes_B": -0.4949,
+      "no_A": 1.0464,
+      "no_B": -0.3511
+    },
+    "yes_side_n": 187,
+    "yes_side_brier_raw": 0.2969,
+    "yes_side_brier_global": 0.2522,
+    "yes_side_brier_directional": 0.2485,
+    "no_side_n": 573,
+    "no_side_brier_raw": 0.0936,
+    "no_side_brier_global": 0.087,
+    "no_side_brier_directional": 0.0879,
+    "trade_sim": {
+      "baseline": {
+        "label": "Baseline (uncalibrated)",
+        "trades": 15309,
+        "win_rate": 0.8156,
+        "total_pnl": 32096.45,
+        "avg_pnl": 2.0966,
+        "brier": 0.144,
+        "max_drawdown": 48.0,
+        "yes_trades": 2908,
+        "yes_win_rate": 0.51,
+        "no_trades": 12401,
+        "no_win_rate": 0.8873,
+        "arr_5": 4712.0,
+        "by_category": {
+          "weather": {
+            "trades": 152,
+            "win_rate": 0.7368,
+            "avg_pnl": 1.683
+          },
+          "crypto": {
+            "trades": 814,
+            "win_rate": 0.6376,
+            "avg_pnl": 1.5681
+          },
+          "geopolitical": {
+            "trades": 111,
+            "win_rate": 0.7477,
+            "avg_pnl": 1.7641
+          },
+          "entertainment": {
+            "trades": 309,
+            "win_rate": 0.7573,
+            "avg_pnl": 1.8559
+          },
+          "sports": {
+            "trades": 5046,
+            "win_rate": 0.8823,
+            "avg_pnl": 2.2605
+          },
+          "economics": {
+            "trades": 4954,
+            "win_rate": 0.7899,
+            "avg_pnl": 2.0221
+          },
+          "politics": {
+            "trades": 3490,
+            "win_rate": 0.8123,
+            "avg_pnl": 2.1246
+          },
+          "science_tech": {
+            "trades": 379,
+            "win_rate": 0.7625,
+            "avg_pnl": 2.122
+          },
+          "other": {
+            "trades": 54,
+            "win_rate": 0.9074,
+            "avg_pnl": 2.8094
+          }
+        }
+      },
+      "global_platt": {
+        "label": "Global Platt",
+        "trades": 15696,
+        "win_rate": 0.8259,
+        "total_pnl": 32803.15,
+        "avg_pnl": 2.0899,
+        "brier": 0.1291,
+        "max_drawdown": 58.0,
+        "yes_trades": 1429,
+        "yes_win_rate": 0.5619,
+        "no_trades": 14267,
+        "no_win_rate": 0.8524,
+        "arr_5": 4696.0,
+        "by_category": {
+          "weather": {
+            "trades": 154,
+            "win_rate": 0.6883,
+            "avg_pnl": 1.4072
+          },
+          "crypto": {
+            "trades": 835,
+            "win_rate": 0.6731,
+            "avg_pnl": 1.5416
+          },
+          "geopolitical": {
+            "trades": 118,
+            "win_rate": 0.8136,
+            "avg_pnl": 2.0329
+          },
+          "entertainment": {
+            "trades": 314,
+            "win_rate": 0.8248,
+            "avg_pnl": 2.1489
+          },
+          "sports": {
+            "trades": 5158,
+            "win_rate": 0.8912,
+            "avg_pnl": 2.223
+          },
+          "economics": {
+            "trades": 5089,
+            "win_rate": 0.8025,
+            "avg_pnl": 2.0402
+          },
+          "politics": {
+            "trades": 3582,
+            "win_rate": 0.8071,
+            "avg_pnl": 2.0925
+          },
+          "science_tech": {
+            "trades": 387,
+            "win_rate": 0.8191,
+            "avg_pnl": 2.2972
+          },
+          "other": {
+            "trades": 59,
+            "win_rate": 0.8814,
+            "avg_pnl": 2.5566
+          }
+        }
+      },
+      "directional_platt": {
+        "label": "Directional Platt",
+        "trades": 15636,
+        "win_rate": 0.8202,
+        "total_pnl": 32924.55,
+        "avg_pnl": 2.1057,
+        "brier": 0.1291,
+        "max_drawdown": 38.66,
+        "yes_trades": 1457,
+        "yes_win_rate": 0.5237,
+        "no_trades": 14179,
+        "no_win_rate": 0.8506,
+        "arr_5": 4734.0,
+        "by_category": {
+          "weather": {
+            "trades": 154,
+            "win_rate": 0.6753,
+            "avg_pnl": 1.3518
+          },
+          "crypto": {
+            "trades": 833,
+            "win_rate": 0.6651,
+            "avg_pnl": 1.6642
+          },
+          "geopolitical": {
+            "trades": 118,
+            "win_rate": 0.822,
+            "avg_pnl": 2.0856
+          },
+          "entertainment": {
+            "trades": 314,
+            "win_rate": 0.8248,
+            "avg_pnl": 2.1964
+          },
+          "sports": {
+            "trades": 5132,
+            "win_rate": 0.8874,
+            "avg_pnl": 2.2385
+          },
+          "economics": {
+            "trades": 5079,
+            "win_rate": 0.798,
+            "avg_pnl": 2.0602
+          },
+          "politics": {
+            "trades": 3563,
+            "win_rate": 0.7993,
+            "avg_pnl": 2.0855
+          },
+          "science_tech": {
+            "trades": 386,
+            "win_rate": 0.7902,
+            "avg_pnl": 2.2355
+          },
+          "other": {
+            "trades": 57,
+            "win_rate": 0.8772,
+            "avg_pnl": 2.6203
+          }
+        }
+      }
+    }
+  },
+  "category_calibration": {
+    "n_train": 1769,
+    "n_test": 759,
+    "category_distribution": {
+      "economics": 835,
+      "sports": 783,
+      "politics": 588,
+      "crypto": 148,
+      "science_tech": 68,
+      "entertainment": 52,
+      "weather": 25,
+      "geopolitical": 19,
+      "other": 10
+    },
+    "test_brier_raw": 0.1526,
+    "test_brier_global_platt": 0.1301,
+    "test_brier_category_platt": 0.1279,
+    "improvement_category_vs_raw": 0.0247,
+    "improvement_category_vs_global": 0.0022,
+    "category_scalers": {
+      "weather": {
+        "n": 18,
+        "using": "global"
+      },
+      "crypto": {
+        "n": 87,
+        "A": 0.3838,
+        "B": -0.5365,
+        "raw_brier": 0.245,
+        "cal_brier": 0.216
+      },
+      "geopolitical": {
+        "n": 16,
+        "using": "global"
+      },
+      "entertainment": {
+        "n": 42,
+        "A": 0.4399,
+        "B": -1.4181,
+        "raw_brier": 0.1728,
+        "cal_brier": 0.1124
+      },
+      "economics": {
+        "n": 594,
+        "A": 0.7622,
+        "B": -0.7262,
+        "raw_brier": 0.1557,
+        "cal_brier": 0.1408
+      },
+      "sports": {
+        "n": 549,
+        "A": 0.9482,
+        "B": -0.4889,
+        "raw_brier": 0.1003,
+        "cal_brier": 0.0953
+      },
+      "politics": {
+        "n": 412,
+        "A": 0.9503,
+        "B": -0.5565,
+        "raw_brier": 0.1412,
+        "cal_brier": 0.1327
+      },
+      "science_tech": {
+        "n": 47,
+        "A": 0.9218,
+        "B": -1.2769,
+        "raw_brier": 0.1543,
+        "cal_brier": 0.1101
+      },
+      "other": {
+        "n": 4,
+        "using": "global"
+      }
+    },
+    "per_category_test_brier": {
+      "crypto": {
+        "n": 61,
+        "brier_raw": 0.2385,
+        "brier_global": 0.2102,
+        "brier_category": 0.1988
+      },
+      "entertainment": {
+        "n": 10,
+        "brier_raw": 0.2712,
+        "brier_global": 0.1642,
+        "brier_category": 0.0937
+      },
+      "sports": {
+        "n": 234,
+        "brier_raw": 0.0854,
+        "brier_global": 0.0782,
+        "brier_category": 0.079
+      },
+      "economics": {
+        "n": 241,
+        "brier_raw": 0.1828,
+        "brier_global": 0.1527,
+        "brier_category": 0.1498
+      },
+      "politics": {
+        "n": 176,
+        "brier_raw": 0.1529,
+        "brier_global": 0.1331,
+        "brier_category": 0.1355
+      },
+      "science_tech": {
+        "n": 21,
+        "brier_raw": 0.2259,
+        "brier_global": 0.1751,
+        "brier_category": 0.1661
+      }
+    }
+  },
+  "walkforward": {
+    "n_folds": 3,
+    "total_valid_markets": 2425,
+    "fold_results": [
+      {
+        "fold": 1,
+        "n_train": 606,
+        "n_test": 606,
+        "train_period": "2018-06-13 \u2192 2025-03-12",
+        "test_period": "2025-03-12 \u2192 2025-04-29",
+        "test_brier_raw": 0.1106,
+        "test_brier_platt": 0.1043,
+        "test_brier_directional": 0.1033,
+        "platt_improvement": 0.0063,
+        "directional_improvement": 0.0073,
+        "platt_params": {
+          "A": 0.5306,
+          "B": -0.5046
+        }
+      },
+      {
+        "fold": 2,
+        "n_train": 1212,
+        "n_test": 606,
+        "train_period": "2018-06-13 \u2192 2025-04-29",
+        "test_period": "2025-04-29 \u2192 2025-06-30",
+        "test_brier_raw": 0.0903,
+        "test_brier_platt": 0.0825,
+        "test_brier_directional": 0.0838,
+        "platt_improvement": 0.0078,
+        "directional_improvement": 0.0065,
+        "platt_params": {
+          "A": 0.7021,
+          "B": -0.6683
+        }
+      },
+      {
+        "fold": 3,
+        "n_train": 1818,
+        "n_test": 607,
+        "train_period": "2018-06-13 \u2192 2025-06-30",
+        "test_period": "2025-06-30 \u2192 2026-06-30",
+        "test_brier_raw": 0.1479,
+        "test_brier_platt": 0.1269,
+        "test_brier_directional": 0.1296,
+        "platt_improvement": 0.021,
+        "directional_improvement": 0.0183,
+        "platt_params": {
+          "A": 0.7808,
+          "B": -0.7035
+        }
+      }
+    ],
+    "aggregate": {
+      "avg_brier_raw": 0.1163,
+      "avg_brier_platt": 0.1046,
+      "avg_brier_directional": 0.1056,
+      "avg_platt_improvement": 0.0117,
+      "avg_directional_improvement": 0.0107
+    }
+  },
+  "multiprompt": {
+    "skipped": true
+  }
+}

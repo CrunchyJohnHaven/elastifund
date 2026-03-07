@@ -1,0 +1,23 @@
+{
+  "run_at": "2026-03-05T22:06:16Z",
+  "mode": "ensemble_comparison",
+  "markets_analyzed": 5,
+  "comparison": {
+    "claude_only": {
+      "markets": 5,
+      "trades": 33,
+      "win_rate": 0.7879,
+      "brier_score": 0.1888,
+      "total_pnl": 50.83,
+      "avg_pnl": 1.5403
+    },
+    "ensemble": {
+      "markets": 5,
+      "trades": 29,
+      "win_rate": 0.7241,
+      "brier_score": 0.1584,
+      "total_pnl": 55.32,
+      "avg_pnl": 1.9074
+    }
+  }
+}

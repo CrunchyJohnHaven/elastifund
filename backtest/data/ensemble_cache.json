@@ -1,0 +1,77 @@
+{
+  "cb1c1fc3347d91aa": {
+    "probability": 0.5,
+    "confidence": "high",
+    "reasoning": "Ensemble of 1 models, stdev=0.000",
+    "stdev": 0.0,
+    "n_models": 1,
+    "individual": [
+      {
+        "probability": 0.5,
+        "confidence": "medium",
+        "model": "claude:claude-haiku-4-5-20251001",
+        "reasoning": "# Step 1: Historical Base Rate\nFor high-profile celebrity marriages, the divorce rate is substantial. Among celebrity couples married for 6+ years, approximately 50-60% eventually divorce. However, this question has a tight timeframe (by Jan 1, 2021), which constrains the base rate considerably.\n\n# Step 2: Specific Evidence\n\n**Factors pointing toward YES (divorce):**\n- Kim filed for divorce in February 2021 (this is after the question date, but the relationship was visibly deteriorating by late 2020)\n- Public reports in late 2020 indicated serious marital strain\n- Kanye's erratic public behavior in 2020 created relationship tension\n- They had been married since 2014 (~6 years), entering a higher-divorce-risk phase\n\n**Factors pointing toward NO (staying married):**\n- They were still legally married as of late 2020\n- They have four children together (creates incentive to reconcile)\n- No formal divorce filing yet (as of Dec 2020)\n- Only ~4 weeks remain in the question window\n\n**Critical timing issue:** The question resolves on Jan 1, 2021. A divorce filing or decree would need to occur by then. Legal divorce processes typically take months, so even if they decided to separate in December 2020, it's unlikely"
+      }
+    ]
+  },
+  "9e4db08df8839325": {
+    "probability": 0.5,
+    "confidence": "high",
+    "reasoning": "Ensemble of 1 models, stdev=0.000",
+    "stdev": 0.0,
+    "n_models": 1,
+    "individual": [
+      {
+        "probability": 0.5,
+        "confidence": "medium",
+        "model": "claude:claude-haiku-4-5-20251001",
+        "reasoning": "Step 1: Historical base rate\nLooking at major fintech/cryptocurrency companies seeking public listings, the base rate for companies beginning public trading within a specified ~12-month window (when seriously pursuing it) is relatively high, around 60-70%, though delays are common.\n\nStep 2: Specific evidence adjusting the probability\nEvidence for YES:\n- Coinbase had filed for direct listing by late 2020\n- Strong market conditions for tech IPOs in late 2020\n- Company was mature and profitable\n- Clear regulatory pathway established\n\nEvidence for NO:\n- Direct listings take time even when filed\n- Regulatory uncertainty around crypto exchanges\n- Timeline is tight (question appears to reference late 2020, leaving ~1 year)\n\nStep 3: Analysis\nCoinbase did actually begin public trading on April 14, 2021 (via direct listing), which is AFTER the Jan 1, 2021 deadline. So this resolves NO in reality. However, answering prospectively as of when this question was likely created (mid-2020): The company had strong momentum, clear intent, and favorable market conditions, but the direct listing process and regulatory reviews suggested uncertainty about hitting the specific Jan 1, 2021 date.\n\nMy estimate before the calibration adjustment would be ~55-60% for completion by Jan 1, 2021. Applying the LL"
+      }
+    ]
+  },
+  "45475ce54b4d494e": {
+    "probability": 0.42,
+    "confidence": "high",
+    "reasoning": "Ensemble of 1 models, stdev=0.000",
+    "stdev": 0.0,
+    "n_models": 1,
+    "individual": [
+      {
+        "probability": 0.42,
+        "confidence": "medium",
+        "model": "claude:claude-haiku-4-5-20251001",
+        "reasoning": "Trump faced an uphill battle"
+      }
+    ]
+  },
+  "c88ea043a9b3e426": {
+    "probability": 0.25,
+    "confidence": "high",
+    "reasoning": "Ensemble of 1 models, stdev=0.000",
+    "stdev": 0.0,
+    "n_models": 1,
+    "individual": [
+      {
+        "probability": 0.25,
+        "confidence": "medium",
+        "model": "claude:claude-haiku-4-5-20251001",
+        "reasoning": "While federal investigations into Hunter Biden were ongoing, the combination of a short timeframe"
+      }
+    ]
+  },
+  "515b83626149b4fc": {
+    "probability": 0.23,
+    "confidence": "high",
+    "reasoning": "Ensemble of 1 models, stdev=0.000",
+    "stdev": 0.0,
+    "n_models": 1,
+    "individual": [
+      {
+        "probability": 0.23,
+        "confidence": "medium",
+        "model": "claude:claude-haiku-4-5-20251001",
+        "reasoning": "# Analysis\n\n**Step 1: Historical Base Rate**\nPresidential candidates announcing election victories before Election Day is extremely rare. Candidates typically wait for official results or at minimum until voting concludes. The base rate for premature victory announcements is very low, around 5-10%.\n\n**Step 2: Specific Evidence**\n\n*Upward adjustments:*\n- Trump has a documented pattern of making bold, unconventional public statements\n- He frequently uses Twitter for major announcements\n- The question allows the full period before November 5th, giving ~4 days post-election\n\n*Downward adjustments:*\n- \"Won the election\" is a strong claim requiring confidence in results\n- Official results typically take days to certify\n- Even Trump would likely wait for clear projection from major networks\n- Before November 5th means before most states finish counting\n- This would be legally and politically risky to claim prematurely\n\n**Step 3: Adjustment for LLM Bias**\nMy intuitive assessment leans toward 25-35% (accounting for Trump's unconventional behavior), but the calibration note warns against overestimating YES probabilities. This is a scenario where Trump *might* act unusually, but the baseline expectation is still cautious. Applying the downward adjustment, I estimate around 20-25%.\n\nPROBABILITY: 0.23"
+      }
+    ]
+  }
+}

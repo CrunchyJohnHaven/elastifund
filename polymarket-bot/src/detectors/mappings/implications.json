@@ -1,0 +1,15 @@
+{
+  "_comment": "Manual implication mappings. If A implies B, then price(A) <= price(B). Each entry maps a 'condition_id' to a list of condition_ids it implies. Populate with real Polymarket condition IDs as you discover relationships.",
+  "groups": [
+    {
+      "label": "Example: Trump wins Iowa implies Trump wins election",
+      "implies": [
+        {
+          "if_market": "EXAMPLE_TRUMP_IOWA_CONDITION_ID",
+          "then_market": "EXAMPLE_TRUMP_WINS_CONDITION_ID",
+          "note": "Winning Iowa is a subset of winning the election"
+        }
+      ]
+    }
+  ]
+}

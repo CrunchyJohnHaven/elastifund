@@ -1,0 +1,61 @@
+# Secrets & credentials
+.env
+*.env
+polymarket-bot.env
+Polymarket_Bot_Credentials.docx
+*.pem
+*.key
+
+# Databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+venv/
+.venv/
+env/
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+pytest-cache-files-*/
+*.cover
+.hypothesis/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+
+# Docker (local only)
+docker-compose.override.yml
+
+# Claude Code internal
+.claude/
+
+# Large binary outputs
+simulator/output/*.json
+simulator/output/*.csv
+backtest/results/*.json
+backtest/charts/*.png

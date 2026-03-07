@@ -1,0 +1,218 @@
+{
+  "validation_summary": {
+    "all_gates_pass": false,
+    "gates_passed": 2,
+    "gates_total": 7,
+    "verdict": "NEEDS IMPROVEMENT"
+  },
+  "gates": {
+    "1_sample_size": {
+      "metric": "Minimum trades for significance",
+      "value": 43,
+      "threshold": "\u2265 200",
+      "passes": false
+    },
+    "2_statistical_significance": {
+      "metric": "Win rate p-value (vs 50%)",
+      "value": 0.169912,
+      "threshold": "< 0.01",
+      "passes": false
+    },
+    "3_sharpe_reasonable": {
+      "metric": "Annualized Sharpe Ratio",
+      "value": 4.212,
+      "threshold": "0.5 - 2.5",
+      "passes": false
+    },
+    "4_deflated_sharpe": {
+      "metric": "Deflated Sharpe (correcting for 10 variants)",
+      "value": 1.0,
+      "threshold": "\u2265 0.95",
+      "passes": true
+    },
+    "5_brier_score": {
+      "metric": "Brier Score",
+      "value": 0.2391,
+      "threshold": "< 0.15",
+      "passes": false
+    },
+    "6_monte_carlo_ruin": {
+      "metric": "P(50% drawdown) over 1 year",
+      "value": 0.009,
+      "threshold": "< 5%",
+      "passes": true
+    },
+    "7_arr_degradation": {
+      "metric": "ARR degradation (naive \u2192 realistic)",
+      "value": "82.3%",
+      "threshold": "< 50% degradation",
+      "passes": false
+    }
+  },
+  "arr_comparison": {
+    "naive_arr": 1109.7,
+    "realistic_arr": 196.2,
+    "degradation_pct": 82.3,
+    "note": "Naive=no fees/slippage; Realistic=2% winner fee, spread slippage, 55% fill rate"
+  },
+  "naive_metrics": {
+    "label": "Naive (no fees/slippage)",
+    "n": 470,
+    "wins": 305,
+    "win_rate": 0.6489,
+    "total_pnl": 280.0,
+    "avg_pnl": 0.5957
+  },
+  "realistic_metrics": {
+    "label": "Realistic (fees+slippage+fills)",
+    "n": 43,
+    "wins": 26,
+    "win_rate": 0.6047,
+    "total_pnl": 9.25,
+    "avg_pnl": 0.2151
+  },
+  "significance": {
+    "naive": {
+      "z_stat": 6.458,
+      "p_value": 0.0,
+      "wilson_ci": [
+        0.6047,
+        0.6907
+      ],
+      "significant_99": true
+    },
+    "realistic": {
+      "z_stat": 1.372,
+      "p_value": 0.169912,
+      "wilson_ci": [
+        0.4558,
+        0.7363
+      ],
+      "significant_99": false,
+      "min_trades_needed": 145
+    }
+  },
+  "brier_decomposition": {
+    "brier_score": 0.2391,
+    "reliability": 0.0281,
+    "resolution": 0.031,
+    "uncertainty": 0.2435,
+    "base_rate": 0.4192,
+    "interpretation": "Reliability=0.0281 (calibration error, lower=better), Resolution=0.0310 (discrimination, higher=better). Good discrimination.",
+    "buckets": [
+      {
+        "bucket": "0.0-0.1",
+        "count": 51,
+        "mean_forecast": 0.06,
+        "observed_rate": 0.157,
+        "calibration_error": 0.097
+      },
+      {
+        "bucket": "0.1-0.2",
+        "count": 50,
+        "mean_forecast": 0.152,
+        "observed_rate": 0.12,
+        "calibration_error": 0.032
+      },
+      {
+        "bucket": "0.2-0.3",
+        "count": 59,
+        "mean_forecast": 0.258,
+        "observed_rate": 0.22,
+        "calibration_error": 0.037
+      },
+      {
+        "bucket": "0.3-0.4",
+        "count": 16,
+        "mean_forecast": 0.348,
+        "observed_rate": 0.625,
+        "calibration_error": 0.277
+      },
+      {
+        "bucket": "0.4-0.5",
+        "count": 48,
+        "mean_forecast": 0.433,
+        "observed_rate": 0.417,
+        "calibration_error": 0.016
+      },
+      {
+        "bucket": "0.5-0.6",
+        "count": 58,
+        "mean_forecast": 0.515,
+        "observed_rate": 0.466,
+        "calibration_error": 0.049
+      },
+      {
+        "bucket": "0.6-0.7",
+        "count": 11,
+        "mean_forecast": 0.636,
+        "observed_rate": 0.455,
+        "calibration_error": 0.182
+      },
+      {
+        "bucket": "0.7-0.8",
+        "count": 163,
+        "mean_forecast": 0.725,
+        "observed_rate": 0.528,
+        "calibration_error": 0.197
+      },
+      {
+        "bucket": "0.8-0.9",
+        "count": 19,
+        "mean_forecast": 0.855,
+        "observed_rate": 0.632,
+        "calibration_error": 0.223
+      },
+      {
+        "bucket": "0.9-1.0",
+        "count": 57,
+        "mean_forecast": 0.937,
+        "observed_rate": 0.632,
+        "calibration_error": 0.306
+      }
+    ]
+  },
+  "sharpe": {
+    "naive": {
+      "sharpe_annual": 11.064,
+      "sharpe_daily": 0.6969,
+      "mean_pnl": 0.5957,
+      "std_pnl": 1.9112,
+      "skewness": -0.622,
+      "kurtosis": 1.384,
+      "n": 470
+    },
+    "realistic": {
+      "sharpe_annual": 4.212,
+      "sharpe_daily": 0.2653,
+      "mean_pnl": 0.2151,
+      "std_pnl": 1.8123,
+      "skewness": -0.413,
+      "kurtosis": 1.129,
+      "n": 43
+    },
+    "deflated_sharpe_ratio": 1.0,
+    "num_variants_tested": 10
+  },
+  "monte_carlo_ruin": {
+    "p_ruin": 0.009,
+    "p_ruin_pct": "0.9%",
+    "passes_threshold": true,
+    "drawdown_threshold": 0.5,
+    "median_max_drawdown": 0.1698,
+    "p95_max_drawdown": 0.3561,
+    "worst_drawdown": 0.9739,
+    "dd_ratio_p95_to_median": 2.1,
+    "median_final_capital": 469.37,
+    "p5_final_capital": 341.15,
+    "p95_final_capital": 590.26,
+    "num_paths": 10000
+  },
+  "kelly_example": {
+    "scenario": "p=0.70, market=0.55, weather market",
+    "full_kelly": 0.3163,
+    "half_kelly": 0.1581,
+    "quarter_kelly": 0.0791,
+    "recommendation": "Quarter-Kelly with 20% max allocation (research consensus)"
+  }
+}

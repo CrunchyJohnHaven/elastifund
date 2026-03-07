@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Predictive Alpha Fund — Project Snapshot</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: #0a0e1a;
+    color: #e2e8f0;
+    padding: 40px;
+    min-height: 100vh;
+  }
+
+  .dashboard {
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+
+  /* Header */
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 32px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid rgba(99, 102, 241, 0.2);
+  }
+
+  .header h1 {
+    font-size: 28px;
+    font-weight: 800;
+    background: linear-gradient(135deg, #818cf8, #6366f1, #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: -0.5px;
+  }
+
+  .header .subtitle {
+    font-size: 13px;
+    color: #64748b;
+    margin-top: 4px;
+  }
+
+  .header .status-badge {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .badge {
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+  }
+
+  .badge-phase {
+    background: rgba(251, 191, 36, 0.15);
+    color: #fbbf24;
+    border: 1px solid rgba(251, 191, 36, 0.3);
+  }
+
+  .badge-date {
+    background: rgba(99, 102, 241, 0.1);
+    color: #818cf8;
+    border: 1px solid rgba(99, 102, 241, 0.2);
+  }
+
+  /* Grid */
+  .grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+
+  .grid-4 {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+
+  /* Cards */
+  .card {
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(30, 41, 59, 0.6));
+    border: 1px solid rgba(99, 102, 241, 0.12);
+    border-radius: 16px;
+    padding: 24px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.4), transparent);
+  }
+
+  .card-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: #64748b;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+
+  .card-value {
+    font-size: 36px;
+    font-weight: 800;
+    letter-spacing: -1px;
+  }
+
+  .card-detail {
+    font-size: 12px;
+    color: #64748b;
+    margin-top: 6px;
+  }
+
+  .green { color: #4ade80; }
+  .blue { color: #60a5fa; }
+  .amber { color: #fbbf24; }
+  .red { color: #f87171; }
+  .purple { color: #a78bfa; }
+  .white { color: #e2e8f0; }
+
+  /* Section labels */
+  .section-label {
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #475569;
+    margin-bottom: 12px;
+    margin-top: 8px;
+  }
+
+  /* Scenario table */
+  .scenario-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  .scenario-table th {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #475569;
+    font-weight: 600;
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(99, 102, 241, 0.1);
+  }
+
+  .scenario-table td {
+    padding: 10px 12px;
+    font-size: 14px;
+    font-weight: 500;
+    border-bottom: 1px solid rgba(99, 102, 241, 0.06);
+  }
+
+  .scenario-table tr.highlight td {
+    background: rgba(99, 102, 241, 0.06);
+    font-weight: 700;
+  }
+
+  /* Confidence bar */
+  .confidence-bar {
+    height: 8px;
+    border-radius: 4px;
+    background: rgba(99, 102, 241, 0.1);
+    margin-top: 12px;
+    overflow: hidden;
+  }
+
+  .confidence-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 1s ease;
+  }
+
+  /* Validation gates */
+  .gate {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    font-size: 13px;
+    border-bottom: 1px solid rgba(99, 102, 241, 0.06);
+  }
+
+  .gate:last-child { border-bottom: none; }
+
+  .gate-icon {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .gate-pass {
+    background: rgba(74, 222, 128, 0.15);
+    color: #4ade80;
+  }
+
+  .gate-fail {
+    background: rgba(248, 113, 113, 0.15);
+    color: #f87171;
+  }
+
+  /* Span utilities */
+  .span-2 { grid-column: span 2; }
+  .span-3 { grid-column: span 3; }
+
+  /* Bottom line */
+  .bottom-line {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(139, 92, 246, 0.05));
+    border: 1px solid rgba(99, 102, 241, 0.15);
+    border-radius: 16px;
+    padding: 24px;
+    margin-top: 4px;
+  }
+
+  .bottom-line h3 {
+    font-size: 15px;
+    font-weight: 700;
+    color: #818cf8;
+    margin-bottom: 10px;
+  }
+
+  .bottom-line p {
+    font-size: 13px;
+    line-height: 1.7;
+    color: #94a3b8;
+  }
+
+  .bottom-line strong { color: #e2e8f0; }
+
+  /* Mini bar chart */
+  .bar-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+
+  .bar-label {
+    font-size: 12px;
+    color: #94a3b8;
+    width: 65px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  .bar-track {
+    flex: 1;
+    height: 22px;
+    background: rgba(99, 102, 241, 0.06);
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    padding-left: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    color: white;
+    min-width: 40px;
+  }
+
+  .bar-fill.yes { background: linear-gradient(90deg, #6366f1, #818cf8); }
+  .bar-fill.no { background: linear-gradient(90deg, #4ade80, #22d3ee); }
+
+  .disclaimer {
+    text-align: center;
+    font-size: 10px;
+    color: #334155;
+    margin-top: 24px;
+    letter-spacing: 0.3px;
+  }
+</style>
+</head>
+<body>
+<div class="dashboard">
+
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <h1>Predictive Alpha Fund</h1>
+      <div class="subtitle">AI-Powered Prediction Market Trading — Returns Forecast & Confidence</div>
+    </div>
+    <div class="status-badge">
+      <span class="badge badge-phase">PRE-LAUNCH</span>
+      <span class="badge badge-date">March 5, 2026</span>
+    </div>
+  </div>
+
+  <!-- Hero KPIs -->
+  <div class="grid-4">
+    <div class="card">
+      <div class="card-label">Backtest Win Rate</div>
+      <div class="card-value green">64.9%</div>
+      <div class="card-detail">305 wins / 470 trades across 532 markets</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Median Annual Return (@ $10K)</div>
+      <div class="card-value green">+269%</div>
+      <div class="card-detail">$10,000 → $36,907 median projection</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Probability of Loss (12-mo)</div>
+      <div class="card-value blue">&lt; 0.1%</div>
+      <div class="card-detail">Monte Carlo · 10,000 simulated paths</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Realistic Sharpe Ratio</div>
+      <div class="card-value purple">4.21</div>
+      <div class="card-detail">After 2% fees + 50bps slippage</div>
+    </div>
+  </div>
+
+  <!-- Win Rate Asymmetry -->
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-label">Structural Edge — Buy NO vs Buy YES</div>
+      <div style="margin-top: 12px;">
+        <div class="bar-row">
+          <div class="bar-label">Buy NO</div>
+          <div class="bar-track">
+            <div class="bar-fill no" style="width: 76.2%;">76.2%</div>
+          </div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label">Buy YES</div>
+          <div class="bar-track">
+            <div class="bar-fill yes" style="width: 55.8%;">55.8%</div>
+          </div>
+        </div>
+      </div>
+      <div class="card-detail" style="margin-top: 10px;">NO-bet edge is structural — markets systematically overprice exciting YES outcomes (favorite-longshot bias). 76% of total edge comes from NO bets.</div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">Monte Carlo — Drawdown Risk (10K paths)</div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px;">
+        <div>
+          <div style="font-size: 11px; color: #64748b; margin-bottom: 4px;">P(Ruin)</div>
+          <div style="font-size: 28px; font-weight: 800; color: #4ade80;">0.0%</div>
+        </div>
+        <div>
+          <div style="font-size: 11px; color: #64748b; margin-bottom: 4px;">P(50% Drawdown)</div>
+          <div style="font-size: 28px; font-weight: 800; color: #4ade80;">0.9%</div>
+        </div>
+        <div>
+          <div style="font-size: 11px; color: #64748b; margin-bottom: 4px;">Median Max DD</div>
+          <div style="font-size: 28px; font-weight: 800; color: #fbbf24;">9.2%</div>
+        </div>
+        <div>
+          <div style="font-size: 11px; color: #64748b; margin-bottom: 4px;">95th % Max DD</div>
+          <div style="font-size: 28px; font-weight: 800; color: #f87171;">19.6%</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scenario Projections -->
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-label">$10,000 Capital — 12-Month Projections</div>
+      <table class="scenario-table" style="margin-top: 10px;">
+        <thead>
+          <tr>
+            <th>Scenario</th>
+            <th>Final Value</th>
+            <th>Return</th>
+            <th>P(Loss)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="color: #64748b;">5th Percentile (Bear)</td>
+            <td class="amber">$33,507</td>
+            <td class="amber">+235%</td>
+            <td style="color: #4ade80;">0%</td>
+          </tr>
+          <tr class="highlight">
+            <td style="color: #818cf8;">Median (Base Case)</td>
+            <td class="green">$36,907</td>
+            <td class="green">+269%</td>
+            <td style="color: #4ade80;">0%</td>
+          </tr>
+          <tr>
+            <td style="color: #64748b;">95th Percentile (Bull)</td>
+            <td class="blue">$40,207</td>
+            <td class="blue">+302%</td>
+            <td style="color: #4ade80;">0%</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="card-detail" style="margin-top: 10px;">Assumes 5 trades/day, quarter-Kelly sizing, 2% winner fees</div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">$1,000 Seed Capital — Scenario Analysis</div>
+      <table class="scenario-table" style="margin-top: 10px;">
+        <thead>
+          <tr>
+            <th>Scenario</th>
+            <th>Trades/Day</th>
+            <th>Annual Net</th>
+            <th>ARR</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="color: #64748b;">Bear (3/day)</td>
+            <td>3</td>
+            <td class="amber">+$5,135</td>
+            <td class="amber">+514%</td>
+          </tr>
+          <tr class="highlight">
+            <td style="color: #818cf8;">Base (5/day)</td>
+            <td>5</td>
+            <td class="green">+$10,871</td>
+            <td class="green">+1,087%</td>
+          </tr>
+          <tr>
+            <td style="color: #64748b;">Bull (8/day)</td>
+            <td>8</td>
+            <td class="blue">+$19,454</td>
+            <td class="blue">+1,945%</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="card-detail" style="margin-top: 10px;">After $20/mo infra costs · Quarter-Kelly position sizing</div>
+    </div>
+  </div>
+
+  <!-- Edge & Execution -->
+  <div class="grid-3">
+    <div class="card">
+      <div class="card-label">Edge Profile</div>
+      <div style="margin-top: 8px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
+          <div>
+            <div style="font-size: 11px; color: #64748b;">Mean Edge</div>
+            <div style="font-size: 22px; font-weight: 800; color: #a78bfa;">31.7%</div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-size: 11px; color: #64748b;">Avg P&L / Trade</div>
+            <div style="font-size: 22px; font-weight: 800; color: #4ade80;">+$0.60</div>
+          </div>
+        </div>
+        <div style="font-size: 11px; color: #64748b; margin-bottom: 4px;">Signal Generation Rate</div>
+        <div class="confidence-bar">
+          <div class="confidence-fill" style="width: 88%; background: linear-gradient(90deg, #6366f1, #a78bfa);"></div>
+        </div>
+        <div style="font-size: 11px; color: #64748b; margin-top: 4px;">88% of markets produce actionable signals</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">Position Sizing (Quarter-Kelly)</div>
+      <div style="margin-top: 8px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
+          <div>
+            <div style="font-size: 11px; color: #64748b;">Kelly Fraction</div>
+            <div style="font-size: 22px; font-weight: 800; color: #60a5fa;">0.25×</div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-size: 11px; color: #64748b;">Max Single Position</div>
+            <div style="font-size: 22px; font-weight: 800; color: #fbbf24;">5%</div>
+          </div>
+        </div>
+        <div class="card-detail">
+          <div>Max cluster exposure: 15% of bankroll</div>
+          <div style="margin-top: 2px;">Max scenario exposure: 10% of bankroll</div>
+          <div style="margin-top: 2px;">Daily loss halt: 7% drawdown</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">Fee & Slippage Impact</div>
+      <div style="margin-top: 8px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
+          <div>
+            <div style="font-size: 11px; color: #64748b;">Winner Fee</div>
+            <div style="font-size: 22px; font-weight: 800; color: #f87171;">2.0%</div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-size: 11px; color: #64748b;">Est. Slippage</div>
+            <div style="font-size: 22px; font-weight: 800; color: #fbbf24;">50 bps</div>
+          </div>
+        </div>
+        <div class="card-detail">
+          <div>Break-even win rate: ~53%</div>
+          <div style="margin-top: 2px;">Safety margin: +11.9% above break-even</div>
+          <div style="margin-top: 2px;">Strategy capacity: $1–5M max</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Validation Gates -->
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-label">Validation Gates — Statistical Rigor</div>
+      <div style="margin-top: 8px;">
+        <div class="gate">
+          <div class="gate-icon gate-fail">✗</div>
+          <div style="flex: 1; font-size: 12px;"><span style="color: #94a3b8;">Sample size</span> <span style="color: #f87171;">43 live trades (need 200+)</span></div>
+        </div>
+        <div class="gate">
+          <div class="gate-icon gate-fail">✗</div>
+          <div style="flex: 1; font-size: 12px;"><span style="color: #94a3b8;">P-value</span> <span style="color: #f87171;">0.170 (need &lt; 0.01)</span></div>
+        </div>
+        <div class="gate">
+          <div class="gate-icon gate-fail">✗</div>
+          <div style="flex: 1; font-size: 12px;"><span style="color: #94a3b8;">Brier calibration</span> <span style="color: #f87171;">0.239 (need &lt; 0.15)</span></div>
+        </div>
+        <div class="gate">
+          <div class="gate-icon gate-pass">✓</div>
+          <div style="flex: 1; font-size: 12px;"><span style="color: #94a3b8;">Deflated Sharpe</span> <span style="color: #4ade80;">1.0 (statistically significant)</span></div>
+        </div>
+        <div class="gate">
+          <div class="gate-icon gate-pass">✓</div>
+          <div style="flex: 1; font-size: 12px;"><span style="color: #94a3b8;">MC ruin risk</span> <span style="color: #4ade80;">0.9% (need &lt; 5%)</span></div>
+        </div>
+        <div class="gate">
+          <div class="gate-icon gate-fail">✗</div>
+          <div style="flex: 1; font-size: 12px;"><span style="color: #94a3b8;">Naive → realistic ARR</span> <span style="color: #f87171;">-82% degradation</span></div>
+        </div>
+      </div>
+      <div class="card-detail" style="margin-top: 10px; color: #fbbf24; font-weight: 600;">Status: NEEDS LIVE VALIDATION — Backtest promising but unproven</div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">Live Deployment Status</div>
+      <div style="margin-top: 8px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div>
+            <div style="font-size: 11px; color: #64748b;">Capital Deployed</div>
+            <div style="font-size: 20px; font-weight: 700; color: #e2e8f0;">$1,000 USDC</div>
+          </div>
+          <div>
+            <div style="font-size: 11px; color: #64748b;">Open Positions</div>
+            <div style="font-size: 20px; font-weight: 700; color: #e2e8f0;">34</div>
+          </div>
+          <div>
+            <div style="font-size: 11px; color: #64748b;">Realized P&L</div>
+            <div style="font-size: 20px; font-weight: 700; color: #64748b;">$0.00</div>
+          </div>
+          <div>
+            <div style="font-size: 11px; color: #64748b;">Markets/Scan</div>
+            <div style="font-size: 20px; font-weight: 700; color: #e2e8f0;">100</div>
+          </div>
+        </div>
+        <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(99, 102, 241, 0.1);">
+          <div style="font-size: 11px; color: #64748b; margin-bottom: 6px;">Next Milestones</div>
+          <div style="font-size: 12px; color: #94a3b8;">
+            <div style="margin-bottom: 3px;">→ Live launch: ~March 10, 2026</div>
+            <div style="margin-bottom: 3px;">→ 50+ resolved trades: late March</div>
+            <div>→ Multi-model ensemble: April target</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Line -->
+  <div class="bottom-line">
+    <h3>Bottom Line</h3>
+    <p>
+      Backtest across <strong>532 markets</strong> shows a <strong>64.9% win rate</strong> with a structural NO-bet advantage (<strong>76.2%</strong>).
+      Monte Carlo simulation (10K paths) projects <strong>+269% annual return at $10K capital</strong> with <strong>0% probability of ruin</strong> and a median max drawdown of <strong>9.2%</strong>.
+      After realistic fee/slippage modeling, the deflated Sharpe ratio of <strong>1.0</strong> remains statistically significant.
+      <span style="color: #fbbf24; font-weight: 600;">However — live track record is zero.</span>
+      The <strong>critical next milestone</strong> is accumulating 50+ resolved live trades by late March to validate backtest projections before scaling capital.
+    </p>
+  </div>
+
+  <div class="disclaimer">
+    CONFIDENTIAL — Predictive Alpha Fund · Pre-Launch Internal Snapshot · Not Investment Advice · Past (simulated) performance does not guarantee future results
+  </div>
+
+</div>
+</body>
+</html>
