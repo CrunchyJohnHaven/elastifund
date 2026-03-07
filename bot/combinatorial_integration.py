@@ -157,7 +157,7 @@ class CombinatorialConfig:
     enable_b1_live: bool = False
     a6_buy_threshold: float = 0.97
     a6_unwind_threshold: float = 1.03
-    b1_implication_threshold: float = 0.03
+    b1_implication_threshold: float = 0.04
     stale_book_max_age_seconds: int = 45
     fill_timeout_seconds: float = 3.0
     cancel_replace_count: int = 1
@@ -183,7 +183,7 @@ class CombinatorialConfig:
             enable_b1_live=_env_bool("ENABLE_B1_LIVE", False, env=source),
             a6_buy_threshold=_env_float("JJ_A6_BUY_THRESHOLD", 0.97, env=source),
             a6_unwind_threshold=_env_float("JJ_A6_UNWIND_THRESHOLD", 1.03, env=source),
-            b1_implication_threshold=_env_float("JJ_B1_IMPLICATION_THRESHOLD", 0.03, env=source),
+            b1_implication_threshold=_env_float("JJ_B1_IMPLICATION_THRESHOLD", 0.04, env=source),
             stale_book_max_age_seconds=_env_int(
                 "JJ_COMBINATORIAL_STALE_BOOK_MAX_AGE_SECONDS", 45, env=source
             ),
@@ -356,6 +356,8 @@ class CombinatorialOpportunity:
             "reasoning": self.action,
             "source": self.lane,
             "relation_type": self.relation_type,
+            "a6_mode": self.details.get("a6_mode"),
+            "settlement_path": self.details.get("settlement_path"),
             "resolution_gate_status": self.resolution_gate_status,
             "classification_accuracy": self.classification_accuracy,
             "estimated_budget_usd": self.estimated_budget_usd,

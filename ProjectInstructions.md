@@ -73,15 +73,15 @@ SIGNAL 4: Cross-Platform Arb [COMPLETE, NOT ACTIVATED]
 
 SIGNAL 5: Sum Violation Scanner (A-6) [SHADOW MODE, UPGRADE IN PROGRESS]
   Markets: Multi-outcome / neg-risk event groups
-  Edge: sum(YES asks) < 0.97 or sum(YES bids) > 1.03
+  Edge: current implementation = neg-risk YES-basket only (not binary YES+NO merge); promote only if maker-fill curve, violation half-life, and settlement path pass
   Sizing: Execution-risk-adjusted, capped at $5/leg
-  Status: bot/sum_violation_scanner.py exists; WebSocket depth + batch execution pending
+  Status: scanner + telemetry landed; tick-size updates and A-6 episode tracking now persist, but live order routing and settlement validation are still pending
 
 SIGNAL 6: Dependency Graph Arb (B-1) [BUILDING]
   Markets: Logically linked markets in same resolution window
-  Edge: implication / exclusion / complement violations > 3%
+  Edge: implication / exclusion / complement violations > 4% until the gold-set precision audit proves a tighter threshold
   Sizing: Execution-risk-adjusted, capped at $5/leg
-  Status: bot/constraint_arb_engine.py exists; gold set + Haiku cache + live monitor pending
+  Status: graph cache + live monitor exist; promotion now requires a 50-pair gold set and >=85% validated precision
 
 CONFIRMATION LAYER:
   2+ predictive sources agree → highest confidence, boosted size
@@ -271,21 +271,23 @@ Other completed modules still available for parallel promotion work:
 
 ### P1 — 14-Day Execution Order (Do In Sequence)
 1. **Days 1-3 (A-6 data plane):** Move discovery to Gamma `/events`, stream live market-depth over WebSocket, and keep per-token best-bid/best-ask state in memory.
-2. **Days 4-5 (A-6 execution):** Batch multi-leg maker orders, enforce `postOnly + GTC` only, add 3000ms partial-fill rollback timer, and start linked-leg persistence.
+2. **Days 4-5 (A-6 telemetry):** Batch multi-leg maker orders, enforce `postOnly + GTC` only, and log scan snapshots, basket episodes, and order-group telemetry instead of generic shadow rows.
 3. **Days 6-8 (B-1 graph build):** Build the 50-pair gold set, add resolution-window/tag/embedding prefilter, run Haiku classification, and cache graph edges.
-4. **Days 9-10 (B-1 live monitor):** Monitor implication, mutual-exclusion, and complement violations at `tau = 0.03`; defer conditional chains.
+4. **Days 9-10 (B-1 live monitor):** Monitor implication, mutual-exclusion, and complement violations at `tau = 0.04`; defer conditional chains.
 5. **Days 11-12 (integration):** Route A-6/B-1 into the live confirmation/execution stack, wire execution-risk sizing, and finalize kill switches.
-6. **Days 13-14 (shadow mode):** Paper trade the combined arb stack, simulate realistic maker fills, and publish capture-rate / rollback-loss attribution.
+6. **Days 13-14 (shadow mode):** Publish maker-fill curve, violation half-life, and settlement-path evidence alongside capture-rate / rollback-loss attribution.
 
 ### P2 — Hard Kill Rules (Non-Negotiable)
 1. **A-6 kill:** reject if realized capture `<50%` of theoretical over a trailing 20-event window.
 2. **A-6 kill:** reject if zero qualifying events are detected over 4 weeks.
-3. **B-1 kill:** reject if relation accuracy drops below `80%` on the 50-pair gold set.
-4. **B-1 kill:** reject if resolved false-positive rate exceeds `5%` or if 3 consecutive signals lose money due to rollback/spread collapse.
-5. **Global kill:** decommission both strategies if combined cumulative P&L is negative after 30 live days.
-6. **Program kill:** reject live promotion if partial-basket rollback loss exceeds `30%` of gross edge.
-7. **Program kill:** reject immediately on any augmented-neg-risk rule violation (`Other` traded, placeholder leakage, broken resolution-equivalence gate).
-8. **Program diagnostic:** if VPIN-gated variant materially outperforms ungated variant, treat the issue as execution quality failure before scaling alpha.
+3. **A-6 promotion block:** reject live promotion if basket completion probability stays `<15%` after 50 measured basket attempts.
+4. **B-1 kill:** reject if relation accuracy drops below `85%` on the 50-pair gold set.
+5. **B-1 kill:** reject if resolved false-positive rate exceeds `5%` or if 3 consecutive signals lose money due to rollback/spread collapse.
+6. **Global kill:** decommission both strategies if combined cumulative P&L is negative after 30 live days.
+7. **Program kill:** reject live promotion if partial-basket rollback loss exceeds `30%` of gross edge.
+8. **Program kill:** reject immediately on any augmented-neg-risk rule violation (`Other` traded, placeholder leakage, broken resolution-equivalence gate).
+9. **Program diagnostic:** if VPIN-gated variant materially outperforms ungated variant, treat the issue as execution quality failure before scaling alpha.
+10. **Program promotion gate:** no live promotion until maker-fill curve, violation half-life, and settlement-path checks all pass.
 
 ---
 

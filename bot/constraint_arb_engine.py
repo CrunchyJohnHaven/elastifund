@@ -18,6 +18,7 @@ import re
 import sqlite3
 import threading
 import time
+import uuid
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from typing import Any, Mapping, Sequence
@@ -502,9 +503,99 @@ class ConstraintArbDB:
                     created_at_ts INTEGER NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS arb_scan_snapshot (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts_utc TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    event_id TEXT,
+                    market_id TEXT,
+                    token_id TEXT,
+                    best_bid REAL,
+                    best_ask REAL,
+                    tick_size REAL,
+                    min_order_size REAL,
+                    neg_risk INTEGER,
+                    neg_risk_augmented INTEGER,
+                    tags_json TEXT NOT NULL DEFAULT '[]',
+                    raw_json TEXT NOT NULL DEFAULT '{}'
+                );
+
+                CREATE TABLE IF NOT EXISTS a6_violation_episode (
+                    episode_id TEXT PRIMARY KEY,
+                    ts_start_utc TEXT NOT NULL,
+                    ts_end_utc TEXT,
+                    mode TEXT NOT NULL,
+                    event_id TEXT,
+                    leg_count INTEGER NOT NULL,
+                    sum_metric REAL NOT NULL,
+                    threshold REAL NOT NULL,
+                    max_deviation REAL NOT NULL,
+                    resolved INTEGER NOT NULL DEFAULT 0
+                );
+
+                CREATE TABLE IF NOT EXISTS arb_order_group (
+                    group_id TEXT PRIMARY KEY,
+                    strategy TEXT NOT NULL,
+                    strategy_mode TEXT,
+                    ts_created_utc TEXT NOT NULL,
+                    ts_first_fill_utc TEXT,
+                    ts_closed_utc TEXT,
+                    status TEXT NOT NULL,
+                    expected_edge REAL,
+                    expected_ev REAL,
+                    max_loss_guard REAL,
+                    notes TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS arb_order_leg (
+                    leg_id TEXT PRIMARY KEY,
+                    group_id TEXT NOT NULL REFERENCES arb_order_group(group_id),
+                    token_id TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    limit_price REAL NOT NULL,
+                    size REAL NOT NULL,
+                    post_only INTEGER NOT NULL,
+                    order_id TEXT,
+                    ts_submitted_utc TEXT,
+                    ts_filled_utc TEXT,
+                    filled_size REAL DEFAULT 0,
+                    avg_fill_price REAL,
+                    status TEXT NOT NULL,
+                    reject_code TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS arb_settlement_op (
+                    op_id TEXT PRIMARY KEY,
+                    group_id TEXT REFERENCES arb_order_group(group_id),
+                    op_type TEXT NOT NULL,
+                    chain_id INTEGER DEFAULT 137,
+                    contract_address TEXT,
+                    tx_hash TEXT,
+                    ts_submitted_utc TEXT,
+                    ts_confirmed_utc TEXT,
+                    success INTEGER,
+                    gas_used INTEGER,
+                    effective_cost_usd REAL,
+                    raw_json TEXT NOT NULL DEFAULT '{}'
+                );
+
+                CREATE TABLE IF NOT EXISTS arb_latency_sample (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts_utc TEXT NOT NULL,
+                    channel TEXT NOT NULL,
+                    latency_ms INTEGER NOT NULL,
+                    extra_json TEXT NOT NULL DEFAULT '{}'
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_graph_event ON graph_edges(event_id);
                 CREATE INDEX IF NOT EXISTS idx_violations_event_ts ON constraint_violations(event_id, detected_at_ts);
                 CREATE INDEX IF NOT EXISTS idx_capture_violation ON arb_capture_stats(violation_id);
+                CREATE INDEX IF NOT EXISTS idx_scan_snapshot_event_ts ON arb_scan_snapshot(event_id, ts_utc);
+                CREATE INDEX IF NOT EXISTS idx_a6_episode_event_mode ON a6_violation_episode(event_id, mode, ts_end_utc);
+                CREATE INDEX IF NOT EXISTS idx_order_group_strategy_status ON arb_order_group(strategy, status);
+                CREATE INDEX IF NOT EXISTS idx_order_leg_group ON arb_order_leg(group_id);
+                CREATE INDEX IF NOT EXISTS idx_settlement_group ON arb_settlement_op(group_id);
+                CREATE INDEX IF NOT EXISTS idx_latency_channel_ts ON arb_latency_sample(channel, ts_utc);
                 """
             )
 
@@ -607,11 +698,319 @@ class ConstraintArbDB:
             )
             conn.commit()
 
+    def insert_scan_snapshot(
+        self,
+        *,
+        source: str,
+        event_id: str | None,
+        market_id: str | None,
+        token_id: str | None,
+        best_bid: float | None,
+        best_ask: float | None,
+        tick_size: float | None,
+        min_order_size: float | None,
+        neg_risk: bool,
+        neg_risk_augmented: bool,
+        tags: Sequence[str] | None = None,
+        raw_payload: Mapping[str, Any] | None = None,
+        ts_utc: str | None = None,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO arb_scan_snapshot (
+                    ts_utc, source, event_id, market_id, token_id,
+                    best_bid, best_ask, tick_size, min_order_size,
+                    neg_risk, neg_risk_augmented, tags_json, raw_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ts_utc or datetime.now(timezone.utc).isoformat(),
+                    str(source),
+                    event_id,
+                    market_id,
+                    token_id,
+                    None if best_bid is None else float(best_bid),
+                    None if best_ask is None else float(best_ask),
+                    None if tick_size is None else float(tick_size),
+                    None if min_order_size is None else float(min_order_size),
+                    1 if neg_risk else 0,
+                    1 if neg_risk_augmented else 0,
+                    json.dumps(list(tags or ()), sort_keys=True),
+                    json.dumps(dict(raw_payload or {}), sort_keys=True),
+                ),
+            )
+            conn.commit()
+
+    def upsert_a6_violation_episode(
+        self,
+        *,
+        event_id: str,
+        mode: str,
+        ts: int,
+        leg_count: int,
+        sum_metric: float,
+        threshold: float,
+        deviation: float,
+        gap_seconds: int = 120,
+    ) -> str:
+        ts_iso = datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat()
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT episode_id, ts_start_utc, ts_end_utc, max_deviation
+                FROM a6_violation_episode
+                WHERE event_id = ? AND mode = ?
+                ORDER BY COALESCE(ts_end_utc, ts_start_utc) DESC
+                LIMIT 1
+                """,
+                (str(event_id), str(mode)),
+            ).fetchone()
+
+            if row is not None:
+                last_iso = str(row["ts_end_utc"] or row["ts_start_utc"])
+                try:
+                    last_dt = datetime.fromisoformat(last_iso)
+                except ValueError:
+                    last_dt = None
+                if last_dt is not None:
+                    gap = int(ts - last_dt.timestamp())
+                    if gap <= max(1, int(gap_seconds)):
+                        conn.execute(
+                            """
+                            UPDATE a6_violation_episode
+                            SET ts_end_utc = ?, leg_count = ?, sum_metric = ?, threshold = ?,
+                                max_deviation = ?, resolved = 0
+                            WHERE episode_id = ?
+                            """,
+                            (
+                                ts_iso,
+                                int(leg_count),
+                                float(sum_metric),
+                                float(threshold),
+                                max(float(row["max_deviation"] or 0.0), float(deviation)),
+                                str(row["episode_id"]),
+                            ),
+                        )
+                        conn.commit()
+                        return str(row["episode_id"])
+
+            episode_id = hashlib.sha1(f"{mode}|{event_id}|{ts_iso}|{uuid.uuid4()}".encode("utf-8")).hexdigest()[:20]
+            conn.execute(
+                """
+                INSERT INTO a6_violation_episode (
+                    episode_id, ts_start_utc, ts_end_utc, mode, event_id,
+                    leg_count, sum_metric, threshold, max_deviation, resolved
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                """,
+                (
+                    episode_id,
+                    ts_iso,
+                    ts_iso,
+                    str(mode),
+                    str(event_id),
+                    int(leg_count),
+                    float(sum_metric),
+                    float(threshold),
+                    float(deviation),
+                ),
+            )
+            conn.commit()
+        return episode_id
+
+    def upsert_order_group(
+        self,
+        *,
+        group_id: str,
+        strategy: str,
+        strategy_mode: str | None,
+        status: str,
+        expected_edge: float | None,
+        expected_ev: float | None,
+        max_loss_guard: float | None,
+        notes: str | None = None,
+        ts_created_utc: str | None = None,
+        ts_first_fill_utc: str | None = None,
+        ts_closed_utc: str | None = None,
+    ) -> None:
+        created = ts_created_utc or datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO arb_order_group (
+                    group_id, strategy, strategy_mode, ts_created_utc, ts_first_fill_utc,
+                    ts_closed_utc, status, expected_edge, expected_ev, max_loss_guard, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(group_id) DO UPDATE SET
+                    strategy=excluded.strategy,
+                    strategy_mode=excluded.strategy_mode,
+                    ts_first_fill_utc=COALESCE(excluded.ts_first_fill_utc, arb_order_group.ts_first_fill_utc),
+                    ts_closed_utc=COALESCE(excluded.ts_closed_utc, arb_order_group.ts_closed_utc),
+                    status=excluded.status,
+                    expected_edge=excluded.expected_edge,
+                    expected_ev=excluded.expected_ev,
+                    max_loss_guard=excluded.max_loss_guard,
+                    notes=excluded.notes
+                """,
+                (
+                    str(group_id),
+                    str(strategy),
+                    strategy_mode,
+                    created,
+                    ts_first_fill_utc,
+                    ts_closed_utc,
+                    str(status),
+                    None if expected_edge is None else float(expected_edge),
+                    None if expected_ev is None else float(expected_ev),
+                    None if max_loss_guard is None else float(max_loss_guard),
+                    notes,
+                ),
+            )
+            conn.commit()
+
+    def upsert_order_leg(
+        self,
+        *,
+        leg_id: str,
+        group_id: str,
+        token_id: str,
+        side: str,
+        limit_price: float,
+        size: float,
+        post_only: bool,
+        status: str,
+        order_id: str | None = None,
+        ts_submitted_utc: str | None = None,
+        ts_filled_utc: str | None = None,
+        filled_size: float = 0.0,
+        avg_fill_price: float | None = None,
+        reject_code: str | None = None,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO arb_order_leg (
+                    leg_id, group_id, token_id, side, limit_price, size, post_only,
+                    order_id, ts_submitted_utc, ts_filled_utc, filled_size,
+                    avg_fill_price, status, reject_code
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(leg_id) DO UPDATE SET
+                    group_id=excluded.group_id,
+                    token_id=excluded.token_id,
+                    side=excluded.side,
+                    limit_price=excluded.limit_price,
+                    size=excluded.size,
+                    post_only=excluded.post_only,
+                    order_id=COALESCE(excluded.order_id, arb_order_leg.order_id),
+                    ts_submitted_utc=COALESCE(excluded.ts_submitted_utc, arb_order_leg.ts_submitted_utc),
+                    ts_filled_utc=COALESCE(excluded.ts_filled_utc, arb_order_leg.ts_filled_utc),
+                    filled_size=excluded.filled_size,
+                    avg_fill_price=excluded.avg_fill_price,
+                    status=excluded.status,
+                    reject_code=excluded.reject_code
+                """,
+                (
+                    str(leg_id),
+                    str(group_id),
+                    str(token_id),
+                    str(side),
+                    float(limit_price),
+                    float(size),
+                    1 if post_only else 0,
+                    order_id,
+                    ts_submitted_utc,
+                    ts_filled_utc,
+                    float(filled_size),
+                    None if avg_fill_price is None else float(avg_fill_price),
+                    str(status),
+                    reject_code,
+                ),
+            )
+            conn.commit()
+
+    def insert_settlement_op(
+        self,
+        *,
+        group_id: str | None,
+        op_type: str,
+        chain_id: int = 137,
+        contract_address: str | None = None,
+        tx_hash: str | None = None,
+        ts_submitted_utc: str | None = None,
+        ts_confirmed_utc: str | None = None,
+        success: bool | None = None,
+        gas_used: int | None = None,
+        effective_cost_usd: float | None = None,
+        raw_payload: Mapping[str, Any] | None = None,
+    ) -> str:
+        op_id = hashlib.sha1(
+            f"{group_id}|{op_type}|{tx_hash or ''}|{ts_submitted_utc or ''}|{uuid.uuid4()}".encode("utf-8")
+        ).hexdigest()[:20]
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO arb_settlement_op (
+                    op_id, group_id, op_type, chain_id, contract_address, tx_hash,
+                    ts_submitted_utc, ts_confirmed_utc, success, gas_used,
+                    effective_cost_usd, raw_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    op_id,
+                    group_id,
+                    str(op_type),
+                    int(chain_id),
+                    contract_address,
+                    tx_hash,
+                    ts_submitted_utc,
+                    ts_confirmed_utc,
+                    None if success is None else (1 if success else 0),
+                    gas_used,
+                    None if effective_cost_usd is None else float(effective_cost_usd),
+                    json.dumps(dict(raw_payload or {}), sort_keys=True),
+                ),
+            )
+            conn.commit()
+        return op_id
+
+    def insert_latency_sample(
+        self,
+        *,
+        channel: str,
+        latency_ms: int,
+        extra_payload: Mapping[str, Any] | None = None,
+        ts_utc: str | None = None,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO arb_latency_sample (ts_utc, channel, latency_ms, extra_json)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    ts_utc or datetime.now(timezone.utc).isoformat(),
+                    str(channel),
+                    int(latency_ms),
+                    json.dumps(dict(extra_payload or {}), sort_keys=True),
+                ),
+            )
+            conn.commit()
+
     @staticmethod
     def _avg(values: Sequence[float]) -> float:
         if not values:
             return 0.0
         return float(sum(values) / len(values))
+
+    @staticmethod
+    def _median(values: Sequence[float]) -> float:
+        if not values:
+            return 0.0
+        ordered = sorted(float(value) for value in values)
+        mid = len(ordered) // 2
+        if len(ordered) % 2 == 1:
+            return ordered[mid]
+        return (ordered[mid - 1] + ordered[mid]) / 2.0
 
     @staticmethod
     def _fmt_ts(ts: int | None) -> str:
@@ -648,6 +1047,27 @@ class ConstraintArbDB:
                 """,
                 (since_ts,),
             ).fetchall()
+            episode_rows = conn.execute(
+                """
+                SELECT episode_id, ts_start_utc, ts_end_utc, mode, event_id, max_deviation
+                FROM a6_violation_episode
+                WHERE ts_start_utc >= ? OR COALESCE(ts_end_utc, ts_start_utc) >= ?
+                ORDER BY ts_start_utc DESC
+                """,
+                (
+                    datetime.fromtimestamp(since_ts, tz=timezone.utc).isoformat(),
+                    datetime.fromtimestamp(since_ts, tz=timezone.utc).isoformat(),
+                ),
+            ).fetchall()
+            settlement_rows = conn.execute(
+                """
+                SELECT op_type, success, effective_cost_usd
+                FROM arb_settlement_op
+                WHERE COALESCE(ts_submitted_utc, ts_confirmed_utc) >= ?
+                ORDER BY COALESCE(ts_submitted_utc, ts_confirmed_utc) DESC
+                """,
+                (datetime.fromtimestamp(since_ts, tz=timezone.utc).isoformat(),),
+            ).fetchall()
 
         rows: list[dict[str, Any]] = []
         for raw in raw_rows:
@@ -678,6 +1098,22 @@ class ConstraintArbDB:
                     "detected_at_ts": int(raw[14] or 0),
                 }
             )
+
+        episode_durations: list[float] = []
+        episode_modes: dict[str, int] = {}
+        for row in episode_rows:
+            mode = str(row[3] or "unknown")
+            episode_modes[mode] = episode_modes.get(mode, 0) + 1
+            try:
+                start_dt = datetime.fromisoformat(str(row[1]))
+                end_dt = datetime.fromisoformat(str(row[2] or row[1]))
+            except ValueError:
+                continue
+            episode_durations.append(max(0.0, end_dt.timestamp() - start_dt.timestamp()))
+
+        settlement_total = len(settlement_rows)
+        settlement_success = sum(1 for row in settlement_rows if row[1] == 1)
+        settlement_costs = [float(row[2]) for row in settlement_rows if row[2] is not None]
 
         total = len(rows)
         theo = float(sum(row["theoretical_pnl"] for row in rows))
@@ -747,6 +1183,11 @@ class ConstraintArbDB:
             f"- Violations logged: {total}",
             f"- Unique events: {unique_events}",
             f"- Actual observed span: {self._fmt_ts(first_ts)} -> {self._fmt_ts(last_ts)} ({observed_days:.4f} day(s))",
+            f"- A-6 lane definition: neg_risk_sum only (current settlement path: hold_to_resolution)",
+            f"- A-6 episode count: {len(episode_rows)}",
+            f"- A-6 episode median duration: {self._median(episode_durations):.1f}s",
+            f"- Settlement ops: {settlement_success}/{settlement_total} successful",
+            f"- Avg settlement cost (if any): {self._avg(settlement_costs):.4f}",
             f"- Theoretical PnL: {theo:.6f}",
             f"- Realized PnL: {real:.6f}",
             f"- Capture ratio: {capture:.2%}",
@@ -759,6 +1200,7 @@ class ConstraintArbDB:
             "## Sum-Violation Backtest",
             "",
             "- Basis: shadow captures only. Modeled net edge uses `score = gross_edge - slippage_est - fill_risk - semantic_penalty`.",
+            f"- Episode modes observed: {', '.join(f'{mode}={count}' for mode, count in sorted(episode_modes.items())) or 'none'}",
             f"- Same-event sum observations: {len(sum_rows)} raw / {len(tradable_sum_rows)} tradable after coverage filter",
             f"- Complete-basket underrounds: {complete_underrounds}",
             f"- Modeled net-positive opportunities: {len(modeled_positive)}/{len(tradable_sum_rows)} ({modeled_positive_rate:.2%})",
@@ -1634,7 +2076,7 @@ class ConstraintArbEngine:
         buy_threshold: float = 0.97,
         execute_threshold: float = 0.95,
         unwind_threshold: float = 1.03,
-        implication_threshold: float = 0.02,
+        implication_threshold: float = 0.04,
         stale_quote_seconds: int = 30,
         max_leg_spread: float = 0.03,
         vpin_veto_threshold: float = 0.75,
@@ -1776,16 +2218,38 @@ class ConstraintArbEngine:
             tradable_event_markets: list[NormalizedMarket] = []
             market_spreads: dict[str, float] = {}
             maker_targets: dict[str, float] = {}
+            market_tick_sizes: dict[str, float] = {}
             liquidity_ok = True
 
             for market in event_markets:
+                quote = self._quotes.get(market.market_id)
+                self.db.insert_scan_snapshot(
+                    source=str(quote.source if quote is not None else "engine_quote_cache"),
+                    event_id=market.event_id,
+                    market_id=market.market_id,
+                    token_id=market.yes_token_id,
+                    best_bid=(quote.yes_bid if quote is not None else None),
+                    best_ask=(quote.yes_ask if quote is not None else None),
+                    tick_size=market.tick_size,
+                    min_order_size=market.min_order_size,
+                    neg_risk=bool(market.profile.is_neg_risk),
+                    neg_risk_augmented=bool(market.profile.is_augmented_neg_risk),
+                    tags=(market.category, *market.profile.scope_fingerprint[:4]),
+                    raw_payload={
+                        "question": market.question,
+                        "outcome": market.outcome,
+                        "resolution_key": market.resolution_key,
+                        "quote_complete": bool(quote.complete) if quote is not None else False,
+                        "quote_blocked_reasons": list(quote.blocked_reasons) if quote is not None else [],
+                    },
+                    ts_utc=datetime.fromtimestamp(now_ts, tz=timezone.utc).isoformat(),
+                )
                 outcome = market.outcome or (market.outcomes[0] if market.outcomes else "")
                 if market.profile.is_augmented_neg_risk and not is_tradable_outcome(market, outcome):
                     continue
 
                 tradable_event_markets.append(market)
 
-                quote = self._quotes.get(market.market_id)
                 if not quote or not self._quote_fresh(quote, now_ts):
                     continue
 
@@ -1806,6 +2270,7 @@ class ConstraintArbEngine:
                 if maker_target <= 0.0:
                     liquidity_ok = False
                 maker_targets[market.market_id] = float(maker_target)
+                market_tick_sizes[market.market_id] = float(tick_size)
 
             if len(priced_markets) < 2:
                 continue
@@ -1852,6 +2317,15 @@ class ConstraintArbEngine:
                 action = "buy_yes_basket" if execute_ready else "watch_yes_basket"
                 if vpin >= self.vpin_veto_threshold:
                     action = "vpin_veto"
+                episode_id = self.db.upsert_a6_violation_episode(
+                    event_id=event_id,
+                    mode="neg_risk_sum",
+                    ts=now_ts,
+                    leg_count=len(tradable_market_ids),
+                    sum_metric=float(total_yes_ask),
+                    threshold=float(self.buy_threshold),
+                    deviation=abs(float(total_yes_ask) - 1.0),
+                )
 
                 violation = ConstraintViolation(
                     violation_id=self._make_violation_id(f"sum_under|{event_id}|{snap_bucket}|{maker_sum_bid:.6f}"),
@@ -1869,6 +2343,9 @@ class ConstraintArbEngine:
                     theoretical_pnl=float(gross_edge),
                     realized_pnl=0.0,
                     details={
+                        "a6_mode": "neg_risk_sum",
+                        "settlement_path": "hold_to_resolution",
+                        "episode_id": episode_id,
                         "maker_sum_bid": maker_sum_bid,
                         "sum_yes_ask": total_yes_ask,
                         "legs": n_legs,
@@ -1881,6 +2358,7 @@ class ConstraintArbEngine:
                         "liquidity_ok": liquidity_ok,
                         "max_leg_spread": self.max_leg_spread,
                         "market_spreads": market_spreads,
+                        "market_tick_sizes": market_tick_sizes,
                         "gate_safety_status": gate.safety_status,
                         "gate_reasons": list(gate.reasons),
                     },
@@ -1900,6 +2378,15 @@ class ConstraintArbEngine:
                 action = "unwind_basket"
                 if vpin >= self.vpin_veto_threshold:
                     action = "vpin_veto"
+                episode_id = self.db.upsert_a6_violation_episode(
+                    event_id=event_id,
+                    mode="neg_risk_sum",
+                    ts=now_ts,
+                    leg_count=len(tradable_market_ids),
+                    sum_metric=float(total_yes_ask),
+                    threshold=float(self.unwind_threshold),
+                    deviation=abs(float(total_yes_ask) - 1.0),
+                )
 
                 violation = ConstraintViolation(
                     violation_id=self._make_violation_id(f"sum_over|{event_id}|{now_ts}|{total_yes_ask:.6f}"),
@@ -1917,6 +2404,9 @@ class ConstraintArbEngine:
                     theoretical_pnl=float(gross_edge),
                     realized_pnl=0.0,
                     details={
+                        "a6_mode": "neg_risk_sum",
+                        "settlement_path": "hold_to_resolution",
+                        "episode_id": episode_id,
                         "maker_sum_bid": maker_sum_bid,
                         "sum_yes_ask": total_yes_ask,
                         "legs": n_legs,
@@ -1929,6 +2419,7 @@ class ConstraintArbEngine:
                         "liquidity_ok": liquidity_ok,
                         "max_leg_spread": self.max_leg_spread,
                         "market_spreads": market_spreads,
+                        "market_tick_sizes": market_tick_sizes,
                         "gate_safety_status": gate.safety_status,
                         "gate_reasons": list(gate.reasons),
                     },
@@ -2086,7 +2577,7 @@ def _add_runtime_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--buy-threshold", type=float, default=0.97)
     parser.add_argument("--execute-threshold", type=float, default=0.95)
     parser.add_argument("--unwind-threshold", type=float, default=1.03)
-    parser.add_argument("--implication-threshold", type=float, default=0.02)
+    parser.add_argument("--implication-threshold", type=float, default=0.04)
     parser.add_argument("--stale-quote-seconds", type=int, default=30)
     parser.add_argument("--vpin-veto-threshold", type=float, default=0.75)
     parser.add_argument("--scan-interval", type=int, default=60)

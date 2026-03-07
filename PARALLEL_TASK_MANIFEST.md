@@ -22,17 +22,19 @@ Instance 3 (A-6 sum-violation scanner) and the current B-1 graph/runtime were ex
 | 4.2 Add market-depth WebSocket support | COMPLETE | [`infra/clob_ws.py`](/Users/johnbradley/Desktop/Elastifund/infra/clob_ws.py) now provides chunked market/user channel clients and a shared best-bid/ask store for A-6/B-1 |
 | 4.3 Handle CLOB 404 bootstrap cleanly | COMPLETE | A-6 quote fetch quarantines missing order books as suspended legs/events instead of crashing the scan |
 | 4.4 Compute sum violations | COMPLETE | Live run: `events=100`, `candidates=2`, `selected=11`, `quotes=11`, `blocked=0`, `violations=2` |
-| 4.5 Fee-adjusted / execution-aware edge scoring | COMPLETE | `ConstraintArbEngine.scan_sum_violations()` logs `maker_sum_bid`, spreads, fill risk, score, and execute readiness in `constraint_violations` |
+| 4.5 Fee-adjusted / execution-aware edge scoring | COMPLETE | `ConstraintArbEngine.scan_sum_violations()` now logs `a6_mode=neg_risk_sum`, settlement-path metadata, per-leg tick sizes, and A-6 episode ids alongside `maker_sum_bid`, spreads, fill risk, score, and execute readiness |
 | 4.6 Build B-1 candidate pruning | COMPLETE | [`strategies/b1_dependency_graph.py`](/Users/johnbradley/Desktop/Elastifund/strategies/b1_dependency_graph.py) now applies category/subcategory gates, time windows, and top-K semantic neighbor pruning |
 | 4.7 Build B-1 classifier + cache | COMPLETE | [`strategies/b1_dependency_graph.py`](/Users/johnbradley/Desktop/Elastifund/strategies/b1_dependency_graph.py) now ships the exact JSON prompt scaffold plus sqlite caching in `state/arb_graph.db` |
 | 4.8 Run live B-1 monitor | EXECUTED | Public-data slice runs completed on 200 and 500 active markets. Result: `edges=344` then `edges=1059`, all `same_event_sum`, `violations=0` in both runs |
-| 4.9 Historical backtest / gold set / weekly audit | PENDING | Not built in this execution |
+| 4.9 Historical backtest / gold set / weekly audit | IN PROGRESS | Validation harness exists; next gate is 50 human-labeled pairs with >=85% precision, not just graph volume |
 | 4.10 Integrate into `jj_live.py` | PENDING | Structural-arb execution routing, linked-leg posting, and rollback posting are still not wired into the live trader |
-| 4.11 Kill gate at day 14 | IN PROGRESS | Scanner/reporting path is ready; the 14-day observation window has not elapsed |
+| 4.11 Kill gate at day 14 | IN PROGRESS | Scanner/reporting path is ready; the 14-day observation window now tracks maker-fill, violation half-life, and settlement-path evidence in addition to capture |
+| 4.12 Research ingest + telemetry schema | COMPLETE | Dedicated `arb_scan_snapshot`, `a6_violation_episode`, `arb_order_group`, `arb_order_leg`, `arb_settlement_op`, and `arb_latency_sample` tables landed with upgraded empirical reporting |
 
 Artifacts generated:
 - [`logs/sum_violation_events.jsonl`](/Users/johnbradley/Desktop/Elastifund/logs/sum_violation_events.jsonl)
 - [`reports/constraint_arb_shadow_report.md`](/Users/johnbradley/Desktop/Elastifund/reports/constraint_arb_shadow_report.md)
+- [`reports/arb_empirical_snapshot.md`](/Users/johnbradley/Desktop/Elastifund/reports/arb_empirical_snapshot.md)
 - [`data/constraint_arb.db`](/Users/johnbradley/Desktop/Elastifund/data/constraint_arb.db)
 
 ---
@@ -108,11 +110,12 @@ Artifacts generated:
 | 4.5 | Position merge path | Merge complete baskets only when collateral value exceeds `$20` | Freed capital is logged and inventory stays consistent |
 | 4.6 | Build B-1 candidate pruning | Resolution window, category/subcategory gate, and top-K semantic neighbors | COMPLETE — deterministic top-K pruning added in `strategies/b1_dependency_graph.py` |
 | 4.7 | Build B-1 classifier + cache | Structured JSON prompt and cached graph edges in sqlite | IN PROGRESS — prompt/parse contract and `state/arb_graph.db` cache exist; live transport wiring remains |
-| 4.8 | Create validation set + audits | 50-pair gold set plus weekly resolved-market audit | IN PROGRESS — validation harness exists, but the gold set itself is not labeled yet |
-| 4.9 | Run live B-1 monitor | Check implication / exclusion / complement violations with maker-relevant bid/ask constraints | IN PROGRESS — monitor exists, but it is not yet running in shadow mode |
+| 4.8 | Create validation set + audits | 50-pair gold set plus weekly resolved-market audit | IN PROGRESS — precision gate raised to 85%; labeling still pending |
+| 4.9 | Run live B-1 monitor | Check implication / exclusion / complement violations with maker-relevant bid/ask constraints | IN PROGRESS — monitor exists, threshold raised to `tau >= 0.04`, shadow activation still pending |
 | 4.10 | Integrate into `jj_live.py` | Route structural-arb signals through live confirmation/risk handling and multi-leg execution | IN PROGRESS — live routing not yet connected |
-| 4.11 | Shadow mode attribution | Run 14-day paper mode with fill simulation, capture ratio, and rollback-loss metrics | Hard GO / NO-GO report published |
+| 4.11 | Shadow mode attribution | Run 14-day paper mode with fill simulation, capture ratio, rollback-loss metrics, violation half-life, and settlement evidence | Hard GO / NO-GO report published |
 | 4.12 | Enforce kill switches | Halt on poor capture, classifier drift, or negative live P&L | Strategy self-disables when structural edge degrades |
+| 4.13 | Split binary Dutch-book A-6 lane | Keep binary YES+NO merge baskets separate from neg-risk YES baskets | BACKLOG — current repo ships `neg_risk_sum` only |
 
 **Depends on:** Stream 2 for the WebSocket data plane. Everything else is local implementation work.
 

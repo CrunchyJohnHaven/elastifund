@@ -1,0 +1,374 @@
+{
+  "a6_replay": {
+    "a6_modes": {
+      "neg_risk_sum": 5
+    },
+    "actual_capture_rate": 0.0,
+    "complete_basket_count": 20,
+    "episode_count": 5,
+    "event_legs": {
+      "count": 20,
+      "max": 59.0,
+      "mean": 16.4,
+      "median": 9.0,
+      "min": 5.0,
+      "p10": 5.0,
+      "p25": 6.0,
+      "p75": 27.75,
+      "p90": 32.0
+    },
+    "gross_edge": {
+      "count": 20,
+      "max": 0.771,
+      "mean": 0.156500101134959,
+      "median": 0.04949999999999999,
+      "min": 0.03200101134958988,
+      "p10": 0.03290010113495891,
+      "p25": 0.03975000000000001,
+      "p75": 0.16250000000000003,
+      "p90": 0.44300000000000006
+    },
+    "modeled_capture_rate": 0.5431312856574996,
+    "observed_end": "2026-03-07T20:11:41+00:00",
+    "observed_persistence_lower_bound_seconds": 0.0,
+    "observed_persistence_p90_seconds": 0.0,
+    "observed_start": "2026-03-07T18:49:58+00:00",
+    "positive_score_count": 9,
+    "row_count": 44,
+    "settlement_paths": {
+      "hold_to_resolution": 5
+    },
+    "threshold_recommendations": {
+      "by_leg_bucket": {
+        "11_20_legs": {
+          "basis": "no_samples",
+          "recommended_min_gross_edge": null,
+          "recommended_sum_yes_ask_threshold": null,
+          "sample_count": 0
+        },
+        "21_plus_legs": {
+          "basis": "thin_sample_execution_drag_plus_buffer",
+          "positive_score_count": 1,
+          "recommended_min_gross_edge": 0.094,
+          "recommended_sum_yes_ask_threshold": 0.906,
+          "sample_count": 1
+        },
+        "3_5_legs": {
+          "basis": "no_samples",
+          "recommended_min_gross_edge": null,
+          "recommended_sum_yes_ask_threshold": null,
+          "sample_count": 0
+        },
+        "6_10_legs": {
+          "basis": "thin_sample_execution_drag_plus_buffer",
+          "positive_score_count": 1,
+          "recommended_min_gross_edge": 0.043,
+          "recommended_sum_yes_ask_threshold": 0.957,
+          "sample_count": 1
+        }
+      },
+      "global_underround_threshold": 0.9315
+    },
+    "unique_events": 15
+  },
+  "b1": {
+    "a6_or_b1_half_life_seconds": null,
+    "graph_edge_count": 0,
+    "historical_violation_count": 0,
+    "measurement_status": "insufficient_live_samples",
+    "notes": "No historical B-1 violations are logged in constraint_arb.db yet.",
+    "recommended_implication_threshold": 0.04
+  },
+  "execution_tasks": [
+    {
+      "status": "done_in_this_pass",
+      "title": "Clarify A-6 lane as neg-risk YES-basket only",
+      "why": "The current implementation targets neg-risk sum rebalancing, not binary YES+NO merge baskets."
+    },
+    {
+      "status": "done_in_this_pass",
+      "title": "Add combinatorial telemetry schema and A-6 episode tracking",
+      "why": "Maker-fill, half-life, settlement, and basket telemetry now have dedicated tables instead of only generic violation rows."
+    },
+    {
+      "status": "done_in_this_pass",
+      "title": "Upgrade empirical snapshot reporting",
+      "why": "The report now exposes A-6 mode, episode counts, settlement coverage, and a research-derived task list."
+    },
+    {
+      "status": "done_in_this_pass",
+      "title": "Propagate tick-size changes through the shared quote store",
+      "why": "Tick-size changes are now preserved alongside best bid/ask updates for A-6 and B-1 consumers."
+    },
+    {
+      "status": "next",
+      "title": "Run a 72h maker-fill curve measurement",
+      "why": "Promotion still depends on measured joint fill probability, not the current trade-through proxy."
+    },
+    {
+      "status": "blocked_external",
+      "title": "Execute settlement-path validation",
+      "why": "No confirmed merge/redeem/convert operations are logged yet, so settlement remains unproven."
+    },
+    {
+      "status": "next",
+      "title": "Finish the 50-pair B-1 gold set and precision audit",
+      "why": "B-1 promotion should be gated on validated precision, not only graph size or classifier confidence."
+    },
+    {
+      "status": "next",
+      "title": "Route live order groups and legs into executor telemetry",
+      "why": "The new order-group tables exist, but live jj_live routing and user-channel fill persistence are still pending."
+    },
+    {
+      "status": "backlog",
+      "title": "Split binary Dutch-book A-6 into a separate lane",
+      "why": "The research report treats YES+NO merge baskets as a distinct settlement path and risk model."
+    }
+  ],
+  "fill_proxy": {
+    "bucketed": {},
+    "eligible_probe_count": 0,
+    "full_fill_proxy_rate": null,
+    "lookahead_seconds": 30,
+    "notes": "No eligible probes. The current Gamma /events A-6 watchlist flattening does not preserve conditionId for 58 otherwise-quotable legs, so the live trade tape cannot be joined back to those markets."
+  },
+  "gating_metrics": {
+    "all_gates_pass": false,
+    "fill_probability_gate": "insufficient_data",
+    "fill_wilson_lower": null,
+    "half_life_gate": "fail",
+    "half_life_seconds": 0.0,
+    "kill_decision": "kill",
+    "kill_reason": "upper_confidence_bound=0.0803<0.50 over 44 completed cycles",
+    "promotion_eligible": false,
+    "settlement_path_gate": "untested"
+  },
+  "generated_at": "2026-03-07T20:12:03+00:00",
+  "inputs": {
+    "book_sample_events": 20,
+    "book_workers": 8,
+    "db_path": "/Users/johnbradley/Desktop/Elastifund/data/constraint_arb.db",
+    "fill_lookahead_seconds": 30,
+    "fill_sample_size": 20,
+    "gamma_pages": 4,
+    "log_path": "/Users/johnbradley/Desktop/Elastifund/logs/sum_violation_events.jsonl",
+    "page_size": 50,
+    "scan_cycles": 1,
+    "scan_interval_seconds": 0,
+    "trade_limit": 1000
+  },
+  "live_surface": {
+    "a6_completed_half_life_p90_seconds": null,
+    "a6_completed_half_life_seconds": null,
+    "active_multi_outcome_events_avg": 9.0,
+    "active_multi_outcome_markets_avg": 58.0,
+    "complete_book_event_count": 9,
+    "cycle_count": 1,
+    "gross_deviation": {
+      "count": 9,
+      "max": 0.2630000000000001,
+      "mean": 0.05533333333333333,
+      "median": 0.03299999999999992,
+      "min": 0.0009999999999998899,
+      "p10": 0.0105999999999999,
+      "p25": 0.014000000000000012,
+      "p75": 0.04800000000000004,
+      "p90": 0.10380000000000011
+    },
+    "incomplete_book_leg_count": 0,
+    "incomplete_book_leg_rate": 0.0,
+    "latest_cycle": {
+      "active_multi_outcome_event_count": 9,
+      "active_multi_outcome_market_count": 58,
+      "book_sample_event_count": 9,
+      "book_sample_market_count": 58,
+      "candidate_event_count": 9,
+      "cycle_index": 0,
+      "observed_at": "2026-03-07T20:11:55+00:00"
+    },
+    "overround_gross_deviation": {
+      "count": 9,
+      "max": 0.2630000000000001,
+      "mean": 0.05533333333333333,
+      "median": 0.03299999999999992,
+      "min": 0.0009999999999998899,
+      "p10": 0.0105999999999999,
+      "p25": 0.014000000000000012,
+      "p75": 0.04800000000000004,
+      "p90": 0.10380000000000011
+    },
+    "qualified_a6_count": 5,
+    "qualified_overround_count": 5,
+    "qualified_underround_count": 0,
+    "sampled_event_observation_count": 9,
+    "spread": {
+      "count": 58,
+      "max": 0.246,
+      "mean": 0.018586206896551723,
+      "median": 0.0059999999999999845,
+      "min": 0.0009999999999999974,
+      "p10": 0.001,
+      "p25": 0.002,
+      "p75": 0.01175,
+      "p90": 0.033699999999999994
+    },
+    "spread_by_midpoint_bucket": {
+      "core_35_65pct": {
+        "count": 4,
+        "max": 0.020000000000000018,
+        "mean": 0.015,
+        "median": 0.014999999999999986,
+        "min": 0.010000000000000009,
+        "p10": 0.010000000000000009,
+        "p25": 0.010000000000000009,
+        "p75": 0.019999999999999976,
+        "p90": 0.02
+      },
+      "favorite_65_100pct": {
+        "count": 5,
+        "max": 0.040000000000000036,
+        "mean": 0.019999999999999973,
+        "median": 0.019999999999999907,
+        "min": 0.0040000000000000036,
+        "p10": 0.004400000000000004,
+        "p25": 0.0050000000000000044,
+        "p75": 0.030999999999999917,
+        "p90": 0.03639999999999999
+      },
+      "mid_15_35pct": {
+        "count": 4,
+        "max": 0.246,
+        "mean": 0.10900000000000001,
+        "median": 0.09000000000000001,
+        "min": 0.010000000000000009,
+        "p10": 0.010000000000000009,
+        "p25": 0.010000000000000009,
+        "p75": 0.189,
+        "p90": 0.2232
+      },
+      "tail_0_5pct": {
+        "count": 36,
+        "max": 0.046,
+        "mean": 0.006527777777777777,
+        "median": 0.003,
+        "min": 0.0009999999999999974,
+        "p10": 0.001,
+        "p25": 0.0010000000000000009,
+        "p75": 0.0075000000000000015,
+        "p90": 0.015
+      },
+      "tail_5_15pct": {
+        "count": 9,
+        "max": 0.14300000000000002,
+        "mean": 0.027444444444444445,
+        "median": 0.005999999999999978,
+        "min": 0.0010000000000000009,
+        "p10": 0.0018000000000000017,
+        "p25": 0.0040000000000000036,
+        "p75": 0.023999999999999994,
+        "p90": 0.07340000000000002
+      }
+    },
+    "sum_yes_ask": {
+      "count": 9,
+      "max": 1.2630000000000001,
+      "mean": 1.0553333333333332,
+      "median": 1.033,
+      "min": 1.001,
+      "p10": 1.0106,
+      "p25": 1.014,
+      "p75": 1.048,
+      "p90": 1.1038000000000001
+    },
+    "token_404_count": 0,
+    "token_404_rate": 0.0,
+    "top_violations": [
+      {
+        "action": "unwind_basket",
+        "category": "unknown",
+        "complete_book": true,
+        "cycle_index": 0,
+        "event_id": "24383",
+        "event_title": "Harvey Weinstein prison time?",
+        "gross_deviation": 0.2630000000000001,
+        "incomplete_legs": 0,
+        "observed_at_ts": 1772914315,
+        "priced_legs": 6,
+        "sum_yes_ask": 1.2630000000000001,
+        "token_404_legs": 0,
+        "tradable_legs": 6
+      },
+      {
+        "action": "unwind_basket",
+        "category": "unknown",
+        "complete_book": true,
+        "cycle_index": 0,
+        "event_id": "48295",
+        "event_title": "Fannie Mae IPO Closing Market Cap",
+        "gross_deviation": 0.06400000000000006,
+        "incomplete_legs": 0,
+        "observed_at_ts": 1772914315,
+        "priced_legs": 7,
+        "sum_yes_ask": 1.064,
+        "token_404_legs": 0,
+        "tradable_legs": 7
+      },
+      {
+        "action": "unwind_basket",
+        "category": "unknown",
+        "complete_book": true,
+        "cycle_index": 0,
+        "event_id": "48297",
+        "event_title": "Databricks IPO Closing Market Cap",
+        "gross_deviation": 0.04800000000000004,
+        "incomplete_legs": 0,
+        "observed_at_ts": 1772914315,
+        "priced_legs": 8,
+        "sum_yes_ask": 1.048,
+        "token_404_legs": 0,
+        "tradable_legs": 8
+      },
+      {
+        "action": "unwind_basket",
+        "category": "unknown",
+        "complete_book": true,
+        "cycle_index": 0,
+        "event_id": "32228",
+        "event_title": "Balance of Power: 2026 Midterms",
+        "gross_deviation": 0.03299999999999992,
+        "incomplete_legs": 0,
+        "observed_at_ts": 1772914315,
+        "priced_legs": 5,
+        "sum_yes_ask": 1.033,
+        "token_404_legs": 0,
+        "tradable_legs": 5
+      },
+      {
+        "action": "unwind_basket",
+        "category": "unknown",
+        "complete_book": true,
+        "cycle_index": 0,
+        "event_id": "48292",
+        "event_title": "OpenAI IPO Closing Market Cap",
+        "gross_deviation": 0.03299999999999992,
+        "incomplete_legs": 0,
+        "observed_at_ts": 1772914315,
+        "priced_legs": 7,
+        "sum_yes_ask": 1.033,
+        "token_404_legs": 0,
+        "tradable_legs": 7
+      }
+    ],
+    "underround_gross_deviation": {
+      "count": 0
+    }
+  },
+  "settlement": {
+    "avg_cost_usd": null,
+    "ops_by_type": {},
+    "success_rate": null,
+    "successful": 0,
+    "total": 0
+  }
+}

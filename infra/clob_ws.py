@@ -61,6 +61,7 @@ class BestBidAsk:
     best_bid: float
     best_ask: float
     updated_ts: float
+    tick_size: float | None = None
 
 
 @dataclass(frozen=True)
@@ -82,16 +83,49 @@ class BestBidAskStore:
     def __init__(self) -> None:
         self._quotes: dict[str, BestBidAsk] = {}
         self._no_orderbook: set[str] = set()
+        self._tick_sizes: dict[str, float] = {}
         self._lock = threading.Lock()
 
-    def update(self, token_id: str, *, best_bid: float, best_ask: float, updated_ts: float | None = None) -> None:
+    def update(
+        self,
+        token_id: str,
+        *,
+        best_bid: float,
+        best_ask: float,
+        updated_ts: float | None = None,
+        tick_size: float | None = None,
+    ) -> None:
         if not token_id:
             return
         ts = float(updated_ts or time.time())
-        quote = BestBidAsk(token_id=str(token_id), best_bid=float(best_bid), best_ask=float(best_ask), updated_ts=ts)
         with self._lock:
+            prior = self._quotes.get(str(token_id))
+            quote = BestBidAsk(
+                token_id=str(token_id),
+                best_bid=float(best_bid),
+                best_ask=float(best_ask),
+                updated_ts=ts,
+                tick_size=(
+                    float(tick_size)
+                    if tick_size is not None and float(tick_size) > 0.0
+                    else (
+                        prior.tick_size
+                        if prior is not None and prior.tick_size is not None
+                        else self._tick_sizes.get(str(token_id))
+                    )
+                ),
+            )
             self._quotes[str(token_id)] = quote
             self._no_orderbook.discard(str(token_id))
+
+    def update_tick_size(self, token_id: str, *, tick_size: float, updated_ts: float | None = None) -> None:
+        if not token_id:
+            return
+        tick = float(tick_size)
+        if tick <= 0.0:
+            return
+        with self._lock:
+            self._tick_sizes[str(token_id)] = tick
 
     def mark_no_orderbook(self, token_id: str) -> None:
         if not token_id:
@@ -104,6 +138,7 @@ class BestBidAskStore:
         with self._lock:
             self._quotes.pop(str(token_id), None)
             self._no_orderbook.discard(str(token_id))
+            self._tick_sizes.pop(str(token_id), None)
 
     def get(self, token_id: str) -> BestBidAsk | None:
         with self._lock:
@@ -126,6 +161,14 @@ class BestBidAskStore:
     def tokens_without_orderbook(self) -> set[str]:
         with self._lock:
             return set(self._no_orderbook)
+
+    def get_tick_size(self, token_id: str) -> float | None:
+        with self._lock:
+            quote = self._quotes.get(str(token_id))
+            if quote is not None and quote.tick_size is not None:
+                return float(quote.tick_size)
+            tick_size = self._tick_sizes.get(str(token_id))
+            return None if tick_size is None else float(tick_size)
 
 
 def _safe_float(value: Any) -> float | None:
@@ -181,6 +224,41 @@ def parse_best_bid_ask_messages(payload: Any) -> list[BestBidAsk]:
             )
         )
     return messages
+
+
+def parse_tick_size_messages(payload: Any) -> list[tuple[str, float, float]]:
+    """Extract tick_size_change updates from a market-channel payload."""
+    out: list[tuple[str, float, float]] = []
+    now = time.time()
+
+    if isinstance(payload, list):
+        for item in payload:
+            out.extend(parse_tick_size_messages(item))
+        return out
+
+    if not isinstance(payload, dict):
+        return out
+
+    candidates: list[dict[str, Any]] = []
+    event_type = str(payload.get("event_type") or payload.get("type") or "").lower()
+    if event_type == "tick_size_change":
+        candidates.append(payload)
+    elif isinstance(payload.get("data"), list):
+        candidates.extend([item for item in payload["data"] if isinstance(item, dict)])
+    elif isinstance(payload.get("data"), dict):
+        candidates.append(payload["data"])
+
+    for item in candidates:
+        item_type = str(item.get("event_type") or item.get("type") or "").lower()
+        if item_type != "tick_size_change":
+            continue
+        token_id = str(item.get("asset_id") or item.get("token_id") or item.get("market") or "").strip()
+        tick_size = _safe_float(item.get("tick_size") or item.get("new_tick_size"))
+        updated_ts = _safe_float(item.get("timestamp") or item.get("ts")) or now
+        if not token_id or tick_size is None or tick_size <= 0.0:
+            continue
+        out.append((token_id, float(tick_size), float(updated_ts)))
+    return out
 
 
 def parse_user_order_events(payload: Any) -> list[UserOrderEvent]:
@@ -283,9 +361,17 @@ class ClobMarketWebSocketClient:
                     payload = json.loads(raw)
                 except json.JSONDecodeError:
                     continue
+                for token_id, tick_size, updated_ts in parse_tick_size_messages(payload):
+                    self.store.update_tick_size(token_id, tick_size=tick_size, updated_ts=updated_ts)
                 messages = parse_best_bid_ask_messages(payload)
                 for msg in messages:
-                    self.store.update(msg.token_id, best_bid=msg.best_bid, best_ask=msg.best_ask, updated_ts=msg.updated_ts)
+                    self.store.update(
+                        msg.token_id,
+                        best_bid=msg.best_bid,
+                        best_ask=msg.best_ask,
+                        updated_ts=msg.updated_ts,
+                        tick_size=msg.tick_size,
+                    )
                     if self.message_hook is not None:
                         self.message_hook(msg)
 

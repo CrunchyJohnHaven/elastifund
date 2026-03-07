@@ -66,6 +66,8 @@ class TestA6Strategy(unittest.TestCase):
         self.assertIsNotNone(opp)
         assert opp is not None
         self.assertTrue(opp.execute_ready)
+        self.assertEqual(opp.a6_mode, "neg_risk_sum")
+        self.assertEqual(opp.settlement_path, "hold_to_resolution")
         self.assertAlmostEqual(opp.maker_sum_bid, 0.90)
 
 

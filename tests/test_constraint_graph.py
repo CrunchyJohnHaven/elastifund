@@ -341,6 +341,12 @@ class TestConstraintGraph(unittest.TestCase):
             self.assertIn("graph_edges", names)
             self.assertIn("constraint_violations", names)
             self.assertIn("arb_capture_stats", names)
+            self.assertIn("arb_scan_snapshot", names)
+            self.assertIn("a6_violation_episode", names)
+            self.assertIn("arb_order_group", names)
+            self.assertIn("arb_order_leg", names)
+            self.assertIn("arb_settlement_op", names)
+            self.assertIn("arb_latency_sample", names)
 
     def test_shadow_report_includes_backtest_and_kill_gate_sections(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -409,6 +415,7 @@ class TestConstraintGraph(unittest.TestCase):
             self.assertIn("## Sum-Violation Backtest", report)
             self.assertIn("## Kill Gate", report)
             self.assertIn("tradable after coverage filter", report)
+            self.assertIn("A-6 lane definition", report)
             self.assertIn("IN PROGRESS", report)
 
 

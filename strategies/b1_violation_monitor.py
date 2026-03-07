@@ -24,7 +24,7 @@ class B1ViolationMonitor:
         *,
         graph_store: GraphStore,
         quote_store: BestBidAskStore,
-        implication_threshold: float = 0.02,
+        implication_threshold: float = 0.04,
         complementary_threshold: float = 0.02,
         max_stale_seconds: float = 2.0,
     ) -> None:

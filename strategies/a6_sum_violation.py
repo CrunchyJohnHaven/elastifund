@@ -76,6 +76,8 @@ class EventWatch:
     is_augmented: bool
     legs: tuple[OutcomeLeg, ...]
     raw_event: dict[str, Any] = field(default_factory=dict)
+    a6_mode: str = "neg_risk_sum"
+    settlement_path: str = "hold_to_resolution"
 
     @property
     def yes_token_ids(self) -> tuple[str, ...]:
@@ -88,6 +90,7 @@ class A6LegQuote:
     token_id: str
     best_bid: float
     best_ask: float
+    tick_size: float
     maker_bid_target: float
     spread: float
     stale_seconds: float
@@ -98,6 +101,8 @@ class A6LegQuote:
 class A6Opportunity:
     event_id: str
     title: str
+    a6_mode: str
+    settlement_path: str
     maker_sum_bid: float
     sum_yes_ask: float
     detect_threshold: float
@@ -243,11 +248,13 @@ class A6SignalEngine:
         execute_threshold: float = 0.95,
         max_spread: float = 0.03,
         max_stale_seconds: float = 2.0,
+        settlement_path: str = "hold_to_resolution",
     ) -> None:
         self.detect_threshold = float(detect_threshold)
         self.execute_threshold = float(execute_threshold)
         self.max_spread = float(max_spread)
         self.max_stale_seconds = float(max_stale_seconds)
+        self.settlement_path = str(settlement_path)
 
     def evaluate_event(
         self,
@@ -278,14 +285,16 @@ class A6SignalEngine:
                 reasons.append(f"stale_quote:{leg.market_id}")
                 return None
 
+            live_tick_size = quote_store.get_tick_size(leg.yes_token_id)
+            tick_size = max(0.001, float(live_tick_size if live_tick_size is not None else leg.tick_size))
             spread = max(0.0, float(quote.best_ask - quote.best_bid))
             if spread > self.max_spread:
                 liquidity_ok = False
                 reasons.append(f"wide_spread:{leg.market_id}")
 
-            maker_bid_target = floor_to_tick(max(0.0, quote.best_ask - leg.tick_size), leg.tick_size)
+            maker_bid_target = floor_to_tick(max(0.0, quote.best_ask - tick_size), tick_size)
             if maker_bid_target >= quote.best_ask:
-                maker_bid_target = floor_to_tick(max(0.0, quote.best_ask - leg.tick_size), leg.tick_size)
+                maker_bid_target = floor_to_tick(max(0.0, quote.best_ask - tick_size), tick_size)
             if maker_bid_target <= 0.0:
                 liquidity_ok = False
                 reasons.append(f"non_positive_bid_target:{leg.market_id}")
@@ -296,6 +305,7 @@ class A6SignalEngine:
                     token_id=leg.yes_token_id,
                     best_bid=float(quote.best_bid),
                     best_ask=float(quote.best_ask),
+                    tick_size=float(tick_size),
                     maker_bid_target=float(maker_bid_target),
                     spread=float(spread),
                     stale_seconds=float(stale_seconds),
@@ -319,6 +329,8 @@ class A6SignalEngine:
         return A6Opportunity(
             event_id=watch.event_id,
             title=watch.title,
+            a6_mode=watch.a6_mode,
+            settlement_path=self.settlement_path,
             maker_sum_bid=float(maker_sum_bid),
             sum_yes_ask=float(sum_yes_ask),
             detect_threshold=self.detect_threshold,

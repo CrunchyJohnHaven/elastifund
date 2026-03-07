@@ -145,8 +145,8 @@ Each edge scored on four dimensions (1–5 scale):
 
 | v3 Rank | Strategy ID | Name | P(Works) | v3 Composite | JJ Tier | Notes |
 |---------|------------|------|----------|-------------|---------|-------|
-| 1 | A-6 | Multi-Outcome Sum Violation Scanner | 45% | 4.2 | TIER 2 | IMDEA: $40M proven arb. Infrastructure reusable for B-1, B-5, B-8 |
-| 2 | B-1 | LLM Combinatorial Dependency Graph | 45% | 4.1 | TIER 3 | Cross-market logical dependency arb. 5-7 days build. |
+| 1 | A-6 | Multi-Outcome Sum Violation Scanner | 45% | 4.2 | TIER 2 | Current shipped lane = neg-risk YES-basket only. Binary YES+NO Dutch-book split into separate backlog until settlement path is verified. |
+| 2 | B-1 | LLM Combinatorial Dependency Graph | 45% | 4.1 | TIER 3 | Cross-market logical dependency arb. Promotion gate now requires a 50-pair gold set with >=85% precision; monitor at `tau >= 0.04` until the fill curve is measured. |
 | 3 | D-12 | Adaptive Platt Calibration (Rolling) | 10% | 2.2 | TIER 4 | Validated negative on 2026-03-07. Static `A=0.5914`, `B=-0.3977` beat rolling windows 50/100/200 on the 532-market walk-forward holdout. Revisit only after 100+ live resolved trades. |
 | 4 | G-1 | WebSocket Upgrade (REST→WS) | 95%* | 3.9 | TIER 1 | *Infrastructure, not alpha. Prerequisite for 8+ strategies. |
 | 5 | D-9 | Ensemble Disagreement Signal | 30% | 3.8 | TIER 2 | 1 day. Simple std() on multi-model outputs. |
@@ -514,7 +514,7 @@ for market in open_markets:
 6. G-8 Position merging.
 7. D-9 Ensemble disagreement weighting.
 8. H-2 Bankroll segmentation.
-9. Gate: A-6 must detect >=5 qualifying events in 14 days.
+9. Gate: A-6 must detect >=5 qualifying events in 14 days and pass maker-fill / half-life / settlement checks before live promotion.
 
 **Cycle 2 (Days 16-30):**
 10. B-1 LLM combinatorial dependency graph.
