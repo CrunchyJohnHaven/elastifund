@@ -242,7 +242,10 @@ class TestConstraintGraph(unittest.TestCase):
             engine.update_quote(market_id="carol", yes_bid=0.31, yes_ask=0.32, updated_ts=now_ts)
 
             violations = engine.scan_sum_violations(now_ts=now_ts)
-            self.assertEqual(violations, [])
+            self.assertEqual(len(violations), 1)
+            self.assertEqual(violations[0].action, "watch_yes_basket")
+            self.assertFalse(violations[0].details["complete_basket"])
+            self.assertEqual(violations[0].details["missing_legs"], 1)
 
     def test_overround_subset_still_detected_with_coverage_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

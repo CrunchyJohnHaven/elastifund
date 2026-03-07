@@ -74,6 +74,95 @@ RELATION_LABELS = {
     "ambiguous",
 }
 
+ANCHOR_STOPWORDS = {
+    "market",
+    "markets",
+    "event",
+    "events",
+    "election",
+    "elections",
+    "price",
+    "prices",
+    "candidate",
+    "candidates",
+    "winner",
+    "winners",
+    "race",
+    "races",
+    "seat",
+    "seats",
+    "party",
+    "parties",
+}
+ENTITY_STOPWORDS = {
+    "will",
+    "what",
+    "when",
+    "who",
+    "which",
+    "new",
+    "before",
+    "after",
+}
+MONTH_TOKENS = {
+    "jan",
+    "january",
+    "feb",
+    "february",
+    "mar",
+    "march",
+    "apr",
+    "april",
+    "may",
+    "jun",
+    "june",
+    "jul",
+    "july",
+    "aug",
+    "august",
+    "sep",
+    "sept",
+    "september",
+    "oct",
+    "october",
+    "nov",
+    "november",
+    "dec",
+    "december",
+}
+OFFICE_TOKENS = {
+    "president",
+    "presidency",
+    "presidential",
+    "senate",
+    "senator",
+    "house",
+    "governor",
+    "gubernatorial",
+    "mayor",
+    "prime minister",
+    "parliament",
+}
+PARTY_TOKENS = {
+    "democrat",
+    "democratic",
+    "republican",
+    "gop",
+    "labour",
+    "labour party",
+    "conservative",
+    "liberal",
+    "green",
+}
+DATE_TOKEN_RE = re.compile(
+    r"\b(20\d{2}|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b",
+    re.IGNORECASE,
+)
+ENTITY_RE = re.compile(
+    r"\b(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}|[A-Z]{2,}(?:\s+[A-Z]{2,}){0,2})\b"
+)
+
 GAMMA_API_BASE = "https://gamma-api.polymarket.com"
 HTTP_TIMEOUT_SECONDS = 15
 DEFAULT_HEADERS = {
@@ -124,6 +213,39 @@ class GraphEdge:
     semantic_confidence: float
     resolution_key: str
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PrefilterFeatures:
+    same_event: bool
+    same_category: bool
+    within_resolution_window: bool
+    resolution_delta_hours: float | None
+    title_similarity: float
+    shared_question_tokens: tuple[str, ...]
+    shared_event_anchors: tuple[str, ...]
+    shared_entities: tuple[str, ...]
+    shared_date_tokens: tuple[str, ...]
+    lexical_cues: tuple[str, ...]
+    office_hierarchy_cues: tuple[str, ...]
+    outcome_overlap_ratio: float
+    gate_passed: bool
+    gate_reasons: tuple[str, ...]
+    score: float
+
+
+@dataclass(frozen=True)
+class CandidatePair:
+    market_a: NormalizedMarket
+    market_b: NormalizedMarket
+    pair_key: tuple[str, str]
+    pair_signature: str
+    passed: bool
+    priority: float
+    sample_bucket: str
+    suggested_label: str
+    reason_codes: tuple[str, ...]
+    features: PrefilterFeatures
 
 
 @dataclass(frozen=True)
