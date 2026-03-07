@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 import json
 import logging
 from pathlib import Path
+import re
 import time
 from typing import Any, Mapping, Sequence
 
@@ -31,12 +32,43 @@ CLOB_PRICES_URL = "https://clob.polymarket.com/prices"
 
 logger = logging.getLogger("sum_violation_scanner")
 
+_DATE_OR_NUMERIC_RE = re.compile(
+    r"\b(?:"
+    r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|"
+    r"aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|"
+    r"20\d{2}|\d{1,2}/\d{1,2}|\d+(?:\.\d+)?%?"
+    r")\b",
+    flags=re.IGNORECASE,
+)
+
 
 def _as_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return False
+
+
+def _norm_text(text: str) -> str:
+    value = text.lower().strip()
+    value = re.sub(r"[^a-z0-9\s]", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _question_skeleton(question: str) -> str:
+    skeleton = _DATE_OR_NUMERIC_RE.sub("<value>", question.lower())
+    skeleton = re.sub(r"[^a-z<>\s]", " ", skeleton)
+    return re.sub(r"\s+", " ", skeleton).strip()
 
 
 def extract_gamma_yes_quotes(raw: Mapping[str, Any]) -> tuple[float | None, float | None]:
@@ -152,6 +184,37 @@ class SumViolationScanner:
                 break
             time.sleep(0.15)
         return events
+
+    def _event_is_candidate(self, raw_event: Mapping[str, Any]) -> bool:
+        if _as_bool(raw_event.get("cumulativeMarkets")):
+            return False
+        if self._looks_ladder_event(raw_event):
+            return False
+        return bool(self._watch_builder.build_watchlist([raw_event]))
+
+    def _flatten_event_markets(self, raw_event: Mapping[str, Any]) -> list[dict[str, Any]]:
+        return self._watch_builder.flatten_markets([raw_event])
+
+    def _looks_ladder_event(self, raw_event: Mapping[str, Any]) -> bool:
+        raw_markets = raw_event.get("markets")
+        if not isinstance(raw_markets, list) or len(raw_markets) < self.min_event_markets:
+            return False
+
+        questions = [
+            str(market.get("question") or market.get("title") or raw_event.get("title") or "").strip()
+            for market in raw_markets
+            if isinstance(market, Mapping)
+        ]
+        questions = [question for question in questions if question]
+        if len(questions) < self.min_event_markets:
+            return False
+
+        skeletons = {_question_skeleton(question) for question in questions}
+        if len(skeletons) != 1:
+            return False
+        if sum(1 for question in questions if _DATE_OR_NUMERIC_RE.search(question)) < self.min_event_markets - 1:
+            return False
+        return len({_norm_text(question) for question in questions}) >= self.min_event_markets
 
     def _select_candidate_events(self, raw_events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
         watches = self._watch_builder.build_watchlist(raw_events)

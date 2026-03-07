@@ -198,7 +198,7 @@ class MultiLegExecutor:
             attempt.state = MultiLegState.FILLED_ALL
             return MultiLegDecision(MultiLegState.FILLED_ALL, "all_legs_filled")
 
-        if attempt.state == MultiLegState.ORDERS_LIVE and attempt.signal_ts is not None:
+        if attempt.state in {MultiLegState.ORDERS_LIVE, MultiLegState.FILLED_SOME} and attempt.signal_ts is not None:
             if now - attempt.signal_ts > attempt.fill_ttl_seconds:
                 if not attempt.has_any_fill:
                     attempt.state = MultiLegState.CANCELLED_NONE_FILLED

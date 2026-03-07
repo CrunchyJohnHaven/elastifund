@@ -411,14 +411,22 @@ def _parse_clob_token_ids(raw: Any) -> tuple[str | None, str | None]:
 
 
 def _extract_office_scope(text: str) -> tuple[str, ...]:
-    lowered = text.lower()
-    found = [office for office in sorted(_OFFICE_TERMS) if office in lowered]
+    lowered = _norm_text(text)
+    found = [
+        office
+        for office in sorted(_OFFICE_TERMS)
+        if re.search(rf"\b{re.escape(office)}\b", lowered)
+    ]
     return tuple(found)
 
 
 def _extract_geography_scope(text: str) -> tuple[str, ...]:
     lowered = _norm_text(text)
-    matches = {geo for geo in _KNOWN_GEOS if geo in lowered}
+    matches = {
+        geo
+        for geo in _KNOWN_GEOS
+        if re.search(rf"\b{re.escape(geo)}\b", lowered)
+    }
     return tuple(sorted(matches))
 
 
@@ -630,6 +638,9 @@ def resolution_equivalence_gate(
     penalty = 0.0
 
     for market in markets[1:]:
+        if base.profile.source == market.profile.source == "unknown":
+            penalty += 0.08
+            reasons.append("source_uncertain")
         if base.profile.source != market.profile.source:
             if "unknown" in {base.profile.source, market.profile.source}:
                 penalty += 0.08
@@ -642,6 +653,9 @@ def resolution_equivalence_gate(
             delta_h = abs(b_cutoff - m_cutoff) / 3600.0
             if delta_h > cutoff_tolerance_hours:
                 reasons.append("cutoff_mismatch")
+        elif not b_cutoff and not m_cutoff:
+            penalty += 0.06
+            reasons.append("cutoff_uncertain")
         elif b_cutoff != m_cutoff:
             penalty += 0.06
             reasons.append("cutoff_uncertain")

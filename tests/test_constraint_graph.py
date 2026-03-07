@@ -31,6 +31,9 @@ class TestConstraintGraph(unittest.TestCase):
             "category": category,
             "negRisk": neg_risk,
             "negRiskAugmented": augmented,
+            "acceptingOrders": True,
+            "enableOrderBook": True,
+            "clobTokenIds": '["yes-token","no-token"]',
             "resolutionSource": source,
             "endDate": end_date,
             "rules": f"Resolves using {source} at {end_date}.",
@@ -146,7 +149,7 @@ class TestConstraintGraph(unittest.TestCase):
                 snapshot_dedupe_seconds=15,
             )
 
-            outcomes = ["Alice", "Bob", "Other"]
+            outcomes = ["Alice", "Bob", "Carol"]
             markets = [
                 self._mk_market(
                     market_id="alice",
@@ -165,10 +168,10 @@ class TestConstraintGraph(unittest.TestCase):
                     augmented=True,
                 ),
                 self._mk_market(
-                    market_id="other",
+                    market_id="carol",
                     event_id="evt-aug",
-                    question="Who will win? Other",
-                    outcome="Other",
+                    question="Who will win? Carol",
+                    outcome="Carol",
                     outcomes=outcomes,
                     augmented=True,
                 ),
@@ -178,13 +181,12 @@ class TestConstraintGraph(unittest.TestCase):
             now_ts = 1_700_000_000
             engine.update_quote(market_id="alice", yes_bid=0.30, yes_ask=0.31, updated_ts=now_ts)
             engine.update_quote(market_id="bob", yes_bid=0.31, yes_ask=0.32, updated_ts=now_ts)
-            engine.update_quote(market_id="other", yes_bid=0.09, yes_ask=0.10, updated_ts=now_ts)
+            engine.update_quote(market_id="carol", yes_bid=0.09, yes_ask=0.10, updated_ts=now_ts)
 
             violations = engine.scan_sum_violations(now_ts=now_ts)
             self.assertEqual(len(violations), 1)
             v = violations[0]
-            # "Other" must be excluded in augmented neg-risk sums.
-            self.assertAlmostEqual(v.details["sum_yes_ask"], 0.63, places=6)
+            self.assertAlmostEqual(v.details["sum_yes_ask"], 0.73, places=6)
 
             # Same event snapshot should dedupe.
             second = engine.scan_sum_violations(now_ts=now_ts)

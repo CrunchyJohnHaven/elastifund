@@ -2,6 +2,7 @@ import unittest
 
 from bot.neg_risk_inventory import NegRiskInventory
 from bot.resolution_normalizer import (
+    evaluate_event_tradability,
     is_tradable_outcome,
     normalize_market,
     resolution_equivalence_gate,
@@ -37,18 +38,44 @@ class TestNegRiskFilters(unittest.TestCase):
         }
 
     def test_augmented_other_outcome_blocked(self) -> None:
-        market = normalize_market(
-            self._mk_market(
-                market_id="m1",
-                event_id="evt-a",
-                question="Who wins?",
-                outcome="Other",
-                outcomes=["Alice", "Bob", "Other"],
-                augmented=True,
-            )
-        )
-        self.assertFalse(is_tradable_outcome(market, "Other"))
-        self.assertTrue(is_tradable_outcome(market, "Alice"))
+        markets = [
+            normalize_market(
+                self._mk_market(
+                    market_id="alice",
+                    event_id="evt-a",
+                    question="Who wins? Alice",
+                    outcome="Alice",
+                    outcomes=["Alice", "Bob", "Other"],
+                    augmented=True,
+                )
+            ),
+            normalize_market(
+                self._mk_market(
+                    market_id="bob",
+                    event_id="evt-a",
+                    question="Who wins? Bob",
+                    outcome="Bob",
+                    outcomes=["Alice", "Bob", "Other"],
+                    augmented=True,
+                )
+            ),
+            normalize_market(
+                self._mk_market(
+                    market_id="other",
+                    event_id="evt-a",
+                    question="Who wins? Other",
+                    outcome="Other",
+                    outcomes=["Alice", "Bob", "Other"],
+                    augmented=True,
+                )
+            ),
+        ]
+        self.assertFalse(is_tradable_outcome(markets[2], "Other"))
+        self.assertTrue(is_tradable_outcome(markets[0], "Alice"))
+
+        tradability = evaluate_event_tradability(markets)
+        self.assertEqual(tradability.status, "hard_blocked")
+        self.assertIn("augmented_other_bucket_present", tradability.reasons)
 
     def test_resolution_gate_rejects_source_and_cutoff_mismatch(self) -> None:
         a = normalize_market(
@@ -76,8 +103,38 @@ class TestNegRiskFilters(unittest.TestCase):
 
         gate = resolution_equivalence_gate([a, b], cutoff_tolerance_hours=24)
         self.assertFalse(gate.passed)
+        self.assertEqual(gate.safety_status, "hard_blocked")
         self.assertIn("source_mismatch", gate.reasons)
         self.assertIn("cutoff_mismatch", gate.reasons)
+
+    def test_augmented_catch_all_and_placeholder_event_blocked(self) -> None:
+        markets = [
+            normalize_market(
+                self._mk_market(
+                    market_id="alice",
+                    event_id="evt-catch",
+                    question="Who wins? Alice",
+                    outcome="Alice",
+                    outcomes=["Alice", "Field", "TBD"],
+                    augmented=True,
+                )
+            ),
+            normalize_market(
+                self._mk_market(
+                    market_id="field",
+                    event_id="evt-catch",
+                    question="Who wins? Field",
+                    outcome="Field",
+                    outcomes=["Alice", "Field", "TBD"],
+                    augmented=True,
+                )
+            ),
+        ]
+
+        tradability = evaluate_event_tradability(markets)
+        self.assertEqual(tradability.status, "hard_blocked")
+        self.assertIn("augmented_catch_all_bucket_present", tradability.reasons)
+        self.assertIn("augmented_placeholder_outcome_present", tradability.reasons)
 
     def test_neg_risk_conversion_bookkeeping(self) -> None:
         inventory = NegRiskInventory()
@@ -132,11 +189,80 @@ class TestNegRiskFilters(unittest.TestCase):
         self.assertEqual(inventory.quantity("evt-nr", "Alice", "NO"), 2.0)
         self.assertEqual(inventory.quantity("evt-nr", "Bob", "YES"), 3.0)
         self.assertEqual(inventory.quantity("evt-nr", "Carol", "YES"), 3.0)
+        self.assertEqual(inventory.event_tradability("evt-nr").status, "tradable")
 
     def test_conversion_requires_no_inventory(self) -> None:
         inventory = NegRiskInventory()
         with self.assertRaises(ValueError):
             inventory.convert_no_to_yes_others(event_id="evt-x", outcome="Alice", quantity=1.0)
+
+    def test_validate_order_uses_event_level_safety(self) -> None:
+        inventory = NegRiskInventory()
+        markets = [
+            normalize_market(
+                self._mk_market(
+                    market_id="alice",
+                    event_id="evt-blocked",
+                    question="Who wins? Alice",
+                    outcome="Alice",
+                    outcomes=["Alice", "Bob", "Other"],
+                    augmented=True,
+                )
+            ),
+            normalize_market(
+                self._mk_market(
+                    market_id="bob",
+                    event_id="evt-blocked",
+                    question="Who wins? Bob",
+                    outcome="Bob",
+                    outcomes=["Alice", "Bob", "Other"],
+                    augmented=True,
+                )
+            ),
+        ]
+        inventory.register_markets(markets)
+
+        self.assertFalse(inventory.validate_order(markets[0], "Alice"))
+        self.assertIn("augmented_other_bucket_present", inventory.order_block_reasons(markets[0], "Alice"))
+
+    def test_safety_matrix_reports_blocked_and_tradable_events(self) -> None:
+        inventory = NegRiskInventory()
+        inventory.register_markets(
+            [
+                normalize_market(
+                    self._mk_market(
+                        market_id="alice",
+                        event_id="evt-tradable",
+                        question="Who wins? Alice",
+                        outcome="Alice",
+                        outcomes=["Alice", "Bob"],
+                    )
+                ),
+                normalize_market(
+                    self._mk_market(
+                        market_id="bob",
+                        event_id="evt-tradable",
+                        question="Who wins? Bob",
+                        outcome="Bob",
+                        outcomes=["Alice", "Bob"],
+                    )
+                ),
+                normalize_market(
+                    self._mk_market(
+                        market_id="other",
+                        event_id="evt-blocked",
+                        question="Who wins? Other",
+                        outcome="Other",
+                        outcomes=["Alice", "Bob", "Other"],
+                        augmented=True,
+                    )
+                ),
+            ]
+        )
+
+        matrix = {row.event_id: row for row in inventory.safety_matrix()}
+        self.assertEqual(matrix["evt-tradable"].status, "tradable")
+        self.assertEqual(matrix["evt-blocked"].status, "hard_blocked")
 
     def test_merge_bookkeeping_reduces_offsetting_inventory(self) -> None:
         inventory = NegRiskInventory()

@@ -4,13 +4,13 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
 from itertools import combinations
 import logging
+import math
 from pathlib import Path
 import re
 import sqlite3
@@ -18,7 +18,7 @@ import threading
 import time
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 try:
     from bot.cross_platform_arb import extract_keywords, normalize_title, title_similarity
@@ -26,12 +26,9 @@ except ImportError:  # pragma: no cover - direct script mode
     from cross_platform_arb import extract_keywords, normalize_title, title_similarity  # type: ignore
 
 try:
-    from bot.debate_pipeline import DebatePipeline
+    from bot.relation_classifier import RelationClassifier, RelationResult
 except ImportError:  # pragma: no cover - direct script mode
-    try:
-        from debate_pipeline import DebatePipeline  # type: ignore
-    except ImportError:  # pragma: no cover - optional dependency
-        DebatePipeline = None  # type: ignore[assignment]
+    from relation_classifier import RelationClassifier, RelationResult  # type: ignore
 
 try:
     from bot.neg_risk_inventory import NegRiskInventory
@@ -73,9 +70,8 @@ RELATION_LABELS = {
     "mutually_exclusive",
     "complementary",
     "subset",
-    "conditional_chain",
     "independent",
-    "ambiguous_do_not_trade",
+    "ambiguous",
 }
 
 GAMMA_API_BASE = "https://gamma-api.polymarket.com"
@@ -116,13 +112,6 @@ class MarketQuote:
     no_bid: float
     no_ask: float
     updated_ts: int
-
-
-@dataclass(frozen=True)
-class RelationResult:
-    relation_type: str
-    confidence: float
-    reason: str
 
 
 @dataclass(frozen=True)
@@ -657,109 +646,6 @@ class CandidateGenerator:
         return pairs
 
 
-class RelationClassifier:
-    """Hybrid relation classifier: heuristics first, optional debate fallback."""
-
-    def __init__(
-        self,
-        *,
-        ambiguous_similarity: float = 0.65,
-        debate_fallback: Callable[[NormalizedMarket, NormalizedMarket], RelationResult | None] | None = None,
-    ) -> None:
-        self.ambiguous_similarity = ambiguous_similarity
-        self.debate_fallback = debate_fallback
-
-    def classify(self, market_a: NormalizedMarket, market_b: NormalizedMarket) -> RelationResult:
-        if market_a.event_id == market_b.event_id:
-            return RelationResult("same_event_sum", 0.97, "same_event")
-
-        threshold_rel = self._threshold_implication(market_a.question, market_b.question)
-        if threshold_rel:
-            relation, reason = threshold_rel
-            return RelationResult(relation, 0.86, reason)
-
-        lexical_rel = self._lexical_implication(market_a.question, market_b.question)
-        if lexical_rel:
-            relation, conf = lexical_rel
-            return RelationResult(relation, conf, "lexical_implication")
-
-        mutual = self._mutual_exclusion(market_a.question, market_b.question)
-        if mutual:
-            return RelationResult("mutually_exclusive", 0.8, "negation_or_binary_opposites")
-
-        if self.debate_fallback:
-            debated = self.debate_fallback(market_a, market_b)
-            if debated and debated.relation_type in RELATION_LABELS:
-                return debated
-
-        sim = title_similarity(normalize_title(market_a.question), normalize_title(market_b.question))
-        if sim >= self.ambiguous_similarity:
-            return RelationResult("ambiguous_do_not_trade", 0.45, "high_semantic_similarity_without_hard_relation")
-        return RelationResult("independent", 0.8, "no_constraint_detected")
-
-    @staticmethod
-    def _threshold_implication(question_a: str, question_b: str) -> tuple[str, str] | None:
-        pattern = re_compile_threshold()
-        pa = pattern.search(question_a.lower())
-        pb = pattern.search(question_b.lower())
-        if not pa or not pb:
-            return None
-
-        dir_a, val_a = pa.group("dir"), float(pa.group("val"))
-        dir_b, val_b = pb.group("dir"), float(pb.group("val"))
-
-        base_a = pattern.sub("", question_a.lower())
-        base_b = pattern.sub("", question_b.lower())
-        sim = title_similarity(normalize_title(base_a), normalize_title(base_b))
-        if sim < 0.7:
-            return None
-
-        above_dirs = {">", ">=", "above", "over", "at least"}
-        below_dirs = {"<", "<=", "below", "under", "at most"}
-
-        if dir_a in above_dirs and dir_b in above_dirs:
-            if val_a > val_b:
-                return ("A_implies_B", "higher_threshold_implies_lower")
-            if val_b > val_a:
-                return ("B_implies_A", "higher_threshold_implies_lower")
-
-        if dir_a in below_dirs and dir_b in below_dirs:
-            if val_a < val_b:
-                return ("A_implies_B", "lower_ceiling_implies_higher_ceiling")
-            if val_b < val_a:
-                return ("B_implies_A", "lower_ceiling_implies_higher_ceiling")
-
-        return None
-
-    @staticmethod
-    def _lexical_implication(question_a: str, question_b: str) -> tuple[str, float] | None:
-        toks_a = extract_keywords(question_a)
-        toks_b = extract_keywords(question_b)
-        if not toks_a or not toks_b:
-            return None
-
-        if toks_a < toks_b and len(toks_b) - len(toks_a) >= 1:
-            # B is stricter (more predicates), so B -> A
-            return ("B_implies_A", 0.72)
-        if toks_b < toks_a and len(toks_a) - len(toks_b) >= 1:
-            return ("A_implies_B", 0.72)
-        return None
-
-    @staticmethod
-    def _mutual_exclusion(question_a: str, question_b: str) -> bool:
-        qa = question_a.lower()
-        qb = question_b.lower()
-        neg_markers = [("win", "lose"), ("yes", "no"), ("above", "below"), ("over", "under")]
-        return any((a in qa and b in qb) or (a in qb and b in qa) for a, b in neg_markers)
-
-
-def re_compile_threshold() -> Any:
-    return re.compile(
-        r"(?P<dir>>=|<=|>|<|above|over|below|under|at least|at most)\s*\$?(?P<val>\d+(?:\.\d+)?)",
-        re.IGNORECASE,
-    )
-
-
 class ViolationScorer:
     @staticmethod
     def score(
@@ -976,124 +862,6 @@ def fetch_gamma_markets(*, max_pages: int = 5, page_limit: int = 200, include_cl
         time.sleep(0.05)
 
     return markets
-
-
-class DebateRelationFallback:
-    """
-    Optional relation fallback for unresolved pairs.
-
-    This runs only after the heuristic classifier fails to find a hard relation.
-    """
-
-    RELATION_PROMPT = """Given two prediction markets:
-Market A: "{title_a}"
-Market B: "{title_b}"
-
-Classify the logical relationship:
-1. A implies B
-2. B implies A
-3. A and B are mutually exclusive
-4. A and B are independent
-5. A is a subset of B's outcomes
-
-Respond in this exact format:
-RELATION: <1-5>
-CONFIDENCE: <0-100>
-RATIONALE: <one sentence>"""
-
-    _RELATION_MAP = {
-        "1": "A_implies_B",
-        "2": "B_implies_A",
-        "3": "mutually_exclusive",
-        "4": "independent",
-        # subset(A,B) is equivalent to A => B.
-        "5": "A_implies_B",
-    }
-
-    def __init__(
-        self,
-        *,
-        min_similarity: float = 0.62,
-        timeout_seconds: float = 30.0,
-        max_calls_per_build: int = 100,
-    ) -> None:
-        self.min_similarity = min_similarity
-        self.timeout_seconds = timeout_seconds
-        self.max_calls_per_build = max_calls_per_build
-        self._calls_this_build = 0
-        self._cache: dict[tuple[str, str], RelationResult] = {}
-        self._pipeline = DebatePipeline() if DebatePipeline is not None else None
-
-    def reset_budget(self) -> None:
-        self._calls_this_build = 0
-
-    def __call__(self, market_a: NormalizedMarket, market_b: NormalizedMarket) -> RelationResult | None:
-        if self._pipeline is None:
-            return None
-
-        sim = title_similarity(normalize_title(market_a.question), normalize_title(market_b.question))
-        if sim < self.min_similarity:
-            return None
-        if self._calls_this_build >= self.max_calls_per_build:
-            return None
-
-        key = tuple(sorted((market_a.market_id, market_b.market_id)))
-        if key in self._cache:
-            return self._cache[key]
-
-        self._calls_this_build += 1
-        prompt = self.RELATION_PROMPT.format(
-            title_a=market_a.question.replace('"', '\\"'),
-            title_b=market_b.question.replace('"', '\\"'),
-        )
-        raw = self._call_model(prompt)
-        if not raw:
-            return None
-
-        relation = self._parse_relation(raw)
-        if relation is None:
-            return None
-        self._cache[key] = relation
-        return relation
-
-    def _call_model(self, prompt: str) -> str:
-        async def _run_prompt() -> str:
-            assert self._pipeline is not None
-            await self._pipeline._init_clients()  # type: ignore[attr-defined]
-
-            if getattr(self._pipeline, "_openai_client", None):
-                return await self._pipeline._call_openai(prompt)  # type: ignore[attr-defined]
-            if getattr(self._pipeline, "_anthropic_client", None):
-                return await self._pipeline._call_anthropic(prompt)  # type: ignore[attr-defined]
-            if getattr(self._pipeline, "_google_client", None):
-                return await self._pipeline._call_gemini(prompt)  # type: ignore[attr-defined]
-            return ""
-
-        try:
-            return asyncio.run(asyncio.wait_for(_run_prompt(), timeout=self.timeout_seconds))
-        except RuntimeError as exc:
-            # If a caller already has an active event loop, skip fallback safely.
-            logger.debug("Debate fallback unavailable in active loop: %s", exc)
-            return ""
-        except Exception as exc:
-            logger.warning("Debate fallback call failed: %s", exc)
-            return ""
-
-    def _parse_relation(self, text: str) -> RelationResult | None:
-        relation_match = re.search(r"RELATION\s*:\s*([1-5])", text, flags=re.IGNORECASE)
-        if not relation_match:
-            return None
-        relation_num = relation_match.group(1)
-        relation_type = self._RELATION_MAP.get(relation_num)
-        if relation_type is None:
-            return None
-
-        conf_match = re.search(r"CONFIDENCE\s*:\s*(\d+(?:\.\d+)?)", text, flags=re.IGNORECASE)
-        confidence_raw = _safe_float(conf_match.group(1) if conf_match else 60.0, 60.0)
-        confidence = confidence_raw / 100.0 if confidence_raw > 1.0 else confidence_raw
-        confidence = max(0.0, min(1.0, confidence))
-
-        return RelationResult(relation_type=relation_type, confidence=confidence, reason="debate_fallback")
 
 
 class ConstraintArbRuntime:
@@ -1383,6 +1151,10 @@ class ConstraintArbEngine:
         return dict(self._markets)
 
     @property
+    def quotes(self) -> dict[str, MarketQuote]:
+        return dict(self._quotes)
+
+    @property
     def edges(self) -> dict[str, GraphEdge]:
         return dict(self._edges)
 
@@ -1463,6 +1235,9 @@ class ConstraintArbEngine:
             selected_outcomes: dict[str, str] = {}
             priced_markets: list[tuple[NormalizedMarket, MarketQuote]] = []
             tradable_event_markets: list[NormalizedMarket] = []
+            market_spreads: dict[str, float] = {}
+            maker_targets: dict[str, float] = {}
+            liquidity_ok = True
 
             for market in event_markets:
                 outcome = market.outcome or (market.outcomes[0] if market.outcomes else "")
@@ -1475,8 +1250,20 @@ class ConstraintArbEngine:
                 if not quote or not self._quote_fresh(quote, now_ts):
                     continue
 
+                if not market.accepting_orders or not market.enable_order_book or not market.yes_token_id:
+                    continue
+
                 selected_outcomes[market.market_id] = outcome
                 priced_markets.append((market, quote))
+                spread = max(0.0, quote.yes_ask - quote.yes_bid)
+                market_spreads[market.market_id] = float(spread)
+                if spread > self.max_leg_spread:
+                    liquidity_ok = False
+                tick_size = max(market.tick_size, 0.001)
+                maker_target = _floor_to_tick(max(0.0, quote.yes_ask - tick_size), tick_size)
+                if maker_target <= 0.0:
+                    liquidity_ok = False
+                maker_targets[market.market_id] = float(maker_target)
 
             if len(priced_markets) < 2:
                 continue
@@ -1495,40 +1282,43 @@ class ConstraintArbEngine:
                 continue
 
             total_yes_ask = sum(q.yes_ask for _, q in priced_markets)
+            maker_sum_bid = sum(maker_targets.get(m.market_id, q.yes_bid) for m, q in priced_markets)
             n_legs = len(priced_markets)
             slippage_est = slippage_buffer * n_legs
+            effective_fill_risk = float(fill_risk + (0.005 if not liquidity_ok else 0.0))
             vpin = self._event_vpin(event_id, [m.market_id for m, _ in priced_markets], vpin_by_id)
 
-            if total_yes_ask < self.buy_threshold:
+            if maker_sum_bid < self.buy_threshold:
                 if not complete_basket:
                     continue
-                gross_edge = 1.0 - total_yes_ask
+                gross_edge = 1.0 - maker_sum_bid
                 score = self.scorer.score(
                     theoretical_edge=gross_edge,
                     worst_case_slippage=slippage_est,
-                    fill_risk=fill_risk,
+                    fill_risk=effective_fill_risk,
                     semantic_penalty=gate.semantic_penalty,
                 )
 
                 snap_bucket = now_ts // self.snapshot_dedupe_seconds
-                dedupe_key = (event_id, snap_bucket, int(total_yes_ask * 10000))
+                dedupe_key = (event_id, snap_bucket, int(maker_sum_bid * 10000))
                 if dedupe_key in self._seen_sum_snapshots:
                     continue
                 self._seen_sum_snapshots.add(dedupe_key)
 
-                action = "buy_yes_basket"
+                execute_ready = complete_basket and (maker_sum_bid < self.execute_threshold or liquidity_ok)
+                action = "buy_yes_basket" if execute_ready else "watch_yes_basket"
                 if vpin >= self.vpin_veto_threshold:
                     action = "vpin_veto"
 
                 violation = ConstraintViolation(
-                    violation_id=self._make_violation_id(f"sum_under|{event_id}|{snap_bucket}|{total_yes_ask:.6f}"),
+                    violation_id=self._make_violation_id(f"sum_under|{event_id}|{snap_bucket}|{maker_sum_bid:.6f}"),
                     event_id=event_id,
                     relation_type="same_event_sum",
                     market_ids=tuple(sorted(m.market_id for m, _ in priced_markets)),
                     semantic_confidence=max(0.0, 1.0 - gate.semantic_penalty),
                     gross_edge=float(gross_edge),
                     slippage_est=float(slippage_est),
-                    fill_risk=float(fill_risk),
+                    fill_risk=float(effective_fill_risk),
                     semantic_penalty=float(gate.semantic_penalty),
                     score=float(score),
                     vpin=float(vpin),
@@ -1536,12 +1326,18 @@ class ConstraintArbEngine:
                     theoretical_pnl=float(gross_edge),
                     realized_pnl=0.0,
                     details={
+                        "maker_sum_bid": maker_sum_bid,
                         "sum_yes_ask": total_yes_ask,
                         "legs": n_legs,
                         "event_legs": len(tradable_market_ids),
                         "missing_legs": len(missing_market_ids),
                         "missing_market_ids": list(missing_market_ids),
+                        "execute_ready": execute_ready,
+                        "execute_threshold": self.execute_threshold,
                         "complete_basket": complete_basket,
+                        "liquidity_ok": liquidity_ok,
+                        "max_leg_spread": self.max_leg_spread,
+                        "market_spreads": market_spreads,
                         "gate_reasons": list(gate.reasons),
                     },
                     detected_at_ts=now_ts,
@@ -1554,7 +1350,7 @@ class ConstraintArbEngine:
                 score = self.scorer.score(
                     theoretical_edge=gross_edge,
                     worst_case_slippage=slippage_est,
-                    fill_risk=fill_risk,
+                    fill_risk=effective_fill_risk,
                     semantic_penalty=gate.semantic_penalty,
                 )
                 action = "unwind_basket"
@@ -1569,7 +1365,7 @@ class ConstraintArbEngine:
                     semantic_confidence=max(0.0, 1.0 - gate.semantic_penalty),
                     gross_edge=float(gross_edge),
                     slippage_est=float(slippage_est),
-                    fill_risk=float(fill_risk),
+                    fill_risk=float(effective_fill_risk),
                     semantic_penalty=float(gate.semantic_penalty),
                     score=float(score),
                     vpin=float(vpin),
@@ -1577,12 +1373,18 @@ class ConstraintArbEngine:
                     theoretical_pnl=float(gross_edge),
                     realized_pnl=0.0,
                     details={
+                        "maker_sum_bid": maker_sum_bid,
                         "sum_yes_ask": total_yes_ask,
                         "legs": n_legs,
                         "event_legs": len(tradable_market_ids),
                         "missing_legs": len(missing_market_ids),
                         "missing_market_ids": list(missing_market_ids),
+                        "execute_ready": complete_basket and liquidity_ok,
+                        "execute_threshold": self.execute_threshold,
                         "complete_basket": complete_basket,
+                        "liquidity_ok": liquidity_ok,
+                        "max_leg_spread": self.max_leg_spread,
+                        "market_spreads": market_spreads,
                         "gate_reasons": list(gate.reasons),
                     },
                     detected_at_ts=now_ts,
@@ -1594,6 +1396,9 @@ class ConstraintArbEngine:
 
     def build_constraint_graph(self, max_pairs: int = 2000) -> list[GraphEdge]:
         markets = list(self._markets.values())
+        reset_budget = getattr(self.classifier, "reset_debate_budget", None)
+        if callable(reset_budget):
+            reset_budget()
         pairs = self.candidate_generator.generate(markets, max_pairs=max_pairs)
 
         out: list[GraphEdge] = []
@@ -1610,7 +1415,6 @@ class ConstraintArbEngine:
                 "mutually_exclusive",
                 "complementary",
                 "subset",
-                "conditional_chain",
             }:
                 continue
 
@@ -1628,6 +1432,9 @@ class ConstraintArbEngine:
                 resolution_key=f"{market_a.resolution_key}:{market_b.resolution_key}",
                 metadata={
                     "reason": relation.reason,
+                    "source": getattr(relation, "source", ""),
+                    "prompt_version": getattr(relation, "prompt_version", ""),
+                    "needs_human_review": bool(getattr(relation, "needs_human_review", False)),
                     "gate_reasons": list(gate.reasons),
                 },
             )
@@ -1732,6 +1539,7 @@ def _add_runtime_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--page-limit", type=int, default=200)
     parser.add_argument("--max-pairs", type=int, default=1500)
     parser.add_argument("--buy-threshold", type=float, default=0.97)
+    parser.add_argument("--execute-threshold", type=float, default=0.95)
     parser.add_argument("--unwind-threshold", type=float, default=1.03)
     parser.add_argument("--implication-threshold", type=float, default=0.02)
     parser.add_argument("--stale-quote-seconds", type=int, default=30)
@@ -1739,23 +1547,26 @@ def _add_runtime_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--scan-interval", type=int, default=60)
     parser.add_argument("--market-refresh", type=int, default=300)
     parser.add_argument("--max-cycles", type=int, default=0, help="0 = run indefinitely")
+    parser.add_argument("--relation-cache-path", default="data/relation_cache.db")
     parser.add_argument("--debate-fallback", action="store_true")
     parser.add_argument("--debate-min-similarity", type=float, default=0.62)
+    parser.add_argument("--debate-low-confidence", type=float, default=0.72)
     parser.add_argument("--debate-max-calls", type=int, default=100)
     parser.add_argument("--log-level", default="INFO")
 
 
 def _build_engine_from_args(args: argparse.Namespace) -> ConstraintArbEngine:
-    fallback = None
-    if getattr(args, "debate_fallback", False):
-        fallback = DebateRelationFallback(
-            min_similarity=float(args.debate_min_similarity),
-            max_calls_per_build=max(1, int(args.debate_max_calls)),
-        )
-    classifier = RelationClassifier(debate_fallback=fallback)
+    classifier = RelationClassifier(
+        cache_path=args.relation_cache_path,
+        prefilter_min_similarity=float(args.debate_min_similarity),
+        low_confidence_threshold=float(args.debate_low_confidence),
+        enable_debate_fallback=bool(getattr(args, "debate_fallback", False)),
+        max_debate_calls=max(0, int(args.debate_max_calls)),
+    )
     return ConstraintArbEngine(
         db_path=args.db_path,
         buy_threshold=float(args.buy_threshold),
+        execute_threshold=float(args.execute_threshold),
         unwind_threshold=float(args.unwind_threshold),
         implication_threshold=float(args.implication_threshold),
         stale_quote_seconds=int(args.stale_quote_seconds),

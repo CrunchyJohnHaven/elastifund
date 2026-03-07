@@ -129,6 +129,7 @@ class A6WatchlistBuilder:
         out: list[dict[str, Any]] = []
         for watch in self.build_watchlist(raw_events):
             event_meta = dict(watch.raw_event)
+            event_outcomes = [leg.outcome for leg in watch.legs]
             for leg in watch.legs:
                 out.append(
                     {
@@ -137,6 +138,7 @@ class A6WatchlistBuilder:
                         "events": [{"id": watch.event_id}],
                         "question": leg.question,
                         "outcome": leg.outcome,
+                        "outcomes": list(event_outcomes),
                         "clobTokenIds": json.dumps([leg.yes_token_id, leg.no_token_id]),
                         "orderPriceMinTickSize": leg.tick_size,
                         "orderMinSize": leg.min_order_size,

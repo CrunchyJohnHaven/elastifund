@@ -41,6 +41,11 @@ class KillReason(Enum):
     INSUFFICIENT_SIGNALS = "insufficient_signals"
     NEGATIVE_OOS_EV = "negative_oos_ev"
     REGIME_DECAY = "regime_decay"
+    SHADOW_PROMOTION = "shadow_promotion_gate"
+    CAPTURE_RATE = "capture_rate"
+    CLASSIFICATION_ACCURACY = "classification_accuracy"
+    FALSE_POSITIVE_RATE = "false_positive_rate"
+    ROLLBACK_CLUSTER = "rollback_cluster"
 
 
 @dataclass
@@ -323,6 +328,174 @@ def check_oos_ev(
             )
 
     return KillResult(passed=True, metrics={"oos_ev": oos_ev, "in_sample_ev": in_sample_ev})
+
+
+def check_shadow_promotion(
+    signal_count: int,
+    minimum_signals: int = 20,
+) -> KillResult:
+    """Promotion gate: shadow mode needs enough samples before live consideration."""
+    if signal_count < minimum_signals:
+        return KillResult(
+            passed=False,
+            reason=KillReason.SHADOW_PROMOTION,
+            detail=f"Only {signal_count} shadow signals; need {minimum_signals}",
+            metrics={"signal_count": signal_count, "minimum_signals": minimum_signals},
+        )
+    return KillResult(passed=True, metrics={"signal_count": signal_count})
+
+
+def check_capture_rate(
+    capture_rate: float | None,
+    minimum_capture_rate: float = 0.50,
+) -> KillResult:
+    """Promotion gate: realized capture must retain enough theoretical edge."""
+    if capture_rate is None:
+        return KillResult(
+            passed=False,
+            reason=KillReason.CAPTURE_RATE,
+            detail="Capture rate unavailable",
+            metrics={"capture_rate": None, "minimum_capture_rate": minimum_capture_rate},
+        )
+    if capture_rate < minimum_capture_rate:
+        return KillResult(
+            passed=False,
+            reason=KillReason.CAPTURE_RATE,
+            detail=f"Capture rate {capture_rate:.2%} < {minimum_capture_rate:.2%}",
+            metrics={"capture_rate": capture_rate, "minimum_capture_rate": minimum_capture_rate},
+        )
+    return KillResult(passed=True, metrics={"capture_rate": capture_rate})
+
+
+def check_classification_accuracy(
+    classification_accuracy: float | None,
+    minimum_accuracy: float = 0.80,
+) -> KillResult:
+    """Promotion gate: B-1 needs validated relation accuracy before live routing."""
+    if classification_accuracy is None:
+        return KillResult(
+            passed=False,
+            reason=KillReason.CLASSIFICATION_ACCURACY,
+            detail="Classification accuracy unavailable",
+            metrics={"classification_accuracy": None, "minimum_accuracy": minimum_accuracy},
+        )
+    if classification_accuracy < minimum_accuracy:
+        return KillResult(
+            passed=False,
+            reason=KillReason.CLASSIFICATION_ACCURACY,
+            detail=f"Classification accuracy {classification_accuracy:.2%} < {minimum_accuracy:.2%}",
+            metrics={"classification_accuracy": classification_accuracy, "minimum_accuracy": minimum_accuracy},
+        )
+    return KillResult(passed=True, metrics={"classification_accuracy": classification_accuracy})
+
+
+def check_false_positive_rate(
+    false_positive_rate: float | None,
+    maximum_false_positive_rate: float = 0.05,
+) -> KillResult:
+    """Promotion gate: structural lanes halt if resolved false positives drift too high."""
+    if false_positive_rate is None:
+        return KillResult(
+            passed=False,
+            reason=KillReason.FALSE_POSITIVE_RATE,
+            detail="False-positive rate unavailable",
+            metrics={
+                "false_positive_rate": None,
+                "maximum_false_positive_rate": maximum_false_positive_rate,
+            },
+        )
+    if false_positive_rate > maximum_false_positive_rate:
+        return KillResult(
+            passed=False,
+            reason=KillReason.FALSE_POSITIVE_RATE,
+            detail=f"False-positive rate {false_positive_rate:.2%} > {maximum_false_positive_rate:.2%}",
+            metrics={
+                "false_positive_rate": false_positive_rate,
+                "maximum_false_positive_rate": maximum_false_positive_rate,
+            },
+        )
+    return KillResult(passed=True, metrics={"false_positive_rate": false_positive_rate})
+
+
+def check_consecutive_rollbacks(
+    consecutive_rollbacks: int,
+    maximum_consecutive_rollbacks: int = 3,
+) -> KillResult:
+    """Promotion gate: repeated rollback losses disable live promotion."""
+    if consecutive_rollbacks > maximum_consecutive_rollbacks:
+        return KillResult(
+            passed=False,
+            reason=KillReason.ROLLBACK_CLUSTER,
+            detail=(
+                f"Consecutive rollback losses {consecutive_rollbacks} > "
+                f"{maximum_consecutive_rollbacks}"
+            ),
+            metrics={
+                "consecutive_rollbacks": consecutive_rollbacks,
+                "maximum_consecutive_rollbacks": maximum_consecutive_rollbacks,
+            },
+        )
+    return KillResult(passed=True, metrics={"consecutive_rollbacks": consecutive_rollbacks})
+
+
+def run_combinatorial_promotion_battery(
+    *,
+    signal_count: int,
+    capture_rate: float | None,
+    false_positive_rate: float | None,
+    consecutive_rollbacks: int,
+    minimum_signals: int = 20,
+    minimum_capture_rate: float = 0.50,
+    maximum_false_positive_rate: float = 0.05,
+    maximum_consecutive_rollbacks: int = 3,
+    require_classification: bool = False,
+    classification_accuracy: float | None = None,
+    minimum_classification_accuracy: float = 0.80,
+) -> tuple[bool, list[KillResult]]:
+    """Run promotion gates for A-6/B-1 shadow-to-live eligibility."""
+    results = [
+        (
+            "shadow_promotion",
+            check_shadow_promotion(signal_count=signal_count, minimum_signals=minimum_signals),
+        ),
+        (
+            "capture_rate",
+            check_capture_rate(capture_rate=capture_rate, minimum_capture_rate=minimum_capture_rate),
+        ),
+        (
+            "false_positive_rate",
+            check_false_positive_rate(
+                false_positive_rate=false_positive_rate,
+                maximum_false_positive_rate=maximum_false_positive_rate,
+            ),
+        ),
+        (
+            "rollback_cluster",
+            check_consecutive_rollbacks(
+                consecutive_rollbacks=consecutive_rollbacks,
+                maximum_consecutive_rollbacks=maximum_consecutive_rollbacks,
+            ),
+        ),
+    ]
+
+    if require_classification:
+        results.append(
+            (
+                "classification_accuracy",
+                check_classification_accuracy(
+                    classification_accuracy=classification_accuracy,
+                    minimum_accuracy=minimum_classification_accuracy,
+                ),
+            )
+        )
+
+    all_passed = all(result.passed for _, result in results)
+    for name, result in results:
+        if not result.passed:
+            logger.warning("KILL [%s]: %s", name, result)
+        else:
+            logger.debug("PASS [%s]", name)
+    return all_passed, [result for _, result in results]
 
 
 # ---------------------------------------------------------------------------

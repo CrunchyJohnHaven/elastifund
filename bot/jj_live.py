@@ -158,6 +158,52 @@ except ImportError:
     except ImportError:
         LeadLagEngine = None
 
+try:
+    from bot.combinatorial_integration import (
+        CombinatorialConfig,
+        CombinatorialSignalStore,
+        attach_signal_source_metadata,
+        evaluate_combinatorial_risk,
+        is_combinatorial_signal,
+    )
+except ImportError:
+    try:
+        from combinatorial_integration import (  # type: ignore
+            CombinatorialConfig,
+            CombinatorialSignalStore,
+            attach_signal_source_metadata,
+            evaluate_combinatorial_risk,
+            is_combinatorial_signal,
+        )
+    except ImportError:
+        CombinatorialConfig = None
+        CombinatorialSignalStore = None
+
+        def attach_signal_source_metadata(signal: dict) -> dict:  # type: ignore[no-redef]
+            return signal
+
+        def is_combinatorial_signal(signal: dict) -> bool:  # type: ignore[no-redef]
+            return False
+
+        def evaluate_combinatorial_risk(*args, **kwargs):  # type: ignore[no-redef]
+            return None
+
+try:
+    from bot.sum_violation_scanner import SumViolationScanner
+except ImportError:
+    try:
+        from sum_violation_scanner import SumViolationScanner  # type: ignore
+    except ImportError:
+        SumViolationScanner = None
+
+try:
+    from bot.kill_rules import run_combinatorial_promotion_battery
+except ImportError:
+    try:
+        from kill_rules import run_combinatorial_promotion_battery  # type: ignore
+    except ImportError:
+        run_combinatorial_promotion_battery = None
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -794,10 +840,55 @@ class TradeDatabase:
                 report_sent INTEGER DEFAULT 0
             );
 
+            CREATE TABLE IF NOT EXISTS combinatorial_baskets (
+                basket_id TEXT PRIMARY KEY,
+                violation_id TEXT NOT NULL,
+                lane TEXT NOT NULL,
+                source_id INTEGER DEFAULT 0,
+                source_tag TEXT,
+                relation_type TEXT,
+                confirmation_mode TEXT,
+                execution_mode TEXT NOT NULL,
+                state TEXT NOT NULL,
+                state_reason TEXT,
+                event_id TEXT,
+                market_ids_json TEXT NOT NULL,
+                theoretical_edge REAL,
+                realized_edge REAL,
+                capture_rate REAL,
+                partial_fill_loss REAL,
+                classification_accuracy REAL,
+                resolution_gate_status TEXT,
+                budget_usd REAL DEFAULT 0.0,
+                kill_rule_trigger TEXT,
+                metadata_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                closed_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS combinatorial_cycle_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                cycle_number INTEGER,
+                a6_detected INTEGER DEFAULT 0,
+                b1_detected INTEGER DEFAULT 0,
+                shadow_logged INTEGER DEFAULT 0,
+                live_attempted INTEGER DEFAULT 0,
+                blocked INTEGER DEFAULT 0,
+                active_baskets INTEGER DEFAULT 0,
+                arb_budget_in_use_usd REAL DEFAULT 0.0,
+                kill_triggers_json TEXT NOT NULL,
+                metrics_json TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_trades_market ON trades(market_id);
             CREATE INDEX IF NOT EXISTS idx_trades_outcome ON trades(outcome);
             CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(timestamp);
             CREATE INDEX IF NOT EXISTS idx_multi_bankroll_level ON multi_bankroll(bankroll_level);
+            CREATE INDEX IF NOT EXISTS idx_comb_baskets_lane_state ON combinatorial_baskets(lane, state);
+            CREATE INDEX IF NOT EXISTS idx_comb_baskets_updated ON combinatorial_baskets(updated_at);
+            CREATE INDEX IF NOT EXISTS idx_comb_cycle_ts ON combinatorial_cycle_metrics(timestamp);
         """)
         self.conn.commit()
 
@@ -881,6 +972,268 @@ class TradeDatabase:
             1 if PAPER_TRADING else 0,
         ))
         self.conn.commit()
+
+    def upsert_combinatorial_basket(self, basket: dict) -> None:
+        """Persist the latest lifecycle snapshot for an A-6 or B-1 basket."""
+        now = datetime.now(timezone.utc).isoformat()
+        state = str(basket.get("state", "DETECTED"))
+        closed_at = basket.get("closed_at")
+        if state in {
+            "BLOCKED",
+            "COMPLETE",
+            "CLOSED",
+            "EXECUTOR_PENDING",
+            "EXPIRED",
+            "ROLLED_BACK",
+            "SHADOW_LOGGED",
+        } and not closed_at:
+            closed_at = now
+
+        market_ids = basket.get("market_ids") or []
+        metadata = basket.get("metadata") or {}
+        c = self.conn.cursor()
+        c.execute(
+            """
+            INSERT INTO combinatorial_baskets (
+                basket_id,
+                violation_id,
+                lane,
+                source_id,
+                source_tag,
+                relation_type,
+                confirmation_mode,
+                execution_mode,
+                state,
+                state_reason,
+                event_id,
+                market_ids_json,
+                theoretical_edge,
+                realized_edge,
+                capture_rate,
+                partial_fill_loss,
+                classification_accuracy,
+                resolution_gate_status,
+                budget_usd,
+                kill_rule_trigger,
+                metadata_json,
+                created_at,
+                updated_at,
+                closed_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(basket_id) DO UPDATE SET
+                violation_id=excluded.violation_id,
+                lane=excluded.lane,
+                source_id=excluded.source_id,
+                source_tag=excluded.source_tag,
+                relation_type=excluded.relation_type,
+                confirmation_mode=excluded.confirmation_mode,
+                execution_mode=excluded.execution_mode,
+                state=excluded.state,
+                state_reason=excluded.state_reason,
+                event_id=excluded.event_id,
+                market_ids_json=excluded.market_ids_json,
+                theoretical_edge=excluded.theoretical_edge,
+                realized_edge=excluded.realized_edge,
+                capture_rate=excluded.capture_rate,
+                partial_fill_loss=excluded.partial_fill_loss,
+                classification_accuracy=excluded.classification_accuracy,
+                resolution_gate_status=excluded.resolution_gate_status,
+                budget_usd=excluded.budget_usd,
+                kill_rule_trigger=excluded.kill_rule_trigger,
+                metadata_json=excluded.metadata_json,
+                updated_at=excluded.updated_at,
+                closed_at=excluded.closed_at
+            """,
+            (
+                basket.get("basket_id"),
+                basket.get("violation_id", basket.get("basket_id")),
+                basket.get("lane", "unknown"),
+                basket.get("source_id", 0),
+                basket.get("source_tag", ""),
+                basket.get("relation_type", ""),
+                basket.get("confirmation_mode", "bypass"),
+                basket.get("execution_mode", "shadow"),
+                state,
+                basket.get("state_reason", ""),
+                basket.get("event_id", ""),
+                json.dumps(list(market_ids), sort_keys=True),
+                basket.get("theoretical_edge"),
+                basket.get("realized_edge"),
+                basket.get("capture_rate"),
+                basket.get("partial_fill_loss"),
+                basket.get("classification_accuracy"),
+                basket.get("resolution_gate_status", ""),
+                basket.get("budget_usd", 0.0),
+                basket.get("kill_rule_trigger"),
+                json.dumps(metadata, sort_keys=True),
+                basket.get("created_at", now),
+                now,
+                closed_at,
+            ),
+        )
+        self.conn.commit()
+
+    def log_combinatorial_cycle(self, cycle_data: dict) -> None:
+        """Persist per-cycle A-6/B-1 integration metrics."""
+        c = self.conn.cursor()
+        c.execute(
+            """
+            INSERT INTO combinatorial_cycle_metrics (
+                timestamp,
+                cycle_number,
+                a6_detected,
+                b1_detected,
+                shadow_logged,
+                live_attempted,
+                blocked,
+                active_baskets,
+                arb_budget_in_use_usd,
+                kill_triggers_json,
+                metrics_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                datetime.now(timezone.utc).isoformat(),
+                cycle_data.get("cycle_number"),
+                cycle_data.get("a6_detected", 0),
+                cycle_data.get("b1_detected", 0),
+                cycle_data.get("shadow_logged", 0),
+                cycle_data.get("live_attempted", 0),
+                cycle_data.get("blocked", 0),
+                cycle_data.get("active_baskets", 0),
+                cycle_data.get("arb_budget_in_use_usd", 0.0),
+                json.dumps(cycle_data.get("kill_triggers", []), sort_keys=True),
+                json.dumps(cycle_data.get("metrics", {}), sort_keys=True),
+            ),
+        )
+        self.conn.commit()
+
+    def get_combinatorial_summary(self, hours: int = 24) -> dict:
+        """Aggregate recent A-6/B-1 telemetry for reporting and promotion gates."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=max(1, hours))).isoformat()
+        rows = self.conn.execute(
+            """
+            SELECT *
+            FROM combinatorial_baskets
+            WHERE updated_at >= ?
+            ORDER BY updated_at ASC, basket_id ASC
+            """,
+            (cutoff,),
+        ).fetchall()
+
+        def _lane_default() -> dict:
+            return {
+                "detected": 0,
+                "shadow_logged": 0,
+                "live_attempted": 0,
+                "blocked": 0,
+                "active": 0,
+                "avg_capture_rate": None,
+                "avg_classification_accuracy": None,
+                "false_positive_rate": None,
+                "consecutive_rollbacks": 0,
+                "kill_triggers": [],
+            }
+
+        summary = {
+            "hours": hours,
+            "lanes": {"a6": _lane_default(), "b1": _lane_default()},
+            "active_baskets": 0,
+            "arb_budget_in_use_usd": 0.0,
+            "kill_triggers": [],
+        }
+        terminal_states = {
+            "BLOCKED",
+            "COMPLETE",
+            "CLOSED",
+            "EXECUTOR_PENDING",
+            "EXPIRED",
+            "ROLLED_BACK",
+            "SHADOW_LOGGED",
+        }
+        capture_samples: dict[str, list[float]] = {"a6": [], "b1": []}
+        accuracy_samples: dict[str, list[float]] = {"a6": [], "b1": []}
+        false_positive_counts: dict[str, int] = {"a6": 0, "b1": 0}
+        resolved_fp_counts: dict[str, int] = {"a6": 0, "b1": 0}
+        rollback_streaks: dict[str, int] = {"a6": 0, "b1": 0}
+
+        for row in rows:
+            payload = dict(row)
+            lane = str(payload.get("lane") or "unknown")
+            if lane not in summary["lanes"]:
+                summary["lanes"][lane] = _lane_default()
+                capture_samples[lane] = []
+                accuracy_samples[lane] = []
+                false_positive_counts[lane] = 0
+                resolved_fp_counts[lane] = 0
+                rollback_streaks[lane] = 0
+
+            lane_summary = summary["lanes"][lane]
+            lane_summary["detected"] += 1
+            if payload.get("execution_mode") == "shadow":
+                lane_summary["shadow_logged"] += 1
+            elif payload.get("execution_mode") == "live":
+                lane_summary["live_attempted"] += 1
+            elif payload.get("execution_mode") == "blocked":
+                lane_summary["blocked"] += 1
+
+            state = str(payload.get("state") or "")
+            partial_fill_loss = payload.get("partial_fill_loss")
+            if state not in terminal_states:
+                lane_summary["active"] += 1
+                summary["active_baskets"] += 1
+                summary["arb_budget_in_use_usd"] += _safe_float(payload.get("budget_usd"), 0.0)
+            if partial_fill_loss not in (None, "") and _safe_float(partial_fill_loss, 0.0) > 0:
+                rollback_streaks[lane] += 1
+            else:
+                rollback_streaks[lane] = 0
+            lane_summary["consecutive_rollbacks"] = max(
+                int(lane_summary["consecutive_rollbacks"]),
+                int(rollback_streaks[lane]),
+            )
+
+            capture_rate = payload.get("capture_rate")
+            if capture_rate not in (None, ""):
+                capture_samples[lane].append(_safe_float(capture_rate, 0.0))
+
+            classification_accuracy = payload.get("classification_accuracy")
+            if classification_accuracy not in (None, ""):
+                accuracy_samples[lane].append(_safe_float(classification_accuracy, 0.0))
+
+            kill_trigger = payload.get("kill_rule_trigger")
+            if kill_trigger:
+                lane_summary["kill_triggers"].append(str(kill_trigger))
+                summary["kill_triggers"].append(str(kill_trigger))
+
+            metadata = {}
+            raw_metadata = payload.get("metadata_json")
+            if raw_metadata:
+                try:
+                    metadata = json.loads(raw_metadata)
+                except (TypeError, json.JSONDecodeError):
+                    metadata = {}
+            if "false_positive" in metadata:
+                resolved_fp_counts[lane] += 1
+                if metadata.get("false_positive"):
+                    false_positive_counts[lane] += 1
+
+        for lane, lane_summary in summary["lanes"].items():
+            if capture_samples.get(lane):
+                lane_summary["avg_capture_rate"] = sum(capture_samples[lane]) / len(capture_samples[lane])
+            if accuracy_samples.get(lane):
+                lane_summary["avg_classification_accuracy"] = (
+                    sum(accuracy_samples[lane]) / len(accuracy_samples[lane])
+                )
+            total_fp = resolved_fp_counts.get(lane, 0)
+            if total_fp:
+                lane_summary["false_positive_rate"] = false_positive_counts.get(lane, 0) / total_fp
+            lane_summary["kill_triggers"] = sorted(set(lane_summary["kill_triggers"]))
+
+        summary["kill_triggers"] = sorted(set(summary["kill_triggers"]))
+        summary["arb_budget_in_use_usd"] = round(summary["arb_budget_in_use_usd"], 2)
+        return summary
 
     def get_unresolved_trades(self) -> list:
         """Get all trades that haven't been resolved yet."""
@@ -1217,13 +1570,8 @@ class JJState:
         self.state_file = state_file
         self.state = self._load()
 
-    def _load(self) -> dict:
-        if self.state_file.exists():
-            try:
-                with open(self.state_file) as f:
-                    return json.load(f)
-            except Exception:
-                pass
+    @staticmethod
+    def _default_state() -> dict:
         return {
             "bankroll": INITIAL_BANKROLL,
             "total_deployed": 0.0,
@@ -1238,7 +1586,42 @@ class JJState:
             "cycles_completed": 0,
             "started_at": datetime.now(timezone.utc).isoformat(),
             "veterans_allocation": 0.0,  # 20% of net profits
+            "linked_legs": {},  # attempt_id -> multi-leg basket state
+            "a6_state": {
+                "attempts": {},
+                "quarantined_tokens_path": "data/a6_quarantine_tokens.json",
+                "last_watch_refresh_ts": None,
+            },
+            "b1_state": {
+                "attempts": {},
+                "validation_accuracy": None,
+                "dep_graph_db_path": "data/dep_graph.sqlite",
+            },
         }
+
+    def _load(self) -> dict:
+        default_state = self._default_state()
+        if self.state_file.exists():
+            try:
+                with open(self.state_file) as f:
+                    raw = json.load(f)
+                if isinstance(raw, dict):
+                    merged = dict(default_state)
+                    merged.update(raw)
+                    if isinstance(raw.get("a6_state"), dict):
+                        merged["a6_state"] = {**default_state["a6_state"], **raw["a6_state"]}
+                    if isinstance(raw.get("b1_state"), dict):
+                        merged["b1_state"] = {**default_state["b1_state"], **raw["b1_state"]}
+                    if not isinstance(merged.get("open_positions"), dict):
+                        merged["open_positions"] = {}
+                    if not isinstance(merged.get("trade_log"), list):
+                        merged["trade_log"] = []
+                    if not isinstance(merged.get("linked_legs"), dict):
+                        merged["linked_legs"] = {}
+                    return merged
+            except Exception:
+                pass
+        return default_state
 
     def save(self):
         with open(self.state_file, "w") as f:
@@ -1264,6 +1647,44 @@ class JJState:
 
     def has_position(self, market_id: str) -> bool:
         return market_id in self.state["open_positions"]
+
+    def upsert_linked_legs(self, attempt_id: str, payload: dict) -> None:
+        record = dict(payload)
+        record.setdefault("attempt_id", str(attempt_id))
+        record.setdefault("updated_at", datetime.now(timezone.utc).isoformat())
+        state = str(record.get("state", "")).upper()
+        record["active"] = state not in {
+            "BLOCKED",
+            "COMPLETE",
+            "CLOSED",
+            "EXECUTOR_PENDING",
+            "EXPIRED",
+            "ROLLED_BACK",
+            "SHADOW_LOGGED",
+        }
+        self.state.setdefault("linked_legs", {})[str(attempt_id)] = record
+        self.save()
+
+    def clear_linked_legs(self, attempt_id: str) -> None:
+        linked = self.state.setdefault("linked_legs", {})
+        if str(attempt_id) in linked:
+            linked.pop(str(attempt_id), None)
+            self.save()
+
+    def count_active_linked_baskets(self) -> int:
+        return sum(
+            1
+            for payload in self.state.get("linked_legs", {}).values()
+            if bool(payload.get("active"))
+        )
+
+    def get_arb_budget_in_use_usd(self) -> float:
+        total = 0.0
+        for payload in self.state.get("linked_legs", {}).values():
+            if not bool(payload.get("active")):
+                continue
+            total += _safe_float(payload.get("reserved_budget_usd"), 0.0)
+        return round(total, 2)
 
     def record_trade(self, market_id: str, question: str, direction: str,
                      price: float, size_usd: float, edge: float,
@@ -1520,6 +1941,50 @@ class JJLive:
         else:
             logger.warning("Lead-lag engine not available — running without")
 
+        # Signals 5/6: A-6 + B-1 structural alpha integration.
+        self.combinatorial_cfg = (
+            CombinatorialConfig.from_env() if CombinatorialConfig is not None else None
+        )
+        self.constraint_signal_store = None
+        self.a6_shadow_scanner = None
+        self._constraint_last_seen_ts = 0
+        self._last_combinatorial_cycle = {
+            "a6_detected": 0,
+            "b1_detected": 0,
+            "shadow_logged": 0,
+            "live_attempted": 0,
+            "blocked": 0,
+            "active_baskets": 0,
+            "arb_budget_in_use_usd": 0.0,
+            "kill_triggers": [],
+            "metrics": {},
+        }
+        if self.combinatorial_cfg is not None and self.combinatorial_cfg.any_enabled():
+            if CombinatorialSignalStore is not None:
+                self.constraint_signal_store = CombinatorialSignalStore(
+                    self.combinatorial_cfg.constraint_db_path
+                )
+                self._constraint_last_seen_ts = max(
+                    0,
+                    int(time.time()) - max(1, int(self.combinatorial_cfg.stale_book_max_age_seconds)),
+                )
+            if (
+                SumViolationScanner is not None
+                and self.combinatorial_cfg.embedded_a6_scanner_enabled
+                and (self.combinatorial_cfg.enable_a6_shadow or self.combinatorial_cfg.enable_a6_live)
+            ):
+                try:
+                    self.a6_shadow_scanner = SumViolationScanner(
+                        db_path=self.combinatorial_cfg.constraint_db_path,
+                        buy_threshold=self.combinatorial_cfg.a6_buy_threshold,
+                        unwind_threshold=self.combinatorial_cfg.a6_unwind_threshold,
+                        stale_quote_seconds=self.combinatorial_cfg.stale_book_max_age_seconds,
+                    )
+                    logger.info("A-6 embedded shadow scanner enabled")
+                except Exception as e:
+                    logger.warning(f"A-6 embedded shadow scanner init failed: {e}")
+                    self.a6_shadow_scanner = None
+
         mode_str = "PAPER" if self.paper_mode else "LIVE"
         logger.info("=" * 60)
         logger.info(f"JJ {mode_str} TRADING SYSTEM — INITIALIZED")
@@ -1549,6 +2014,22 @@ class JJLive:
         )
         logger.info(f"  Thresholds: YES={YES_THRESHOLD:.0%}, NO={NO_THRESHOLD:.0%}")
         logger.info(f"  Category filter: skip priority < {MIN_CATEGORY_PRIORITY}")
+        if self.combinatorial_cfg is not None:
+            logger.info(
+                "  Combinatorial flags: A6(shadow=%s live=%s) B1(shadow=%s live=%s)",
+                self.combinatorial_cfg.enable_a6_shadow,
+                self.combinatorial_cfg.enable_a6_live,
+                self.combinatorial_cfg.enable_b1_shadow,
+                self.combinatorial_cfg.enable_b1_live,
+            )
+            logger.info(
+                "  Combinatorial caps: max_leg=$%.2f arb_budget=$%.2f stale=%ss fill_timeout=%sms merge_min=$%.2f",
+                self.combinatorial_cfg.max_notional_per_leg_usd,
+                self.combinatorial_cfg.arb_budget_usd,
+                self.combinatorial_cfg.stale_book_max_age_seconds,
+                self.combinatorial_cfg.fill_timeout_ms,
+                self.combinatorial_cfg.merge_min_notional_usd,
+            )
         logger.info(f"  Database: {DB_FILE}")
         logger.info("=" * 60)
 
