@@ -14,23 +14,26 @@
 
 ## EXECUTION UPDATE — STREAM 4 (2026-03-07)
 
-Instance 3 (A-6 sum-violation scanner) was executed in shadow mode on March 7, 2026. The combinatorial-arb deep dive is now integrated, so Stream 4 expands from a scanner-only lane into the full A-6/B-1 deployment track.
+Instance 3 (A-6 sum-violation scanner) and the current B-1 graph/runtime were executed on March 7, 2026 against live public Polymarket data. The combinatorial-arb deep dive is now integrated into the repo, tests, and manifest.
 
 | Task | Status | Evidence |
 |---|---|---|
-| 4.1 Enumerate multi-outcome markets | COMPLETE | `bot/sum_violation_scanner.py` pulls Gamma active markets and groups by normalized event IDs |
-| 4.2 Compute sum violations | COMPLETE | One live scan logged `violations=9` (`buy < 0.97`, `unwind > 1.03`) |
-| 4.3 Fee-adjusted edge calculation | COMPLETE | Violation payload logs gross edge, slippage estimate, fill risk, and score |
-| 4.4 Research integration | COMPLETE | Canonical build spec added at `docs/strategy/combinatorial_arb_implementation_deep_dive.md` |
-| 4.5 Historical backtest | PENDING | Not run in this execution |
-| 4.6 Kill gate at day 14 | IN PROGRESS | Scanner running path established; needs 14-day observation window |
-| 4.7 B-1 graph build | PENDING | Heuristic engine exists; gold set + Haiku edge cache not built |
-| 4.8 Integrate into `jj_live.py` | PENDING | Runtime exists as standalone tooling; linked-leg execution path still missing |
+| 4.1 Upgrade A-6 discovery to `/events` | COMPLETE | [`bot/sum_violation_scanner.py`](/Users/johnbradley/Desktop/Elastifund/bot/sum_violation_scanner.py) now pages Gamma `GET /events` and flattens watchlist-safe event groups |
+| 4.2 Add market-depth WebSocket support | COMPLETE | [`bot/ws_trade_stream.py`](/Users/johnbradley/Desktop/Elastifund/bot/ws_trade_stream.py) landed with reconnects, circuit breaker, REST fallback, VPIN, OFI, latency stats, and book parsing; covered by [`bot/tests/test_ws_trade_stream.py`](/Users/johnbradley/Desktop/Elastifund/bot/tests/test_ws_trade_stream.py) |
+| 4.3 Handle CLOB 404 bootstrap cleanly | COMPLETE | A-6 quote fetch quarantines missing order books as suspended legs/events instead of crashing the scan |
+| 4.4 Compute sum violations | COMPLETE | Live run: `events=100`, `candidates=2`, `selected=11`, `quotes=11`, `blocked=0`, `violations=2` |
+| 4.5 Fee-adjusted / execution-aware edge scoring | COMPLETE | `ConstraintArbEngine.scan_sum_violations()` logs `maker_sum_bid`, spreads, fill risk, score, and execute readiness in `constraint_violations` |
+| 4.6 Build B-1 candidate pruning | COMPLETE | [`bot/constraint_arb_engine.py`](/Users/johnbradley/Desktop/Elastifund/bot/constraint_arb_engine.py) now enforces a 72h resolution window in the pruning path; covered by [`tests/test_constraint_graph.py`](/Users/johnbradley/Desktop/Elastifund/tests/test_constraint_graph.py) |
+| 4.7 Build B-1 classifier + cache | COMPLETE | Relation-classifier fallback/caching path is live and covered by [`tests/test_constraint_runtime.py`](/Users/johnbradley/Desktop/Elastifund/tests/test_constraint_runtime.py) |
+| 4.8 Run live B-1 monitor | EXECUTED | Public-data slice runs completed on 200 and 500 active markets. Result: `edges=344` then `edges=1059`, all `same_event_sum`, `violations=0` in both runs |
+| 4.9 Historical backtest / gold set / weekly audit | PENDING | Not built in this execution |
+| 4.10 Integrate into `jj_live.py` | PENDING | Structural-arb execution routing, linked-leg posting, and rollback posting are still not wired into the live trader |
+| 4.11 Kill gate at day 14 | IN PROGRESS | Scanner/reporting path is ready; the 14-day observation window has not elapsed |
 
 Artifacts generated:
-- `logs/sum_violation_events.jsonl`
-- `reports/constraint_arb_shadow_report.md`
-- `data/constraint_arb.db` (`constraint_violations` table updated)
+- [`logs/sum_violation_events.jsonl`](/Users/johnbradley/Desktop/Elastifund/logs/sum_violation_events.jsonl)
+- [`reports/constraint_arb_shadow_report.md`](/Users/johnbradley/Desktop/Elastifund/reports/constraint_arb_shadow_report.md)
+- [`data/constraint_arb.db`](/Users/johnbradley/Desktop/Elastifund/data/constraint_arb.db)
 
 ---
 
@@ -98,16 +101,16 @@ Artifacts generated:
 
 | # | Task | Detail | Done When |
 |---|------|--------|-----------|
-| 4.1 | Upgrade A-6 discovery to `/events` | Use Gamma `active=true`, `closed=false`, `limit=100`, paginated `offset`; keep only grouped events with `enableOrderBook=true` | Multi-outcome events are first-class discovery objects |
-| 4.2 | Add market-depth WebSocket support | Extend `bot/ws_trade_stream.py` for `market` subscriptions and maintain shared `LOB_STATE` | Best bid/ask updates stream in real time without REST-only polling |
-| 4.3 | Handle CLOB 404 bootstrap cleanly | Treat missing order books as suspended `NaN` legs until first live liquidity snapshot arrives | No scanner crashes or false triggers from empty books |
-| 4.4 | A-6 execution state machine | Batch maker orders, enforce `postOnly + GTC`, add 3000ms rollback timer, and linked-leg tracking | Partial baskets are cancelled or scratched deterministically |
+| 4.1 | Upgrade A-6 discovery to `/events` | Use Gamma `active=true`, `closed=false`, `limit=100`, paginated `offset`; keep only grouped events with `enableOrderBook=true` | COMPLETE — reusable discovery lives in `signals/sum_violation/sum_discovery.py` |
+| 4.2 | Add market-depth WebSocket support | Extend the shared CLOB market client and maintain shared `LOB_STATE` | COMPLETE — `infra/ws_market_cache.py` wraps the market websocket cache for A-6/B-1 consumers |
+| 4.3 | Handle CLOB 404 bootstrap cleanly | Treat missing order books as suspended `NaN` legs until first live liquidity snapshot arrives | COMPLETE — persisted quarantine with exponential backoff added at `data/a6_quarantine_tokens.json` |
+| 4.4 | A-6 execution state machine | Batch maker orders, enforce `postOnly + GTC`, add 3000ms rollback timer, and linked-leg tracking | IN PROGRESS — planner/state machine is wired, live batch posting still pending in `bot/jj_live.py` |
 | 4.5 | Position merge path | Merge complete baskets only when collateral value exceeds `$20` | Freed capital is logged and inventory stays consistent |
-| 4.6 | Build B-1 candidate pruning | Resolution window, tag/slug overlap, and embedding cosine > 0.60 | Candidate pair count is reduced before LLM calls |
-| 4.7 | Build B-1 classifier + cache | Claude Haiku classifies relation type; write edges to `data/constraint_arb.db` | `graph_edges` populated with validated dependency labels |
-| 4.8 | Create validation set + audits | 50-pair gold set plus weekly resolved-market audit | Accuracy and false-positive rate are measurable |
-| 4.9 | Run live B-1 monitor | Check implication / exclusion / complement violations with `tau = 0.03` | Console and DB capture >5 theoretical violations/day in shadow mode |
-| 4.10 | Integrate into `jj_live.py` | Register Signal Sources 5/6, bypass predictive confirmation, and apply execution-risk sizing | Structural arb reaches the live execution queue |
+| 4.6 | Build B-1 candidate pruning | Resolution window, tag/slug overlap, and embedding cosine > 0.60 | COMPLETE — deterministic top-K pruning added in `signals/dep_graph/dep_candidate_pairs.py` |
+| 4.7 | Build B-1 classifier + cache | Claude Haiku classifies relation type; write edges to `data/constraint_arb.db` | IN PROGRESS — prompt/parse contract and `data/dep_graph.sqlite` cache exist; live transport wiring remains |
+| 4.8 | Create validation set + audits | 50-pair gold set plus weekly resolved-market audit | IN PROGRESS — validation harness exists, but the gold set itself is not labeled yet |
+| 4.9 | Run live B-1 monitor | Check implication / exclusion / complement violations with `tau = 0.03` | IN PROGRESS — monitor and execution planner exist, but they are not yet running in shadow mode |
+| 4.10 | Integrate into `jj_live.py` | Register Signal Sources 5/6, bypass predictive confirmation, and apply execution-risk sizing | IN PROGRESS — state schema is ready, live routing not yet connected |
 | 4.11 | Shadow mode attribution | Run 14-day paper mode with fill simulation, capture ratio, and rollback-loss metrics | Hard GO / NO-GO report published |
 | 4.12 | Enforce kill switches | Halt on poor capture, classifier drift, or negative live P&L | Strategy self-disables when structural edge degrades |
 

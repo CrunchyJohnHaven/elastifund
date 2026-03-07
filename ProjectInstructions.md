@@ -252,15 +252,15 @@ Elastifund/
    - `tests/test_arb_execution_partial_fill.py`
 5. [x] Added `bot/sum_violation_scanner.py` runtime loop wiring live Gamma market discovery + CLOB orderbook quotes into `ConstraintArbEngine.scan_sum_violations()` with JSONL logging and shadow-report output.
 6. [x] Connected debate pipeline fallback only for unresolved pair classifications after heuristic prefilter (enabled via `--debate-fallback` in `constraint_arb_engine.py` runtime commands).
-7. [ ] Replace A-6 discovery in `bot/sum_violation_scanner.py` with Gamma `/events` pagination (`active=true`, `closed=false`, `limit=100`, `offset`).
-8. [ ] Extend `bot/ws_trade_stream.py` from trade ticks to market-depth subscriptions (`book` + `price_change`) and shared `LOB_STATE`.
-9. [ ] Handle CLOB orderbook bootstrap 404s as suspended `NaN` legs, not hard scanner failures.
-10. [ ] Add batch multi-leg maker execution to `bot/jj_live.py` with `postOnly=true`, `OrderType.GTC`, linked-leg tracking, and 3000ms rollback logic.
-11. [ ] Extend `jj_state.json` schema with `linked_legs` so partial baskets are tracked as one logical unit.
-12. [ ] Add merge helper for complete baskets with `$20` minimum threshold and verified contract addresses.
-13. [ ] Build the B-1 gold set, Haiku relation classifier, and cached graph edges inside `data/constraint_arb.db`.
-14. [ ] Add resolved-market dependency audit and halt B-1 above 5% false-positive rate.
-15. [ ] Integrate A-6 and B-1 into `jj_live.py` as Signal Sources 5 and 6 with deterministic bypass semantics.
+7. [x] Replace A-6 discovery in `bot/sum_violation_scanner.py` with Gamma `/events` pagination (`active=true`, `closed=false`, `limit=50`, `offset`).
+8. [x] Add shared A-6/B-1 quote infrastructure in `infra/clob_ws.py` (market/user channel clients, chunked subscriptions, reconnect/backoff, shared best-bid/ask store).
+9. [x] Handle CLOB `/prices` 404s as hard no-orderbook blocks and suspend those events from the active A-6 watchlist for that scan.
+10. [x] Add generic maker-only multi-leg state handling in `execution/multileg_executor.py` with fill TTL, rollback, unwind TTL, and freeze-on-unhedged-exposure semantics.
+11. [x] Land event watchlist + execution-aware threshold logic in `strategies/a6_sum_violation.py`.
+12. [x] Land B-1 graph cache + prompt scaffolding in `strategies/b1_dependency_graph.py` and maker-executable live checks in `strategies/b1_violation_monitor.py`.
+13. [ ] Add live user-channel fill handling + real order submission on top of the shared multi-leg executor.
+14. [ ] Add resolved-market dependency audit and manual 50-pair validation loop for B-1.
+15. [ ] Integrate A-6 and B-1 into the live confirmation/execution stack in `bot/jj_live.py` once the multi-leg routing path is ready.
 
 Other completed modules still available for parallel promotion work:
 
@@ -274,7 +274,7 @@ Other completed modules still available for parallel promotion work:
 2. **Days 4-5 (A-6 execution):** Batch multi-leg maker orders, enforce `postOnly + GTC` only, add 3000ms partial-fill rollback timer, and start linked-leg persistence.
 3. **Days 6-8 (B-1 graph build):** Build the 50-pair gold set, add resolution-window/tag/embedding prefilter, run Haiku classification, and cache graph edges.
 4. **Days 9-10 (B-1 live monitor):** Monitor implication, mutual-exclusion, and complement violations at `tau = 0.03`; defer conditional chains.
-5. **Days 11-12 (integration):** Route A-6/B-1 to execution queue as Signal Sources 5/6, wire execution-risk sizing, and finalize kill switches.
+5. **Days 11-12 (integration):** Route A-6/B-1 into the live confirmation/execution stack, wire execution-risk sizing, and finalize kill switches.
 6. **Days 13-14 (shadow mode):** Paper trade the combined arb stack, simulate realistic maker fills, and publish capture-rate / rollback-loss attribution.
 
 ### P2 — Hard Kill Rules (Non-Negotiable)

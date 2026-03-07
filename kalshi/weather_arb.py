@@ -12,10 +12,10 @@ import json
 import logging
 import math
 import os
-import time
+import re
 import uuid
 from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -23,9 +23,12 @@ import requests
 
 try:
     from kalshi_python import Configuration as KalshiConfig, KalshiClient
+    from kalshi_python.api import MarketsApi, PortfolioApi
 except ImportError:  # pragma: no cover - handled in runtime checks
     KalshiClient = None
     KalshiConfig = None
+    MarketsApi = None
+    PortfolioApi = None
 
 try:
     from dotenv import load_dotenv
@@ -36,16 +39,21 @@ except Exception:  # pragma: no cover - optional convenience only
 
 
 NWS_BASE = "https://api.weather.gov"
+KALSHI_API_BASE = os.environ.get(
+    "KALSHI_API_BASE",
+    "https://api.elections.kalshi.com/trade-api/v2",
+)
 DATA_DIR = Path("data")
 SIGNALS_LOG = DATA_DIR / "kalshi_weather_signals.jsonl"
 ORDERS_LOG = DATA_DIR / "kalshi_weather_orders.jsonl"
+MAX_FORECAST_HORIZON_DAYS = 7
 
 CITY_CONFIG = {
     "NYC": {
         "name": "New York City",
         "lat": 40.7829,
         "lon": -73.9654,
-        "aliases": ["new york", "nyc", "central park"],
+        "aliases": ["new york city", "new york", "nyc", "central park"],
         "ticker_prefixes": ["KXHIGHNY", "KXRAINNYC", "KXRAINNYCM"],
     },
     "CHI": {
@@ -53,14 +61,14 @@ CITY_CONFIG = {
         "lat": 41.8781,
         "lon": -87.6298,
         "aliases": ["chicago", "o'hare", "ohare"],
-        "ticker_prefixes": ["KXHIGHCH"],
+        "ticker_prefixes": ["KXHIGHCHI", "KXHIGHCH"],
     },
     "MIA": {
         "name": "Miami",
         "lat": 25.7617,
         "lon": -80.1918,
         "aliases": ["miami"],
-        "ticker_prefixes": ["KXHIGHMI"],
+        "ticker_prefixes": ["KXHIGHMIA", "KXHIGHMI"],
     },
     "AUS": {
         "name": "Austin",
@@ -73,8 +81,8 @@ CITY_CONFIG = {
         "name": "Los Angeles",
         "lat": 34.0522,
         "lon": -118.2437,
-        "aliases": ["los angeles"],
-        "ticker_prefixes": ["KXHIGHLA"],
+        "aliases": ["los angeles", "lax"],
+        "ticker_prefixes": ["KXHIGHLAX", "KXHIGHLA"],
     },
 }
 
@@ -107,6 +115,14 @@ class WeatherSignal:
     confidence: float = 0.0
 
 
+@dataclass
+class KalshiSession:
+    api_client: Any | None = None
+    markets_api: Any | None = None
+    portfolio_api: Any | None = None
+    auth_configured: bool = False
+
+
 def _bool_env(name: str, default: bool) -> bool:
     val = os.environ.get(name)
     if val is None:
@@ -114,9 +130,10 @@ def _bool_env(name: str, default: bool) -> bool:
     return val.lower() in ("true", "1", "yes")
 
 
-def _json_get(url: str, timeout: float = 12.0) -> dict:
+def _json_get(url: str, *, params: Optional[dict[str, Any]] = None, timeout: float = 12.0) -> dict:
     resp = requests.get(
         url,
+        params=params,
         timeout=timeout,
         headers={"User-Agent": "Elastifund/1.0 (weather-arb)"},
     )
@@ -159,7 +176,6 @@ def parse_temperature_contract(text: str) -> Optional[tuple[str, float, Optional
     s = text.lower()
 
     # e.g., "60-64" or "between 60 and 64"
-    import re
     m = re.search(r"(\d{1,3})\s*[-–]\s*(\d{1,3})", s)
     if m:
         lo = float(m.group(1))
@@ -230,6 +246,7 @@ def fetch_nws_snapshot(city_code: str, target_date: Optional[datetime] = None) -
         target_date = datetime.now(timezone.utc) + timedelta(days=1)
     target_day = target_date.date()
 
+    target_periods = []
     best_period = None
     for p in periods:
         start = p.get("startTime")
@@ -241,11 +258,11 @@ def fetch_nws_snapshot(city_code: str, target_date: Optional[datetime] = None) -
             continue
         if start_dt.date() != target_day:
             continue
+        target_periods.append(p)
         # Prefer daytime period for daily high.
         if p.get("isDaytime"):
             best_period = p
-            break
-        if best_period is None:
+        elif best_period is None:
             best_period = p
 
     if best_period is None:
@@ -260,21 +277,31 @@ def fetch_nws_snapshot(city_code: str, target_date: Optional[datetime] = None) -
     if temp is not None and str(best_period.get("temperatureUnit", "F")).upper() == "C":
         temp = temp * 9.0 / 5.0 + 32.0
 
-    pop_val = best_period.get("probabilityOfPrecipitation", {}).get("value")
-    pop = _safe_float(pop_val, None)
-    if pop is not None:
-        pop = max(0.0, min(1.0, pop / 100.0))
+    pop_probs: list[float] = []
+    for period in target_periods or [best_period]:
+        pop_val = period.get("probabilityOfPrecipitation", {}).get("value")
+        pop = _safe_float(pop_val, None)
+        if pop is None:
+            continue
+        pop_probs.append(max(0.0, min(1.0, pop / 100.0)))
+
+    daily_pop = None
+    if pop_probs:
+        no_precip_prob = 1.0
+        for pop in pop_probs:
+            no_precip_prob *= 1.0 - pop
+        daily_pop = max(0.0, min(1.0, 1.0 - no_precip_prob))
 
     return ForecastSnapshot(
         city=city_code,
         target_date=target_day.isoformat(),
         high_temp_f=temp,
-        pop_probability=pop,
+        pop_probability=daily_pop,
         source_period=best_period.get("name", ""),
     )
 
 
-def _load_kalshi_key() -> Optional[str]:
+def _load_kalshi_key_path() -> Optional[Path]:
     key_path = os.environ.get("KALSHI_RSA_KEY_PATH", "").strip()
     candidates = [
         Path(key_path) if key_path else None,
@@ -283,31 +310,40 @@ def _load_kalshi_key() -> Optional[str]:
     ]
     for path in candidates:
         if path and path.exists():
-            return path.read_text(encoding="utf-8")
+            return path
     return None
 
 
-def get_kalshi_client(*, execute: bool = False) -> KalshiClient:
-    if KalshiClient is None or KalshiConfig is None:
-        raise RuntimeError("kalshi_python is not installed")
+def get_kalshi_client(*, execute: bool = False) -> KalshiSession:
+    if KalshiClient is None or KalshiConfig is None or MarketsApi is None or PortfolioApi is None:
+        if execute:
+            raise RuntimeError("kalshi_python is required for live Kalshi orders")
+        logger.warning("kalshi_python is not installed; using public HTTP market scan only")
+        return KalshiSession()
 
     api_key_id = os.environ.get("KALSHI_API_KEY_ID", "").strip()
-    private_key_pem = _load_kalshi_key()
+    private_key_path = _load_kalshi_key_path()
 
     config = KalshiConfig()
-    if api_key_id and private_key_pem:
-        config.api_key_id = api_key_id
-        config.private_key_pem = private_key_pem
+    api_client = KalshiClient(configuration=config)
+    auth_configured = bool(api_key_id and private_key_path)
+    if auth_configured:
+        api_client.set_kalshi_auth(api_key_id, str(private_key_path))
     elif execute:
         missing = []
         if not api_key_id:
             missing.append("KALSHI_API_KEY_ID")
-        if not private_key_pem:
+        if not private_key_path:
             missing.append("KALSHI_RSA_KEY_PATH/private key")
         raise RuntimeError(f"Missing Kalshi auth for --execute: {', '.join(missing)}")
-    else:
+    if not auth_configured:
         logger.warning("Kalshi auth not configured; attempting read-only public market scan")
-    return KalshiClient(configuration=config)
+    return KalshiSession(
+        api_client=api_client,
+        markets_api=MarketsApi(api_client),
+        portfolio_api=PortfolioApi(api_client),
+        auth_configured=auth_configured,
+    )
 
 
 def _field(obj: Any, name: str, default: Any = None) -> Any:
@@ -318,31 +354,49 @@ def _field(obj: Any, name: str, default: Any = None) -> Any:
     return default
 
 
-def fetch_open_markets(client: KalshiClient, max_pages: int = 3) -> list[Any]:
+def _public_get_markets(**params: Any) -> list[dict[str, Any]]:
+    resp = _json_get(f"{KALSHI_API_BASE}/markets", params=params, timeout=20.0)
+    return list(resp.get("markets", []) or [])
+
+
+def fetch_open_markets(session: KalshiSession, max_pages: int = 3) -> list[Any]:
     markets = []
     cursor = None
     for _ in range(max(1, max_pages)):
         kwargs: dict[str, Any] = {"status": "open", "limit": 1000}
         if cursor:
             kwargs["cursor"] = cursor
-        resp = client.get_markets(**kwargs)
-        page_markets = list(_field(resp, "markets", []) or [])
+        if session.markets_api is not None:
+            resp = session.markets_api.get_markets(**kwargs)
+            page_markets = list(_field(resp, "markets", []) or [])
+            cursor = _field(resp, "cursor")
+        else:
+            resp = _json_get(f"{KALSHI_API_BASE}/markets", params=kwargs, timeout=20.0)
+            page_markets = list(resp.get("markets", []) or [])
+            cursor = resp.get("cursor")
         markets.extend(page_markets)
-        cursor = _field(resp, "cursor")
         if not cursor:
             break
     return markets
 
 
-def fetch_weather_series_markets(client: KalshiClient) -> list[Any]:
+def fetch_weather_series_markets(session: KalshiSession) -> list[Any]:
     """Fetch open markets directly from known weather series tickers."""
     markets: list[Any] = []
     seen: set[str] = set()
     for city_cfg in CITY_CONFIG.values():
         for series in city_cfg.get("ticker_prefixes", []):
             try:
-                resp = client.get_markets(series_ticker=series, status="open", limit=200)
-                for m in list(_field(resp, "markets", []) or []):
+                if session.markets_api is not None:
+                    resp = session.markets_api.get_markets(
+                        series_ticker=series,
+                        status="open",
+                        limit=200,
+                    )
+                    page_markets = list(_field(resp, "markets", []) or [])
+                else:
+                    page_markets = _public_get_markets(series_ticker=series, status="open", limit=200)
+                for m in page_markets:
                     ticker = str(_field(m, "ticker", "") or "")
                     if not ticker or ticker in seen:
                         continue
@@ -356,9 +410,15 @@ def fetch_weather_series_markets(client: KalshiClient) -> list[Any]:
 def _market_city_code(market: Any) -> Optional[str]:
     ticker = str(_field(market, "ticker", "") or "").upper()
     event_ticker = str(_field(market, "event_ticker", "") or "").upper()
+    text = " ".join(
+        str(_field(market, key, "") or "")
+        for key in ("ticker", "event_ticker", "title", "subtitle")
+    ).lower()
     for city_code, cfg in CITY_CONFIG.items():
         prefixes = cfg.get("ticker_prefixes", [])
         if any(ticker.startswith(prefix) or event_ticker.startswith(prefix) for prefix in prefixes):
+            return city_code
+        if any(alias in text for alias in cfg.get("aliases", [])):
             return city_code
     return None
 
@@ -375,6 +435,65 @@ def _market_type(market: Any) -> Optional[str]:
     return None
 
 
+def extract_market_target_date(market: Any) -> Optional[date]:
+    for raw in (
+        str(_field(market, "event_ticker", "") or ""),
+        str(_field(market, "ticker", "") or ""),
+    ):
+        match = re.search(r"-(\d{2})([A-Z]{3})(\d{2})(?:-|$)", raw.upper())
+        if not match:
+            continue
+        yy, month_abbr, dd = match.groups()
+        try:
+            return datetime.strptime(f"{yy}{month_abbr}{dd}", "%y%b%d").date()
+        except ValueError:
+            continue
+
+    title = " ".join(
+        str(_field(market, key, "") or "")
+        for key in ("title", "subtitle")
+    ).replace("*", "")
+    match = re.search(r"on\s+([A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})", title)
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%b %d, %Y").date()
+    except ValueError:
+        try:
+            return datetime.strptime(match.group(1), "%B %d, %Y").date()
+        except ValueError:
+            return None
+
+
+def _maker_order_probability(
+    best_bid: Optional[float],
+    best_ask: Optional[float],
+    *,
+    passive_offset_cents: int = 1,
+) -> Optional[float]:
+    ask = _safe_float(best_ask, None)
+    if ask is None:
+        return None
+
+    ask_cents = int(round(max(0.0, min(0.99, ask)) * 100))
+    if ask_cents <= 1:
+        return None
+
+    offset = max(0, int(passive_offset_cents))
+    bid = _safe_float(best_bid, None)
+    if bid is None:
+        price_cents = ask_cents - max(1, offset)
+    else:
+        bid_cents = int(round(max(0.0, min(0.99, bid)) * 100))
+        price_cents = bid_cents + offset
+        if price_cents >= ask_cents:
+            price_cents = ask_cents - 1
+
+    if price_cents < 1:
+        return None
+    return price_cents / 100.0
+
+
 def build_weather_signal(
     city_code: str,
     snapshot: ForecastSnapshot,
@@ -383,9 +502,14 @@ def build_weather_signal(
     edge_threshold: float = 0.10,
     max_spread: float = 0.15,
     temp_std_f: float = 3.0,
+    maker_offset_cents: int = 1,
 ) -> Optional[WeatherSignal]:
     mtype = _market_type(market)
     if mtype is None:
+        return None
+
+    market_target_date = extract_market_target_date(market)
+    if market_target_date is not None and market_target_date.isoformat() != snapshot.target_date:
         return None
 
     yes_ask = _to_prob(_field(market, "yes_ask"))
@@ -403,7 +527,7 @@ def build_weather_signal(
         if snapshot.pop_probability is None:
             return None
         model_prob = snapshot.pop_probability
-        reason = f"NWS PoP={model_prob:.1%} vs market"
+        reason = f"NWS daily PoP={model_prob:.1%} vs market"
     else:
         if snapshot.high_temp_f is None:
             return None
@@ -415,8 +539,19 @@ def build_weather_signal(
         model_prob = temperature_probability(snapshot.high_temp_f, contract, std_f=temp_std_f)
         reason = f"NWS high={snapshot.high_temp_f:.1f}F -> model P(YES)={model_prob:.1%}"
 
-    yes_edge = model_prob - yes_ask
-    no_edge = (1.0 - model_prob) - no_ask
+    yes_order_prob = _maker_order_probability(
+        yes_bid,
+        yes_ask,
+        passive_offset_cents=maker_offset_cents,
+    )
+    no_order_prob = _maker_order_probability(
+        no_bid,
+        no_ask,
+        passive_offset_cents=maker_offset_cents,
+    )
+
+    yes_edge = model_prob - yes_order_prob if yes_order_prob is not None else float("-inf")
+    no_edge = (1.0 - model_prob) - no_order_prob if no_order_prob is not None else float("-inf")
     if yes_edge <= 0 and no_edge <= 0:
         return None
 
@@ -425,11 +560,15 @@ def build_weather_signal(
     if edge < edge_threshold:
         return None
 
-    spread = (yes_ask - (yes_bid or yes_ask)) if side == "yes" else (no_ask - (no_bid or no_ask))
+    yes_spread = yes_ask - (yes_bid if yes_bid is not None else max(0.0, yes_ask - 0.01))
+    no_spread = no_ask - (no_bid if no_bid is not None else max(0.0, no_ask - 0.01))
+    spread = yes_spread if side == "yes" else no_spread
     if spread > max_spread:
         return None
 
-    order_prob = yes_ask if side == "yes" else no_ask
+    order_prob = yes_order_prob if side == "yes" else no_order_prob
+    if order_prob is None:
+        return None
     confidence = max(0.0, min(1.0, edge / max(edge_threshold, 1e-6)))
     return WeatherSignal(
         timestamp=datetime.now(timezone.utc).isoformat(),
@@ -467,7 +606,7 @@ def _kelly_size_usd(
 
 
 def place_order(
-    client: KalshiClient,
+    session: KalshiSession,
     signal: WeatherSignal,
     size_usd: float,
     *,
@@ -496,7 +635,10 @@ def place_order(
         payload["status"] = "paper"
         return payload
 
-    response = client.create_order(**payload)
+    if session.portfolio_api is None:
+        raise RuntimeError("kalshi_python is required for live Kalshi orders")
+
+    response = session.portfolio_api.create_order(**payload)
     order = _field(response, "order")
     return {
         "status": "live",
@@ -511,34 +653,56 @@ def place_order(
 
 
 def scan_weather_signals(
-    client: KalshiClient,
+    session: KalshiSession,
     *,
     edge_threshold: float = 0.10,
     max_spread: float = 0.15,
     temp_std_f: float = 3.0,
+    maker_offset_cents: int = 1,
     max_pages: int = 3,
 ) -> list[WeatherSignal]:
-    markets = fetch_weather_series_markets(client)
+    markets = fetch_weather_series_markets(session)
     if not markets:
-        markets = fetch_open_markets(client, max_pages=max_pages)
-    by_city: dict[str, list[Any]] = {city: [] for city in CITY_CONFIG}
+        markets = fetch_open_markets(session, max_pages=max_pages)
+    by_city_and_date: dict[tuple[str, date], list[Any]] = {}
+    today_utc = datetime.now(timezone.utc).date()
     for market in markets:
+        if _market_type(market) is None:
+            continue
         city = _market_city_code(market)
         if not city:
             continue
-        by_city[city].append(market)
+        target_day = extract_market_target_date(market)
+        if target_day is None:
+            continue
+        horizon_days = (target_day - today_utc).days
+        if horizon_days < 0 or horizon_days > MAX_FORECAST_HORIZON_DAYS:
+            continue
+        by_city_and_date.setdefault((city, target_day), []).append(market)
 
     signals: list[WeatherSignal] = []
-    for city_code in CITY_CONFIG:
-        if not by_city[city_code]:
-            continue
+    for (city_code, target_day), city_markets in sorted(by_city_and_date.items()):
         try:
-            snapshot = fetch_nws_snapshot(city_code)
+            snapshot = fetch_nws_snapshot(
+                city_code,
+                datetime(
+                    target_day.year,
+                    target_day.month,
+                    target_day.day,
+                    12,
+                    tzinfo=timezone.utc,
+                ),
+            )
         except Exception as e:
-            logger.warning("NWS snapshot failed for %s: %s", city_code, e)
+            logger.warning(
+                "NWS snapshot failed for %s %s: %s",
+                city_code,
+                target_day.isoformat(),
+                e,
+            )
             continue
 
-        for market in by_city[city_code]:
+        for market in city_markets:
             sig = build_weather_signal(
                 city_code,
                 snapshot,
@@ -546,6 +710,7 @@ def scan_weather_signals(
                 edge_threshold=edge_threshold,
                 max_spread=max_spread,
                 temp_std_f=temp_std_f,
+                maker_offset_cents=maker_offset_cents,
             )
             if sig:
                 signals.append(sig)
@@ -555,12 +720,13 @@ def scan_weather_signals(
 
 
 def run_once(args: argparse.Namespace) -> int:
-    client = get_kalshi_client(execute=args.execute)
+    session = get_kalshi_client(execute=args.execute)
     signals = scan_weather_signals(
-        client,
+        session,
         edge_threshold=args.edge_threshold,
         max_spread=args.max_spread,
         temp_std_f=args.temp_std_f,
+        maker_offset_cents=args.maker_offset_cents,
         max_pages=args.max_pages,
     )
     if not signals:
@@ -589,7 +755,7 @@ def run_once(args: argparse.Namespace) -> int:
         row["size_usd"] = size_usd
         _append_jsonl(SIGNALS_LOG, row)
 
-        order = place_order(client, sig, size_usd, execute=args.execute)
+        order = place_order(session, sig, size_usd, execute=args.execute)
         order_row = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "execute": args.execute,
@@ -621,6 +787,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--edge-threshold", type=float, default=float(os.environ.get("KALSHI_WEATHER_EDGE_THRESHOLD", "0.10")))
     p.add_argument("--max-spread", type=float, default=float(os.environ.get("KALSHI_WEATHER_MAX_SPREAD", "0.15")))
     p.add_argument("--temp-std-f", type=float, default=float(os.environ.get("KALSHI_WEATHER_TEMP_STD_F", "3.0")))
+    p.add_argument("--maker-offset-cents", type=int, default=int(os.environ.get("KALSHI_WEATHER_MAKER_OFFSET_CENTS", "1")))
     p.add_argument("--bankroll-usd", type=float, default=float(os.environ.get("KALSHI_WEATHER_BANKROLL_USD", "25")))
     p.add_argument("--max-order-usd", type=float, default=float(os.environ.get("KALSHI_WEATHER_MAX_ORDER_USD", "5")))
     p.add_argument("--kelly-fraction", type=float, default=float(os.environ.get("KALSHI_WEATHER_KELLY_FRACTION", "0.25")))

@@ -55,6 +55,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -1948,6 +1949,7 @@ class JJLive:
         self.constraint_signal_store = None
         self.a6_shadow_scanner = None
         self._constraint_last_seen_ts = 0
+        self._seen_combinatorial_baskets: set[str] = set()
         self._last_combinatorial_cycle = {
             "a6_detected": 0,
             "b1_detected": 0,
@@ -1991,7 +1993,11 @@ class JJLive:
         logger.info(f"  Mode: {mode_str}")
         logger.info(f"  Bankroll: ${self.state.state['bankroll']:.2f}")
         logger.info(f"  Multi-bankroll: {BANKROLL_LEVELS}")
-        logger.info(f"  Open positions: {len(self.state.state['open_positions'])}")
+        logger.info(
+            "  Open positions: %s single-leg / %s linked baskets",
+            len(self.state.state["open_positions"]),
+            self.state.count_active_linked_baskets(),
+        )
         logger.info(f"  Max per trade: ${MAX_POSITION_USD}")
         logger.info(f"  Daily loss limit: ${MAX_DAILY_LOSS_USD}")
         logger.info(f"  Kelly fraction: {KELLY_FRACTION} (max {MAX_KELLY_FRACTION})")
@@ -2056,6 +2062,241 @@ class JJLive:
                 except Exception:
                     logger.warning("Could not init Telegram — notifications disabled")
                     return _DummyNotifier()
+
+    def _run_embedded_a6_shadow_scan(self) -> dict:
+        """Optionally refresh the shared constraint DB with the built-in A-6 scanner."""
+        if self.a6_shadow_scanner is None:
+            return {}
+        try:
+            stats = self.a6_shadow_scanner.scan_once()
+            return {
+                "markets_fetched": stats.markets_fetched,
+                "candidate_events": stats.candidate_events,
+                "candidate_markets": stats.candidate_markets,
+                "quotes_updated": stats.quotes_updated,
+                "violations_found": stats.violations_found,
+                "elapsed_seconds": stats.elapsed_seconds,
+            }
+        except Exception as e:
+            logger.warning(f"A-6 embedded shadow scan failed: {e}")
+            return {"error": str(e)}
+
+    def _evaluate_combinatorial_health(self) -> dict:
+        summary = self.db.get_combinatorial_summary(hours=24 * 14)
+        lane_health: dict[str, dict] = {}
+        if self.combinatorial_cfg is None or run_combinatorial_promotion_battery is None:
+            summary["lane_health"] = lane_health
+            return summary
+
+        for lane, metrics in summary.get("lanes", {}).items():
+            lane_enabled = self.combinatorial_cfg.shadow_enabled(lane) or self.combinatorial_cfg.live_enabled(lane)
+            if not lane_enabled:
+                continue
+            if metrics.get("detected", 0) <= 0:
+                lane_health[lane] = {"ready_for_live": False, "status": "no_samples", "kill_triggers": []}
+                continue
+
+            require_classification = lane == "b1"
+            passed, results = run_combinatorial_promotion_battery(
+                signal_count=int(metrics.get("detected", 0)),
+                capture_rate=metrics.get("avg_capture_rate"),
+                false_positive_rate=metrics.get("false_positive_rate"),
+                consecutive_rollbacks=int(metrics.get("consecutive_rollbacks", 0)),
+                minimum_signals=self.combinatorial_cfg.shadow_promotion_min_signals,
+                minimum_capture_rate=self.combinatorial_cfg.required_capture_rate,
+                maximum_false_positive_rate=self.combinatorial_cfg.max_false_positive_rate,
+                maximum_consecutive_rollbacks=self.combinatorial_cfg.max_consecutive_rollbacks,
+                require_classification=require_classification,
+                classification_accuracy=metrics.get("avg_classification_accuracy"),
+                minimum_classification_accuracy=self.combinatorial_cfg.required_classification_accuracy,
+            )
+            triggers = [
+                result.reason.value
+                for result in results
+                if not result.passed and result.reason is not None
+            ]
+            lane_health[lane] = {
+                "ready_for_live": passed,
+                "status": "ready" if passed else "blocked",
+                "kill_triggers": triggers,
+            }
+            summary.setdefault("kill_triggers", []).extend(triggers)
+
+        summary["kill_triggers"] = sorted(set(summary.get("kill_triggers", [])))
+        summary["lane_health"] = lane_health
+        return summary
+
+    def _record_combinatorial_basket(
+        self,
+        signal: dict,
+        *,
+        execution_mode: str,
+        state: str,
+        state_reason: str,
+        budget_usd: float,
+        kill_rule_trigger: str | None = None,
+        metadata: dict | None = None,
+    ) -> None:
+        created_at = signal.get("created_at") or datetime.now(timezone.utc).isoformat()
+        payload = {
+            "attempt_id": signal.get("basket_id", signal.get("violation_id", "")),
+            "basket_id": signal.get("basket_id", signal.get("violation_id", "")),
+            "violation_id": signal.get("violation_id", signal.get("basket_id", "")),
+            "lane": signal.get("source", "unknown"),
+            "source_id": signal.get("source_id", 0),
+            "source_tag": signal.get("source_tag", ""),
+            "relation_type": signal.get("relation_type", ""),
+            "confirmation_mode": signal.get("confirmation_mode", "bypass"),
+            "execution_mode": execution_mode,
+            "state": state,
+            "state_reason": state_reason,
+            "event_id": signal.get("event_id", ""),
+            "market_ids": signal.get("market_ids", []),
+            "theoretical_edge": signal.get("theoretical_edge", signal.get("edge", 0.0)),
+            "realized_edge": signal.get("realized_edge"),
+            "capture_rate": signal.get("capture_rate"),
+            "partial_fill_loss": signal.get("partial_fill_loss"),
+            "classification_accuracy": signal.get("classification_accuracy"),
+            "resolution_gate_status": signal.get("resolution_gate_status", ""),
+            "reserved_budget_usd": budget_usd if execution_mode == "live" else 0.0,
+            "budget_usd": budget_usd if execution_mode == "live" else 0.0,
+            "kill_rule_trigger": kill_rule_trigger,
+            "created_at": created_at,
+            "metadata": {
+                "details": signal.get("details", {}),
+                "live_eligible": bool(signal.get("live_eligible", False)),
+                **(metadata or {}),
+            },
+        }
+        self.state.upsert_linked_legs(payload["basket_id"], payload)
+        self.db.upsert_combinatorial_basket(payload)
+
+    def _process_combinatorial_cycle(self, cycle_number: int) -> tuple[list[dict], dict]:
+        empty_summary = {
+            "cycle_number": cycle_number,
+            "a6_detected": 0,
+            "b1_detected": 0,
+            "shadow_logged": 0,
+            "live_attempted": 0,
+            "blocked": 0,
+            "active_baskets": self.state.count_active_linked_baskets(),
+            "arb_budget_in_use_usd": self.state.get_arb_budget_in_use_usd(),
+            "kill_triggers": [],
+            "metrics": {},
+        }
+        if (
+            self.combinatorial_cfg is None
+            or not self.combinatorial_cfg.any_enabled()
+            or self.constraint_signal_store is None
+        ):
+            self._last_combinatorial_cycle = empty_summary
+            return [], empty_summary
+
+        cycle_metrics: dict[str, Any] = {}
+        embedded_scan = self._run_embedded_a6_shadow_scan()
+        if embedded_scan:
+            cycle_metrics["embedded_a6_scan"] = embedded_scan
+
+        now_ts = int(time.time())
+        opportunities = self.constraint_signal_store.poll_new_opportunities(
+            since_ts=self._constraint_last_seen_ts,
+            config=self.combinatorial_cfg,
+            now_ts=now_ts,
+        )
+        if opportunities:
+            self._constraint_last_seen_ts = max(
+                self._constraint_last_seen_ts,
+                max(opportunity.detected_at_ts for opportunity in opportunities) - 1,
+            )
+
+        emitted_signals: list[dict] = []
+        summary = dict(empty_summary)
+        for opportunity in opportunities:
+            if opportunity.basket_id in self._seen_combinatorial_baskets:
+                continue
+            signal = attach_signal_source_metadata(opportunity.to_signal())
+            lane = signal.get("source", "unknown")
+            if lane == "a6":
+                summary["a6_detected"] += 1
+            elif lane == "b1":
+                summary["b1_detected"] += 1
+
+            decision = evaluate_combinatorial_risk(
+                opportunity,
+                config=self.combinatorial_cfg,
+                daily_pnl=self.state.state["daily_pnl"],
+                max_daily_loss_usd=MAX_DAILY_LOSS_USD,
+                open_positions=len(self.state.state["open_positions"]),
+                open_baskets=self.state.count_active_linked_baskets(),
+                max_open_positions=MAX_OPEN_POSITIONS,
+                arb_budget_in_use_usd=self.state.get_arb_budget_in_use_usd(),
+            )
+
+            if decision is None or not decision.allow:
+                summary["blocked"] += 1
+                trigger = decision.kill_trigger if decision is not None else "risk_router_unavailable"
+                if trigger:
+                    summary["kill_triggers"].append(trigger)
+                self._record_combinatorial_basket(
+                    signal,
+                    execution_mode="blocked",
+                    state="BLOCKED",
+                    state_reason=decision.reason if decision is not None else "risk_router_unavailable",
+                    budget_usd=0.0,
+                    kill_rule_trigger=trigger,
+                )
+                self._seen_combinatorial_baskets.add(opportunity.basket_id)
+                continue
+
+            if opportunity.live_eligible and self.combinatorial_cfg.live_enabled(lane) and not self.paper_mode:
+                summary["blocked"] += 1
+                summary["kill_triggers"].append("executor_unavailable")
+                self._record_combinatorial_basket(
+                    signal,
+                    execution_mode="blocked",
+                    state="EXECUTOR_PENDING",
+                    state_reason="executor adapter not wired",
+                    budget_usd=0.0,
+                    kill_rule_trigger="executor_unavailable",
+                )
+                self._seen_combinatorial_baskets.add(opportunity.basket_id)
+                continue
+
+            if self.combinatorial_cfg.shadow_enabled(lane) or self.paper_mode:
+                summary["shadow_logged"] += 1
+                emitted_signals.append(signal)
+                self._record_combinatorial_basket(
+                    signal,
+                    execution_mode="shadow",
+                    state="SHADOW_LOGGED",
+                    state_reason="shadow_mode",
+                    budget_usd=0.0,
+                )
+                self._seen_combinatorial_baskets.add(opportunity.basket_id)
+                continue
+
+            summary["blocked"] += 1
+            summary["kill_triggers"].append("lane_disabled")
+            self._record_combinatorial_basket(
+                signal,
+                execution_mode="blocked",
+                state="BLOCKED",
+                state_reason="lane_disabled",
+                budget_usd=0.0,
+                kill_rule_trigger="lane_disabled",
+            )
+            self._seen_combinatorial_baskets.add(opportunity.basket_id)
+
+        health = self._evaluate_combinatorial_health()
+        cycle_metrics["health"] = health
+        summary["active_baskets"] = self.state.count_active_linked_baskets()
+        summary["arb_budget_in_use_usd"] = self.state.get_arb_budget_in_use_usd()
+        summary["kill_triggers"].extend(health.get("kill_triggers", []))
+        summary["kill_triggers"] = sorted(set(summary["kill_triggers"]))
+        summary["metrics"] = cycle_metrics
+        self.db.log_combinatorial_cycle(summary)
+        self._last_combinatorial_cycle = summary
+        return emitted_signals, summary
 
     def _on_regime_change(self, token_id: str, prev_regime, new_regime):
         """Callback when VPIN regime changes for a market."""
@@ -2265,6 +2506,18 @@ class JJLive:
         except Exception as e:
             logger.warning(f"Adaptive Platt refresh failed (non-fatal): {e}")
 
+        combinatorial_signals, combinatorial_cycle = self._process_combinatorial_cycle(cycle_num)
+        if combinatorial_cycle["a6_detected"] or combinatorial_cycle["b1_detected"]:
+            logger.info(
+                "Combinatorial cycle: A6=%s B1=%s shadow=%s blocked=%s active=%s budget=$%.2f",
+                combinatorial_cycle["a6_detected"],
+                combinatorial_cycle["b1_detected"],
+                combinatorial_cycle["shadow_logged"],
+                combinatorial_cycle["blocked"],
+                combinatorial_cycle["active_baskets"],
+                combinatorial_cycle["arb_budget_in_use_usd"],
+            )
+
         # 1. SCAN
         try:
             result = self.scanner.fetch_active_markets(limit=100)
@@ -2411,13 +2664,14 @@ class JJLive:
 
         # Build batch for analyzer — skip markets we already hold
         markets_for_analysis = []
+        active_position_slots = len(self.state.state["open_positions"]) + self.state.count_active_linked_baskets()
         for m in actionable[:20]:
             market_id = m.get("id", m.get("condition_id", ""))
 
             if self.state.has_position(market_id):
                 continue
 
-            if len(self.state.state["open_positions"]) + len(markets_for_analysis) >= MAX_OPEN_POSITIONS:
+            if active_position_slots + len(markets_for_analysis) >= MAX_OPEN_POSITIONS:
                 logger.info(f"Position limit reached ({MAX_OPEN_POSITIONS})")
                 break
 
@@ -2691,6 +2945,7 @@ class JJLive:
         # Tag LLM signals with source
         for s in signals:
             s.setdefault("source", "llm")
+            attach_signal_source_metadata(s)
 
         # --- SIGNAL SOURCE #2: Smart Wallet Flow Detector ---
         wallet_signals = []
@@ -2701,6 +2956,7 @@ class JJLive:
                     logger.info(f"Wallet flow: {len(wallet_signals)} signals")
                     for ws in wallet_signals:
                         ws["source"] = "wallet_flow"
+                        attach_signal_source_metadata(ws)
             except Exception as e:
                 logger.warning(f"Wallet flow scan failed (non-fatal): {e}")
 
@@ -2711,6 +2967,8 @@ class JJLive:
                 lmsr_signals = self.lmsr_engine.get_signals(actionable)
                 if lmsr_signals:
                     logger.info(f"LMSR engine: {len(lmsr_signals)} signals")
+                    for ls in lmsr_signals:
+                        attach_signal_source_metadata(ls)
             except Exception as e:
                 logger.warning(f"LMSR scan failed (non-fatal): {e}")
 
@@ -2723,6 +2981,7 @@ class JJLive:
                     logger.info(f"Cross-platform arb: {len(arb_signals)} signals")
                     for asig in arb_signals:
                         asig["source"] = "cross_platform_arb"
+                        attach_signal_source_metadata(asig)
             except Exception as e:
                 logger.warning(f"Cross-platform arb scan failed (non-fatal): {e}")
 
@@ -2772,6 +3031,8 @@ class JJLive:
 
                 if lead_lag_signals:
                     logger.info(f"Lead-lag engine: {len(lead_lag_signals)} signals")
+                    for lsig in lead_lag_signals:
+                        attach_signal_source_metadata(lsig)
             except Exception as e:
                 logger.warning(f"Lead-lag scan failed (non-fatal): {e}")
 
@@ -2805,8 +3066,22 @@ class JJLive:
         # Group all signals by market_id + direction
         from collections import defaultdict as _defaultdict
         signal_groups = _defaultdict(list)
-        all_signals = signals + wallet_signals + lmsr_signals + arb_signals + lead_lag_signals
+        combinatorial_bypass_signals = []
+        all_signals = (
+            signals
+            + wallet_signals
+            + lmsr_signals
+            + arb_signals
+            + lead_lag_signals
+            + combinatorial_signals
+        )
         for s in all_signals:
+            attach_signal_source_metadata(s)
+            if is_combinatorial_signal(s):
+                s["_confirmation"] = False
+                s["_kelly_override"] = 0.0
+                combinatorial_bypass_signals.append(s)
+                continue
             key = (s["market_id"], s["direction"])
             signal_groups[key].append(s)
 
@@ -2887,16 +3162,28 @@ class JJLive:
                 f"| res={res_str} | vel={s.get('velocity_score', 0):.0f} "
                 f"| dir={s['direction']} | src={src}{conf}"
             )
+        for s in combinatorial_bypass_signals[:5]:
+            logger.info(
+                "  COMBINATORIAL: %s | edge=%.3f | relation=%s | src=%s [%s]",
+                s.get("question", "")[:50],
+                _safe_float(s.get("edge"), 0.0),
+                s.get("relation_type", ""),
+                s.get("source_tag", s.get("source", "?")),
+                s.get("confirmation_mode", "bypass"),
+            )
         logger.info(
-            f"Found {len(signals)} tradeable signals "
+            f"Found {len(signals)} predictive signals + {len(combinatorial_bypass_signals)} combinatorial bypass signals "
             f"(LLM:{len([s for s in signals if 'llm' in s.get('source', '')])} "
-            f"wallet:{len(wallet_signals)} lmsr:{len(lmsr_signals)})"
+            f"wallet:{len(wallet_signals)} lmsr:{len(lmsr_signals)} A6:{combinatorial_cycle['a6_detected']} B1:{combinatorial_cycle['b1_detected']})"
         )
 
         # 3. EXECUTE TRADES
         trades_placed = 0
 
         for signal in signals:
+            if len(self.state.state["open_positions"]) + self.state.count_active_linked_baskets() >= MAX_OPEN_POSITIONS:
+                logger.info(f"Composite position limit reached ({MAX_OPEN_POSITIONS})")
+                break
             market_id = signal["market_id"]
             mdata = market_lookup.get(market_id)
 
@@ -3093,13 +3380,18 @@ class JJLive:
             "filtered_no_resolution": skipped_no_resolution,
             "analyzed": len(markets_for_analysis) if markets_for_analysis else 0,
             "actionable": len(actionable),
-            "signals": len(signals),
+            "signals": len(signals) + len(combinatorial_bypass_signals),
+            "predictive_signals": len(signals),
+            "combinatorial_signals": len(combinatorial_bypass_signals),
             "trades_placed": trades_placed,
             "open_positions": len(self.state.state["open_positions"]),
+            "linked_baskets": self.state.count_active_linked_baskets(),
+            "arb_budget_in_use_usd": self.state.get_arb_budget_in_use_usd(),
             "bankroll": self.state.state["bankroll"],
             "max_resolution_hours": MAX_RESOLUTION_HOURS,
             "platt_mode": self.adaptive_platt.active_mode,
             "daily_pnl": self.state.state["daily_pnl"],
+            "combinatorial": combinatorial_cycle,
             "elapsed_seconds": round(elapsed, 1),
         }
 
@@ -3107,21 +3399,32 @@ class JJLive:
         self.db.log_cycle(summary)
 
         # Write intel snapshot for SystemIntel.docx generation
-        self._write_intel_snapshot(summary, signals, actionable)
+        self._write_intel_snapshot(
+            summary,
+            signals,
+            actionable,
+            combinatorial_signals=combinatorial_bypass_signals,
+        )
 
         mode_tag = "PAPER" if self.paper_mode else "LIVE"
         logger.info(
             f"=== JJ [{mode_tag}] Cycle {cycle_num} complete in {elapsed:.1f}s | "
             f"scanned={len(markets)} cat_skip={skipped_category} "
             f"slow_skip={skipped_too_slow} no_res={skipped_no_resolution} "
-            f"actionable={len(actionable)} signals={len(signals)} "
+            f"actionable={len(actionable)} predictive={len(signals)} combinatorial={len(combinatorial_bypass_signals)} "
             f"trades={trades_placed} (max_res={MAX_RESOLUTION_HOURS}h "
             f"platt={self.adaptive_platt.active_mode}) ==="
         )
 
         return summary
 
-    def _write_intel_snapshot(self, summary: dict, signals: list, actionable: list):
+    def _write_intel_snapshot(
+        self,
+        summary: dict,
+        signals: list,
+        actionable: list,
+        combinatorial_signals: list | None = None,
+    ):
         """Write a JSON intel snapshot for SystemIntel.docx generation.
 
         Captures per-cycle intelligence: what the bot saw, what it traded,
@@ -3149,10 +3452,13 @@ class JJLive:
                 "markets_scanned": summary.get("scanned", 0),
                 "markets_actionable": summary.get("actionable", 0),
                 "signals_generated": summary.get("signals", 0),
+                "predictive_signals": summary.get("predictive_signals", 0),
+                "combinatorial_signals": summary.get("combinatorial_signals", 0),
                 "trades_placed": summary.get("trades_placed", 0),
                 "bankroll": summary.get("bankroll", 0),
                 "daily_pnl": summary.get("daily_pnl", 0),
                 "open_positions": summary.get("open_positions", 0),
+                "linked_baskets": summary.get("linked_baskets", 0),
             }
 
             # Accumulate signal details (last 100 signals for pattern detection)
@@ -3168,6 +3474,18 @@ class JJLive:
                         "calibrated_prob": sig.get("calibrated_prob", 0),
                         "category": sig.get("category", "unknown"),
                         "confidence": sig.get("confidence", ""),
+                    })
+            for sig in combinatorial_signals or []:
+                if isinstance(sig, dict):
+                    signal_records.append({
+                        "timestamp": now,
+                        "market_id": sig.get("market_id", ""),
+                        "question": (sig.get("question", ""))[:80],
+                        "direction": sig.get("direction", ""),
+                        "edge": sig.get("edge", 0),
+                        "category": sig.get("source_tag", sig.get("source", "unknown")),
+                        "confidence": sig.get("confidence", ""),
+                        "relation_type": sig.get("relation_type", ""),
                     })
             signal_records = signal_records[-200:]  # Keep last 200
 
@@ -3192,6 +3510,8 @@ class JJLive:
                 "current_bankroll": summary.get("bankroll", 0),
                 "current_daily_pnl": summary.get("daily_pnl", 0),
                 "open_positions": summary.get("open_positions", 0),
+                "linked_baskets": summary.get("linked_baskets", 0),
+                "combinatorial": summary.get("combinatorial", {}),
                 "cycle_history": cycle_history,
                 "recent_signals": signal_records,
                 "category_frequency": cat_freq,
@@ -3211,6 +3531,20 @@ class JJLive:
                     "ensemble_skip_fragile_conviction": ENSEMBLE_SKIP_FRAGILE_CONVICTION,
                     "paper_mode": self.paper_mode,
                 },
+                "combinatorial_params": {
+                    "enabled": bool(self.combinatorial_cfg and self.combinatorial_cfg.any_enabled()),
+                    "a6_shadow": bool(self.combinatorial_cfg and self.combinatorial_cfg.enable_a6_shadow),
+                    "a6_live": bool(self.combinatorial_cfg and self.combinatorial_cfg.enable_a6_live),
+                    "b1_shadow": bool(self.combinatorial_cfg and self.combinatorial_cfg.enable_b1_shadow),
+                    "b1_live": bool(self.combinatorial_cfg and self.combinatorial_cfg.enable_b1_live),
+                    "max_leg_notional_usd": (
+                        self.combinatorial_cfg.max_notional_per_leg_usd if self.combinatorial_cfg else None
+                    ),
+                    "arb_budget_usd": self.combinatorial_cfg.arb_budget_usd if self.combinatorial_cfg else None,
+                    "merge_min_notional_usd": (
+                        self.combinatorial_cfg.merge_min_notional_usd if self.combinatorial_cfg else None
+                    ),
+                },
             }
 
             with open(snapshot_path, "w") as f:
@@ -3223,73 +3557,81 @@ class JJLive:
         """Run JJ continuously (daemon mode)."""
         mode_tag = "PAPER" if self.paper_mode else "LIVE"
         logger.info(f"JJ {mode_tag} — Starting continuous mode")
-
         try:
-            if self.ensemble_mode:
-                sources = [f"LLM Ensemble ({len(self.analyzer.models)} models + RAG)"]
-            else:
-                sources = ["LLM (Claude-only)"]
-            if self.lmsr_engine:
-                sources.append("LMSR")
-            if self.wallet_flow_available:
-                sources.append("WalletFlow")
-            if self.arb_available:
-                sources.append("CrossPlatformArb")
-            if self.trade_stream:
-                sources.append("VPIN/OFI")
-            if self.lead_lag:
-                sources.append("LeadLag")
-            await self.notifier.send_message(
-                f"JJ {mode_tag} TRADING ONLINE\n"
-                f"Bankroll: ${self.state.state['bankroll']:.2f}\n"
-                f"Signal sources: {' + '.join(sources)}\n"
-                f"Max/trade: ${MAX_POSITION_USD}\n"
-                f"Kelly: {KELLY_FRACTION}\n"
-                f"Scan every {SCAN_INTERVAL}s\n"
-                f"Daily loss limit: ${MAX_DAILY_LOSS_USD}"
-            )
-        except Exception:
-            pass
-
-        # Start WebSocket trade stream as background task
-        if self.trade_stream:
-            self._trade_stream_task = asyncio.create_task(self.trade_stream.start())
-            logger.info("WebSocket trade stream started as background task")
-
-        while True:
             try:
-                summary = await self.run_cycle()
-
-                if summary.get("status") == "paused":
-                    # Daily loss limit — sleep until midnight UTC
-                    now = datetime.now(timezone.utc)
-                    tomorrow = (now + timedelta(days=1)).replace(
-                        hour=0, minute=5, second=0, microsecond=0
-                    )
-                    sleep_seconds = (tomorrow - now).total_seconds()
-                    logger.info(f"Paused — sleeping {sleep_seconds:.0f}s until tomorrow")
-                    await asyncio.sleep(sleep_seconds)
+                if self.ensemble_mode:
+                    sources = [f"LLM Ensemble ({len(self.analyzer.models)} models + RAG)"]
                 else:
-                    logger.info(f"Sleeping {SCAN_INTERVAL}s...")
-                    await asyncio.sleep(SCAN_INTERVAL)
+                    sources = ["LLM (Claude-only)"]
+                if self.lmsr_engine:
+                    sources.append("LMSR")
+                if self.wallet_flow_available:
+                    sources.append("WalletFlow")
+                if self.arb_available:
+                    sources.append("CrossPlatformArb")
+                if self.trade_stream:
+                    sources.append("VPIN/OFI")
+                if self.lead_lag:
+                    sources.append("LeadLag")
+                if self.combinatorial_cfg and self.combinatorial_cfg.enable_a6_shadow:
+                    sources.append("A6-Shadow")
+                if self.combinatorial_cfg and self.combinatorial_cfg.enable_b1_shadow:
+                    sources.append("B1-Shadow")
+                await self.notifier.send_message(
+                    f"JJ {mode_tag} TRADING ONLINE\n"
+                    f"Bankroll: ${self.state.state['bankroll']:.2f}\n"
+                    f"Signal sources: {' + '.join(sources)}\n"
+                    f"Max/trade: ${MAX_POSITION_USD}\n"
+                    f"Kelly: {KELLY_FRACTION}\n"
+                    f"Scan every {SCAN_INTERVAL}s\n"
+                    f"Daily loss limit: ${MAX_DAILY_LOSS_USD}"
+                )
+            except Exception:
+                pass
 
-            except KeyboardInterrupt:
-                logger.info("JJ shutting down (KeyboardInterrupt)")
-                break
-            except Exception as e:
-                logger.error(f"Cycle error: {e}", exc_info=True)
+            if self.trade_stream:
+                self._trade_stream_task = asyncio.create_task(self.trade_stream.start())
+                logger.info("WebSocket trade stream started as background task")
+
+            while True:
                 try:
-                    await self.notifier.send_error(str(e), context="cycle_error")
+                    summary = await self.run_cycle()
+
+                    if summary.get("status") == "paused":
+                        now = datetime.now(timezone.utc)
+                        tomorrow = (now + timedelta(days=1)).replace(
+                            hour=0, minute=5, second=0, microsecond=0
+                        )
+                        sleep_seconds = (tomorrow - now).total_seconds()
+                        logger.info(f"Paused — sleeping {sleep_seconds:.0f}s until tomorrow")
+                        await asyncio.sleep(sleep_seconds)
+                    else:
+                        logger.info(f"Sleeping {SCAN_INTERVAL}s...")
+                        await asyncio.sleep(SCAN_INTERVAL)
+
+                except KeyboardInterrupt:
+                    logger.info("JJ shutting down (KeyboardInterrupt)")
+                    break
+                except Exception as e:
+                    logger.error(f"Cycle error: {e}", exc_info=True)
+                    try:
+                        await self.notifier.send_error(str(e), context="cycle_error")
+                    except Exception:
+                        pass
+                    await asyncio.sleep(60)
+        finally:
+            if self.a6_shadow_scanner is not None:
+                try:
+                    self.a6_shadow_scanner.close()
                 except Exception:
                     pass
-                # Back off on errors
-                await asyncio.sleep(60)
 
     async def show_status(self):
         """Print current JJ state with database stats."""
         s = self.state.state
         db_stats = self.db.get_stats()
         multi = self.multi_sim.get_summary()
+        combinatorial_summary = self.db.get_combinatorial_summary(hours=24 * 14)
 
         mode_str = "PAPER" if self.paper_mode else "LIVE"
         print(f"\n{'='*50}")
@@ -3302,6 +3644,7 @@ class JJLive:
         print(f"Total trades:     {s['total_trades']}")
         print(f"Trades today:     {s['trades_today']}")
         print(f"Open positions:   {len(s['open_positions'])}")
+        print(f"Linked baskets:   {self.state.count_active_linked_baskets()}")
         print(f"Cycles completed: {s['cycles_completed']}")
         print(f"Veterans fund:    ${s['veterans_allocation']:.2f}")
         print(f"Started:          {s['started_at']}")
@@ -3323,6 +3666,18 @@ class JJLive:
                 data = multi[level]
                 print(f"  ${level:>7,}: bankroll=${data['bankroll']:,.2f} "
                       f"pnl=${data['pnl']:,.2f} trades={data['trades']}")
+
+        print(f"\nCombinatorial Summary (14d):")
+        print(f"  Active baskets:    {combinatorial_summary['active_baskets']}")
+        print(f"  Arb budget in use: ${combinatorial_summary['arb_budget_in_use_usd']:.2f}")
+        for lane in ("a6", "b1"):
+            metrics = combinatorial_summary["lanes"].get(lane, {})
+            print(
+                f"  {lane.upper()}: detected={metrics.get('detected', 0)} "
+                f"shadow={metrics.get('shadow_logged', 0)} "
+                f"blocked={metrics.get('blocked', 0)} "
+                f"capture={metrics.get('avg_capture_rate') if metrics.get('avg_capture_rate') is not None else 'n/a'}"
+            )
 
         if s["open_positions"]:
             print(f"\nOpen Positions:")
@@ -3433,6 +3788,7 @@ def run_resolution_tracker():
             print(f"Warning: state sync failed: {e}")
 
     stats = db.get_stats()
+    combinatorial_summary = db.get_combinatorial_summary(hours=24 * 14)
     print(f"\nResolved {resolved_count} trades this run.")
     print(f"Overall: {stats['wins']}W / {stats['losses']}L "
           f"({stats['win_rate']:.1%}) | P&L: ${stats['total_pnl']:.2f}")
@@ -3524,6 +3880,7 @@ async def generate_daily_report():
         f"Daily P&L: ${daily_pnl:+.2f}",
         f"Cumulative P&L: ${stats['total_pnl']:+.2f}",
         f"Open positions: {unresolved}",
+        f"Linked baskets: {combinatorial_summary['active_baskets']}",
     ]
 
     if stats['brier_score'] is not None:
@@ -3540,6 +3897,22 @@ async def generate_daily_report():
         report_lines.append(
             f"  ${level:>7,}: bankroll=${data['bankroll']:,.2f} "
             f"pnl=${data['pnl']:,.2f} trades={data['trades']}"
+        )
+
+    report_lines.append(f"\nCombinatorial Summary (14d):")
+    report_lines.append(
+        f"  Active baskets: {combinatorial_summary['active_baskets']} | "
+        f"Arb budget in use: ${combinatorial_summary['arb_budget_in_use_usd']:.2f}"
+    )
+    for lane in ("a6", "b1"):
+        metrics = combinatorial_summary["lanes"].get(lane, {})
+        capture = metrics.get("avg_capture_rate")
+        capture_str = f"{capture:.1%}" if isinstance(capture, (int, float)) else "n/a"
+        report_lines.append(
+            f"  {lane.upper()}: detected={metrics.get('detected', 0)} "
+            f"shadow={metrics.get('shadow_logged', 0)} "
+            f"blocked={metrics.get('blocked', 0)} "
+            f"capture={capture_str}"
         )
 
     report_text = "\n".join(report_lines)

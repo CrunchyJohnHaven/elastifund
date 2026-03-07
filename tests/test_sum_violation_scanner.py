@@ -37,6 +37,9 @@ class TestSumViolationScanner(unittest.TestCase):
                     "closed": False,
                     "negRisk": True,
                     "enableOrderBook": True,
+                    "resolutionSource": "Associated Press",
+                    "endDate": "2026-11-03T23:59:00Z",
+                    "rules": "Resolves using Associated Press.",
                     "markets": [
                         {
                             "id": "m-a",
@@ -119,6 +122,9 @@ class TestSumViolationScanner(unittest.TestCase):
                     "closed": False,
                     "negRisk": True,
                     "enableOrderBook": True,
+                    "resolutionSource": "Associated Press",
+                    "endDate": "2026-11-03T23:59:00Z",
+                    "rules": "Resolves using Associated Press.",
                     "markets": [
                         {"id": "m-a", "question": "Who wins?", "groupItemTitle": "Alice", "clobTokenIds": '["t-a-yes","t-a-no"]', "bestAsk": 0.30, "acceptingOrders": True, "enableOrderBook": True},
                         {"id": "m-b", "question": "Who wins?", "groupItemTitle": "Bob", "clobTokenIds": '["t-b-yes","t-b-no"]', "bestAsk": 0.31, "acceptingOrders": True, "enableOrderBook": True},

@@ -440,10 +440,7 @@ class TestTradeStreamManager:
 
     def test_circuit_breaker_falls_back_to_rest_polling(self):
         async def scenario():
-            fallback_hit = asyncio.Event()
-
             async def fake_rest_fetch(token_id: str):
-                fallback_hit.set()
                 return {
                     "bids": [{"price": "0.50", "size": "100"}],
                     "asks": [{"price": "0.52", "size": "100"}],
@@ -467,7 +464,11 @@ class TestTradeStreamManager:
             manager.fetch_initial_books = lambda: asyncio.sleep(0)
 
             task = asyncio.create_task(manager.start())
-            await asyncio.wait_for(fallback_hit.wait(), timeout=1.0)
+            deadline = time.time() + 1.0
+            while manager.get_status()["rest_fallback_polls"] < 1:
+                if time.time() >= deadline:
+                    raise AssertionError("REST fallback never triggered")
+                await asyncio.sleep(0.01)
 
             status = manager.get_status()
             assert status["fallback_active"] is True

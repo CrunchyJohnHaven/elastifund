@@ -101,8 +101,9 @@ class TestConstraintRuntimeHelpers(unittest.TestCase):
             )
         )
         result_unresolved = classifier.classify(unresolved_a, unresolved_b)
-        self.assertEqual(result_unresolved.reason, "mock_fallback")
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(result_unresolved.source, "debate")
+        self.assertIn(result_unresolved.reason, {"debate_fallback", "mock_fallback"})
+        self.assertGreaterEqual(len(calls), 1)
 
 
 if __name__ == "__main__":

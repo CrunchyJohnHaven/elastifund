@@ -70,7 +70,7 @@ _DIRECTIONAL_INVERSION = {
     "B_implies_A": "A_implies_B",
 }
 _THRESHOLD_RE = re.compile(
-    r"(?P<dir>>=|<=|>|<|above|over|below|under|at least|at most)\s*\$?(?P<val>\d+(?:\.\d+)?)",
+    r"(?P<dir>>=|<=|>|<|above|over|below|under|at least|at most|exceed|exceeds)\s*\$?(?P<val>\d+(?:\.\d+)?)",
     re.IGNORECASE,
 )
 
@@ -685,7 +685,11 @@ class RelationClassifier:
         if self.debate_fallback is not None:
             fallback = self.debate_fallback(canonical.market_a, canonical.market_b)
             if fallback is not None:
-                return self._normalize_result(fallback, reason="debate_fallback", source="debate")
+                return self._normalize_result(
+                    fallback,
+                    reason=fallback.reason or "debate_fallback",
+                    source="debate",
+                )
 
         return RelationResult(
             relation_type="ambiguous",
@@ -717,7 +721,13 @@ class RelationClassifier:
             debated = self.debate_fallback(canonical.market_a, canonical.market_b)
             if debated is None:
                 return None
-            return canonical.orient(self._normalize_result(debated, reason="debate_fallback", source="debate"))
+            return canonical.orient(
+                self._normalize_result(
+                    debated,
+                    reason=debated.reason or "debate_fallback",
+                    source="debate",
+                )
+            )
 
         if not self.enable_debate_fallback or not self.model_adapter.available():
             return None
@@ -842,7 +852,7 @@ class RelationClassifier:
         return RelationResult(
             relation_type=label,
             confidence=max(0.0, min(1.0, result.confidence)),
-            reason=reason,
+            reason=result.reason or reason,
             ambiguous=result.ambiguous or label == "ambiguous",
             needs_human_review=result.needs_human_review or label == "ambiguous",
             short_rationale=_compact_text(result.short_rationale),
@@ -857,6 +867,8 @@ class RelationClassifier:
 
     def _should_run_debate(self, result: RelationResult, prefilter: RelationPrefilterDecision) -> bool:
         if not self.enable_debate_fallback:
+            return False
+        if result.source == "debate":
             return False
         if prefilter.obviously_independent:
             return False
@@ -930,7 +942,7 @@ class RelationClassifier:
         if similarity < 0.7:
             return None
 
-        above_dirs = {">", ">=", "above", "over", "at least"}
+        above_dirs = {">", ">=", "above", "over", "at least", "exceed", "exceeds"}
         below_dirs = {"<", "<=", "below", "under", "at most"}
 
         if dir_a in above_dirs and dir_b in above_dirs:

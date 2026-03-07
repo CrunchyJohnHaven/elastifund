@@ -256,6 +256,23 @@ def _office_hierarchy_cues(market_a: NormalizedMarket, market_b: NormalizedMarke
     return tuple(cues)
 
 
+def _same_event_relation_hint(market_a: NormalizedMarket, market_b: NormalizedMarket) -> tuple[str, str] | None:
+    if market_a.event_id != market_b.event_id:
+        return None
+
+    outcome_a = normalize_outcome_name(market_a.outcome or "")
+    outcome_b = normalize_outcome_name(market_b.outcome or "")
+    if outcome_a and outcome_b and outcome_a != outcome_b:
+        combined_outcomes = {normalize_outcome_name(outcome) for outcome in market_a.outcomes + market_b.outcomes}
+        combined_outcomes = {outcome for outcome in combined_outcomes if outcome}
+        if len(combined_outcomes) > 2 or market_a.is_multi_outcome or market_b.is_multi_outcome:
+            return ("mutually_exclusive", "same_event_distinct_named_outcomes")
+
+    if normalize_title(market_a.question) == normalize_title(market_b.question):
+        return ("complementary", "same_question_binary")
+    return None
+
+
 def _floor_to_tick(value: float, tick_size: float) -> float:
     if tick_size <= 0:
         return float(value)
@@ -825,65 +842,285 @@ class CandidateGenerator:
         min_token_overlap: int = 1,
         min_similarity: float = 0.60,
         resolution_window_hours: int = 72,
+        prefilter_score_threshold: float = 4.0,
+        max_same_event_pairs_per_event: int = 24,
+        max_pairs_per_block: int = 80,
     ) -> None:
         self.min_token_overlap = min_token_overlap
         self.min_similarity = min_similarity
         self.resolution_window_hours = max(1, int(resolution_window_hours))
+        self.prefilter_score_threshold = float(prefilter_score_threshold)
+        self.max_same_event_pairs_per_event = max(1, int(max_same_event_pairs_per_event))
+        self.max_pairs_per_block = max(1, int(max_pairs_per_block))
+        self._last_stats: dict[str, int] = {}
 
-    def _within_resolution_window(self, left: NormalizedMarket, right: NormalizedMarket) -> bool:
+    @property
+    def last_stats(self) -> dict[str, int]:
+        return dict(self._last_stats)
+
+    def _resolution_delta_hours(self, left: NormalizedMarket, right: NormalizedMarket) -> float | None:
         left_cutoff = left.profile.cutoff_ts
         right_cutoff = right.profile.cutoff_ts
         if not left_cutoff or not right_cutoff:
-            return True
+            return None
         delta_seconds = abs(int(left_cutoff) - int(right_cutoff))
-        return delta_seconds <= self.resolution_window_hours * 3600
+        return float(delta_seconds / 3600.0)
 
-    def generate(self, markets: Sequence[NormalizedMarket], max_pairs: int = 2000) -> list[tuple[NormalizedMarket, NormalizedMarket]]:
-        pairs: list[tuple[NormalizedMarket, NormalizedMarket]] = []
+    def _within_resolution_window(self, left: NormalizedMarket, right: NormalizedMarket) -> bool:
+        delta_hours = self._resolution_delta_hours(left, right)
+        if delta_hours is None:
+            return True
+        return delta_hours <= self.resolution_window_hours
+
+    def _market_blocks(self, market: NormalizedMarket) -> set[str]:
+        blocks: set[str] = set()
+        for token in sorted(_slug_tokens(market.event_id))[:4]:
+            blocks.add(f"anchor:{token}")
+        for entity in _extract_named_entities(market.question)[:3]:
+            blocks.add(f"entity:{entity}")
+        for office in sorted(_extract_office_tokens(market.question)):
+            blocks.add(f"office:{office}")
+        if market.profile.source != "unknown":
+            blocks.add(f"source:{market.profile.source}")
+        return blocks
+
+    def score_pair(self, market_a: NormalizedMarket, market_b: NormalizedMarket) -> CandidatePair:
+        left, right = _canonical_pair(market_a, market_b)
+        pair_key = (left.market_id, right.market_id)
+        signature = build_pair_signature(left, right)
+
+        same_event = left.event_id == right.event_id
+        same_category = bool(left.category and right.category and left.category == right.category and left.category != "unknown")
+        resolution_delta_hours = self._resolution_delta_hours(left, right)
+        within_window = self._within_resolution_window(left, right)
+        shared_question_tokens = tuple(sorted(extract_keywords(left.question) & extract_keywords(right.question)))
+        shared_event_anchors = tuple(sorted(_slug_tokens(left.event_id) & _slug_tokens(right.event_id)))
+        shared_entities = tuple(sorted(set(_extract_named_entities(left.question)) & set(_extract_named_entities(right.question))))
+        shared_date_tokens = tuple(sorted(set(_extract_date_tokens(left.question)) & set(_extract_date_tokens(right.question))))
+        lexical_cues: list[str] = []
+
+        threshold_rel = RelationClassifier._threshold_implication(left.question, right.question)
+        if threshold_rel is not None:
+            lexical_cues.append(threshold_rel[1])
+        lexical_rel = RelationClassifier._lexical_implication(left.question, right.question)
+        if lexical_rel is not None:
+            lexical_cues.append("lexical_implication")
+        if RelationClassifier._mutual_exclusion(left.question, right.question):
+            lexical_cues.append("mutual_exclusion")
+
+        same_event_hint = _same_event_relation_hint(left, right)
+        if same_event_hint is not None:
+            lexical_cues.append(same_event_hint[1])
+
+        office_hierarchy_cues = _office_hierarchy_cues(left, right)
+        title_sim = title_similarity(normalize_title(left.question), normalize_title(right.question))
+
+        outcome_overlap_ratio = 0.0
+        left_outcomes = {normalize_outcome_name(outcome) for outcome in left.outcomes if normalize_outcome_name(outcome)}
+        right_outcomes = {normalize_outcome_name(outcome) for outcome in right.outcomes if normalize_outcome_name(outcome)}
+        if left_outcomes and right_outcomes:
+            outcome_overlap_ratio = len(left_outcomes & right_outcomes) / len(left_outcomes | right_outcomes)
+
+        gate = resolution_equivalence_gate([left, right])
+
+        score = 0.0
+        if same_event:
+            score += 5.0
+        if same_category:
+            score += 0.5
+        if within_window:
+            score += 1.0
+        score += min(len(shared_event_anchors), 3) * 1.4
+        score += min(len(shared_entities), 2) * 1.6
+        score += min(len(shared_question_tokens), 3) * 0.8
+        score += min(1.0, title_sim) * 2.0
+        if shared_date_tokens:
+            score += 0.5
+        if lexical_cues:
+            score += 2.0
+        if office_hierarchy_cues:
+            score += 1.5
+        if outcome_overlap_ratio >= 0.5:
+            score += 0.5
+        if gate.passed:
+            score += 1.0
+        else:
+            score -= 3.0
+        if not within_window and not same_event:
+            score -= 2.0
+
+        evidence_points = sum(
+            1
+            for present in (
+                same_event,
+                bool(shared_event_anchors),
+                bool(shared_entities),
+                len(shared_question_tokens) >= self.min_token_overlap,
+                title_sim >= self.min_similarity,
+                bool(shared_date_tokens),
+                bool(lexical_cues),
+                bool(office_hierarchy_cues),
+                outcome_overlap_ratio >= 0.5,
+            )
+            if present
+        )
+
+        suggested_label = "ambiguous"
+        sample_bucket = "shared_anchor_candidate"
+        if same_event_hint is not None:
+            suggested_label, sample_bucket = same_event_hint[0], "same_event_cluster"
+        elif threshold_rel is not None:
+            suggested_label, sample_bucket = threshold_rel[0], "implication_candidate"
+        elif lexical_rel is not None:
+            suggested_label, sample_bucket = lexical_rel[0], "implication_candidate"
+        elif "mutual_exclusion" in lexical_cues:
+            suggested_label, sample_bucket = "mutually_exclusive", "mutual_exclusion_candidate"
+        elif office_hierarchy_cues:
+            sample_bucket = "office_hierarchy_candidate"
+        elif same_event:
+            sample_bucket = "same_event_cluster"
+        elif title_sim < self.min_similarity and len(shared_question_tokens) < self.min_token_overlap:
+            suggested_label, sample_bucket = "independent", "control_near_miss"
+
+        strong_signal = same_event or bool(shared_event_anchors) or bool(shared_entities) or bool(lexical_cues) or bool(office_hierarchy_cues)
+        passed = gate.passed and (
+            same_event
+            or (
+                within_window
+                and strong_signal
+                and evidence_points >= 3
+                and score >= self.prefilter_score_threshold
+            )
+        )
+        if not passed and sample_bucket != "control_near_miss":
+            sample_bucket = "control_near_miss"
+            if suggested_label == "ambiguous":
+                suggested_label = "independent"
+
+        reason_codes = tuple(
+            dict.fromkeys(
+                [
+                    *(["same_event"] if same_event else []),
+                    *(["same_category"] if same_category else []),
+                    *(["resolution_window_aligned"] if within_window else ["resolution_window_miss"]),
+                    *(["shared_event_anchor"] if shared_event_anchors else []),
+                    *(["shared_named_entity"] if shared_entities else []),
+                    *(["shared_date_token"] if shared_date_tokens else []),
+                    *(["title_similarity"] if title_sim >= self.min_similarity else []),
+                    *lexical_cues,
+                    *office_hierarchy_cues,
+                    *gate.reasons,
+                ]
+            )
+        )
+
+        return CandidatePair(
+            market_a=left,
+            market_b=right,
+            pair_key=pair_key,
+            pair_signature=signature,
+            passed=passed,
+            priority=float(score),
+            sample_bucket=sample_bucket,
+            suggested_label=suggested_label,
+            reason_codes=reason_codes,
+            features=PrefilterFeatures(
+                same_event=same_event,
+                same_category=same_category,
+                within_resolution_window=within_window,
+                resolution_delta_hours=resolution_delta_hours,
+                title_similarity=float(title_sim),
+                shared_question_tokens=shared_question_tokens,
+                shared_event_anchors=shared_event_anchors,
+                shared_entities=shared_entities,
+                shared_date_tokens=shared_date_tokens,
+                lexical_cues=tuple(lexical_cues),
+                office_hierarchy_cues=office_hierarchy_cues,
+                outcome_overlap_ratio=float(outcome_overlap_ratio),
+                gate_passed=gate.passed,
+                gate_reasons=tuple(gate.reasons),
+                score=float(score),
+            ),
+        )
+
+    def generate_candidates(
+        self,
+        markets: Sequence[NormalizedMarket],
+        *,
+        max_pairs: int = 2000,
+        include_rejected: bool = False,
+    ) -> list[CandidatePair]:
         seen: set[tuple[str, str]] = set()
+        candidates: dict[tuple[str, str], CandidatePair] = {}
+        same_event_considered = 0
+        block_considered = 0
 
         by_event: dict[str, list[NormalizedMarket]] = {}
         for market in markets:
             by_event.setdefault(market.event_id, []).append(market)
 
-        # Pass 1: same event pairs (highest priority)
-        for event_markets in by_event.values():
+        for event_id in sorted(by_event):
+            event_markets = sorted(by_event[event_id], key=lambda market: market.market_id)
+            per_event = 0
             for left, right in combinations(event_markets, 2):
-                key = tuple(sorted((left.market_id, right.market_id)))
-                if key in seen:
-                    continue
-                seen.add(key)
-                pairs.append((left, right))
-                if len(pairs) >= max_pairs:
-                    return pairs
+                if per_event >= self.max_same_event_pairs_per_event:
+                    break
+                pair = self.score_pair(left, right)
+                seen.add(pair.pair_key)
+                candidates[pair.pair_key] = pair
+                same_event_considered += 1
+                per_event += 1
 
-        # Pass 2: same category, token overlap, same resolution month
-        by_category: dict[str, list[NormalizedMarket]] = {}
+        block_index: dict[str, list[NormalizedMarket]] = {}
         for market in markets:
-            by_category.setdefault(market.category, []).append(market)
+            for block in self._market_blocks(market):
+                block_index.setdefault(block, []).append(market)
 
-        for category_markets in by_category.values():
-            for left, right in combinations(category_markets, 2):
-                key = tuple(sorted((left.market_id, right.market_id)))
-                if key in seen:
+        for block in sorted(block_index):
+            block_markets = sorted({market.market_id: market for market in block_index[block]}.values(), key=lambda market: market.market_id)
+            per_block = 0
+            for left, right in combinations(block_markets, 2):
+                if per_block >= self.max_pairs_per_block:
+                    break
+                pair_key = tuple(sorted((left.market_id, right.market_id)))
+                if pair_key in seen:
                     continue
+                pair = self.score_pair(left, right)
+                candidates[pair.pair_key] = pair
+                seen.add(pair.pair_key)
+                block_considered += 1
+                per_block += 1
 
-                if not self._within_resolution_window(left, right):
-                    continue
+        ordered = sorted(
+            candidates.values(),
+            key=lambda pair: (
+                0 if pair.passed else 1,
+                -pair.priority,
+                pair.pair_key,
+            ),
+        )
+        if not include_rejected:
+            ordered = [pair for pair in ordered if pair.passed]
+        ordered = ordered[: max(1, int(max_pairs))] if ordered else []
 
-                left_tokens = extract_keywords(left.question)
-                right_tokens = extract_keywords(right.question)
-                overlap = len(left_tokens & right_tokens)
-                sim = title_similarity(normalize_title(left.question), normalize_title(right.question))
-                if overlap < self.min_token_overlap and sim < self.min_similarity:
-                    continue
+        naive_pairs = math.comb(len(markets), 2) if len(markets) >= 2 else 0
+        self._last_stats = {
+            "market_count": len(markets),
+            "naive_pairs": naive_pairs,
+            "same_event_considered": same_event_considered,
+            "block_pairs_considered": block_considered,
+            "unique_pairs_considered": len(candidates),
+            "passed_pairs": sum(1 for pair in candidates.values() if pair.passed),
+            "rejected_pairs": sum(1 for pair in candidates.values() if not pair.passed),
+            "returned_pairs": len(ordered),
+        }
+        return ordered
 
-                seen.add(key)
-                pairs.append((left, right))
-                if len(pairs) >= max_pairs:
-                    return pairs
-
-        return pairs
+    def generate(self, markets: Sequence[NormalizedMarket], max_pairs: int = 2000) -> list[tuple[NormalizedMarket, NormalizedMarket]]:
+        return [
+            (pair.market_a, pair.market_b)
+            for pair in self.generate_candidates(markets, max_pairs=max_pairs, include_rejected=False)
+        ]
 
 
 class ViolationScorer:
@@ -1105,248 +1342,283 @@ def fetch_gamma_markets(*, max_pages: int = 5, page_limit: int = 200, include_cl
 
 
 class ConstraintArbRuntime:
-    """Live monitor that wires Gamma polling + CLOB WebSocket stream into the engine."""
+    """Live runtime that merges Gamma `/events` discovery with CLOB market books."""
 
     def __init__(
         self,
         *,
         engine: ConstraintArbEngine,
-        max_pages: int = 5,
-        page_limit: int = 200,
+        max_pages: int = 20,
+        page_limit: int = 100,
         max_pairs: int = 1500,
         scan_interval_seconds: int = 60,
         market_refresh_seconds: int = 300,
+        gamma_cache: GammaMarketCache | None = None,
+        clob_client: CLOBWebSocketClient | None = None,
     ) -> None:
+        if GammaMarketCache is None or CLOBWebSocketClient is None:
+            raise RuntimeError("GammaMarketCache and CLOBWebSocketClient are required for the live runtime")
+
         self.engine = engine
-        self.max_pages = max_pages
-        self.page_limit = page_limit
         self.max_pairs = max_pairs
-        self.scan_interval_seconds = max(1, scan_interval_seconds)
-        self.market_refresh_seconds = max(15, market_refresh_seconds)
+        self.scan_interval_seconds = max(1, int(scan_interval_seconds))
+        self.market_refresh_seconds = max(15, int(market_refresh_seconds))
+        self.gamma_cache = gamma_cache or GammaMarketCache(
+            max_pages=max_pages,
+            page_size=page_limit,
+            refresh_interval_seconds=self.market_refresh_seconds,
+        )
+        self.clob_client = clob_client or CLOBWebSocketClient(
+            stale_book_seconds=float(self.engine.stale_quote_seconds),
+            quarantine_retry_seconds=max(120.0, float(self.market_refresh_seconds)),
+        )
 
-        self._market_tokens: dict[str, tuple[str, str]] = {}
-        self._last_market_refresh_ts = 0
-
-        self._stream = None
-        self._stream_loop: asyncio.AbstractEventLoop | None = None
-        self._stream_thread: threading.Thread | None = None
-        self._stream_ready = threading.Event()
+        self._clob_task: asyncio.Task[None] | None = None
+        self._latest_snapshot: ConstraintRuntimeSnapshot | None = None
 
     @property
     def stream_enabled(self) -> bool:
-        return TradeStreamManager is not None
+        return CLOBWebSocketClient is not None
 
-    def _build_token_map(self, raw_markets: Sequence[Mapping[str, Any]]) -> dict[str, tuple[str, str]]:
-        token_map: dict[str, tuple[str, str]] = {}
-        for raw in raw_markets:
-            market_id = _extract_market_id(raw)
-            if not market_id:
-                continue
-            yes_token, no_token = parse_clob_token_ids(raw.get("clobTokenIds"))
-            token_map[market_id] = (yes_token, no_token)
-        return token_map
+    @property
+    def latest_snapshot(self) -> ConstraintRuntimeSnapshot | None:
+        return self._latest_snapshot
 
-    def _seed_quotes_from_gamma(self, raw_markets: Sequence[Mapping[str, Any]]) -> None:
-        now_ts = _now_ts()
-        for raw in raw_markets:
-            market_id = _extract_market_id(raw)
-            if not market_id:
-                continue
-            yes_bid, yes_ask = _extract_yes_quote(raw)
-            self.engine.update_quote(
-                market_id=market_id,
-                yes_bid=yes_bid,
-                yes_ask=yes_ask,
+    async def _ensure_clob_running(self) -> None:
+        if self._clob_task is None or self._clob_task.done():
+            self._clob_task = asyncio.create_task(self.clob_client.run(), name="constraint-clob-client")
+
+    async def refresh_markets(self, *, force: bool = False) -> int:
+        snapshot = await self.gamma_cache.refresh_once(force=force)
+        self.engine.sync_normalized_markets(snapshot.normalized_markets())
+        self.clob_client.sync_tokens(snapshot.token_to_market_id)
+        await self._ensure_clob_running()
+
+        bootstrap_tokens = [
+            token_id
+            for token_id in snapshot.all_token_ids()
+            if self.clob_client.get_book(token_id, require_fresh=False) is None
+        ]
+        if bootstrap_tokens:
+            await self.clob_client.bootstrap_tokens(bootstrap_tokens)
+        return len(snapshot.markets)
+
+    def _token_block_reason(self, token_id: str, *, side: str) -> str:
+        if not token_id:
+            return f"missing_{side}_token"
+        state = self.clob_client.get_token_state(token_id)
+        if state is None:
+            return f"{side}_book_unavailable"
+        if state.status == "quarantined":
+            return f"{side}_token_404"
+        if state.status == "stale":
+            return f"{side}_stale_book"
+        if state.status == "error":
+            return f"{side}_book_error"
+        if state.status == "tracking":
+            return f"{side}_book_pending"
+        return f"{side}_book_unavailable"
+
+    def _build_market_view(
+        self,
+        *,
+        record: GammaMarketRecord,
+        now_ts: int,
+    ) -> LiveConstraintMarket:
+        blocked_reasons = list(record.incomplete_reasons)
+        yes_book = self.clob_client.get_book(record.yes_token_id) if record.yes_token_id else None
+        no_book = self.clob_client.get_book(record.no_token_id) if record.no_token_id else None
+
+        if yes_book is None:
+            blocked_reasons.append(self._token_block_reason(record.yes_token_id, side="yes"))
+        if no_book is None:
+            blocked_reasons.append(self._token_block_reason(record.no_token_id, side="no"))
+
+        freshness_values: list[float] = []
+        if yes_book is not None:
+            freshness_values.append(max(0.0, float(now_ts) - yes_book.received_ts))
+        if no_book is not None:
+            freshness_values.append(max(0.0, float(now_ts) - no_book.received_ts))
+        freshness_seconds = max(freshness_values) if freshness_values else None
+
+        quote = None
+        executable = False
+        if (
+            yes_book is not None
+            and no_book is not None
+            and yes_book.best_bid is not None
+            and yes_book.best_ask is not None
+            and no_book.best_bid is not None
+            and no_book.best_ask is not None
+        ):
+            executable = not blocked_reasons
+            quote = MarketQuote(
+                market_id=record.market_id,
+                yes_bid=_clamp_price(yes_book.best_bid),
+                yes_ask=_clamp_price(yes_book.best_ask),
+                no_bid=_clamp_price(no_book.best_bid),
+                no_ask=_clamp_price(no_book.best_ask),
                 updated_ts=now_ts,
+                complete=executable,
+                blocked_reasons=tuple(dict.fromkeys(blocked_reasons)),
+                freshness_seconds=freshness_seconds,
+                source="ws",
             )
 
-    def refresh_markets(self, *, force: bool = False) -> int:
-        now = _now_ts()
-        if not force and now - self._last_market_refresh_ts < self.market_refresh_seconds:
-            return 0
-
-        raw_markets = fetch_gamma_markets(
-            max_pages=self.max_pages,
-            page_limit=self.page_limit,
-            include_closed=False,
+        return LiveConstraintMarket(
+            market_id=record.market_id,
+            event_id=record.event_id,
+            slug=record.market_slug,
+            question=record.question,
+            condition_id=record.condition_id,
+            yes_token_id=record.yes_token_id,
+            no_token_id=record.no_token_id,
+            outcome_name=record.outcome_name or record.normalized_market.outcome,
+            category=record.category,
+            tags=record.tags,
+            normalized_market=record.normalized_market,
+            quote=quote,
+            freshness_seconds=freshness_seconds,
+            executable=executable,
+            blocked_reasons=tuple(dict.fromkeys(blocked_reasons)),
+            multi_outcome_event_id=record.multi_outcome_event_id,
+            multi_outcome_size=record.multi_outcome_size,
         )
-        if not raw_markets:
-            return 0
 
-        self.engine.register_markets(raw_markets)
-        self._seed_quotes_from_gamma(raw_markets)
-        self._market_tokens = self._build_token_map(raw_markets)
-        self._last_market_refresh_ts = now
+    def build_runtime_snapshot(self, *, now_ts: int | None = None) -> ConstraintRuntimeSnapshot:
+        now_ts = int(now_ts or _now_ts())
+        gamma_snapshot = self.gamma_cache.get_snapshot()
+        market_views = tuple(
+            self._build_market_view(record=record, now_ts=now_ts)
+            for record in gamma_snapshot.markets.values()
+        )
+        market_view_by_id = {market.market_id: market for market in market_views}
 
-        if self._stream is None:
-            self._start_stream()
-        else:
-            self._update_stream_subscriptions()
-
-        return len(raw_markets)
-
-    def _start_stream(self) -> None:
-        if TradeStreamManager is None:
-            logger.warning("TradeStreamManager not available; running without live CLOB stream")
-            return
-
-        all_tokens = [tok for pair in self._market_tokens.values() for tok in pair if tok]
-        manager = TradeStreamManager(token_ids=sorted(set(all_tokens)))
-        self._stream = manager
-
-        def _runner() -> None:
-            loop = asyncio.new_event_loop()
-            self._stream_loop = loop
-            asyncio.set_event_loop(loop)
-            self._stream_ready.set()
-            try:
-                loop.run_until_complete(manager.start())
-            finally:
-                try:
-                    pending = asyncio.all_tasks(loop)
-                    for task in pending:
-                        task.cancel()
-                except Exception:
-                    pass
-                loop.close()
-
-        self._stream_thread = threading.Thread(target=_runner, name="constraint-arb-ws", daemon=True)
-        self._stream_thread.start()
-        self._stream_ready.wait(timeout=5)
-
-    def _update_stream_subscriptions(self) -> None:
-        if self._stream is None:
-            return
-        known = set(getattr(self._stream, "token_ids", []))
-        for pair in self._market_tokens.values():
-            for token_id in pair:
-                if token_id and token_id not in known:
-                    self._stream.add_token(token_id)
-                    known.add(token_id)
-
-    def _update_quotes_from_stream(self) -> int:
-        if self._stream is None:
-            return 0
-
-        updated = 0
-        now_ts = _now_ts()
-        for market_id, (yes_token, no_token) in self._market_tokens.items():
-            yes_bid = None
-            yes_ask = None
-            no_bid = None
-            no_ask = None
-
-            if yes_token:
-                yes_book = self._stream.get_book(yes_token)
-                if yes_book and yes_book.bids and yes_book.asks:
-                    yes_bid = _clamp_price(yes_book.bids[0].price)
-                    yes_ask = _clamp_price(yes_book.asks[0].price)
-
-            if no_token:
-                no_book = self._stream.get_book(no_token)
-                if no_book and no_book.bids and no_book.asks:
-                    no_bid = _clamp_price(no_book.bids[0].price)
-                    no_ask = _clamp_price(no_book.asks[0].price)
-
-            if yes_bid is None or yes_ask is None:
-                if no_bid is not None and no_ask is not None:
-                    yes_bid = _clamp_price(1.0 - no_ask)
-                    yes_ask = _clamp_price(1.0 - no_bid)
-
-            if yes_bid is None or yes_ask is None:
-                continue
-            if yes_ask < yes_bid:
-                yes_bid, yes_ask = yes_ask, yes_bid
-
-            self.engine.update_quote(
-                market_id=market_id,
-                yes_bid=yes_bid,
-                yes_ask=yes_ask,
-                no_bid=no_bid,
-                no_ask=no_ask,
-                updated_ts=now_ts,
+        event_views: list[LiveConstraintEvent] = []
+        for event in gamma_snapshot.events.values():
+            event_markets = [market_view_by_id[market_id] for market_id in event.market_ids if market_id in market_view_by_id]
+            blocked_reasons = list(event.blocked_reasons)
+            if event.is_multi_outcome and any(not market.executable for market in event_markets):
+                blocked_reasons.append("live_book_incomplete")
+            freshness_values = [market.freshness_seconds for market in event_markets if market.freshness_seconds is not None]
+            event_views.append(
+                LiveConstraintEvent(
+                    event_id=event.event_id,
+                    slug=event.slug,
+                    title=event.title,
+                    category=event.category,
+                    tags=event.tags,
+                    market_ids=event.market_ids,
+                    outcome_names=event.outcome_names,
+                    is_multi_outcome=event.is_multi_outcome,
+                    executable=bool(event.is_multi_outcome and event.executable and not any(not market.executable for market in event_markets)),
+                    blocked_reasons=tuple(dict.fromkeys(blocked_reasons)),
+                    freshness_seconds=max(freshness_values) if freshness_values else None,
+                )
             )
-            updated += 1
 
-        return updated
+        executable_quotes = [market.quote for market in market_views if market.quote is not None and market.executable]
+        self.engine.replace_quotes(executable_quotes)
 
-    def _collect_vpin(self) -> dict[str, float]:
-        if self._stream is None:
-            return {}
+        gamma_metrics = gamma_snapshot.metrics
+        clob_metrics = self.clob_client.get_metrics()
+        metrics = {
+            "event_count": gamma_metrics.event_count,
+            "market_count": gamma_metrics.market_count,
+            "multi_outcome_event_count": gamma_metrics.multi_outcome_event_count,
+            "incomplete_market_count": gamma_metrics.incomplete_market_count,
+            "executable_market_count": len(executable_quotes),
+            "blocked_market_count": sum(1 for market in market_views if not market.executable),
+            "gamma_refresh_count": gamma_metrics.refresh_count,
+            "gamma_refresh_failures": gamma_metrics.refresh_failures,
+            "gamma_last_error": gamma_metrics.last_error,
+            **clob_metrics,
+        }
+        snapshot = ConstraintRuntimeSnapshot(
+            updated_ts=now_ts,
+            markets=market_views,
+            events=tuple(event_views),
+            metrics=metrics,
+        )
+        self._latest_snapshot = snapshot
+        return snapshot
 
-        vpin: dict[str, float] = {}
-        for market_id, (yes_token, no_token) in self._market_tokens.items():
-            vals: list[float] = []
-            if yes_token:
-                vals.append(_safe_float(self._stream.vpin.get_vpin(yes_token), 0.0))
-            if no_token:
-                vals.append(_safe_float(self._stream.vpin.get_vpin(no_token), 0.0))
-            if vals:
-                vpin[market_id] = max(vals)
-        return vpin
+    async def run_cycle_async(self, *, force_market_refresh: bool = False) -> dict[str, Any]:
+        markets_refreshed = await self.refresh_markets(force=force_market_refresh)
+        runtime_snapshot = self.build_runtime_snapshot()
 
-    def run_cycle(self, *, force_market_refresh: bool = False) -> dict[str, int]:
-        markets_refreshed = self.refresh_markets(force=force_market_refresh)
-        ws_quotes_updated = self._update_quotes_from_stream()
-
-        debate = getattr(self.engine.classifier, "debate_fallback", None)
-        if debate is not None and hasattr(debate, "reset_budget"):
-            debate.reset_budget()
+        reset_budget = getattr(self.engine.classifier, "reset_debate_budget", None)
+        if callable(reset_budget):
+            reset_budget()
 
         edges = self.engine.build_constraint_graph(max_pairs=self.max_pairs)
-        vpin_by_id = self._collect_vpin()
-        sum_violations = self.engine.scan_sum_violations(vpin_by_id=vpin_by_id)
-        graph_violations = self.engine.scan_graph_violations(vpin_by_id=vpin_by_id)
+        sum_violations = self.engine.scan_sum_violations()
+        graph_violations = self.engine.scan_graph_violations()
 
-        summary = {
+        summary: dict[str, Any] = {
             "markets_refreshed": markets_refreshed,
-            "ws_quotes_updated": ws_quotes_updated,
+            "executable_markets": runtime_snapshot.metrics.get("executable_market_count", 0),
+            "incomplete_market_count": runtime_snapshot.metrics.get("incomplete_market_count", 0),
+            "ws_reconnect_count": runtime_snapshot.metrics.get("ws_reconnect_count", 0),
+            "stale_book_drop_count": runtime_snapshot.metrics.get("stale_book_drop_count", 0),
+            "token_404_count": runtime_snapshot.metrics.get("token_404_count", 0),
             "edges_built": len(edges),
             "sum_violations": len(sum_violations),
             "graph_violations": len(graph_violations),
         }
         logger.info(
-            "Constraint cycle: refreshed=%s ws_quotes=%s edges=%s sum=%s graph=%s",
+            "Constraint cycle: refreshed=%s executable=%s incomplete=%s reconnects=%s stale=%s token404=%s edges=%s sum=%s graph=%s",
             summary["markets_refreshed"],
-            summary["ws_quotes_updated"],
+            summary["executable_markets"],
+            summary["incomplete_market_count"],
+            summary["ws_reconnect_count"],
+            summary["stale_book_drop_count"],
+            summary["token_404_count"],
             summary["edges_built"],
             summary["sum_violations"],
             summary["graph_violations"],
         )
         return summary
 
-    def run(self, *, once: bool = False, max_cycles: int | None = None) -> list[dict[str, int]]:
-        summaries: list[dict[str, int]] = []
-
+    async def _run_async(self, *, once: bool = False, max_cycles: int | None = None) -> list[dict[str, Any]]:
+        summaries: list[dict[str, Any]] = []
         cycles = 0
         try:
             while True:
                 cycles += 1
-                force_refresh = cycles == 1
-                cycle_summary = self.run_cycle(force_market_refresh=force_refresh)
+                cycle_summary = await self.run_cycle_async(force_market_refresh=(cycles == 1))
                 summaries.append(cycle_summary)
-                if force_refresh and cycle_summary["markets_refreshed"] == 0:
+                if cycles == 1 and cycle_summary["markets_refreshed"] == 0:
                     logger.warning("No markets loaded from Gamma; aborting runtime loop")
                     break
                 if once:
                     break
                 if max_cycles is not None and cycles >= max_cycles:
                     break
-                time.sleep(self.scan_interval_seconds)
+                await asyncio.sleep(self.scan_interval_seconds)
         finally:
-            self.stop()
+            await self._stop_async()
         return summaries
 
+    def run(self, *, once: bool = False, max_cycles: int | None = None) -> list[dict[str, Any]]:
+        return asyncio.run(self._run_async(once=once, max_cycles=max_cycles))
+
+    async def _stop_async(self) -> None:
+        self.gamma_cache.stop()
+        await self.clob_client.stop()
+        if self._clob_task is not None:
+            self._clob_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._clob_task
+            self._clob_task = None
+
     def stop(self) -> None:
-        if self._stream is None or self._stream_loop is None:
-            return
         try:
-            fut = asyncio.run_coroutine_threadsafe(self._stream.stop(), self._stream_loop)
-            fut.result(timeout=5)
-        except Exception as exc:
-            logger.debug("Error while stopping trade stream: %s", exc)
-        if self._stream_thread:
-            self._stream_thread.join(timeout=5)
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(self._stop_async())
+            return
+        loop.create_task(self._stop_async())
 
 
 class ConstraintArbEngine:
@@ -1398,19 +1670,35 @@ class ConstraintArbEngine:
     def edges(self) -> dict[str, GraphEdge]:
         return dict(self._edges)
 
-    @property
-    def quotes(self) -> dict[str, MarketQuote]:
-        return dict(self._quotes)
-
     def register_markets(self, raw_markets: Sequence[Mapping[str, Any]]) -> list[NormalizedMarket]:
         normalized = [normalize_market(raw) for raw in raw_markets]
         self.register_normalized_markets(normalized)
         return normalized
 
+    def sync_normalized_markets(self, markets: Sequence[NormalizedMarket]) -> None:
+        active_ids = {market.market_id for market in markets}
+        self._markets = {market.market_id: market for market in markets}
+        self._quotes = {
+            market_id: quote
+            for market_id, quote in self._quotes.items()
+            if market_id in active_ids
+        }
+        self._edges = {
+            edge_id: edge
+            for edge_id, edge in self._edges.items()
+            if edge.market_a in active_ids and edge.market_b in active_ids
+        }
+        self.inventory = NegRiskInventory()
+        for market in markets:
+            self.inventory.register_market(market)
+
     def register_normalized_markets(self, markets: Sequence[NormalizedMarket]) -> None:
         for market in markets:
             self._markets[market.market_id] = market
             self.inventory.register_market(market)
+
+    def replace_quotes(self, quotes: Sequence[MarketQuote]) -> None:
+        self._quotes = {quote.market_id: quote for quote in quotes}
 
     def update_quote(
         self,
@@ -1421,6 +1709,10 @@ class ConstraintArbEngine:
         no_bid: float | None = None,
         no_ask: float | None = None,
         updated_ts: int | None = None,
+        complete: bool = True,
+        blocked_reasons: Sequence[str] | None = None,
+        freshness_seconds: float | None = None,
+        source: str = "unknown",
     ) -> None:
         if no_bid is None:
             no_bid = max(0.0, 1.0 - yes_ask)
@@ -1433,13 +1725,17 @@ class ConstraintArbEngine:
             no_bid=float(no_bid),
             no_ask=float(no_ask),
             updated_ts=int(updated_ts or _now_ts()),
+            complete=bool(complete),
+            blocked_reasons=tuple(blocked_reasons or ()),
+            freshness_seconds=freshness_seconds,
+            source=str(source),
         )
 
     def get_quote(self, market_id: str) -> MarketQuote | None:
         return self._quotes.get(market_id)
 
     def _quote_fresh(self, quote: MarketQuote, now_ts: int) -> bool:
-        return now_ts - quote.updated_ts <= self.stale_quote_seconds
+        return bool(quote.complete) and now_ts - quote.updated_ts <= self.stale_quote_seconds
 
     def _event_vpin(self, event_id: str, market_ids: Sequence[str], vpin_by_id: Mapping[str, float] | None) -> float:
         if not vpin_by_id:
@@ -1490,7 +1786,10 @@ class ConstraintArbEngine:
                 if not quote or not self._quote_fresh(quote, now_ts):
                     continue
 
-                if not market.accepting_orders or not market.enable_order_book or not market.yes_token_id:
+                accepting_orders = bool(getattr(market, "accepting_orders", True))
+                enable_order_book = bool(getattr(market, "enable_order_book", True))
+                yes_token_id = str(getattr(market, "yes_token_id", "") or "")
+                if not accepting_orders or not enable_order_book or not yes_token_id:
                     continue
 
                 selected_outcomes[market.market_id] = outcome
@@ -1499,7 +1798,7 @@ class ConstraintArbEngine:
                 market_spreads[market.market_id] = float(spread)
                 if spread > self.max_leg_spread:
                     liquidity_ok = False
-                tick_size = max(market.tick_size, 0.001)
+                tick_size = max(_safe_float(getattr(market, "tick_size", 0.001), 0.001), 0.001)
                 maker_target = _floor_to_tick(max(0.0, quote.yes_ask - tick_size), tick_size)
                 if maker_target <= 0.0:
                     liquidity_ok = False
@@ -1518,7 +1817,10 @@ class ConstraintArbEngine:
                 markets_for_gate,
                 selected_outcomes=selected_outcomes,
             )
-            if not gate.passed:
+            # A-6 legs already come from the same Gamma event grouping. If Gamma
+            # omits explicit source/cutoff metadata, keep the basket tradable in
+            # shadow/live scans but preserve the penalty and gate annotations.
+            if gate.safety_status == "hard_blocked":
                 continue
 
             total_yes_ask = sum(q.yes_ask for _, q in priced_markets)
@@ -1529,8 +1831,6 @@ class ConstraintArbEngine:
             vpin = self._event_vpin(event_id, [m.market_id for m, _ in priced_markets], vpin_by_id)
 
             if maker_sum_bid < self.buy_threshold:
-                if not complete_basket:
-                    continue
                 gross_edge = 1.0 - maker_sum_bid
                 score = self.scorer.score(
                     theoretical_edge=gross_edge,
@@ -1578,6 +1878,7 @@ class ConstraintArbEngine:
                         "liquidity_ok": liquidity_ok,
                         "max_leg_spread": self.max_leg_spread,
                         "market_spreads": market_spreads,
+                        "gate_safety_status": gate.safety_status,
                         "gate_reasons": list(gate.reasons),
                     },
                     detected_at_ts=now_ts,
@@ -1625,6 +1926,7 @@ class ConstraintArbEngine:
                         "liquidity_ok": liquidity_ok,
                         "max_leg_spread": self.max_leg_spread,
                         "market_spreads": market_spreads,
+                        "gate_safety_status": gate.safety_status,
                         "gate_reasons": list(gate.reasons),
                     },
                     detected_at_ts=now_ts,

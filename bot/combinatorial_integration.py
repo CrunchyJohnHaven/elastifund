@@ -332,6 +332,7 @@ class CombinatorialOpportunity:
         signal = {
             "basket_id": self.basket_id,
             "violation_id": self.violation_id,
+            "event_id": self.event_id,
             "market_id": self.market_ids[0] if self.market_ids else self.event_id,
             "market_ids": list(self.market_ids),
             "question": question,
@@ -339,6 +340,7 @@ class CombinatorialOpportunity:
             "edge": self.theoretical_edge,
             "theoretical_edge": self.theoretical_edge,
             "confidence": self.semantic_confidence,
+            "semantic_confidence": self.semantic_confidence,
             "estimated_prob": None,
             "reasoning": self.action,
             "source": self.lane,
@@ -452,4 +454,3 @@ class CombinatorialSignalStore:
             seen.add(opportunity.violation_id)
             opportunities.append(opportunity)
         return opportunities
-

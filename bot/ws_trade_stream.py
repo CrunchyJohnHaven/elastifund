@@ -515,7 +515,18 @@ class TradeStreamManager:
 
     async def _run_rest_fallback_once(self) -> None:
         self._rest_fallback_polls += 1
-        await self.fetch_initial_books()
+        if self.rest_book_fetcher is not None:
+            for token_id in list(self.token_ids):
+                try:
+                    payload = await self.rest_book_fetcher(token_id)
+                except Exception as exc:  # pragma: no cover - caller-defined fetcher
+                    logger.debug("fallback rest fetch failed for %s: %s", token_id, exc)
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                self._replace_book(token_id, self._parse_levels(payload.get("bids")), self._parse_levels(payload.get("asks")))
+        else:
+            await self.fetch_initial_books()
         for token_id, book in list(self._books.items()):
             snapshot = self.ofi.update(token_id, book)
             if snapshot:

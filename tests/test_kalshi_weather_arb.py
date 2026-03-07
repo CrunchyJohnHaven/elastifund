@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from kalshi.weather_arb import (
     ForecastSnapshot,
     build_weather_signal,
+    extract_market_target_date,
     parse_temperature_contract,
     temperature_probability,
 )
@@ -46,6 +47,7 @@ def test_build_rain_signal_yes_side():
     )
     market = {
         "ticker": "KXRAINNYCM-TEST",
+        "event_ticker": "KXRAINNYC-26MAR08",
         "title": "Will it rain in NYC tomorrow?",
         "yes_ask": 58,
         "yes_bid": 56,
@@ -57,6 +59,7 @@ def test_build_rain_signal_yes_side():
     assert sig.market_type == "rain"
     assert sig.side == "yes"
     assert sig.edge > 0.10
+    assert sig.order_probability == 0.57
 
 
 def test_build_temp_signal_no_side():
@@ -69,6 +72,7 @@ def test_build_temp_signal_no_side():
     )
     market = {
         "ticker": "KXHIGHCH-TEST",
+        "event_ticker": "KXHIGHCHI-26MAR08",
         "title": "Will Chicago high be above 60?",
         "subtitle": "Above 60",
         "yes_ask": 70,
@@ -81,3 +85,32 @@ def test_build_temp_signal_no_side():
     assert sig.market_type == "temperature"
     assert sig.side == "no"
     assert sig.edge > 0.10
+    assert sig.order_probability == 0.31
+
+
+def test_extract_market_target_date_from_event_ticker():
+    market = {
+        "ticker": "KXRAINNYC-26MAR08-T0",
+        "event_ticker": "KXRAINNYC-26MAR08",
+    }
+    assert extract_market_target_date(market).isoformat() == "2026-03-08"
+
+
+def test_build_signal_skips_mismatched_market_date():
+    snapshot = ForecastSnapshot(
+        city="NYC",
+        target_date="2026-03-08",
+        high_temp_f=55.0,
+        pop_probability=0.75,
+        source_period="Sunday",
+    )
+    market = {
+        "ticker": "KXRAINNYC-26MAR09-T0",
+        "event_ticker": "KXRAINNYC-26MAR09",
+        "title": "Will it rain in New York City on Monday?",
+        "yes_ask": 58,
+        "yes_bid": 56,
+        "no_ask": 44,
+        "no_bid": 42,
+    }
+    assert build_weather_signal("NYC", snapshot, market, edge_threshold=0.10, max_spread=0.20) is None
