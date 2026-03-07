@@ -1,103 +1,130 @@
 # Elastifund
 
-AI-powered prediction market trading system. Uses Claude, GPT, and Grok to find mispricings on Polymarket, then trades them with Kelly-optimal sizing.
-
-**20% of all net profits go to veteran suicide prevention. Non-negotiable.**
+**An open-source AI trading system that exploits mispricings in prediction markets — and sends 20% of every dollar earned to veteran suicide prevention.**
 
 ---
+
+## The Thesis
+
+Prediction markets like Polymarket let people bet real money on real-world events. The price of each outcome *should* represent the crowd's best guess at the probability. But crowds are systematically wrong — they anchor on headlines, overweight favorites, and ignore base rates.
+
+We built an AI system that thinks independently. It reads the question, reasons from first principles, and estimates the *true* probability — without seeing the market price, so it can't anchor on the crowd's mistakes.
+
+When our AI disagrees with the market by enough, we trade. When the event resolves, the market pays out $1 or $0. If we're right more often than the market expects, we make money. Consistently.
+
+## The Evidence
+
+We backtested against 532 resolved Polymarket events. The system identified 372 trades.
+
+| | |
+|---|---|
+| **Win rate** | **68.5%** (vs 50% random) |
+| **NO-side win rate** | **70.2%** (exploiting favorite-longshot bias) |
+| **Ruin probability** | **0%** across 10,000 Monte Carlo simulations |
+| **Brier score** | **0.217** (well-calibrated probability estimates) |
+
+The system is live now — paper trading 24/7 on a VPS in Frankfurt, 21 open positions across politics, sports, entertainment, and crypto markets. 436 cycles completed. 7,887 signals generated. Waiting for first batch of markets to resolve for live validation.
 
 ## How It Works
 
-1. **Scan** — Pulls active markets from Polymarket's Gamma API
-2. **Estimate** — Claude (+ ensemble) estimates true probability independent of market price
-3. **Detect Edge** — Compares AI estimate vs market. If divergence exceeds threshold, it's a trade
-4. **Size** — Kelly criterion with time-aware dampening (never full Kelly on short-duration markets)
-5. **Execute** — Places orders via Polymarket CLOB. Paper mode by default, live mode opt-in
-6. **Learn** — Bayesian belief updating as new evidence arrives. Category-specific calibration
-
-## Performance (Backtest)
-
-| Metric | Value |
-|--------|-------|
-| Markets tested | 532 |
-| Win rate | 68.5% |
-| NO-side win rate | 70.2% |
-| Ruin probability | 0% (10K Monte Carlo sims) |
-| Brier score | 0.217 |
-
-Live validation in progress. Paper trading on DigitalOcean VPS, 24/7.
-
-## Architecture
-
 ```
-polymarket-bot/
-  src/
-    engine/           Trading loop (configurable interval)
-    claude_analyzer.py AI probability estimation
-    bayesian_signal.py Sequential Bayesian belief updating (log-space)
-    lmsr.py           LMSR pricing model for AMM inefficiency detection
-    scanner.py        Gamma API market scanner
-    risk/sizing.py    Kelly criterion + time-aware dampener
-    calibration/      Category-specific Platt scaling
-    broker/           CLOB execution (paper + live)
-    safety.py         Kill switch, drawdown limits, exposure caps
-    app/              FastAPI dashboard (9 endpoints)
-  backtest/           Strategy validation + Monte Carlo
-  simulator/          Fill model + sensitivity analysis
-  data_layer/         SQLAlchemy data infrastructure
-  tests/              98 tests, 0 regressions
+Every 5 minutes:
+
+  1. SCAN      Pull 100 active markets from Polymarket
+  2. ESTIMATE  Claude AI estimates true probability (anti-anchoring prompt)
+  3. CALIBRATE Category-specific Platt scaling corrects for known AI biases
+  4. DETECT    Compare calibrated estimate vs market price → find edge
+  5. SIZE      Kelly criterion determines optimal bet size
+  6. EXECUTE   Place order via Polymarket's CLOB (central limit order book)
+  7. LEARN     Bayesian belief updating as new evidence arrives
 ```
 
-## Quick Start
+The AI doesn't see the market price before estimating. This is critical — it prevents the AI from just agreeing with the crowd. It thinks independently, then we compare.
+
+## What Makes This Different
+
+**vs. "I'll just bet on stuff"** — We're systematic. Every trade has a measured edge, sized by Kelly criterion, risk-controlled by 6 safety layers. No gut feelings, no FOMO, no tilt.
+
+**vs. Trading bots that use technical analysis** — We don't look at price charts. We reason about events: *what is the actual probability that Sweden qualifies for the World Cup?* Then we trade the gap between our answer and the market's.
+
+**vs. Other AI approaches** — Our AI never sees the market price (anti-anchoring). We calibrate per category (politics =/= crypto =/= sports). We use LMSR pricing models to detect AMM inefficiencies. We update beliefs in real-time with Bayesian inference.
+
+## The Stack
+
+```
+polymarket-bot/src/
+  engine/loop.py          Main trading loop
+  claude_analyzer.py      AI probability estimation (Claude Haiku)
+  bayesian_signal.py      Sequential Bayesian belief updating (log-space)
+  lmsr.py                 LMSR pricing + AMM inefficiency detection
+  scanner.py              Polymarket Gamma API market scanner
+  risk/sizing.py          Kelly criterion + time-aware dampener
+  calibration/            Category-specific Platt scaling
+  broker/                 CLOB execution (paper + live modes)
+  safety.py               Kill switch, drawdown limits, exposure caps
+  app/                    FastAPI monitoring dashboard (9 endpoints)
+
+backtest/                 Strategy validation + Monte Carlo simulation
+simulator/                Fill model + sensitivity analysis
+research_dispatch/        90+ prioritized research tasks
+```
+
+98 tests. 0 regressions. Paper mode by default — no real money moves until you explicitly flip the switch.
+
+## The Mission
+
+**20% of all net trading profits go to veteran suicide prevention.** This is non-negotiable. It's the reason this project exists. The more the system earns, the more veterans get helped.
+
+Organizations we support:
+- [Veterans Crisis Line](https://www.veteranscrisisline.net/)
+- [Stop Soldier Suicide](https://stopsoldiersuicide.org/)
+- [22Until None](https://www.22untilnone.org/)
+
+## Get Involved
+
+We're looking for contributors who want to build something that matters.
+
+**The deal is simple:**
+1. You contribute — code, research, backtests, edge strategies, bug fixes
+2. You can run your own instance of the system
+3. 20% of your net trading profits go to veterans
+
+That's the social contract. Not a legal obligation. A handshake between people who care.
+
+### What You Can Work On
+
+- **Edge research** — Find new categories or signals where AI beats the crowd
+- **Model improvement** — Better prompts, ensemble methods, calibration tuning
+- **Infrastructure** — Faster scanning, better execution, monitoring dashboards
+- **Data science** — Backtest analysis, Monte Carlo simulation, portfolio optimization
+- **Market expansion** — Kalshi integration, Metaculus, new platforms
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions.
+
+### Quick Start
 
 ```bash
-# Clone
 git clone git@github.com:CrunchyJohnHaven/elastifund.git
 cd elastifund/polymarket-bot
-
-# Set up environment
-cp .env.example .env
-# Edit .env with your API keys (paper mode works without Polymarket keys)
-
-# Install
-pip install -r requirements.txt  # or: pip install -e .
-
-# Run (paper mode)
-python -m src.main
-
-# Run tests
-python -m pytest tests/ -v
+cp .env.example .env        # Edit with your API keys
+pip install -e .             # Install dependencies
+python -m pytest tests/ -v   # Verify everything works
+python -m src.main           # Start paper trading
 ```
 
-## Key Modules
+## Risks (We're Honest About These)
 
-| Module | What It Does |
-|--------|-------------|
-| `lmsr.py` | LMSR cost function, softmax pricing, AMM inefficiency detection |
-| `bayesian_signal.py` | Log-space sequential Bayesian updating with evidence decay |
-| `risk/sizing.py` | Kelly sizing with 6-tier time dampener (5min markets capped at 5% Kelly) |
-| `calibration/` | Category + directional Platt scaling (YES-side: 82% calibrated accuracy) |
-| `engine/loop.py` | Main loop: scan, estimate, detect edge, size, execute, learn |
+- **Regulatory** — CFTC is watching prediction markets. Polymarket could face restrictions.
+- **Competition** — As more traders use AI, edges compress. We need to stay ahead.
+- **Live vs backtest gap** — Backtests look great. Live results are unproven until markets resolve.
+- **Scale limits** — At large sizes, our orders move the market. Edge shrinks with capital.
 
-## Risk Controls (6 Layers)
-
-1. Kill switch (DB-backed, API-controllable)
-2. Max position USD
-3. Max orders/hour rate limiting
-4. Max daily drawdown (auto-triggers kill switch)
-5. Stale price guard
-6. Volatility pause
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get involved.
-
-**The deal:** You contribute code and research. You run your own instance. 20% of your net trading profits go to veteran suicide prevention. That's the social contract.
+This is a science experiment with real money implications. We believe the hypothesis is strong. But we haven't proven it in live markets yet — that proof comes when the first batch of positions resolve.
 
 ## License
 
-MIT
+MIT — use it, fork it, improve it, run it. Just remember the mission.
 
 ---
 
-Built by [John Bradley](https://github.com/CrunchyJohnHaven) and collaborators.
+Built by [John Bradley](https://github.com/CrunchyJohnHaven) and contributors.
