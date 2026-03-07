@@ -9,15 +9,21 @@ from typing import Iterable
 
 try:
     from bot.resolution_normalizer import (
+        EventTradability,
         NormalizedMarket,
+        evaluate_event_tradability,
         is_named_outcome,
+        outcome_block_reasons,
         is_tradable_outcome,
         normalize_outcome_name,
     )
 except ImportError:  # pragma: no cover - direct script mode
     from resolution_normalizer import (  # type: ignore
+        EventTradability,
         NormalizedMarket,
+        evaluate_event_tradability,
         is_named_outcome,
+        outcome_block_reasons,
         is_tradable_outcome,
         normalize_outcome_name,
     )
@@ -48,6 +54,8 @@ class NegRiskInventory:
         self._event_named_outcomes: dict[str, set[str]] = {}
         self._event_augmented: dict[str, bool] = {}
         self._event_neg_risk: dict[str, bool] = {}
+        self._event_markets: dict[str, dict[str, NormalizedMarket]] = {}
+        self._event_safety: dict[str, EventTradability] = {}
         self._positions: dict[tuple[str, str, str], float] = {}
         self._avg_cost: dict[tuple[str, str, str], float] = {}
         self._conversions: list[ConversionRecord] = []
@@ -57,6 +65,8 @@ class NegRiskInventory:
         event_id = market.event_id
         if event_id not in self._event_named_outcomes:
             self._event_named_outcomes[event_id] = set()
+        if event_id not in self._event_markets:
+            self._event_markets[event_id] = {}
 
         for outcome in market.outcomes:
             normalized = normalize_outcome_name(outcome)
@@ -76,6 +86,10 @@ class NegRiskInventory:
             self._event_neg_risk.get(event_id, False)
             or market.profile.is_neg_risk
         )
+        self._event_markets[event_id][market.market_id] = market
+        self._event_safety[event_id] = evaluate_event_tradability(
+            tuple(self._event_markets[event_id].values())
+        )
 
     def route_exchange(self, market: NormalizedMarket) -> str:
         """Route neg-risk markets through the adapter exchange path."""
@@ -83,7 +97,14 @@ class NegRiskInventory:
 
     def validate_order(self, market: NormalizedMarket, outcome: str) -> bool:
         """Block unsafe legs in augmented neg-risk events."""
-        return is_tradable_outcome(market, outcome)
+        return not self.order_block_reasons(market, outcome)
+
+    def order_block_reasons(self, market: NormalizedMarket, outcome: str) -> tuple[str, ...]:
+        reasons: list[str] = list(outcome_block_reasons(market, outcome))
+        event_safety = self._event_safety.get(market.event_id)
+        if event_safety and event_safety.status != "tradable":
+            reasons.extend(event_safety.reasons)
+        return tuple(dict.fromkeys(reasons))
 
     def record_fill(
         self,
@@ -131,6 +152,9 @@ class NegRiskInventory:
         """Atomically convert NO(outcome) into YES(other named outcomes)."""
         if quantity <= 0:
             raise ValueError("quantity must be positive")
+        safety = self._event_safety.get(event_id)
+        if safety and safety.status != "tradable":
+            raise ValueError(f"event not tradable: {','.join(safety.reasons)}")
 
         outcome_norm = normalize_outcome_name(outcome)
         no_key = (event_id, outcome_norm, "NO")
@@ -226,6 +250,12 @@ class NegRiskInventory:
 
     def named_outcomes(self, event_id: str) -> tuple[str, ...]:
         return tuple(sorted(self._event_named_outcomes.get(event_id, set())))
+
+    def event_tradability(self, event_id: str) -> EventTradability | None:
+        return self._event_safety.get(event_id)
+
+    def safety_matrix(self) -> tuple[EventTradability, ...]:
+        return tuple(self._event_safety[event_id] for event_id in sorted(self._event_safety))
 
     def register_markets(self, markets: Iterable[NormalizedMarket]) -> None:
         for market in markets:
