@@ -64,6 +64,7 @@ DISAGREEMENT_LOW_STD = float(os.environ.get("JJ_DISAGREEMENT_LOW_STD", "0.05"))
 DISAGREEMENT_HIGH_STD = float(os.environ.get("JJ_DISAGREEMENT_HIGH_STD", "0.15"))
 DISAGREEMENT_MIN_KELLY = float(os.environ.get("JJ_DISAGREEMENT_MIN_KELLY", f"{1.0 / 32.0:.5f}"))
 DISAGREEMENT_MAX_KELLY = float(os.environ.get("JJ_DISAGREEMENT_MAX_KELLY", "0.25"))
+SINGLE_MODEL_DISAGREEMENT = 0.20
 
 
 def calibrate_probability(raw_prob: float) -> float:
@@ -475,6 +476,7 @@ class EnsembleResult:
     n_models: int = 0            # How many models succeeded
     model_spread: float = 0.0    # Max - min estimate (disagreement)
     model_stddev: float = 0.0    # Stddev of model estimates (disagreement sizing)
+    disagreement: float = 0.0    # Execution disagreement; single-model fallback defaults to 0.20
     consensus: float = 0.0       # Fraction agreeing on YES/NO direction
     agreement: float = 0.0       # 0-1 score using spread + consensus
     kelly_multiplier: float = 1.0  # Relative to quarter-Kelly (1.0 = full quarter-Kelly)
@@ -519,7 +521,7 @@ def aggregate_probability_stats(values: list[float]) -> tuple[float, float]:
     if not values:
         return 0.5, 0.0
     mean_prob = trimmed_mean(values)
-    stddev = float(np.std(np.asarray(values, dtype=float))) if len(values) > 1 else 0.0
+    stddev = compute_disagreement(values)
     return mean_prob, stddev
 
 
@@ -534,7 +536,18 @@ def compute_consensus(estimates: list[ModelEstimate]) -> float:
 
 def compute_stddev(values: list[float]) -> float:
     """Population stddev of model probabilities."""
-    return aggregate_probability_stats(values)[1]
+    if not values or len(values) == 1:
+        return 0.0
+    return float(np.std(np.asarray(values, dtype=float)))
+
+
+def compute_disagreement(values: list[float]) -> float:
+    """Execution disagreement with a pessimistic fallback for single-model output."""
+    if not values:
+        return 0.0
+    if len(values) == 1:
+        return SINGLE_MODEL_DISAGREEMENT
+    return compute_stddev(values)
 
 
 def confidence_from_spread(spread: float, consensus: float) -> str:
@@ -559,6 +572,18 @@ def kelly_multiplier_from_agreement(agreement: float) -> float:
     """Map agreement score to size multiplier: 0.25x (weak) to 1.5x (strong)."""
     agreement = max(0.0, min(1.0, float(agreement)))
     return max(0.25, min(1.5, 0.25 + 1.25 * agreement))
+
+
+def disagreement_kelly_modifier(std_dev: float) -> float:
+    """Lookup-table sizing modifier for ensemble disagreement."""
+    std_dev = max(0.0, float(std_dev))
+    if std_dev < 0.05:
+        return 1.0
+    if std_dev < 0.10:
+        return 0.75
+    if std_dev < 0.15:
+        return 0.50
+    return 0.25
 
 
 def kelly_multiplier_from_stddev(stddev: float) -> float:
@@ -924,17 +949,21 @@ class LLMEnsemble:
                 model_estimates=estimates,
             )
 
-        # Trimmed mean + explicit std-dev disagreement
+        # Trimmed mean + explicit disagreement
         probs = [e.probability for e in good_estimates]
-        mean_prob, stddev = aggregate_probability_stats(probs)
+        consensus_probability = trimmed_mean(probs)
+        disagreement = compute_disagreement(probs)
 
         # Spread and consensus
         spread = max(probs) - min(probs) if len(probs) > 1 else 0.0
         consensus = compute_consensus(good_estimates)
         agreement = compute_agreement_score(spread, consensus)
-        kelly_multiplier = kelly_multiplier_from_stddev(stddev)
-        disagreement_kelly_fraction = kelly_fraction_from_stddev(stddev)
-        models_agree = consensus >= 0.75 and stddev < DISAGREEMENT_HIGH_STD
+        kelly_multiplier = disagreement_kelly_modifier(disagreement)
+        disagreement_kelly_fraction = min(
+            DISAGREEMENT_MAX_KELLY,
+            max(0.0, DISAGREEMENT_MAX_KELLY * kelly_multiplier),
+        )
+        models_agree = consensus >= 0.75 and disagreement < DISAGREEMENT_HIGH_STD
 
         # Confidence
         confidence = confidence_from_spread(spread, consensus)
@@ -955,12 +984,12 @@ class LLMEnsemble:
             try:
                 counter_probability, counter_error = await self._run_counter_narrative(
                     question=question,
-                    initial_prob=mean_prob,
+                    initial_prob=consensus_probability,
                     search_context=search_context,
                     timeout=timeout,
                 )
                 if counter_probability is not None:
-                    counter_shift = abs(counter_probability - mean_prob)
+                    counter_shift = abs(counter_probability - consensus_probability)
                     counter_fragile = counter_shift > self.counter_shift_threshold
                     if counter_fragile:
                         confidence = "low"
@@ -973,16 +1002,17 @@ class LLMEnsemble:
                 errors.append(f"counter_narrative: {e}")
 
         # Step 5: Platt calibration on ensemble mean
-        calibrated = calibrate_probability(mean_prob)
+        calibrated = calibrate_probability(consensus_probability)
 
         result = EnsembleResult(
-            probability=mean_prob,
+            probability=consensus_probability,
             calibrated_probability=calibrated,
             confidence=confidence,
             reasoning=combined_reasoning,
             n_models=len(good_estimates),
             model_spread=round(spread, 4),
-            model_stddev=round(stddev, 4),
+            model_stddev=round(disagreement, 4),
+            disagreement=round(disagreement, 4),
             consensus=round(consensus, 4),
             agreement=round(agreement, 4),
             kelly_multiplier=round(kelly_multiplier, 4),
@@ -1026,6 +1056,7 @@ class LLMEnsemble:
             "n_models": result.n_models,
             "model_spread": result.model_spread,
             "model_stddev": result.model_stddev,
+            "disagreement": result.disagreement,
             "consensus": result.consensus,
             "agreement": result.agreement,
             "kelly_multiplier": result.kelly_multiplier,

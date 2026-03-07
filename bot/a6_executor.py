@@ -57,11 +57,13 @@ class A6ExecutorConfig:
     max_leg_notional_usd: float = 5.0
     max_open_baskets: int = 5
     max_daily_loss_usd: float = 5.0
-    fill_timeout_ms: int = 3_000
+    fill_timeout_seconds: float = 3.0
     quote_improvement_ticks: int = 1
     max_reprices_per_leg: int = 1
     quantity_decimals: int = 4
     signature_type: int = 1
+    batch_order_max: int = 15  # CLOB POST /orders max per request
+    settlement_path: str = "hold_to_resolution"  # or "relayer" (requires Builder creds)
 
 
 @dataclass(frozen=True)
@@ -481,13 +483,13 @@ class A6BasketExecutor:
 
         if basket.state == A6BasketState.QUOTING:
             started = basket.current_quote_started_ts or basket.detected_at_ts
-            if now - started >= int(self.config.fill_timeout_ms):
+            if now - started >= self.config.fill_timeout_seconds:
                 return self._expire_basket(basket, reason="initial_fill_timeout", now_ts=now)
             return A6ExecutorUpdate(basket=basket, commands=tuple(), events=tuple())
 
         if basket.state == A6BasketState.PARTIAL:
             started = basket.current_quote_started_ts or basket.detected_at_ts
-            if now - started < int(self.config.fill_timeout_ms):
+            if now - started < self.config.fill_timeout_seconds:
                 return A6ExecutorUpdate(basket=basket, commands=tuple(), events=tuple())
 
             reprice_update = self._maybe_reprice_open_legs(basket, now_ts=now)

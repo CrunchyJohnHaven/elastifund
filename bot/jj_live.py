@@ -86,12 +86,15 @@ from src.claude_analyzer import ClaudeAnalyzer
 
 # LLM Ensemble: multi-model + agentic RAG (preferred over single Claude)
 try:
-    from bot.llm_ensemble import LLMEnsemble
+    from bot.llm_ensemble import LLMEnsemble, disagreement_kelly_modifier
 except ImportError:
     try:
-        from llm_ensemble import LLMEnsemble
+        from llm_ensemble import LLMEnsemble, disagreement_kelly_modifier
     except ImportError:
         LLMEnsemble = None
+
+        def disagreement_kelly_modifier(std_dev: float) -> float:
+            return 1.0
 
 # Use official py-clob-client for order placement (the custom src/bot.py
 # has HMAC body mismatch and wrong EIP-712 domain bugs that cause 403s)
@@ -1729,6 +1732,29 @@ def kelly_size(
     return round(final_size, 2)
 
 
+def apply_disagreement_size_modifier(
+    size_usd: float,
+    std_dev: float | None,
+    *,
+    modifier: float | None = None,
+) -> tuple[float, float]:
+    """Apply the Stream 6 disagreement multiplier to a Kelly-sized trade."""
+    if size_usd <= 0:
+        return 0.0, 1.0
+    if std_dev is None:
+        return round(size_usd, 2), 1.0
+
+    resolved_modifier = (
+        max(0.0, float(modifier))
+        if modifier is not None
+        else disagreement_kelly_modifier(std_dev)
+    )
+    final_size = round(size_usd * resolved_modifier, 2)
+    if final_size < 0.50:
+        return 0.0, resolved_modifier
+    return final_size, resolved_modifier
+
+
 # ---------------------------------------------------------------------------
 # State Management
 # ---------------------------------------------------------------------------
@@ -3034,7 +3060,7 @@ class JJLive:
                 models_agree = r.get("models_agree", True)
                 model_spread = _safe_float(r.get("model_spread", 0.0), 0.0)
                 model_stddev = _safe_float(
-                    r.get("model_stddev", r.get("stdev", 0.0)),
+                    r.get("disagreement", r.get("model_stddev", r.get("stdev", 0.0))),
                     0.0,
                 )
                 rag_used = r.get("search_context_used", False)
@@ -3044,7 +3070,7 @@ class JJLive:
                 )
                 kelly_multiplier = _safe_float(
                     r.get("kelly_multiplier"),
-                    1.0 if model_stddev <= DISAGREEMENT_LOW_STD else DISAGREEMENT_MIN_KELLY / MAX_KELLY_FRACTION,
+                    disagreement_kelly_modifier(model_stddev),
                 )
                 disagreement_kelly_fraction = _safe_float(
                     r.get("disagreement_kelly_fraction"),
@@ -3097,6 +3123,7 @@ class JJLive:
                     "n_models": n_models,
                     "model_spread": model_spread,
                     "model_stddev": model_stddev,
+                    "disagreement": model_stddev,
                     "agreement": agreement,
                     "kelly_multiplier": kelly_multiplier,
                     "disagreement_kelly_fraction": disagreement_kelly_fraction,
@@ -3296,24 +3323,9 @@ class JJLive:
                 primary["_kelly_override"] = KELLY_FRACTION
                 primary["_confirmation"] = False
 
-            # Ensemble disagreement sizing: cap Kelly by std-dev disagreement.
+            # Keep the base Kelly decision here; apply disagreement to final USD size.
             base_kelly = _safe_float(primary.get("_kelly_override", KELLY_FRACTION), KELLY_FRACTION)
-            disagreement_kelly_fraction = _safe_float(
-                primary.get("disagreement_kelly_fraction"),
-                None,
-            )
-            effective_kelly = min(MAX_KELLY_FRACTION, max(0.0, base_kelly))
-            if disagreement_kelly_fraction is not None:
-                effective_kelly = min(effective_kelly, max(0.0, disagreement_kelly_fraction))
-                if int(_safe_float(primary.get("n_models", 0), 0)) > 1:
-                    logger.info(
-                        "  Kelly cap applied: std=%.3f base=%.4f cap=%.4f final=%.4f",
-                        _safe_float(primary.get("model_stddev", 0.0), 0.0),
-                        base_kelly,
-                        disagreement_kelly_fraction,
-                        effective_kelly,
-                    )
-            primary["_kelly_override"] = effective_kelly
+            primary["_kelly_override"] = min(MAX_KELLY_FRACTION, max(0.0, base_kelly))
 
             confirmed_signals.append(primary)
 
@@ -3367,6 +3379,18 @@ class JJLive:
                 bankroll=self.state.state["bankroll"],
                 kelly_fraction_override=signal.get("_kelly_override"),
             )
+            size_usd, disagreement_modifier = apply_disagreement_size_modifier(
+                size_usd,
+                _safe_float(signal.get("disagreement", signal.get("model_stddev")), None),
+                modifier=_safe_float(signal.get("kelly_multiplier"), None),
+            )
+            if signal.get("disagreement", signal.get("model_stddev")) is not None:
+                logger.info(
+                    "Disagreement: %.3f, Kelly modifier: %.2f, final size: $%.2f",
+                    _safe_float(signal.get("disagreement", signal.get("model_stddev")), 0.0),
+                    disagreement_modifier,
+                    size_usd,
+                )
 
             if size_usd <= 0:
                 logger.info(f"  SKIP (size=0): {signal['question'][:50]}...")

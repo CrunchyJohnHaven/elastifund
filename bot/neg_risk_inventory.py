@@ -120,8 +120,9 @@ class NegRiskInventory:
         prev_avg = self._avg_cost.get(key, 0.0)
 
         new_qty = prev_qty + float(quantity)
-        if new_qty < 0:
+        if new_qty < -1e-9:
             raise ValueError("position quantity cannot go negative")
+        new_qty = max(0.0, new_qty)
 
         if new_qty == 0:
             self._positions.pop(key, None)

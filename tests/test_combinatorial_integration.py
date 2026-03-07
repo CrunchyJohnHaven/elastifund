@@ -13,6 +13,7 @@ from bot.combinatorial_integration import (
     attach_signal_source_metadata,
     evaluate_combinatorial_risk,
 )
+from signals.dep_graph.dep_graph_store import DepEdgeRecord, DepGraphStore, question_hash
 
 
 class TestCombinatorialIntegration(unittest.TestCase):
@@ -99,6 +100,93 @@ class TestCombinatorialIntegration(unittest.TestCase):
             self.assertEqual(by_lane["a6"].estimated_budget_usd, 15.0)
             self.assertEqual(by_lane["b1"].classification_accuracy, 0.83)
             self.assertTrue(by_lane["b1"].live_eligible)
+
+    def test_signal_store_backfills_b1_accuracy_from_dep_graph_db(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "constraint_arb.db"
+            dep_graph_path = Path(tmp) / "dep_graph.sqlite"
+
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE constraint_violations (
+                        violation_id TEXT PRIMARY KEY,
+                        event_id TEXT NOT NULL,
+                        relation_type TEXT NOT NULL,
+                        market_ids_json TEXT NOT NULL,
+                        semantic_confidence REAL NOT NULL,
+                        gross_edge REAL NOT NULL,
+                        action TEXT NOT NULL,
+                        details_json TEXT NOT NULL,
+                        detected_at_ts INTEGER NOT NULL
+                    )
+                    """
+                )
+                now_ts = int(time.time())
+                conn.execute(
+                    """
+                    INSERT INTO constraint_violations
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "b1-2",
+                        "evt-b1",
+                        "A_implies_B",
+                        '["ma","mb"]',
+                        0.88,
+                        0.041,
+                        "buy_B_sell_A",
+                        "{}",
+                        now_ts,
+                    ),
+                )
+                conn.commit()
+
+            dep_store = DepGraphStore(dep_graph_path)
+            dep_store.upsert_market_meta(market_id="ma", question="Will CPI be above 4.0?")
+            dep_store.upsert_market_meta(market_id="mb", question="Will CPI be above 3.0?")
+            dep_store.upsert_edge(
+                DepEdgeRecord(
+                    edge_id="edge-1",
+                    a_market_id="ma",
+                    b_market_id="mb",
+                    relation="A_implies_B",
+                    confidence=0.84,
+                    constraint="P(A)<=P(B)",
+                    model_version="haiku-json-v1",
+                    a_question_hash=question_hash("Will CPI be above 4.0?"),
+                    b_question_hash=question_hash("Will CPI be above 3.0?"),
+                    reason="manual",
+                    metadata={},
+                )
+            )
+            dep_store.record_validation_samples(
+                [
+                    {
+                        "edge_id": "edge-1",
+                        "label_human": "A_implies_B",
+                        "label_resolved": "A_implies_B",
+                        "notes": "confirmed",
+                    }
+                ]
+            )
+
+            cfg = CombinatorialConfig(
+                enable_b1_shadow=True,
+                stale_book_max_age_seconds=300,
+                max_notional_per_leg_usd=5.0,
+                constraint_db_path=db_path,
+                dep_graph_db_path=dep_graph_path,
+            )
+            store = CombinatorialSignalStore(db_path, dep_graph_db_path=dep_graph_path)
+            opportunities = store.poll_new_opportunities(
+                since_ts=0,
+                config=cfg,
+                now_ts=int(time.time()),
+            )
+
+            self.assertEqual(len(opportunities), 1)
+            self.assertAlmostEqual(opportunities[0].classification_accuracy, 1.0)
 
     def test_risk_router_blocks_on_slots_and_budget(self) -> None:
         cfg = CombinatorialConfig(

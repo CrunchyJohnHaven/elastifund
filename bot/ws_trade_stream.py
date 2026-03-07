@@ -13,8 +13,11 @@ import asyncio
 from collections import deque
 import json
 import logging
+import os
+import sqlite3
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 try:
@@ -42,6 +45,9 @@ WS_CIRCUIT_BREAKER_DISCONNECTS = 3
 WS_CIRCUIT_BREAKER_WINDOW_SECONDS = 300
 REST_FALLBACK_POLL_SECONDS = 5
 LATENCY_SAMPLE_LIMIT = 2048
+MAX_SUBSCRIPTIONS = 50
+LATENCY_LOG_INTERVAL_SECONDS = 300  # 5 minutes
+LATENCY_P99_ALERT_THRESHOLD_MS = 200.0
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -49,6 +55,72 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _percentile(values: list[float], pct: float) -> float:
+    """Compute percentile from sorted values list (pct in 0-1 range)."""
+    if not values:
+        return 0.0
+    idx = min(len(values) - 1, max(0, int(round((len(values) - 1) * pct))))
+    return float(values[idx])
+
+
+class LatencyPersistence:
+    """Persist latency snapshots to SQLite for production monitoring."""
+
+    def __init__(self, db_path: str | Path | None = None) -> None:
+        if db_path is None:
+            db_path = Path(os.environ.get("ELASTIFUND_DATA_DIR", "data")) / "ws_latency.db"
+        self._db_path = str(db_path)
+        self._init_db()
+
+    def _init_db(self) -> None:
+        Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(self._db_path)
+        try:
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS latency_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp REAL NOT NULL,
+                    source TEXT NOT NULL DEFAULT 'ws_trade_stream',
+                    exchange_p50_ms REAL,
+                    exchange_p95_ms REAL,
+                    exchange_p99_ms REAL,
+                    processing_p50_ms REAL,
+                    processing_p95_ms REAL,
+                    processing_p99_ms REAL,
+                    sample_count INTEGER,
+                    connection_mode TEXT
+                )"""
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def record(self, stats: dict[str, float], *, connection_mode: str = "unknown") -> None:
+        conn = sqlite3.connect(self._db_path)
+        try:
+            conn.execute(
+                """INSERT INTO latency_snapshots
+                   (timestamp, exchange_p50_ms, exchange_p95_ms, exchange_p99_ms,
+                    processing_p50_ms, processing_p95_ms, processing_p99_ms,
+                    sample_count, connection_mode)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    time.time(),
+                    stats.get("exchange_p50_ms", 0.0),
+                    stats.get("exchange_p95_ms", 0.0),
+                    stats.get("exchange_p99_ms", 0.0),
+                    stats.get("processing_p50_ms", 0.0),
+                    stats.get("processing_p95_ms", 0.0),
+                    stats.get("processing_p99_ms", 0.0),
+                    stats.get("samples", 0),
+                    connection_mode,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
 
 @dataclass
@@ -204,8 +276,18 @@ class TradeStreamManager:
         backoff_base: float = WS_BACKOFF_BASE,
         backoff_max: float = WS_BACKOFF_MAX,
         heartbeat_interval: float = 30.0,
+        max_subscriptions: int = MAX_SUBSCRIPTIONS,
+        latency_log_interval: float = LATENCY_LOG_INTERVAL_SECONDS,
+        latency_db_path: Optional[str] = None,
     ) -> None:
-        self.token_ids: list[str] = list(dict.fromkeys(token_ids or []))
+        initial = list(dict.fromkeys(token_ids or []))
+        self.max_subscriptions = max(1, int(max_subscriptions))
+        self.token_ids: list[str] = initial[: self.max_subscriptions]
+        if len(initial) > self.max_subscriptions:
+            logger.warning(
+                "token list truncated from %d to max %d subscriptions",
+                len(initial), self.max_subscriptions,
+            )
         self.vpin = VPINManager(bucket_size=vpin_bucket_size, window_size=vpin_window_size)
         self.ofi = OFICalculator()
         self.on_regime_change = on_regime_change
@@ -221,6 +303,7 @@ class TradeStreamManager:
         self.backoff_base = max(0.001, float(backoff_base))
         self.backoff_max = max(self.backoff_base, float(backoff_max))
         self.heartbeat_interval = max(0.5, float(heartbeat_interval))
+        self.latency_log_interval = max(10.0, float(latency_log_interval))
 
         self._books: dict[str, OrderBookState] = {}
         self._last_ofi: dict[str, OFISnapshot] = {}
@@ -235,10 +318,27 @@ class TradeStreamManager:
         self._processing_latency_samples: deque[float] = deque(maxlen=LATENCY_SAMPLE_LIMIT)
         self._ws: Any = None
 
-    def add_token(self, token_id: str) -> None:
+        self._latency_persistence: LatencyPersistence | None = None
+        self._latency_db_path = latency_db_path
+
+    def _ensure_latency_persistence(self) -> LatencyPersistence:
+        if self._latency_persistence is None:
+            self._latency_persistence = LatencyPersistence(db_path=self._latency_db_path)
+        return self._latency_persistence
+
+    def add_token(self, token_id: str) -> bool:
+        """Add a token to track. Returns False if at max subscriptions."""
         token = str(token_id).strip()
-        if token and token not in self.token_ids:
-            self.token_ids.append(token)
+        if not token or token in self.token_ids:
+            return token in self.token_ids
+        if len(self.token_ids) >= self.max_subscriptions:
+            logger.warning(
+                "cannot add token %s: at max subscriptions (%d)",
+                token[:12], self.max_subscriptions,
+            )
+            return False
+        self.token_ids.append(token)
+        return True
 
     def remove_token(self, token_id: str) -> None:
         token = str(token_id).strip()
@@ -557,44 +657,86 @@ class TradeStreamManager:
                     break
                 await self._handle_message(raw)
 
+    async def _latency_log_loop(self) -> None:
+        """Periodically log and persist latency stats. Warn if p99 > threshold."""
+        while self._running:
+            await asyncio.sleep(self.latency_log_interval)
+            if not self._running:
+                break
+            stats = self.get_latency_stats()
+            if stats["samples"] == 0:
+                continue
+            mode = "websocket" if self._connected else "rest_fallback" if self._fallback_active else "disconnected"
+            logger.info(
+                "WS latency: exchange p50=%.1fms p95=%.1fms p99=%.1fms | "
+                "processing p50=%.1fms p95=%.1fms p99=%.1fms | "
+                "samples=%d mode=%s",
+                stats["exchange_p50_ms"], stats["exchange_p95_ms"], stats["exchange_p99_ms"],
+                stats["processing_p50_ms"], stats["processing_p95_ms"], stats["processing_p99_ms"],
+                stats["samples"], mode,
+            )
+            if stats["processing_p99_ms"] > LATENCY_P99_ALERT_THRESHOLD_MS:
+                logger.warning(
+                    "processing p99 latency %.1fms exceeds %.0fms threshold",
+                    stats["processing_p99_ms"], LATENCY_P99_ALERT_THRESHOLD_MS,
+                )
+            if stats["exchange_p99_ms"] > LATENCY_P99_ALERT_THRESHOLD_MS:
+                logger.warning(
+                    "exchange p99 latency %.1fms exceeds %.0fms threshold",
+                    stats["exchange_p99_ms"], LATENCY_P99_ALERT_THRESHOLD_MS,
+                )
+            try:
+                persistence = self._ensure_latency_persistence()
+                persistence.record(stats, connection_mode=mode)
+            except Exception as exc:
+                logger.debug("failed to persist latency snapshot: %s", exc)
+
     async def start(self) -> None:
         if self._running:
             return
 
         self._running = True
-        await self.fetch_initial_books()
+        latency_task = asyncio.create_task(self._latency_log_loop(), name="ws-latency-log")
+        try:
+            await self.fetch_initial_books()
 
-        if (self.websocket_connect is None and websockets is None) or not self.token_ids:  # pragma: no cover - optional dependency path
-            while self._running:
-                await self._run_rest_fallback_once()
-                await asyncio.sleep(self.rest_poll_interval)
-            return
-
-        backoff = self.backoff_base
-        while self._running:
-            try:
-                await self._connect_and_stream()
-                if self._running:
-                    raise ConnectionError("market stream ended")
-            except asyncio.CancelledError:  # pragma: no cover - shutdown path
-                raise
-            except Exception as exc:  # pragma: no cover - exercised by injected doubles
-                self._connected = False
-                self._ws = None
-                self._reconnect_count += 1
-                logger.warning("market ws disconnected: %s", exc)
-                fallback = self._register_disconnect()
-                if fallback:
-                    if self.on_fallback is not None:
-                        self.on_fallback(self.get_status())
+            if (self.websocket_connect is None and websockets is None) or not self.token_ids:  # pragma: no cover - optional dependency path
+                while self._running:
                     await self._run_rest_fallback_once()
-                    await asyncio.sleep(self.fallback_cooldown_seconds)
-                else:
-                    await asyncio.sleep(backoff)
-                    backoff = min(backoff * 2.0, self.backoff_max)
+                    await asyncio.sleep(self.rest_poll_interval)
+                return
 
-        self._connected = False
-        self._ws = None
+            backoff = self.backoff_base
+            while self._running:
+                try:
+                    await self._connect_and_stream()
+                    if self._running:
+                        raise ConnectionError("market stream ended")
+                except asyncio.CancelledError:  # pragma: no cover - shutdown path
+                    raise
+                except Exception as exc:  # pragma: no cover - exercised by injected doubles
+                    self._connected = False
+                    self._ws = None
+                    self._reconnect_count += 1
+                    logger.warning("market ws disconnected: %s", exc)
+                    fallback = self._register_disconnect()
+                    if fallback:
+                        if self.on_fallback is not None:
+                            self.on_fallback(self.get_status())
+                        await self._run_rest_fallback_once()
+                        await asyncio.sleep(self.fallback_cooldown_seconds)
+                    else:
+                        await asyncio.sleep(backoff)
+                        backoff = min(backoff * 2.0, self.backoff_max)
+
+            self._connected = False
+            self._ws = None
+        finally:
+            latency_task.cancel()
+            try:
+                await latency_task
+            except asyncio.CancelledError:
+                pass
 
     async def stop(self) -> None:
         self._running = False
@@ -647,6 +789,7 @@ class TradeStreamManager:
         return {
             "connected": self._connected,
             "tokens_tracked": len(self.token_ids),
+            "max_subscriptions": self.max_subscriptions,
             "fallback_active": self._fallback_active,
             "fallback_activations": self._fallback_activations,
             "rest_fallback_polls": self._rest_fallback_polls,

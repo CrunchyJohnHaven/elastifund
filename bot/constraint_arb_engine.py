@@ -1389,6 +1389,7 @@ class ConstraintArbRuntime:
             self._clob_task = asyncio.create_task(self.clob_client.run(), name="constraint-clob-client")
 
     async def refresh_markets(self, *, force: bool = False) -> int:
+        previous_refresh_ts = self.gamma_cache.get_snapshot().refreshed_at_ts
         snapshot = await self.gamma_cache.refresh_once(force=force)
         self.engine.sync_normalized_markets(snapshot.normalized_markets())
         self.clob_client.sync_tokens(snapshot.token_to_market_id)
@@ -1401,6 +1402,8 @@ class ConstraintArbRuntime:
         ]
         if bootstrap_tokens:
             await self.clob_client.bootstrap_tokens(bootstrap_tokens)
+        if not force and snapshot.refreshed_at_ts == previous_refresh_ts:
+            return 0
         return len(snapshot.markets)
 
     def _token_block_reason(self, token_id: str, *, side: str) -> str:

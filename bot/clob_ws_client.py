@@ -62,14 +62,15 @@ def _safe_float(value: Any) -> float | None:
 
 
 def _normalize_ts(raw: Any) -> float | None:
+    """Convert exchange timestamp to epoch seconds."""
     value = _safe_float(raw)
     if value is None:
         return None
-    if value > 1e12:
-        return value / 1000.0
-    if value > 1e10:
-        return value / 1000.0
-    return value
+    if value > 1e15:  # microseconds
+        return value / 1_000_000.0
+    if value > 1e12:  # milliseconds
+        return value / 1_000.0
+    return value  # already seconds
 
 
 def _percentile(values: Sequence[float], pct: float) -> float:
@@ -161,6 +162,7 @@ class CLOBWebSocketClient:
         stale_book_seconds: float = 30.0,
         quarantine_retry_seconds: float = 120.0,
         rest_poll_interval_seconds: float = 15.0,
+        rest_parallelism: int = 8,
         websocket_connect: WebsocketConnect | None = None,
         rest_book_fetcher: BookFetcher | None = None,
         on_book_update: Callable[[TokenBook], None] | None = None,
@@ -180,6 +182,7 @@ class CLOBWebSocketClient:
         self.stale_book_seconds = max(1.0, float(stale_book_seconds))
         self.quarantine_retry_seconds = max(self.stale_book_seconds, float(quarantine_retry_seconds))
         self.rest_poll_interval_seconds = max(5.0, float(rest_poll_interval_seconds))
+        self.rest_parallelism = max(1, int(rest_parallelism))
         self._connect = websocket_connect or (websockets.connect if websockets is not None else None)
         self._rest_book_fetcher = rest_book_fetcher
         self._on_book_update = on_book_update
@@ -216,6 +219,7 @@ class CLOBWebSocketClient:
         self._token_404_count = 0
         self._last_message_ts = 0.0
         self._subscribed_tokens: set[str] = set()
+        self._tick_sizes: dict[str, float] = {}  # token_id -> tick_size
 
     def subscribe_books(self, *, maxsize: int = 1000) -> asyncio.Queue[TokenBook]:
         queue: asyncio.Queue[TokenBook] = asyncio.Queue(maxsize=max(1, maxsize))
@@ -339,12 +343,14 @@ class CLOBWebSocketClient:
 
     async def bootstrap_tokens(self, token_ids: Sequence[str] | None = None) -> None:
         tokens = [str(token_id) for token_id in (token_ids or self.tracked_tokens()) if str(token_id).strip()]
+        eligible: list[str] = []
         for token_id in tokens:
             now = self._clock()
             retry_at = self._quarantined_until.get(token_id)
             if retry_at and retry_at > now:
                 continue
-            await self._fetch_and_apply_rest_snapshot(token_id)
+            eligible.append(token_id)
+        await self._fetch_many_rest_snapshots(eligible)
 
     async def retry_quarantined_tokens(self) -> None:
         now = self._clock()
@@ -353,8 +359,18 @@ class CLOBWebSocketClient:
             for token_id, retry_at in self._quarantined_until.items()
             if retry_at <= now and token_id in self._token_to_market_id
         ]
-        for token_id in due:
-            await self._fetch_and_apply_rest_snapshot(token_id)
+        await self._fetch_many_rest_snapshots(due)
+
+    async def _fetch_many_rest_snapshots(self, token_ids: Sequence[str]) -> None:
+        if not token_ids:
+            return
+        semaphore = asyncio.Semaphore(self.rest_parallelism)
+
+        async def _worker(token_id: str) -> None:
+            async with semaphore:
+                await self._fetch_and_apply_rest_snapshot(token_id)
+
+        await asyncio.gather(*(_worker(token_id) for token_id in token_ids))
 
     def sweep_stale_books(self) -> int:
         now = self._clock()
@@ -551,6 +567,8 @@ class CLOBWebSocketClient:
                 self._lag_samples_ms.append(lag_ms)
                 self._clock_skew_samples_ms.append(skew_ms)
 
+            if self._maybe_handle_tick_size_change(message):
+                continue
             if self._maybe_handle_trade_message(message, received_at):
                 continue
             self._maybe_handle_book_message(message, received_at)
@@ -601,6 +619,23 @@ class CLOBWebSocketClient:
             self._apply_price_changes(token_id, changes, received_at=received_at, exchange_ts=exchange_ts)
             return True
         return False
+
+    def _maybe_handle_tick_size_change(self, message: Mapping[str, Any]) -> bool:
+        msg_type = str(message.get("event_type") or message.get("type") or "").lower()
+        if msg_type != "tick_size_change":
+            return False
+        token_id = str(message.get("asset_id") or message.get("token_id") or "").strip()
+        new_tick = _safe_float(message.get("tick_size") or message.get("new_tick_size"))
+        if not token_id or new_tick is None or new_tick <= 0:
+            return False
+        with self._lock:
+            self._tick_sizes[token_id] = float(new_tick)
+        logger.info("tick_size_change token=%s new_tick=%.6f", token_id, new_tick)
+        return True
+
+    def get_tick_size(self, token_id: str) -> float | None:
+        with self._lock:
+            return self._tick_sizes.get(str(token_id))
 
     def _parse_levels(self, raw_levels: Any, *, descending: bool) -> tuple[BookLevel, ...]:
         levels: list[BookLevel] = []

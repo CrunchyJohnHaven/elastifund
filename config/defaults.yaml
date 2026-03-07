@@ -84,7 +84,7 @@
     "a6_unwind_threshold": 1.03,
     "b1_implication_threshold": 0.03,
     "stale_book_max_age_seconds": 45,
-    "fill_timeout_ms": 3000,
+    "fill_timeout_seconds": 3.0,
     "cancel_replace_count": 1,
     "max_notional_per_leg_usd": 5.0,
     "arb_budget_usd": 100.0,

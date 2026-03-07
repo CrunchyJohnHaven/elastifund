@@ -673,8 +673,27 @@ def build_passive_order_probes(
         and leg.midpoint is not None
         and leg.condition_id
     ]
-    eligible.sort(key=lambda leg: (leg.midpoint or 0.0, leg.event_id, leg.market_id, leg.cycle_index))
-    sampled = eligible[:fill_sample_size]
+    by_cycle: dict[int, list[LegObservation]] = defaultdict(list)
+    for leg in eligible:
+        by_cycle[leg.cycle_index].append(leg)
+    for cycle_legs in by_cycle.values():
+        cycle_legs.sort(key=lambda leg: (leg.midpoint or 0.0, leg.event_id, leg.market_id))
+
+    sampled: list[LegObservation] = []
+    cycles = sorted(by_cycle)
+    if not cycles:
+        return []
+
+    per_cycle = max(1, fill_sample_size // len(cycles))
+    for cycle in cycles:
+        sampled.extend(by_cycle[cycle][:per_cycle])
+
+    if len(sampled) < fill_sample_size:
+        leftovers: list[LegObservation] = []
+        for cycle in cycles:
+            leftovers.extend(by_cycle[cycle][per_cycle:])
+        leftovers.sort(key=lambda leg: (leg.cycle_index, leg.midpoint or 0.0, leg.event_id, leg.market_id))
+        sampled.extend(leftovers[: max(0, fill_sample_size - len(sampled))])
 
     probes: list[PassiveOrderProbe] = []
     for leg in sampled:
@@ -920,6 +939,74 @@ def summarize_b1(db_path: Path) -> dict[str, Any]:
     }
 
 
+def evaluate_gating_metrics(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    """Evaluate the three gating metrics from the research dispatch.
+
+    1. Maker fill probability curve on neg-risk outcomes
+    2. Violation frequency and half-life in allowed categories
+    3. Settlement path viability for proxy wallet in neg-risk events
+
+    Returns a dict of gating decisions and supporting evidence.
+    """
+    fill = snapshot.get("fill_proxy", {})
+    live = snapshot.get("live_surface", {})
+    replay = snapshot.get("a6_replay", {})
+    b1 = snapshot.get("b1", {})
+
+    # Gate 1: Fill probability — need Wilson lower bound > 0.20
+    fill_rate = fill.get("full_fill_proxy_rate")
+    wilson_low = fill.get("wilson_low")
+    fill_gate = "unknown"
+    if fill_rate is not None and wilson_low is not None:
+        fill_gate = "pass" if wilson_low > 0.20 else "fail"
+    elif fill.get("eligible_probe_count", 0) == 0:
+        fill_gate = "insufficient_data"
+
+    # Gate 2: Violation half-life — need sufficient observations
+    half_life = replay.get("observed_persistence_lower_bound_seconds")
+    violation_count = replay.get("row_count", 0)
+    half_life_gate = "unknown"
+    if violation_count >= 20 and half_life is not None:
+        half_life_gate = "pass" if half_life >= 10 else "fail"
+    elif violation_count < 20:
+        half_life_gate = "insufficient_data"
+
+    # Gate 3: Settlement path — check if neg-risk events are active
+    neg_risk_events = live.get("active_multi_outcome_event_count_avg")
+    settlement_gate = "untested"  # requires manual verification
+
+    # Confidence-interval kill criterion on effective edge
+    capture_rate = replay.get("actual_capture_rate")
+    modeled_rate = replay.get("modeled_capture_rate")
+    kill_decision = "continue"
+    kill_reason = None
+    if capture_rate is not None and violation_count >= 20:
+        # One-sided upper confidence bound on capture rate
+        low, high = wilson_interval(
+            int(capture_rate * violation_count),
+            violation_count,
+        )
+        if high is not None and high < 0.50:
+            kill_decision = "kill"
+            kill_reason = f"upper_confidence_bound={round(high, 4)}<0.50 over {violation_count} completed cycles"
+
+    return {
+        "fill_probability_gate": fill_gate,
+        "fill_wilson_lower": wilson_low,
+        "half_life_gate": half_life_gate,
+        "half_life_seconds": half_life,
+        "settlement_path_gate": settlement_gate,
+        "kill_decision": kill_decision,
+        "kill_reason": kill_reason,
+        "all_gates_pass": fill_gate == "pass" and half_life_gate == "pass",
+        "promotion_eligible": (
+            fill_gate == "pass"
+            and half_life_gate == "pass"
+            and kill_decision == "continue"
+        ),
+    }
+
+
 def build_markdown_report(snapshot: Mapping[str, Any]) -> str:
     replay = snapshot["a6_replay"]
     live = snapshot["live_surface"]
@@ -996,6 +1083,19 @@ def build_markdown_report(snapshot: Mapping[str, Any]) -> str:
             f"- Historical violation rows: {b1['historical_violation_count']}",
             f"- Measurement status: {b1['measurement_status']}",
             "",
+            "## Shadow-to-Live Gating Metrics",
+            "",
+        ]
+    )
+    gates = snapshot.get("gating_metrics", {})
+    lines.extend(
+        [
+            f"- Fill probability gate: **{gates.get('fill_probability_gate', 'unknown')}** (Wilson lower={gates.get('fill_wilson_lower')})",
+            f"- Violation half-life gate: **{gates.get('half_life_gate', 'unknown')}** ({gates.get('half_life_seconds')}s)",
+            f"- Settlement path gate: **{gates.get('settlement_path_gate', 'untested')}**",
+            f"- Kill decision: **{gates.get('kill_decision', 'continue')}**" + (f" ({gates.get('kill_reason')})" if gates.get('kill_reason') else ""),
+            f"- Promotion eligible: **{gates.get('promotion_eligible', False)}**",
+            "",
             "## Unknowns",
             "",
             "- B-1 live correction half-life remains unmeasured until the live monitor writes non-sum violations to `constraint_arb.db`.",
@@ -1057,20 +1157,38 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     leg_observations: list[LegObservation] = list(live_data["leg_observations"])
     probes = build_passive_order_probes(leg_observations, fill_sample_size=max(1, int(args.fill_sample_size)))
-    min_probe_ts = min((probe.snapshot_ts for probe in probes), default=int(time.time()))
-    logger.info("Fetching recent trade tape since_ts=%s max_rows=%s", min_probe_ts, args.trade_limit)
-    trade_rows = fetch_recent_trade_tape(
-        since_ts=min_probe_ts,
-        max_rows=max(100, int(args.trade_limit)),
-        timeout_seconds=max(1.0, float(args.timeout_seconds)),
-    )
-    trade_data_end_ts = max((int(row.get("timestamp") or 0) for row in trade_rows), default=min_probe_ts)
-    fill_proxy = measure_fill_proxy(
-        probes,
-        trade_rows,
-        lookahead_seconds=max(1, int(args.fill_lookahead_seconds)),
-        trade_data_end_ts=trade_data_end_ts,
-    )
+    if probes:
+        min_probe_ts = min((probe.snapshot_ts for probe in probes), default=int(time.time()))
+        logger.info("Fetching recent trade tape since_ts=%s max_rows=%s", min_probe_ts, args.trade_limit)
+        trade_rows = fetch_recent_trade_tape(
+            since_ts=min_probe_ts,
+            max_rows=max(100, int(args.trade_limit)),
+            timeout_seconds=max(1.0, float(args.timeout_seconds)),
+        )
+        trade_data_end_ts = max((int(row.get("timestamp") or 0) for row in trade_rows), default=min_probe_ts)
+        fill_proxy = measure_fill_proxy(
+            probes,
+            trade_rows,
+            lookahead_seconds=max(1, int(args.fill_lookahead_seconds)),
+            trade_data_end_ts=trade_data_end_ts,
+        )
+    else:
+        missing_condition_count = sum(
+            1
+            for leg in leg_observations
+            if leg.fetch_status == "ok" and not leg.condition_id
+        )
+        fill_proxy = {
+            "lookahead_seconds": max(1, int(args.fill_lookahead_seconds)),
+            "eligible_probe_count": 0,
+            "full_fill_proxy_rate": None,
+            "bucketed": {},
+            "notes": (
+                "No eligible probes. The current Gamma /events A-6 watchlist flattening does not preserve "
+                f"conditionId for {missing_condition_count} otherwise-quotable legs, so the live trade tape "
+                "cannot be joined back to those markets."
+            ),
+        }
 
     b1_summary = summarize_b1(db_path)
 
@@ -1094,6 +1212,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "fill_proxy": fill_proxy,
         "b1": b1_summary,
     }
+    snapshot["gating_metrics"] = evaluate_gating_metrics(snapshot)
 
     output_json.write_text(json.dumps(serialize_for_json(snapshot), indent=2, sort_keys=True) + "\n", encoding="utf-8")
     output_md.write_text(build_markdown_report(snapshot), encoding="utf-8")

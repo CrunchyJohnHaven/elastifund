@@ -132,7 +132,7 @@ class TestA6ExecutorStateMachine(unittest.TestCase):
         )
 
     def test_complete_basket_transitions_to_merge_ready(self) -> None:
-        executor = A6BasketExecutor(A6ExecutorConfig(fill_timeout_ms=3_000))
+        executor = A6BasketExecutor(A6ExecutorConfig(fill_timeout_seconds=3_000))
         start = executor.submit_opportunity(self._make_opportunity(), now_ts=1_000)
         qty = start.basket.target_quantity
 
@@ -158,7 +158,7 @@ class TestA6ExecutorStateMachine(unittest.TestCase):
         self.assertEqual(final.basket.time_to_fill_ms, 1_200)
 
     def test_no_fill_timeout_expires_basket(self) -> None:
-        executor = A6BasketExecutor(A6ExecutorConfig(fill_timeout_ms=3_000))
+        executor = A6BasketExecutor(A6ExecutorConfig(fill_timeout_seconds=3_000))
         executor.submit_opportunity(self._make_opportunity(), now_ts=1_000)
 
         expired = executor.advance_time("a6-sig-1", now_ts=4_500)
@@ -168,7 +168,7 @@ class TestA6ExecutorStateMachine(unittest.TestCase):
         self.assertEqual(expired.events[0].state, "EXPIRED")
 
     def test_partial_fill_then_edge_collapse_rolls_back(self) -> None:
-        executor = A6BasketExecutor(A6ExecutorConfig(fill_timeout_ms=3_000))
+        executor = A6BasketExecutor(A6ExecutorConfig(fill_timeout_seconds=3_000))
         start = executor.submit_opportunity(self._make_opportunity(), now_ts=1_000)
         executor.apply_fill("a6-sig-1", leg_id="alice:YES", filled_quantity=start.basket.target_quantity, avg_price=0.29, now_ts=1_200)
 
@@ -192,7 +192,7 @@ class TestA6ExecutorStateMachine(unittest.TestCase):
         self.assertLess(collapsed.basket.realized_profit_usd, 0.0)
 
     def test_reprices_once_then_aborts_on_second_timeout(self) -> None:
-        executor = A6BasketExecutor(A6ExecutorConfig(fill_timeout_ms=3_000, max_reprices_per_leg=1))
+        executor = A6BasketExecutor(A6ExecutorConfig(fill_timeout_seconds=3_000, max_reprices_per_leg=1))
         start = executor.submit_opportunity(self._make_opportunity(), now_ts=1_000)
         executor.apply_fill("a6-sig-1", leg_id="alice:YES", filled_quantity=start.basket.target_quantity, avg_price=0.29, now_ts=1_200)
         improved_snapshot = self._make_snapshot(

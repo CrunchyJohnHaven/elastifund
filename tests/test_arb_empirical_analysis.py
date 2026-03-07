@@ -5,8 +5,10 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.arb_empirical_analysis import (
+    LegObservation,
     PassiveOrderProbe,
     ReplayViolationRow,
+    build_passive_order_probes,
     build_violation_episodes,
     measure_fill_proxy,
     midpoint_bucket,
@@ -191,6 +193,35 @@ class TestArbEmpiricalAnalysis(unittest.TestCase):
         self.assertEqual(result["eligible_probe_count"], 2)
         self.assertAlmostEqual(result["full_fill_proxy_rate"], 0.5)
         self.assertIn("tail_5_15pct", result["bucketed"])
+
+    def test_build_passive_order_probes_stratifies_by_cycle(self) -> None:
+        legs = []
+        for cycle_index in range(3):
+            for idx in range(3):
+                legs.append(
+                    LegObservation(
+                        cycle_index=cycle_index,
+                        observed_at_ts=100 + cycle_index,
+                        event_id=f"evt-{cycle_index}",
+                        event_title="Event",
+                        market_id=f"m-{cycle_index}-{idx}",
+                        condition_id=f"cond-{cycle_index}-{idx}",
+                        question="Question",
+                        category="politics",
+                        outcome_name="Yes",
+                        tick_size=0.01,
+                        yes_bid=0.10,
+                        yes_ask=0.11,
+                        midpoint=0.105 + idx,
+                        spread=0.01,
+                        fetch_status="ok",
+                        is_tradable_outcome=True,
+                    )
+                )
+
+        probes = build_passive_order_probes(legs, fill_sample_size=6)
+        sampled_cycles = {probe.cycle_index for probe in probes}
+        self.assertEqual(sampled_cycles, {0, 1, 2})
 
 
 if __name__ == "__main__":

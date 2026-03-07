@@ -11,8 +11,11 @@ import sqlite3
 import time
 from typing import Any, Mapping
 
+from signals.dep_graph.dep_graph_store import DepGraphStore
+
 
 DEFAULT_CONSTRAINT_DB_PATH = Path("data") / "constraint_arb.db"
+DEFAULT_DEP_GRAPH_DB_PATH = Path("data") / "dep_graph.sqlite"
 COMBINATORIAL_SOURCE_KEYS = {"a6", "b1"}
 
 
@@ -156,7 +159,7 @@ class CombinatorialConfig:
     a6_unwind_threshold: float = 1.03
     b1_implication_threshold: float = 0.03
     stale_book_max_age_seconds: int = 45
-    fill_timeout_ms: int = 3000
+    fill_timeout_seconds: float = 3.0
     cancel_replace_count: int = 1
     max_notional_per_leg_usd: float = 5.0
     arb_budget_usd: float = 100.0
@@ -167,6 +170,7 @@ class CombinatorialConfig:
     max_false_positive_rate: float = 0.05
     max_consecutive_rollbacks: int = 3
     constraint_db_path: Path = DEFAULT_CONSTRAINT_DB_PATH
+    dep_graph_db_path: Path = DEFAULT_DEP_GRAPH_DB_PATH
     embedded_a6_scanner_enabled: bool = True
 
     @classmethod
@@ -183,7 +187,7 @@ class CombinatorialConfig:
             stale_book_max_age_seconds=_env_int(
                 "JJ_COMBINATORIAL_STALE_BOOK_MAX_AGE_SECONDS", 45, env=source
             ),
-            fill_timeout_ms=_env_int("JJ_COMBINATORIAL_FILL_TIMEOUT_MS", 3000, env=source),
+            fill_timeout_seconds=_env_float("JJ_COMBINATORIAL_FILL_TIMEOUT_SECONDS", 3.0, env=source),
             cancel_replace_count=_env_int("JJ_COMBINATORIAL_CANCEL_REPLACE_COUNT", 1, env=source),
             max_notional_per_leg_usd=_env_float(
                 "JJ_COMBINATORIAL_MAX_NOTIONAL_PER_LEG_USD", 5.0, env=source
@@ -207,6 +211,9 @@ class CombinatorialConfig:
             ),
             constraint_db_path=Path(
                 source.get("JJ_CONSTRAINT_ARB_DB_PATH", str(DEFAULT_CONSTRAINT_DB_PATH))
+            ),
+            dep_graph_db_path=Path(
+                source.get("JJ_DEP_GRAPH_DB_PATH", str(DEFAULT_DEP_GRAPH_DB_PATH))
             ),
             embedded_a6_scanner_enabled=_env_bool(
                 "JJ_A6_EMBEDDED_SHADOW_SCANNER",
@@ -281,6 +288,8 @@ class CombinatorialOpportunity:
         cls,
         row: Mapping[str, Any],
         config: CombinatorialConfig,
+        *,
+        classification_accuracy_fallback: float | None = None,
     ) -> "CombinatorialOpportunity" | None:
         relation_type = str(row.get("relation_type") or "").strip()
         if relation_type == "same_event_sum":
@@ -300,6 +309,8 @@ class CombinatorialOpportunity:
         market_count = len(market_ids) or max(1, int(_safe_float(details.get("legs"), 1.0)))
         estimated_budget_usd = round(config.max_notional_per_leg_usd * market_count, 2)
         classification_accuracy = _safe_optional_float(details.get("classification_accuracy"))
+        if classification_accuracy is None:
+            classification_accuracy = classification_accuracy_fallback
         live_eligible = _live_eligible_for_relation(lane, relation_type, action, details)
         gate_reasons = details.get("gate_reasons") or []
         resolution_gate_status = "passed" if not gate_reasons else f"passed:{','.join(map(str, gate_reasons))}"
@@ -405,8 +416,30 @@ def evaluate_combinatorial_risk(
 class CombinatorialSignalStore:
     """Read normalized A-6/B-1 opportunities from the shared constraint-arb DB."""
 
-    def __init__(self, db_path: str | Path = DEFAULT_CONSTRAINT_DB_PATH) -> None:
+    def __init__(
+        self,
+        db_path: str | Path = DEFAULT_CONSTRAINT_DB_PATH,
+        dep_graph_db_path: str | Path = DEFAULT_DEP_GRAPH_DB_PATH,
+    ) -> None:
         self.db_path = Path(db_path)
+        self.dep_graph_db_path = Path(dep_graph_db_path)
+
+    def _b1_classification_accuracy(self) -> float | None:
+        if not self.dep_graph_db_path.exists():
+            return None
+
+        try:
+            summary = DepGraphStore(self.dep_graph_db_path).accuracy_summary(min_confidence=0.7)
+        except Exception:
+            return None
+
+        human_labeled = int(summary.get("human_labeled") or 0)
+        resolved_labeled = int(summary.get("resolved_labeled") or 0)
+        if human_labeled > 0:
+            return _safe_optional_float(summary.get("accuracy_human"))
+        if resolved_labeled > 0:
+            return _safe_optional_float(summary.get("accuracy_resolved"))
+        return None
 
     def poll_new_opportunities(
         self,
@@ -442,11 +475,24 @@ class CombinatorialSignalStore:
                 (int(since_ts), min_detected_ts),
             ).fetchall()
 
+        b1_accuracy = self._b1_classification_accuracy()
         seen: set[str] = set()
         opportunities: list[CombinatorialOpportunity] = []
         for row in rows:
             payload = dict(row)
-            opportunity = CombinatorialOpportunity.from_violation_row(payload, config)
+            relation_type = str(payload.get("relation_type") or "").strip()
+            accuracy_fallback = b1_accuracy if relation_type in {
+                "A_implies_B",
+                "B_implies_A",
+                "mutually_exclusive",
+                "subset",
+                "complementary",
+            } else None
+            opportunity = CombinatorialOpportunity.from_violation_row(
+                payload,
+                config,
+                classification_accuracy_fallback=accuracy_fallback,
+            )
             if not opportunity:
                 continue
             if opportunity.violation_id in seen:
