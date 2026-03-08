@@ -142,7 +142,7 @@
 - [ ] **Market scanning:** Gamma API fetches ~100 active markets per cycle
 - [ ] **Filtering:** YES price 10-90%, min $100 liquidity, scored by proximity to 50/50
 - [ ] **Claude analysis:** Anti-anchoring prompt (market price HIDDEN from Claude)
-- [ ] **Calibration v2 active:** Platt scaling (A=0.5914, B=-0.3977)
+- [ ] **Calibration v2 active:** fitted Platt scaling from the 532-market audit
   - [ ] 90% Claude → 71% calibrated
   - [ ] 80% Claude → 60% calibrated
   - [ ] 50% Claude → 40% calibrated
@@ -430,4 +430,4 @@
 
 ---
 
-*Generated 2026-03-06 from comprehensive codebase audit. Cross-referenced against COMMAND_NODE_v1.0.2.md, src/safety.py, src/core/config.py, src/broker/polymarket_broker.py, .env.live.template, and 47 Python source files.*
+*Generated 2026-03-06 from comprehensive codebase audit. Cross-referenced against COMMAND_NODE.md, src/safety.py, src/core/config.py, src/broker/polymarket_broker.py, .env.live.template, and 47 Python source files.*

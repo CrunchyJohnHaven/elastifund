@@ -11,7 +11,7 @@ from src.strategies.base import BacktestResult
 class TestReporting(unittest.TestCase):
     def test_analysis_generation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            cfg = AppConfig(system=SystemConfig(report_root=str(Path(tmp) / "reports"), analysis_path=str(Path(tmp) / "FastTradeEdgeAnalysis.md")))
+            cfg = AppConfig(system=SystemConfig(report_root=str(Path(tmp) / "reports"), analysis_path=str(Path(tmp) / "FAST_TRADE_EDGE_ANALYSIS.md")))
             writer = ReportWriter(cfg)
 
             evals = [

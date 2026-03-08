@@ -4,7 +4,7 @@
     "db_path": "data/edge_discovery.db",
     "log_path": "logs/edge_discovery.log",
     "report_root": "reports",
-    "analysis_path": "FastTradeEdgeAnalysis.md"
+    "analysis_path": "FAST_TRADE_EDGE_ANALYSIS.md"
   },
   "sources": {
     "gamma_api": "https://gamma-api.polymarket.com/markets",

@@ -69,7 +69,7 @@ This project runs a continuous 6-phase cycle:
 1. **RESEARCH** — Generate strategy hypotheses via Deep Research prompts
 2. **IMPLEMENT** — Code top candidates, update GitHub and task list
 3. **TEST** — Run through the hypothesis testing pipeline with automated kill rules
-4. **RECORD** — Write findings to Command Node, FastTradeEdgeAnalysis.md, and top-level docs
+4. **RECORD** — Write findings to Command Node, FAST_TRADE_EDGE_ANALYSIS.md, and top-level docs
 5. **PUBLISH** — Push to GitHub, update website, copy command nodes to new AI sessions
 6. **REPEAT** — Feed results into next research cycle
 
@@ -89,16 +89,24 @@ This project has two outputs, and both matter equally:
 
 ---
 
+## Root Context Standard
+
+- Active root handoff docs keep stable canonical names with no version suffixes.
+- Superseded variants move to `archive/root-history/`.
+- If a document is not current or not routinely handed to LLMs, it does not stay at root.
+
 ## Key Documents and Their Roles
 
 | Document | Role | Update Frequency |
 |----------|------|-----------------|
 | `CLAUDE.md` | Agent operating instructions (YOU ARE HERE) | Rarely — only on process changes |
-| `COMMAND_NODE_v1.0.2.md` | Full project context for any AI session | Every flywheel cycle |
-| `ProjectInstructions.md` | Quick-start context with priority queue | When priorities change |
+| `COMMAND_NODE.md` | Full project context for any AI session | Every flywheel cycle |
+| `PROJECT_INSTRUCTIONS.md` | Quick-start context with priority queue | When priorities change |
+| `LLM_CONTEXT_MANIFEST.md` | Canonical root package and naming standard | When package rules change |
 | `FLYWHEEL_STRATEGY.md` | Master project strategy and website vision | Monthly or on strategic shifts |
-| `FastTradeEdgeAnalysis.md` | Auto-generated pipeline results | After every pipeline run |
+| `FAST_TRADE_EDGE_ANALYSIS.md` | Auto-generated pipeline results | After every pipeline run |
 | `EDGE_DISCOVERY_SYSTEM.md` | Hypothesis testing pipeline architecture | When pipeline changes |
+| `KARPATHY_AUTORESEARCH_REPORT.md` | `autoresearch` benchmark discipline and loop-design notes | When loop design changes |
 | `research/edge_backlog_ranked.md` | Ranked strategy backlog | Every flywheel cycle |
 | `README.md` | Public-facing project description | When live metrics change |
 
@@ -132,22 +140,26 @@ This is standard practice. Quantopian was open-source but nobody published their
 
 ## Current State (Update this section each cycle)
 
-**Date:** 2026-03-07
+**Date:** 2026-03-08
 **Cycle:** Flywheel Cycle 2 — Structural Alpha & Microstructure Defense
 **Capital:** $247.51 Polymarket (USDC) + $100 Kalshi (USD) = $347.51 total
-**Live trading:** ACTIVE — Dublin VPS, jj-live.service
+**Live trading:** PAUSED — Dublin VPS deployed, `jj-live.service` currently STOPPED
+**Live trades executed:** 0 (jj_state.json: total_trades=0, cycles_completed=16)
+**Live config:** $0.50/position, 20 max open positions, $5 daily loss cap, 0.25 Kelly, 24h max resolution
 **Execution mode:** 100% Post-Only maker orders (Dispatch #75 pivot)
+**Data target:** 100 resolved trades in 7 days for live calibration data — NOT STARTED (0/100)
 **Strategies tested:** 12 families, all REJECT ALL (taker-based)
-**Strategies in backlog:** 38 ranked (8 new from Dispatch #75)
+**Strategies in backlog:** 131 tracked total (7 deployed, 6 building, 2 structural alpha, 10 rejected, 8 pre-rejected, 1 re-evaluating, 97 research pipeline)
 **New modules (Cycle 2):**
   - bot/ws_trade_stream.py — WebSocket CLOB feed → VPIN + OFI (5-level weighted)
   - bot/lead_lag_engine.py — Semantic Lead-Lag Arbitrage (Granger causality + LLM semantic filter)
   - bot/kill_rules.py — Updated kill rules (semantic decay, toxicity survival, cost stress polynomial, calibration enforcement)
   - All wired into jj_live.py as signal sources #5 (VPIN/OFI) and #6 (LeadLag)
-**Tests:** 223 passing (204 bot/ + 19 tests/)
-**Research dispatches:** 76
+**Tests:** README currently claims 553 passing tests; refresh before repeating externally
+**Research dispatches:** README currently claims 97 dispatches
 **Sprint plan:** 60-day, 4 cycles (VPIN → Debate → Conformal → Risk Parity)
-**Next action:** Deploy to VPS, run lead-lag scan on live market data, validate OFI on real order books
+**Code health:** 38/38 bot/*.py pass syntax. Zero TODO/FIXME. Two of three LLM prompt templates missing temporal grounding (debate_pipeline.py, lead_lag_engine.py).
+**Next action:** Keep `jj-live.service` stopped until the A-6/B-1 execution-validity gate is measured: capture top-of-book cost, dwell time, and maker fill behavior for the allowed neg-risk universe, then decide whether to restart live trading
 
 ---
 

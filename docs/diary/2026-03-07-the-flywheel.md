@@ -3,7 +3,7 @@
 ## What We Did
 Today was meta-work, and it mattered. We formalized the flywheel: Research -> Implement -> Test -> Record -> Publish -> Repeat. That gives the project a repeatable operating loop instead of ad hoc experiments.
 
-We also wrote a Deep Research prompt that requests 100 new strategy hypotheses with scoring criteria, data sources, implementation complexity, and failure modes. In parallel, we created the JJ operating persona and rewrote core docs (`CLAUDE.md`, `README.md`, `ProjectInstructions.md`, `FLYWHEEL_STRATEGY.md`) so every new AI session starts from the same rules and context.
+We also wrote a Deep Research prompt that requests 100 new strategy hypotheses with scoring criteria, data sources, implementation complexity, and failure modes. In parallel, we created the JJ operating persona and rewrote core docs (`CLAUDE.md`, `README.md`, `PROJECT_INSTRUCTIONS.md`, `FLYWHEEL_STRATEGY.md`) so every new AI session starts from the same rules and context.
 
 Finally, we prepared the repo for public visibility: clearer framing, honest failure logging, and a documented system that outsiders can audit.
 

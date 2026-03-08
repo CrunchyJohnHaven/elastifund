@@ -1,6 +1,7 @@
 # Elastifund — Project Instructions
-**Version:** 3.1.0 | **Updated:** 2026-03-07 | **Owner:** John Bradley
+**Version:** 3.2.0 | **Updated:** 2026-03-08 | **Owner:** John Bradley
 **Paste this into any new ChatGPT, Claude web, Claude Code, or Cowork session.**
+**Canonical filename:** `PROJECT_INSTRUCTIONS.md`. Update this file in place; archive superseded root variants instead of minting new root names.
 
 ---
 
@@ -20,7 +21,7 @@ For everything else — writing code, running tests, deploying to VPS, researchi
 
 **Elastifund** is an AI-powered prediction market trading fund. AI persona: **JJ**. We trade on **Polymarket** (USDC, live) and **Kalshi** (USD, API connected). 20% of net trading profits fund veteran suicide prevention.
 
-**Status (March 7, 2026):** Bot deployed to Dublin VPS. Service STOPPED while the structural alpha stack is integrated: smart wallet flow for fast markets plus combinatorial arbitrage (A-6 first, then B-1). Three long-dated orders were placed and cancelled. Velocity filter confirmed that pure LLM forecasting cannot be the only lane on Polymarket.
+**Status (March 8, 2026):** Bot deployed to Dublin VPS. Service STOPPED while the structural alpha stack is reprioritized around execution-validity gates: smart wallet flow for fast markets plus structural arbitrage measured in narrow form first (A-6 guaranteed-dollar first, B-1 templated only). Three long-dated orders were placed and cancelled. Velocity filter confirmed that pure LLM forecasting cannot be the only lane on Polymarket.
 
 **Primary goal: Make the first dollar.** Fast feedback loops. Trade markets that resolve within hours, not months.
 
@@ -33,7 +34,7 @@ For everything else — writing code, running tests, deploying to VPS, researchi
 | **Polymarket** | USDC | Live, service stopped for upgrade | py_clob_client, Gamma API |
 | **Kalshi** | USD | API connected, trading not built | kalshi-python SDK, RSA auth |
 
-Polymarket proxy wallet: `0xb2fef31cf185b75d0c9c77bd1f8fe9fd576f69a5`
+Polymarket proxy wallet: [redacted from repo; stored in runtime config]
 Kalshi API Key ID: [stored in .env — see .env.example]
 
 ---
@@ -71,17 +72,18 @@ SIGNAL 4: Cross-Platform Arb [COMPLETE, NOT ACTIVATED]
   Sizing: Quarter-Kelly
   Status: Code complete, needs live market matching + ops activation
 
-SIGNAL 5: Sum Violation Scanner (A-6) [SHADOW MODE, UPGRADE IN PROGRESS]
-  Markets: Multi-outcome / neg-risk event groups
-  Edge: current implementation = neg-risk YES-basket only (not binary YES+NO merge); promote only if maker-fill curve, violation half-life, and settlement path pass
+SIGNAL 5: Guaranteed Dollar Scanner (A-6) [SHADOW MODE, EMPIRICAL GATE]
+  Markets: Neg-risk event groups only
+  Edge: cheapest guaranteed-dollar construction < 0.95
+  Construction order: YES+NO first, neg-risk-conversion second, full basket last
   Sizing: Execution-risk-adjusted, capped at $5/leg
-  Status: scanner + telemetry landed; tick-size updates and A-6 episode tracking now persist, but live order routing and settlement validation are still pending
+  Status: top-of-book ranking landed; live fill/dwell capture is the next gate
 
-SIGNAL 6: Dependency Graph Arb (B-1) [BUILDING]
-  Markets: Logically linked markets in same resolution window
-  Edge: implication / exclusion / complement violations > 4% until the gold-set precision audit proves a tighter threshold
+SIGNAL 6: Templated Dependency Engine (B-1) [NARROWED / GATED]
+  Markets: Deterministic template families in one event cluster
+  Edge: implication / exclusion / complement violations > 5% and >= 2x combined spread
   Sizing: Execution-risk-adjusted, capped at $5/leg
-  Status: graph cache + live monitor exist; promotion now requires a 50-pair gold set and >=85% validated precision
+  Status: template matcher landed; live density audit currently shows zero deterministic pairs in the first 1,000 allowed markets
 
 CONFIRMATION LAYER:
   2+ predictive sources agree → highest confidence, boosted size
@@ -168,8 +170,10 @@ NOTIFY  → Telegram alerts on every trade
 
 ```
 Elastifund/
-├── ProjectInstructions.md      ← YOU ARE HERE (paste to any AI session)
-├── COMMAND_NODE_v1.0.2.md      ← Deep technical reference (764 lines)
+├── PROJECT_INSTRUCTIONS.md     ← YOU ARE HERE (paste to any AI session)
+├── COMMAND_NODE.md             ← Deep technical reference
+├── LLM_CONTEXT_MANIFEST.md     ← Canonical root context standard
+├── KARPATHY_AUTORESEARCH_REPORT.md ← Loop-design and benchmark discipline notes
 ├── README.md                   ← GitHub public-facing
 ├── .env.example / .gitignore
 │
@@ -240,7 +244,7 @@ Elastifund/
 
 ## 9. Priority Queue (What to Build Next)
 
-> **UPDATED 2026-03-07:** Canonical implementation spec now lives in `docs/strategy/combinatorial_arb_implementation_deep_dive.md`. Primary lane is structural alpha: A-6 first, B-1 second.
+> **UPDATED 2026-03-07:** Canonical implementation spec now lives in `docs/strategy/combinatorial_arb_implementation_deep_dive.md`. Structural alpha is now gated by live executable density: A-6 guaranteed-dollar first, B-1 templated only.
 
 ### P0 — Build Status (Current)
 1. [x] Added `bot/constraint_arb_engine.py` with candidate generation, relation classification, resolution gating, sum/graph violation scanning, VPIN veto hook, SQLite logging, and shadow-report CLI.
@@ -259,35 +263,40 @@ Elastifund/
 11. [x] Land event watchlist + execution-aware threshold logic in `strategies/a6_sum_violation.py`.
 12. [x] Land B-1 graph cache, prompt scaffolding, validation, monitor, and execution-planner modules in `strategies/b1_dependency_graph.py` and `strategies/b1_violation_monitor.py`.
 13. [ ] Add live user-channel fill handling + real order submission on top of the shared multi-leg executor.
-14. [ ] Add resolved-market dependency audit and manual 50-pair validation loop for B-1.
-15. [ ] Integrate A-6 and B-1 into the live confirmation/execution stack in `bot/jj_live.py` once the multi-leg routing path is ready.
+14. [ ] Add resolved-market dependency audit and manual family-specific validation loop for B-1.
+15. [ ] Integrate A-6 and B-1 into the live confirmation/execution stack in `bot/jj_live.py` only after the empirical density/fill gate is passed.
 
 Other completed modules still available for parallel promotion work:
 
 - `bot/btc_5min_maker.py` plus `bot/tests/test_btc_5min_maker.py`
 - `kalshi/weather_arb.py`
-- Rolling adaptive Platt selector and ensemble disagreement sizing in `bot/jj_live.py` + `bot/llm_ensemble.py`
-- Validation coverage in `tests/test_kalshi_weather_arb.py` and `bot/tests/test_llm_ensemble.py`
+- Rolling adaptive Platt selector and ensemble disagreement sizing in `bot/jj_live.py` + `bot/ensemble_estimator.py`
+- Validation coverage in `tests/test_kalshi_weather_arb.py` and `bot/tests/test_ensemble_estimator.py`
 
 ### P1 — 14-Day Execution Order (Do In Sequence)
-1. **Days 1-3 (A-6 data plane):** Move discovery to Gamma `/events`, stream live market-depth over WebSocket, and keep per-token best-bid/best-ask state in memory.
-2. **Days 4-5 (A-6 telemetry):** Batch multi-leg maker orders, enforce `postOnly + GTC` only, and log scan snapshots, basket episodes, and order-group telemetry instead of generic shadow rows.
-3. **Days 6-8 (B-1 graph build):** Build the 50-pair gold set, add resolution-window/tag/embedding prefilter, run Haiku classification, and cache graph edges.
-4. **Days 9-10 (B-1 live monitor):** Monitor implication, mutual-exclusion, and complement violations at `tau = 0.04`; defer conditional chains.
-5. **Days 11-12 (integration):** Route A-6/B-1 into the live confirmation/execution stack, wire execution-risk sizing, and finalize kill switches.
-6. **Days 13-14 (shadow mode):** Publish maker-fill curve, violation half-life, and settlement-path evidence alongside capture-rate / rollback-loss attribution.
+1. **Phase 0 (48-hour empirical gate):** Measure top-of-book costs, cheapest construction type, dwell time, and maker fill behavior for the allowed neg-risk universe.
+2. **Phase 1 (A-6 narrow live shadow):** Keep A-6 to guaranteed-dollar ranking plus maker-only entry logic; do not widen into full-basket optimization first.
+3. **Phase 2 (B-1 templated only):** One event family, deterministic compatibility matrix, manual gold set, then live shadow.
+4. **Phase 3 (integration):** Route A-6/B-1 into the live confirmation/execution stack only if Phase 0 and Phase 2 actually justify it.
+6. **Days 13-14 (shadow mode):** Paper trade the combined arb stack, simulate realistic maker fills, and publish capture-rate / rollback-loss attribution.
 
-### P2 — Hard Kill Rules (Non-Negotiable)
+### P2 — Website: Competitive Benchmark Harness (Sequenced into Cycles 2-4)
+1. **Cycle 2:** Publish methodology page (`/benchmark/methodology`) with T0-T7 test matrix and scoring rubric. No results yet — methodology-first establishes trust.
+2. **Cycle 2-3:** Build benchmark harness (`inventory/` directory structure, Docker orchestration, metrics collection, artifact storage).
+3. **Cycle 3:** Run first 3 systems (Freqtrade, Hummingbot, NautilusTrader) through T0-T5. Publish system profile pages.
+4. **Cycle 4:** Run 6 more systems. Launch interactive leaderboard. Publish license risk guide.
+5. **Post-sprint:** Quarterly updates, expand to commercial SaaS feature comparisons, add legacy systems as historical baselines.
+See `research/dispatches/DISPATCH_097_competitive_inventory_benchmark_blueprint.md` for the implementation brief, `research/competitive_inventory_benchmark_deep_research.md` for the full integrated research, and `REPLIT_DASHBOARD_v8.md` for page specification.
+
+### P3 — Hard Kill Rules (Non-Negotiable)
 1. **A-6 kill:** reject if realized capture `<50%` of theoretical over a trailing 20-event window.
-2. **A-6 kill:** reject if zero qualifying events are detected over 4 weeks.
-3. **A-6 promotion block:** reject live promotion if basket completion probability stays `<15%` after 50 measured basket attempts.
-4. **B-1 kill:** reject if relation accuracy drops below `85%` on the 50-pair gold set.
-5. **B-1 kill:** reject if resolved false-positive rate exceeds `5%` or if 3 consecutive signals lose money due to rollback/spread collapse.
-6. **Global kill:** decommission both strategies if combined cumulative P&L is negative after 30 live days.
-7. **Program kill:** reject live promotion if partial-basket rollback loss exceeds `30%` of gross edge.
-8. **Program kill:** reject immediately on any augmented-neg-risk rule violation (`Other` traded, placeholder leakage, broken resolution-equivalence gate).
-9. **Program diagnostic:** if VPIN-gated variant materially outperforms ungated variant, treat the issue as execution quality failure before scaling alpha.
-10. **Program promotion gate:** no live promotion until maker-fill curve, violation half-life, and settlement-path checks all pass.
+2. **A-6 kill:** reject if the allowed universe fails to produce any event below the initial `0.95` guaranteed-dollar cost gate over the observation window.
+3. **B-1 kill:** reject if relation accuracy drops below `80%` on the 50-pair gold set.
+4. **B-1 kill:** reject if deterministic template density remains effectively zero or if resolved false-positive rate exceeds `5%`.
+5. **Global kill:** decommission both strategies if combined cumulative P&L is negative after 30 live days.
+6. **Program kill:** reject live promotion if partial-basket rollback loss exceeds `30%` of gross edge.
+7. **Program kill:** reject immediately on any augmented-neg-risk rule violation (`Other` traded, placeholder leakage, broken resolution-equivalence gate).
+8. **Program diagnostic:** if VPIN-gated variant materially outperforms ungated variant, treat the issue as execution quality failure before scaling alpha.
 
 ---
 
@@ -325,10 +334,10 @@ Other completed modules still available for parallel promotion work:
 
 **Arb execution contract:** Multi-leg arb stays maker-only. Batch orders must remain `postOnly=true` with `OrderType.GTC`; do not combine post-only with `FAK` or `FOK`.
 
-**Market-data contract:** A-6/B-1 require market WebSocket depth. REST orderbook calls are bootstrap and recovery only. A `GET /book` 404 means "suspend this leg until liquidity appears," not "crash the scan."
+**Market-data contract:** For the current structural-arb gate, top-of-book is the primary instrument. WebSocket + batched `/prices` are first-class; `/book` is recovery only. A `GET /book` 404 means "suspend this leg until liquidity appears," not "crash the scan."
 
 **Merge contract:** Only merge complete baskets above `$20`. Do not hardcode old contract addresses from research notes; `0x2791...` is the Polygon `USDC.e` collateral token, not the CTF contract.
 
 ---
 
-*v3.1.0 — Updated 2026-03-07. Integrated the combinatorial arbitrage deep dive, promoted A-6/B-1 into the active priority queue, and added explicit execution contracts for WebSocket depth, linked-leg state, rollback, and merge handling. This document supersedes COMMAND_NODE for quick-start context in new AI sessions. See COMMAND_NODE_v1.0.2.md for deep technical reference.*
+*v3.2.0 — Updated 2026-03-08. Adopted stable canonical root filenames, added the root-context standard, and kept `PROJECT_INSTRUCTIONS.md` as the in-place quick-start handoff document. See `COMMAND_NODE.md` for deep technical reference.*
