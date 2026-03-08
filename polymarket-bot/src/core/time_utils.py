@@ -12,6 +12,11 @@ def utc_now() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
+def utc_now_naive() -> datetime:
+    """Get current UTC time as a naive datetime for legacy storage paths."""
+    return utc_now().replace(tzinfo=None)
+
+
 def ms_to_datetime(milliseconds: int | float) -> datetime:
     """Convert milliseconds since epoch to datetime.
 

@@ -17,6 +17,7 @@ References:
 """
 import math
 import os
+from datetime import datetime, timezone
 from typing import Optional
 
 import structlog
@@ -27,8 +28,18 @@ logger = structlog.get_logger(__name__)
 # Fitted on 70% train set, validated on 30% test set (out-of-sample)
 # Test-set Brier: 0.286 (raw) → 0.245 (Platt) — improvement of +0.041
 # A and B map: calibrated = sigmoid(A * logit(raw) + B)
-PLATT_A = float(os.environ.get("PLATT_A", "0.5914"))
-PLATT_B = float(os.environ.get("PLATT_B", "-0.3977"))
+def _float_env(name: str, default: str) -> float:
+    raw = os.environ.get(name)
+    if raw in (None, ""):
+        return float(default)
+    try:
+        return float(raw)
+    except ValueError:
+        return float(default)
+
+
+PLATT_A = _float_env("PLATT_A", "0.5914")
+PLATT_B = _float_env("PLATT_B", "-0.3977")
 
 # Market category keywords for routing
 CATEGORY_KEYWORDS = {
@@ -67,7 +78,7 @@ CATEGORY_PRIORITY = {
     "sports": 0,      # Minimal LLM edge, quant teams set lines (research: #1 for arb bots, not LLMs)
     "geopolitical": 1, # ~30% worse than experts (RAND), high uncertainty
     "fed_rates": 0,   # Worst category — systematic overconfidence
-    "unknown": 2,     # Default — still analyze
+    "unknown": 0,     # REJECT — unclassifiable markets have no structural LLM edge
 }
 
 # Polymarket taker fee rates (introduced Feb 18, 2026)
@@ -230,6 +241,24 @@ class ClaudeAnalyzer:
         # Classify market category
         category = classify_market_category(question)
         priority = CATEGORY_PRIORITY.get(category, 2)
+        client = getattr(self, "_client", None)
+        ensemble = getattr(self, "_ensemble", None)
+
+        if not client and not ensemble:
+            return {
+                "probability": current_price,
+                "calibrated_probability": current_price,
+                "confidence": 0.0,
+                "reasoning": "Analyzer not available (Claude and ensemble unavailable)",
+                "mispriced": False,
+                "direction": "hold",
+                "edge": 0.0,
+                "raw_edge": 0.0,
+                "category": category,
+                "category_priority": priority,
+                "taker_fee": 0.0,
+                "skipped": False,
+            }
 
         # Skip low-priority categories
         if priority < self.min_category_priority:
@@ -250,22 +279,6 @@ class ClaudeAnalyzer:
                 "skipped": True,
             }
 
-        if not self._client and not self._ensemble:
-            return {
-                "probability": current_price,
-                "calibrated_probability": current_price,
-                "confidence": 0.0,
-                "reasoning": "Analyzer not available (Claude and ensemble unavailable)",
-                "mispriced": False,
-                "direction": "hold",
-                "edge": 0.0,
-                "raw_edge": 0.0,
-                "category": category,
-                "category_priority": priority,
-                "taker_fee": 0.0,
-                "skipped": False,
-            }
-
         # Build prompt WITHOUT market price (anti-anchoring)
         prompt = self._build_prompt(question, context, news_section=news_section)
 
@@ -273,7 +286,7 @@ class ClaudeAnalyzer:
             response_text: Optional[str] = None
 
             # Ensemble path (optional): falls back to Claude if unavailable/failed.
-            if self._ensemble:
+            if ensemble:
                 response_text = await self._analyze_with_ensemble(
                     question=question,
                     context=context,
@@ -281,9 +294,9 @@ class ClaudeAnalyzer:
                 )
 
             if response_text is None:
-                if not self._client:
+                if not client:
                     raise RuntimeError("Claude API not available and ensemble failed")
-                message = self._client.messages.create(
+                message = client.messages.create(
                     model=self.model,
                     max_tokens=300,
                     messages=[{"role": "user", "content": prompt}],
@@ -420,7 +433,10 @@ class ClaudeAnalyzer:
         ctx_section = f"\nRelevant context:\n{context}\n" if context else ""
         news_block = f"\n{news_section}\n" if news_section else ""
 
+        current_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         return f"""Estimate the probability that this event resolves YES.
+
+Today's date: {current_date}
 
 Question: {question}
 {ctx_section}{news_block}
@@ -429,6 +445,8 @@ Step 2: What specific evidence adjusts the probability up or down from the base 
 Step 3: Give your final estimate.
 
 IMPORTANT CALIBRATION NOTE: You have a documented tendency to overestimate YES probabilities by 20-30%. When you feel 70-80% confident in YES, the true rate is closer to 50-55%. When you feel 90%+ confident in YES, the true rate is closer to 63%. Adjust your estimate downward accordingly.
+
+IMPORTANT DATE NOTE: Use today's date above to ground your reasoning. Do NOT rely on training-data assumptions about future events. If an event's deadline has already passed, account for that. If a product has already launched, that changes the probability.
 
 If recent news headlines are provided above, weight them appropriately — breaking developments may shift probabilities meaningfully, but do not anchor solely on headlines.
 
@@ -526,7 +544,7 @@ REASONING: <1-2 sentences>"""
         """
         # Approximate model rates ($/MTok input/output).
         # Defaults to Haiku pricing for unknown model names.
-        model = self.model.lower()
+        model = getattr(self, "model", "claude-haiku-4-5").lower()
         in_rate = 1.0
         out_rate = 5.0
         if "sonnet" in model:

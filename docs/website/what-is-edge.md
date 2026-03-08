@@ -1,6 +1,6 @@
 # What Is "Edge"? The Honest Math of Prediction Market Trading
 
-*Part of the Elastifund Education Center — [johnbradleytrading.com/learn/what-is-edge](/learn/what-is-edge)*
+*Part of the Elastifund Education Center — [elastifund.io/learn/what-is-edge](https://elastifund.io/learn/what-is-edge)*
 
 ---
 

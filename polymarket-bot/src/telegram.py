@@ -1,6 +1,7 @@
 """Telegram notification client for trading alerts."""
 import os
 from datetime import datetime
+from src.core.time_utils import utc_now_naive
 from typing import Optional
 
 import httpx
@@ -123,7 +124,7 @@ class TelegramNotifier:
         )
         if reasoning:
             msg += f"<b>Reason:</b> {_escape_html(reasoning[:200])}\n"
-        msg += f"\n<i>{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}</i>"
+        msg += f"\n<i>{utc_now_naive().strftime('%Y-%m-%d %H:%M UTC')}</i>"
 
         return await self.send_message(msg)
 
@@ -146,7 +147,7 @@ class TelegramNotifier:
         if pnl is not None:
             emoji = "📈" if pnl >= 0 else "📉"
             msg += f"<b>P&L:</b> {emoji} ${pnl:+.2f}\n"
-        msg += f"\n<i>{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}</i>"
+        msg += f"\n<i>{utc_now_naive().strftime('%Y-%m-%d %H:%M UTC')}</i>"
 
         return await self.send_message(msg)
 
@@ -158,7 +159,7 @@ class TelegramNotifier:
         )
         if context:
             msg += f"<b>Context:</b> {_escape_html(context[:200])}\n"
-        msg += f"\n<i>{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}</i>"
+        msg += f"\n<i>{utc_now_naive().strftime('%Y-%m-%d %H:%M UTC')}</i>"
 
         return await self.send_message(msg)
 
@@ -189,7 +190,7 @@ class TelegramNotifier:
                 m_pnl = m.get("pnl", 0)
                 msg += f"  • {name}: ${m_pnl:+.2f}\n"
 
-        msg += f"\n<i>{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}</i>"
+        msg += f"\n<i>{utc_now_naive().strftime('%Y-%m-%d %H:%M UTC')}</i>"
 
         return await self.send_message(msg)
 
@@ -198,7 +199,7 @@ class TelegramNotifier:
         msg = (
             f"🤖 <b>Bot Started</b>\n\n"
             f"<b>Mode:</b> {'📝 Paper Trading' if mode == 'paper' else '💰 Live Trading'}\n"
-            f"<b>Time:</b> {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}\n"
+            f"<b>Time:</b> {utc_now_naive().strftime('%Y-%m-%d %H:%M UTC')}\n"
         )
         return await self.send_message(msg)
 
@@ -218,7 +219,7 @@ class TelegramNotifier:
             f"<b>Reason:</b> {_escape_html(reason[:300])}\n"
             f"<b>Orders Cancelled:</b> {cancelled_orders}\n"
             f"<b>Status:</b> All new trades BLOCKED\n"
-            f"\n<i>{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}</i>\n"
+            f"\n<i>{utc_now_naive().strftime('%Y-%m-%d %H:%M UTC')}</i>\n"
             f"\n💡 Use /unkill endpoint to resume trading."
         )
         return await self.send_message(msg)
@@ -235,7 +236,7 @@ class TelegramNotifier:
             f"<b>Consecutive Losses:</b> {consecutive_losses}\n"
             f"<b>Cooldown Duration:</b> {cooldown_seconds // 60} minutes\n"
             f"<b>Status:</b> New trades paused\n"
-            f"\n<i>{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}</i>"
+            f"\n<i>{utc_now_naive().strftime('%Y-%m-%d %H:%M UTC')}</i>"
         )
         return await self.send_message(msg)
 
@@ -258,7 +259,7 @@ class TelegramNotifier:
             f"<b>Cancelled:</b> {cancelled} ({cancel_rate:.1f}%)\n"
             f"<b>Avg Fill Time:</b> {avg_fill_time:.1f}s\n"
             f"<b>Avg Slippage:</b> {avg_slippage:+.4f}\n"
-            f"\n<i>{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}</i>"
+            f"\n<i>{utc_now_naive().strftime('%Y-%m-%d %H:%M UTC')}</i>"
         )
         return await self.send_message(msg)
 

@@ -1,10 +1,34 @@
+# Core runtime dependencies for the shared repo-root workspace.
+# For local development and test runs, install requirements-dev.txt instead.
+
+# Exchange and HTTP clients
 aiohttp
+httpx
+py-clob-client
+python-dotenv
+requests
 websockets
+
+# App and storage layers
+aiosqlite
+alembic
+asyncpg
+fastapi>=0.111,<1.0
+greenlet
+pydantic-settings
 sqlalchemy
-scipy
+structlog
+uvicorn[standard]>=0.30,<1.0
+
+# Research and modeling
+anthropic
+matplotlib
 numpy
+openai
 pandas
 scikit-learn
+scipy
 xgboost
-pyyaml
-matplotlib
+
+# Local config and simulation support
+PyYAML

@@ -8,7 +8,13 @@ polymarket-bot.env
 Polymarket_Bot_Credentials.docx
 *.pem
 *.key
+*.p12
+*.pfx
+*.crt
+*.csr
+*.keystore
 jj_state.json
+*.local.json
 
 # Handoff docs containing live credentials — never commit
 CLAUDE_CODE_HANDOFF.md
@@ -26,6 +32,8 @@ JJ_RESOURCE_INVENTORY.md
 *Fund_Pitch*.docx
 *Fund_Overview*.pdf
 *Credentials*.docx
+*.doc
+*.docx
 
 # Spec docs with implementation details — keep private until ready
 LLM_ENSEMBLE_SPEC.md
@@ -58,11 +66,25 @@ env/
 
 # Testing
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
 .pytest_cache/
 pytest-cache-files-*/
 *.cover
 .hypothesis/
+
+# Tooling caches
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.tox/
+.nox/
+.cache/
+.ipynb_checkpoints/
+.direnv/
+.envrc
+.python-version
 
 # IDE
 .vscode/
@@ -70,6 +92,14 @@ pytest-cache-files-*/
 *.swp
 *.swo
 *~
+*.tmp
+*.temp
+*.pid
+tmp/
+temp/
+
+# Logs
+*.log
 
 # OS
 .DS_Store
@@ -93,10 +123,12 @@ simulator/output/*.csv
 backtest/results/*.json
 backtest/charts/*.png
 polymarket-bot/backtest_output/
-research/dispatches/
+research/dispatches/*
+!research/dispatches/README.md
 research/prompts/
 
 # Logs and runtime data
 logs/
 reports/
 data/
+state/elastifund/

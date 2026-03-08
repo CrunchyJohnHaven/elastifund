@@ -1,48 +1,28 @@
 # OPEN_SOURCE_CHECKLIST
 Date: 2026-03-07
-Scope scanned: `/Users/johnbradley/Desktop/Elastifund`
+Scope scanned: repo root
 
-## Summary
-- Hardcoded live API secrets were not found in scanned text files.
-- Public/operational identifiers were found and should be sanitized for open-source release.
+## Current status
+- `python3 scripts/check_repo_hygiene.py` is the publication gate for tracked high-risk artifacts.
+- As of 2026-03-07, the tracked tree contains no `.pem`, `.env`, `.db`, or `jj_state.json` files.
+- The same check scans tracked text files for high-confidence secret patterns and currently reports clean.
 
-## Files Requiring Sanitization (with line numbers)
-- `/Users/johnbradley/Desktop/Elastifund/scripts/deploy.sh:13`
-  - Contains fixed VPS target `root@161.35.24.142`.
-  - Action: replace with env var placeholder.
+## What the check blocks
+- Tracked `*.pem` files.
+- Tracked `.env` files.
+- Tracked `*.db` files.
+- Tracked `jj_state.json`.
+- High-confidence secret material in tracked text files, including private-key headers and live token/key formats.
 
-- `/Users/johnbradley/Desktop/Elastifund/Checklist.md:42`
-- `/Users/johnbradley/Desktop/Elastifund/Checklist.md:44`
-- `/Users/johnbradley/Desktop/Elastifund/Report_Generation_Checklist.md:13`
-- `/Users/johnbradley/Desktop/Elastifund/Report_Generation_Checklist.md:26`
-- `/Users/johnbradley/Desktop/Elastifund/JJ_SYSTEM_v1.0.md:58`
-- `/Users/johnbradley/Desktop/Elastifund/JJ_SYSTEM_v1.0.md:173`
-- `/Users/johnbradley/Desktop/Elastifund/Predictive-Alpha-2.0-Handoff/02_CURRENT_SYSTEM/SYSTEM_OVERVIEW.md:617`
-- `/Users/johnbradley/Desktop/Elastifund/research_dispatch/P0_33_live_vs_backtest_scorecard_COWORK.md:8`
-- `/Users/johnbradley/Desktop/Elastifund/research_dispatch/P0_65_live_scorecard_statistical_validation_COWORK.md:16`
-- `/Users/johnbradley/Desktop/Elastifund/polymarket-bot/HEALTH_REPORT_20260305.md:14`
-  - Contains specific server IP `161.35.24.142`.
-  - Action: replace with `${VPS_HOST}` or redact.
+## Run before public pushes
 
-- `/Users/johnbradley/Desktop/Elastifund/CONTRIBUTING.md:76`
-- `/Users/johnbradley/Desktop/Elastifund/INVESTOR_FOLDER_INDEX.md:67`
-- `/Users/johnbradley/Desktop/Elastifund/JJ_SYSTEM_v1.0.md:5`
-- `/Users/johnbradley/Desktop/Elastifund/generate_monthly_report.js:416`
-  - Contains personal email `johnhavenbradley@gmail.com`.
-  - Action: replace with team alias email.
+```bash
+python3 scripts/check_repo_hygiene.py
+```
 
-- `/Users/johnbradley/Desktop/Elastifund/Checklist.md:84`
-- `/Users/johnbradley/Desktop/Elastifund/research_dispatch/P1_39_multi_model_ensemble_implementation_CLAUDE_CODE.md:89`
-- `/Users/johnbradley/Desktop/Elastifund/polymarket-bot/.env.live.template:30`
-- `/Users/johnbradley/Desktop/Elastifund/polymarket-bot/QUICK_START.md:86`
-- `/Users/johnbradley/Desktop/Elastifund/polymarket-bot/INDEX.md:180`
-- `/Users/johnbradley/Desktop/Elastifund/polymarket-bot/START_HERE.md:168`
-- `/Users/johnbradley/Desktop/Elastifund/polymarket-bot/FILES_SUMMARY.txt:212`
-  - Contains key-like examples (`sk-...`, `sk-ant-...`).
-  - Action: replace with neutral placeholders (already done in root `.env.example`).
+Exit code `0` means the tracked repo is clean for this gate. Exit code `1` means a blocked artifact or secret-like pattern was found and must be removed or untracked before pushing.
 
-## Repository Hygiene Actions Applied
-- Added/updated root `.env.example` placeholders to avoid key-like strings.
-- Ensured root `.gitignore` includes:
-  - `.env`, `jj_state.json`, `*.db`, `venv/`, `__pycache__/`, `research/`.
-  - `polymarket-bot/backtest_output/`.
+## Scope notes
+- Example and template files such as `.env.example` are allowed.
+- Placeholder strings such as `sk-...`, `sk-ant-...`, and `PASTE_...` are ignored so the check does not fail on documentation examples.
+- This is a narrow publication gate, not a full redaction audit. Public IPs, emails, and other non-secret identifiers still need manual review when publishing.

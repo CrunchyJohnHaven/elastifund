@@ -1,6 +1,6 @@
 # Prediction Markets 101
 
-*Part of the Elastifund Education Center — [johnbradleytrading.com/learn/prediction-markets-101](/learn/prediction-markets-101)*
+*Part of the Elastifund Education Center — [elastifund.io/learn/prediction-markets-101](https://elastifund.io/learn/prediction-markets-101)*
 
 ---
 

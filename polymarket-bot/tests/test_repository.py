@@ -1,6 +1,7 @@
 """Tests for repository."""
 import pytest
-from datetime import datetime
+
+from src.core.time_utils import utc_now_naive
 from src.store.repository import Repository
 
 
@@ -71,5 +72,5 @@ class TestRepository:
     async def test_daily_pnl(self, db_session):
         await Repository.upsert_position(db_session, "mkt1", "tok1", "LONG", 100, 0.5, realized_pnl=10.5)
         await db_session.commit()
-        pnl = await Repository.get_daily_pnl(db_session, datetime.utcnow())
+        pnl = await Repository.get_daily_pnl(db_session, utc_now_naive())
         assert pnl == 10.5

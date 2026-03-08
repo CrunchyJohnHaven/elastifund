@@ -89,7 +89,7 @@ class MarketQuarantine:
             )
             self._memory_cache[entry.identifier] = entry
         if rows:
-            logger.info("quarantine_loaded", count=len(rows))
+            logger.info("quarantine_loaded count=%d", len(rows))
 
     def is_quarantined(self, identifier: str) -> bool:
         """Check if a token_id or market_id is currently quarantined."""
@@ -142,12 +142,8 @@ class MarketQuarantine:
             )
 
         logger.info(
-            "quarantined",
-            identifier=identifier[:16],
-            id_type=id_type,
-            reason=reason,
-            strikes=strikes,
-            duration_hours=round(duration / 3600, 1),
+            "quarantined id=%s type=%s reason=%s strikes=%d duration=%.1fh",
+            identifier[:16], id_type, reason, strikes, duration / 3600,
         )
         return entry
 
@@ -160,7 +156,7 @@ class MarketQuarantine:
                 (identifier,),
             )
         if removed:
-            logger.info("quarantine_released", identifier=identifier[:16])
+            logger.info("quarantine_released id=%s", identifier[:16])
         return removed is not None
 
     def get_quarantined_ids(self, id_type: Optional[str] = None) -> set[str]:
@@ -199,7 +195,7 @@ class MarketQuarantine:
             )
             count = cursor.rowcount
         if count:
-            logger.info("quarantine_cleanup", removed=count)
+            logger.info("quarantine_cleanup removed=%d", count)
         return count
 
     def stats(self) -> dict:

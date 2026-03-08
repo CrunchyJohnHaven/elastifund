@@ -11,15 +11,15 @@
 
 ## Landed in this pass
 
-- A-6 discovery is event-based through [`bot/sum_violation_scanner.py`](/Users/johnbradley/Desktop/Elastifund/bot/sum_violation_scanner.py) and reusable watchlist logic in [`strategies/a6_sum_violation.py`](/Users/johnbradley/Desktop/Elastifund/strategies/a6_sum_violation.py).
-- The shared quote store in [`infra/clob_ws.py`](/Users/johnbradley/Desktop/Elastifund/infra/clob_ws.py) now preserves `tick_size_change` events instead of only best bid/ask.
-- Structural-arb persistence in [`bot/constraint_arb_engine.py`](/Users/johnbradley/Desktop/Elastifund/bot/constraint_arb_engine.py) includes dedicated telemetry tables for scan snapshots, A-6 episodes, order groups/legs, settlement ops, and latency samples.
-- The empirical snapshot runner in [`scripts/arb_empirical_analysis.py`](/Users/johnbradley/Desktop/Elastifund/scripts/arb_empirical_analysis.py) consumes the telemetry and emits execution tasks tied to actual gating metrics.
+- A-6 discovery is event-based through [`bot/sum_violation_scanner.py`](../../bot/sum_violation_scanner.py) and reusable watchlist logic in [`strategies/a6_sum_violation.py`](../../strategies/a6_sum_violation.py).
+- The shared quote store in [`infra/clob_ws.py`](../../infra/clob_ws.py) now preserves `tick_size_change` events instead of only best bid/ask.
+- Structural-arb persistence in [`bot/constraint_arb_engine.py`](../../bot/constraint_arb_engine.py) includes dedicated telemetry tables for scan snapshots, A-6 episodes, order groups/legs, settlement ops, and latency samples.
+- The empirical snapshot runner in [`scripts/arb_empirical_analysis.py`](../../scripts/arb_empirical_analysis.py) consumes the telemetry and emits execution tasks tied to actual gating metrics.
 - Quote ingestion remains WebSocket-first, with REST `/prices` fallback and hard 404 no-orderbook blocking in the scanner.
-- Top-of-book guaranteed-dollar ranking now lives in [`signals/sum_violation/guaranteed_dollar.py`](/Users/johnbradley/Desktop/Elastifund/signals/sum_violation/guaranteed_dollar.py).
-- Repo-level A-6 execution gating now also lives in [`bot/execution_readiness.py`](/Users/johnbradley/Desktop/Elastifund/bot/execution_readiness.py) and the scanner surfaces straddles vs baskets directly from [`bot/a6_sum_scanner.py`](/Users/johnbradley/Desktop/Elastifund/bot/a6_sum_scanner.py).
-- B-1 graph cache and residual LLM scaffolding remain in place, while deterministic family matching now lives in [`strategies/b1_templates.py`](/Users/johnbradley/Desktop/Elastifund/strategies/b1_templates.py) and [`bot/b1_template_engine.py`](/Users/johnbradley/Desktop/Elastifund/bot/b1_template_engine.py).
-- Gold-set generation now emits template-family compatibility matrices through [`scripts/build_b1_gold_set.py`](/Users/johnbradley/Desktop/Elastifund/scripts/build_b1_gold_set.py).
+- Top-of-book guaranteed-dollar ranking now lives in [`signals/sum_violation/guaranteed_dollar.py`](../../signals/sum_violation/guaranteed_dollar.py).
+- Repo-level A-6 execution gating now also lives in [`bot/execution_readiness.py`](../../bot/execution_readiness.py) and the scanner surfaces straddles vs baskets directly from [`bot/a6_sum_scanner.py`](../../bot/a6_sum_scanner.py).
+- B-1 graph cache and residual LLM scaffolding remain in place, while deterministic family matching now lives in [`strategies/b1_templates.py`](../../strategies/b1_templates.py) and [`bot/b1_template_engine.py`](../../bot/b1_template_engine.py).
+- Gold-set generation now emits template-family compatibility matrices through [`scripts/build_b1_gold_set.py`](../../scripts/build_b1_gold_set.py).
 
 ## Research-driven gating model
 
@@ -35,21 +35,21 @@ If those three are not measured, the lane is still research, even if the scanner
 
 | Concern | Repo file | State |
 | --- | --- | --- |
-| A-6 event discovery | [`bot/sum_violation_scanner.py`](/Users/johnbradley/Desktop/Elastifund/bot/sum_violation_scanner.py) | Landed |
-| A-6 watchlist + augmented filtering | [`strategies/a6_sum_violation.py`](/Users/johnbradley/Desktop/Elastifund/strategies/a6_sum_violation.py) | Landed |
-| A-6 guaranteed-dollar ranker | [`signals/sum_violation/guaranteed_dollar.py`](/Users/johnbradley/Desktop/Elastifund/signals/sum_violation/guaranteed_dollar.py) | Landed |
-| A-6 execution readiness | [`bot/execution_readiness.py`](/Users/johnbradley/Desktop/Elastifund/bot/execution_readiness.py) | Landed |
-| Structural-arb scoring + telemetry schema | [`bot/constraint_arb_engine.py`](/Users/johnbradley/Desktop/Elastifund/bot/constraint_arb_engine.py) | Landed |
-| Empirical gating report | [`scripts/arb_empirical_analysis.py`](/Users/johnbradley/Desktop/Elastifund/scripts/arb_empirical_analysis.py) | Landed |
-| B-1 graph cache + prompt scaffold | [`strategies/b1_dependency_graph.py`](/Users/johnbradley/Desktop/Elastifund/strategies/b1_dependency_graph.py) | Landed |
-| B-1 live violation monitor | [`strategies/b1_violation_monitor.py`](/Users/johnbradley/Desktop/Elastifund/strategies/b1_violation_monitor.py) | Landed |
-| B-1 deterministic template engines | [`strategies/b1_templates.py`](/Users/johnbradley/Desktop/Elastifund/strategies/b1_templates.py), [`bot/b1_template_engine.py`](/Users/johnbradley/Desktop/Elastifund/bot/b1_template_engine.py) | Landed |
-| Live structural-arb routing | [`bot/jj_live.py`](/Users/johnbradley/Desktop/Elastifund/bot/jj_live.py) | Pending |
+| A-6 event discovery | [`bot/sum_violation_scanner.py`](../../bot/sum_violation_scanner.py) | Landed |
+| A-6 watchlist + augmented filtering | [`strategies/a6_sum_violation.py`](../../strategies/a6_sum_violation.py) | Landed |
+| A-6 guaranteed-dollar ranker | [`signals/sum_violation/guaranteed_dollar.py`](../../signals/sum_violation/guaranteed_dollar.py) | Landed |
+| A-6 execution readiness | [`bot/execution_readiness.py`](../../bot/execution_readiness.py) | Landed |
+| Structural-arb scoring + telemetry schema | [`bot/constraint_arb_engine.py`](../../bot/constraint_arb_engine.py) | Landed |
+| Empirical gating report | [`scripts/arb_empirical_analysis.py`](../../scripts/arb_empirical_analysis.py) | Landed |
+| B-1 graph cache + prompt scaffold | [`strategies/b1_dependency_graph.py`](../../strategies/b1_dependency_graph.py) | Landed |
+| B-1 live violation monitor | [`strategies/b1_violation_monitor.py`](../../strategies/b1_violation_monitor.py) | Landed |
+| B-1 deterministic template engines | [`strategies/b1_templates.py`](../../strategies/b1_templates.py), [`bot/b1_template_engine.py`](../../bot/b1_template_engine.py) | Landed |
+| Live structural-arb routing | [`bot/jj_live.py`](../../bot/jj_live.py) | Pending |
 
 ## Empirical gate status
 
-- The live-public-data A-6 audit in [`reports/guaranteed_dollar_audit.md`](/Users/johnbradley/Desktop/Elastifund/reports/guaranteed_dollar_audit.md) found **92** allowed neg-risk events and **0** constructions below the initial `0.95` cost gate.
-- The live-public-data B-1 audit in [`reports/b1_template_audit.md`](/Users/johnbradley/Desktop/Elastifund/reports/b1_template_audit.md) found **0** deterministic template pairs in the first **1,000** active allowed markets.
+- The live-public-data A-6 audit in [`reports/guaranteed_dollar_audit.md`](../../reports/guaranteed_dollar_audit.md) found **92** allowed neg-risk events and **0** constructions below the initial `0.95` cost gate.
+- The live-public-data B-1 audit in [`reports/b1_template_audit.md`](../../reports/b1_template_audit.md) found **0** deterministic template pairs in the first **1,000** active allowed markets.
 
 ## What this pass explicitly did not claim
 

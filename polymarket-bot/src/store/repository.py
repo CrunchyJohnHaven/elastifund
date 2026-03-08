@@ -1,5 +1,6 @@
 """Repository pattern implementation for database operations."""
 from datetime import datetime, timedelta
+from src.core.time_utils import utc_now_naive
 from typing import Optional, Sequence
 from uuid import uuid4
 
@@ -90,7 +91,7 @@ class Repository:
             order.status = status
             if filled_size is not None:
                 order.filled_size = filled_size
-            order.updated_at = datetime.utcnow()
+            order.updated_at = utc_now_naive()
             await session.flush()
             logger.info(
                 "Updated order status",
@@ -217,7 +218,7 @@ class Repository:
             position.avg_entry_price = avg_entry_price
             position.unrealized_pnl = unrealized_pnl
             position.realized_pnl = realized_pnl
-            position.updated_at = datetime.utcnow()
+            position.updated_at = utc_now_naive()
             await session.flush()
             logger.info(
                 "Updated position",
@@ -298,7 +299,7 @@ class Repository:
             Updated BotState object
         """
         bot_state = await Repository.get_or_create_bot_state(session)
-        bot_state.last_heartbeat = datetime.utcnow()
+        bot_state.last_heartbeat = utc_now_naive()
         await session.flush()
         return bot_state
 
@@ -315,7 +316,7 @@ class Repository:
         bot_state = await Repository.get_or_create_bot_state(session)
         bot_state.kill_switch = enabled
         if enabled:
-            now = datetime.utcnow()
+            now = utc_now_naive()
             settings = get_settings()
             bot_state.kill_latched_at = now
             bot_state.kill_cooldown_until = now + timedelta(
@@ -336,7 +337,7 @@ class Repository:
         if not bot_state.kill_switch:
             return True, "Kill switch already off"
 
-        now = datetime.utcnow()
+        now = utc_now_naive()
         if bot_state.kill_cooldown_until and now < bot_state.kill_cooldown_until:
             remaining = (bot_state.kill_cooldown_until - now).total_seconds()
             return False, f"Cooldown active: {remaining:.0f}s remaining"
@@ -357,7 +358,7 @@ class Repository:
             return True
         # Also block during cooldown even if someone manually set kill_switch=False
         if bot_state.kill_cooldown_until:
-            if datetime.utcnow() < bot_state.kill_cooldown_until:
+            if utc_now_naive() < bot_state.kill_cooldown_until:
                 return True
         return False
 
@@ -366,7 +367,7 @@ class Repository:
         """Check if kill cooldown is still running."""
         bot_state = await Repository.get_or_create_bot_state(session)
         if bot_state.kill_cooldown_until:
-            return datetime.utcnow() < bot_state.kill_cooldown_until
+            return utc_now_naive() < bot_state.kill_cooldown_until
         return False
 
     # ========== ShadowOrder Operations ==========
@@ -555,7 +556,7 @@ class Repository:
         Returns:
             Number of orders in the last hour
         """
-        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+        one_hour_ago = utc_now_naive() - timedelta(hours=1)
 
         stmt = select(func.count(Order.id)).where(Order.created_at >= one_hour_ago)
         result = await session.execute(stmt)
@@ -744,7 +745,7 @@ class Repository:
         win_rate: Optional[float] = None,
     ) -> PortfolioSnapshot:
         """Create a daily portfolio snapshot (upsert by date)."""
-        today = datetime.utcnow().strftime("%Y-%m-%d")
+        today = utc_now_naive().strftime("%Y-%m-%d")
         stmt = select(PortfolioSnapshot).where(PortfolioSnapshot.date == today)
         result = await session.execute(stmt)
         snap = result.scalar_one_or_none()

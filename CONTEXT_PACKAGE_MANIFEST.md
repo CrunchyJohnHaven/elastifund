@@ -23,8 +23,8 @@ Every Deep Research run gets EXACTLY the documents listed below. Extra documents
 |---|------|-------------|-----------------|----------------|
 | 1 | `DEEP_RESEARCH_PROMPT_v6.md` | 14KB | **THE PROMPT.** Research questions for A-6/B-1 GO/NO-GO. | Every new research focus |
 | 2 | `CLAUDE.md` | 9KB | JJ persona, coding standards, current state. | Process changes only |
-| 3 | `COMMAND_NODE_v1.0.2.md` | 45KB | Full architecture: 6 signal sources, API details, bot code, backtest engine. | Every flywheel cycle |
-| 4 | `ProjectInstructions.md` | 14KB | Sprint plan, risk parameters, priority queue. | When priorities change |
+| 3 | `ProjectInstructions.md` | 14KB | Sprint plan, risk parameters, architecture summary, priority queue. | When priorities change |
+| 4 | `docs/REPO_MAP.md` | 5KB | Canonical repo map, directory ownership, and coding-session entrypoints. | When repo layout changes |
 | 5 | `EDGE_DISCOVERY_SYSTEM.md` | 8KB | Kill rules, hypothesis testing pipeline, validation criteria. | When pipeline changes |
 | 6 | `FastTradeEdgeAnalysis.md` | 7KB | Current pipeline results (REJECT ALL). Reality check. | After every pipeline run |
 
@@ -34,7 +34,7 @@ Every Deep Research run gets EXACTLY the documents listed below. Extra documents
 |---|------|-------------|------------|-------------|
 | 7 | `JJ_ASSESSMENT_DISPATCH_v3.md` | 7KB | Prioritization decisions, pre-rejected strategies, execution timeline. Prevents researcher from recommending dead strategies. | When new assessment supersedes it |
 
-### TOTAL: 7 FILES, ~104KB
+### TOTAL: 7 FILES, ~64KB
 
 ---
 
@@ -49,17 +49,17 @@ Every Deep Research run gets EXACTLY the documents listed below. Extra documents
 | File | Why Excluded |
 |------|-------------|
 | `DEEP_RESEARCH_OUTPUT_v3.md` | 178KB. Relevant content (A-6/B-1 specs) inlined into v6 prompt. The other 98 strategies are noise for this run. |
-| `DEEP_RESEARCH_PROMPT_v1-v5.md` | All superseded by v6. |
+| legacy `DEEP_RESEARCH_PROMPT` versions (v1-v5) | All superseded by v6. |
 | `DISPATCH_INSTRUCTIONS.md` | One-time dispatch tasks. Not research context. |
-| `REPLIT_DASHBOARD_v7.md` | Website spec. Include only for website-focused research. |
+| legacy Replit dashboard spec | Website spec. Include only for website-focused research. |
 | `WEATHER_BRACKET_VALIDATION_REPORT.md` | NO-GO verdict already reflected in backlog. Dead end. |
-| `FLYWHEEL_STRATEGY.md` | Absorbed into COMMAND_NODE. Redundant. |
-| `SystemIntel.docx` | Superseded by v3 research output. |
+| `FLYWHEEL_STRATEGY.md` | Strategy/process background. `ProjectInstructions.md` plus `docs/REPO_MAP.md` are the leaner context set for coding and research runs. |
+| legacy `SystemIntel` handoff doc | Superseded by v3 research output. |
 | `RESEARCH_REQUEST_v1.0.1.md` | Superseded by v6 prompt. |
 | `research/edge_backlog_ranked.md` | 130+ lines. Relevant portions summarized in prompt and JJ Assessment. |
 | `requirements.txt` | Build dependency list. Irrelevant to research. |
 | `research/RTDS_MAKER_EDGE_IMPLEMENTATION.md` | Relevant to market-making research (Variant B), not combinatorial arb. |
-| `research/LatencyEdgeResearch.md` | Latency context already in COMMAND_NODE. |
+| `research/LatencyEdgeResearch.md` | Latency context already summarized in `ProjectInstructions.md`. |
 
 ---
 
@@ -83,15 +83,15 @@ Check these fields before every launch. If any are stale, update the source file
 | File | Field to Check | Current Value | Stale If |
 |------|---------------|---------------|----------|
 | `CLAUDE.md` | Current State section date | 2026-03-07 | More than 5 days old |
-| `COMMAND_NODE_v1.0.2.md` | Signal source count | 6 (as of Cycle 2) | New module added without updating |
-| `COMMAND_NODE_v1.0.2.md` | Strategy status table | 6 deployed / 5 building / 10 rejected / 30 pipeline | After any strategy status change |
+| `ProjectInstructions.md` | Signal source count | 6 (as of Cycle 2) | New module added without updating |
+| `ProjectInstructions.md` | Strategy status table | 6 deployed / 5 building / 10 rejected / 30 pipeline | After any strategy status change |
 | `ProjectInstructions.md` | Priority Queue | P0-P4 queue from v3 research | After priority reassessment |
+| `docs/REPO_MAP.md` | Canonical doc list / directory layout | Current monorepo map | After any new top-level workflow doc or major layout change |
 | `FastTradeEdgeAnalysis.md` | Last Updated timestamp | 2026-03-07T17:34:01+00:00 | More than 24h since last pipeline run |
 | `JJ_ASSESSMENT_DISPATCH_v3.md` | Dispatch assessed | DEEP_RESEARCH_OUTPUT_v3.md | After new research output |
 
 **Known staleness (as of this manifest version):**
-- COMMAND_NODE says "4 signal sources" in some sections but system now has 6 (VPIN/OFI and Lead-Lag added in Cycle 2). The version log shows v1.1.0 but the filename still says v1.0.2.
-- ProjectInstructions says "Service STOPPED pending smart wallet flow detector integration" — live trading is now active.
+- Any remaining `COMMAND_NODE` references are stale. `ProjectInstructions.md` plus `docs/REPO_MAP.md` are now the canonical lightweight context set.
 
 ---
 
@@ -123,7 +123,7 @@ TIER 2:
 - [ ] All TIER 1 file dates are within 5 days of launch date
 - [ ] TIER 2 files match current research focus
 - [ ] Prompt state data matches reality (capital, signal source count, live trading status)
-- [ ] COMMAND_NODE strategy counts match edge_backlog_ranked.md
+- [ ] ProjectInstructions strategy counts match edge_backlog_ranked.md
 - [ ] FastTradeEdgeAnalysis reflects latest pipeline run
 - [ ] No excluded files accidentally included
 - [ ] Total attachment count is 7 (or <=10 if TIER 2 expanded)
@@ -133,11 +133,11 @@ TIER 2:
 
 ## WHEN TO UPDATE THIS MANIFEST
 
-1. **New flywheel cycle** — Update COMMAND_NODE, FastTradeEdgeAnalysis, staleness table
+1. **New flywheel cycle** — Update ProjectInstructions, FastTradeEdgeAnalysis, staleness table
 2. **Research focus shifts** — New prompt version, swap TIER 2 documents
-3. **Major code changes** — Update COMMAND_NODE (signal sources, module list)
+3. **Major code changes** — Update ProjectInstructions and `docs/REPO_MAP.md` if signal sources or layout changed
 4. **New research dispatch** — Add to TIER 2 if relevant, remove when consumed
-5. **Strategy status change** — Verify COMMAND_NODE strategy counts
+5. **Strategy status change** — Verify ProjectInstructions strategy counts
 6. **Live performance data available** — Add performance summary to TIER 1 or TIER 2
 
 ---

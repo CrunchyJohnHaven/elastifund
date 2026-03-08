@@ -94,7 +94,8 @@ This project has two outputs, and both matter equally:
 | Document | Role | Update Frequency |
 |----------|------|-----------------|
 | `CLAUDE.md` | Agent operating instructions (YOU ARE HERE) | Rarely — only on process changes |
-| `COMMAND_NODE_v1.0.2.md` | Full project context for any AI session | Every flywheel cycle |
+| `AGENTS.md` | Machine-first entrypoint with commands, boundaries, and canonical docs | When workflow changes |
+| `docs/REPO_MAP.md` | Directory map and task routing for coding sessions | When repo layout changes |
 | `ProjectInstructions.md` | Quick-start context with priority queue | When priorities change |
 | `FLYWHEEL_STRATEGY.md` | Master project strategy and website vision | Monthly or on strategic shifts |
 | `FastTradeEdgeAnalysis.md` | Auto-generated pipeline results | After every pipeline run |

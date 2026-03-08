@@ -1,0 +1,28 @@
+{
+  "rules": [
+    {
+      "current_change_pct": null,
+      "current_total": 0.0,
+      "id": "collective-revenue-drop-gt-20pct",
+      "name": "Collective revenue drop >20%",
+      "notes": "Compares the latest two snapshot dates across all stored strategy snapshots.",
+      "previous_total": null,
+      "status": "insufficient_data",
+      "threshold_pct": -20.0
+    },
+    {
+      "affected_agents": [],
+      "id": "drawdown-gt-15pct",
+      "name": "Max drawdown >15%",
+      "status": "ok",
+      "threshold_pct": 15.0
+    },
+    {
+      "affected_agents": [],
+      "id": "agent-offline-gt-1h",
+      "name": "Agent offline >1 hour",
+      "status": "ok",
+      "threshold_minutes": 60.0
+    }
+  ]
+}

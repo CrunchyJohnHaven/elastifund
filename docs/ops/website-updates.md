@@ -29,6 +29,21 @@ Generated: 2026-03-07 from Replit screenshot review
 
 ## NICE-TO-HAVE UPDATES
 
+### New section: Elastic solved the operator blind spot
+- [ ] Add a short "Why Elastic is load-bearing" section, not a sponsor badge
+- [ ] Show that the bot now writes three concrete artifacts:
+  - agent heartbeat to `elastifund-agents`
+  - per-cycle risk/P&L telemetry to `elastifund-metrics`
+  - order snapshots to `elastifund-trades`
+- [ ] Add one Kibana screenshot that shows the bot heartbeat and one that shows recent trade docs
+- [ ] Add one sentence that explains the practical win: we stopped relying on local logs and SQLite alone to know whether the bot was healthy
+- [ ] Add one sentence that explains the architectural win: the trading bot is now a spoke in the same Elastic-backed control plane as the rest of Elastifund
+
+### Suggested Replit copy
+- [ ] "Elastic gave us a shared operator view. The bot now publishes heartbeats, cycle metrics, and trade snapshots into the same backbone we use for the wider Elastifund control plane."
+- [ ] "What it solved for us was operational blindness: before this, the truth lived in one VPS log file and one local database; now it is queryable in Kibana."
+- [ ] "This is why Elastic is part of the product architecture, not just the tooling list."
+
 ### Section 17: Sponsors & Partners
 - [ ] DigitalOcean → AWS Lightsail (if listing infrastructure partners)
 - [ ] Consider adding "Claude Code" as a development tool
@@ -45,7 +60,7 @@ Generated: 2026-03-07 from Replit screenshot review
 - Well-structured with charts, tables, and interactive elements
 
 ## WHAT'S CORRECT (No changes needed)
-- Platt calibration values (A=0.5914, B=-0.3977) ✅
+- Platt calibration explanation without publishing the live coefficients ✅
 - Category routing tiers ✅
 - Research papers section ✅
 - Veteran impact section ✅

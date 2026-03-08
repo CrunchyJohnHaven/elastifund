@@ -1,0 +1,11 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY agent /app/agent
+COPY shared /app/shared
+
+CMD ["python", "-m", "agent.template.main", "--daemon", "--env-path", "/app/.env"]

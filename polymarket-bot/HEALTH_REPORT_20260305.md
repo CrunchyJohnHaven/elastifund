@@ -1,7 +1,7 @@
 # Health Check & Baseline Snapshot Report
 
 **Date:** 2026-03-05 22:44 UTC
-**Environment:** Mac (local) — `/Users/johnbradley/Desktop/Quant/polymarket-bot/`
+**Environment:** Mac (local) — `polymarket-bot/`
 **Python:** 3.9.6 (venv)
 
 ---

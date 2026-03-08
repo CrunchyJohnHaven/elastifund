@@ -1,5 +1,5 @@
 # Elastifund — Project Instructions
-**Version:** 3.1.0 | **Updated:** 2026-03-07 | **Owner:** John Bradley
+**Version:** 3.1.1 | **Updated:** 2026-03-08 | **Owner:** John Bradley
 **Paste this into any new ChatGPT, Claude web, Claude Code, or Cowork session.**
 
 ---
@@ -168,8 +168,9 @@ NOTIFY  → Telegram alerts on every trade
 
 ```
 Elastifund/
-├── ProjectInstructions.md      ← YOU ARE HERE (paste to any AI session)
-├── COMMAND_NODE_v1.0.2.md      ← Deep technical reference (764 lines)
+├── AGENTS.md                   ← LLM start here (commands + repo rules)
+├── ProjectInstructions.md      ← YOU ARE HERE (current session brief)
+├── docs/REPO_MAP.md            ← Canonical directory map and task routing
 ├── README.md                   ← GitHub public-facing
 ├── .env.example / .gitignore
 │
@@ -195,12 +196,10 @@ Elastifund/
 │   ├── ops/                    ← Deploy guides, checklists, audits
 │   └── templates/              ← Report templates
 │
-├── fund/
-│   ├── investor/               ← Investor reports, pitch sheets, task lists
-│   └── legal/                  ← PPM, subscription agreements, credentials
-│
 └── archive/                    ← Superseded files (Replit builds, old handoffs)
 ```
+
+Private investor and legal materials are intentionally kept outside this repo in a separate private materials directory.
 
 ---
 
@@ -331,4 +330,4 @@ Other completed modules still available for parallel promotion work:
 
 ---
 
-*v3.1.0 — Updated 2026-03-07. Integrated the combinatorial arbitrage deep dive, promoted A-6/B-1 into the active priority queue, and added explicit execution contracts for WebSocket depth, linked-leg state, rollback, and merge handling. This document supersedes COMMAND_NODE for quick-start context in new AI sessions. See COMMAND_NODE_v1.0.2.md for deep technical reference.*
+*v3.1.0 — Updated 2026-03-07. Integrated the combinatorial arbitrage deep dive, promoted A-6/B-1 into the active priority queue, and added explicit execution contracts for WebSocket depth, linked-leg state, rollback, and merge handling. Use this file with `AGENTS.md` and `docs/REPO_MAP.md` as the canonical context package for new AI coding sessions.*

@@ -4,6 +4,7 @@ import json
 import os
 import time
 from datetime import datetime
+from src.core.time_utils import utc_now_naive
 from pathlib import Path
 from typing import Optional
 
@@ -85,7 +86,7 @@ class PaperTrader:
             "total_pnl": 0.0,
             "total_trades": 0,
             "winning_trades": 0,
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": utc_now_naive().isoformat(),
         }
 
     def _save_state(self) -> None:
@@ -395,7 +396,7 @@ class PaperTrader:
 
         # Log the simulated trade
         trade = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": utc_now_naive().isoformat(),
             "source": signal.get("source", "unknown"),
             "market_id": market_id,
             "question": signal.get("question", "")[:200],
@@ -462,7 +463,7 @@ class PaperTrader:
         if not self.notifier:
             return
 
-        today = datetime.utcnow().strftime("%Y-%m-%d")
+        today = utc_now_naive().strftime("%Y-%m-%d")
         today_trades = [
             t for t in self._state["trades"]
             if t.get("timestamp", "").startswith(today)

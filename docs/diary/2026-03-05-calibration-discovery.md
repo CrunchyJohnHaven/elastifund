@@ -3,11 +3,11 @@
 ## What We Did
 We ran our first serious audit on 532 resolved prediction markets and found a hard truth: raw LLM confidence was inflated. When the model said "90% YES," real outcomes landed around 71%. That gap is dangerous in trading because position sizing assumes probabilities are honest.
 
-So we added a calibration layer using Platt scaling in production code: `A=0.5914`, `B=-0.3977`.
+So we added a calibration layer using Platt scaling in production code.
 
 In plain English:
-- `A=0.5914` turns down the volume on extreme confidence. It pulls 90s and 80s closer to reality.
-- `B=-0.3977` shifts the curve so the model stops leaning too optimistic on YES outcomes.
+- The fitted slope turns down the volume on extreme confidence. It pulls 90s and 80s closer to reality.
+- The fitted intercept shifts the curve so the model stops leaning too optimistic on YES outcomes.
 
 The mapping became practical instead of theatrical: 90% -> 71%, 80% -> 60%, 70% -> 53%.
 
@@ -22,7 +22,7 @@ The mapping became practical instead of theatrical: 90% -> 71%, 80% -> 60%, 70% 
 | Resolved markets audited | 532 |
 | Train/test split for calibration | 70% / 30% |
 | Raw model confidence at "90%" | ~71% realized |
-| Platt parameters | A=0.5914, B=-0.3977 |
+| Platt parameters | intentionally omitted from the public repo |
 | Test-set Brier score | 0.286 -> 0.245 |
 | Best backtest win rate (filtered variant) | 71.2% |
 

@@ -73,3 +73,21 @@ class TestSettings:
             assert settings.kelly_fraction == 0.5
             assert settings.chain_id == 137
             assert settings.signature_type == 2
+
+    def test_elastic_settings_accept_hub_env_aliases(self):
+        env = {
+            "DATABASE_URL": "sqlite:///test.db",
+            "ELASTIFUND_AGENT_TELEMETRY_ENABLED": "true",
+            "ELASTICSEARCH_URL": "http://elasticsearch:9200",
+            "ELASTICSEARCH_USERNAME": "elastic",
+            "ELASTIC_PASSWORD": "changeme",
+            "ELASTIFUND_AGENT_ID": "jj-live-paper",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            from src.core.config import Settings
+            settings = Settings()
+            assert settings.elastic_telemetry_enabled is True
+            assert settings.elasticsearch_url == "http://elasticsearch:9200"
+            assert settings.elasticsearch_username == "elastic"
+            assert settings.elasticsearch_password == "changeme"
+            assert settings.elastic_agent_id == "jj-live-paper"

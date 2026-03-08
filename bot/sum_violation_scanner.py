@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -20,6 +22,15 @@ except ImportError:  # pragma: no cover - direct script mode
     from constraint_arb_engine import ConstraintArbEngine, ConstraintViolation  # type: ignore
 
 try:
+    from bot.a6_sum_scanner import A6ScannerConfig, A6SumScanner
+except ImportError:  # pragma: no cover - direct script mode
+    try:
+        from a6_sum_scanner import A6ScannerConfig, A6SumScanner  # type: ignore
+    except ImportError:
+        A6ScannerConfig = None  # type: ignore
+        A6SumScanner = None  # type: ignore
+
+try:
     from infra.clob_ws import BestBidAskStore, ThreadedMarketStream
     from strategies.a6_sum_violation import A6WatchlistBuilder, parse_clob_token_ids
 except ImportError:  # pragma: no cover - direct script mode
@@ -29,6 +40,7 @@ except ImportError:  # pragma: no cover - direct script mode
 
 GAMMA_API_BASE = "https://gamma-api.polymarket.com"
 CLOB_PRICES_URL = "https://clob.polymarket.com/prices"
+CLOB_BOOK_URL = "https://clob.polymarket.com/book"
 
 logger = logging.getLogger("sum_violation_scanner")
 
@@ -103,6 +115,49 @@ class ScanStats:
     elapsed_seconds: float
 
 
+@dataclass(frozen=True)
+class SumViolationLeg:
+    market_id: str
+    event_id: str
+    question: str
+    outcome: str
+    category: str
+    yes_token_id: str | None
+    no_token_id: str | None
+    yes_bid: float | None
+    yes_ask: float | None
+    no_bid: float | None
+    no_ask: float | None
+    yes_depth_usd: float
+    no_depth_usd: float
+    resolution_hours: float | None
+    tick_size: float
+    raw_market: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class SumViolationOpportunity:
+    violation_id: str
+    event_id: str
+    event_key: str
+    event_title: str
+    market_ids: tuple[str, ...]
+    outcomes: tuple[str, ...]
+    legs: tuple[SumViolationLeg, ...]
+    threshold: float
+    sum_yes_bid: float | None
+    sum_yes_ask: float | None
+    sum_no_bid: float | None
+    sum_no_ask: float | None
+    trade_side: str
+    violation_amount: float
+    gross_profit_per_basket: float
+    gross_profit_per_dollar: float
+    execution_cost: float
+    payout_per_basket: float
+    can_trade_fifty_cents_per_leg: bool
+
+
 class SumViolationScanner:
     """Gamma event discovery + WebSocket/REST quote scanner for A-6."""
 
@@ -158,6 +213,7 @@ class SumViolationScanner:
             max_legs=12,
             exclude_augmented=True,
         )
+        self._latest_opportunities: list = []
 
     def close(self) -> None:
         if self._market_stream is not None:
@@ -184,6 +240,370 @@ class SumViolationScanner:
                 break
             time.sleep(0.15)
         return events
+
+    def fetch_active_markets(self) -> list[dict[str, Any]]:
+        """Fetch all active Gamma markets for market-based sum scanning."""
+        markets: list[dict[str, Any]] = []
+        for page in range(self.max_pages):
+            params = {
+                "active": "true",
+                "closed": "false",
+                "archived": "false",
+                "limit": self.page_size,
+                "offset": page * self.page_size,
+            }
+            resp = self._session.get(f"{GAMMA_API_BASE}/markets", params=params, timeout=self.timeout_seconds)
+            resp.raise_for_status()
+            payload = resp.json()
+            batch = payload if isinstance(payload, list) else payload.get("data", [])
+            if not isinstance(batch, list):
+                batch = []
+            markets.extend([market for market in batch if isinstance(market, dict)])
+            if len(batch) < self.page_size:
+                break
+            time.sleep(0.15)
+        return markets
+
+    @staticmethod
+    def _market_event_id(raw_market: Mapping[str, Any]) -> str:
+        direct = str(
+            raw_market.get("event_id")
+            or raw_market.get("eventId")
+            or raw_market.get("parentEventId")
+            or raw_market.get("parentEventID")
+            or ""
+        ).strip()
+        if direct:
+            return direct
+        events = raw_market.get("events")
+        if isinstance(events, list):
+            for raw_event in events:
+                if isinstance(raw_event, Mapping):
+                    event_id = str(raw_event.get("id") or raw_event.get("event_id") or "").strip()
+                    if event_id:
+                        return event_id
+        return ""
+
+    @staticmethod
+    def _market_event_title(raw_market: Mapping[str, Any]) -> str:
+        direct = str(
+            raw_market.get("event_title")
+            or raw_market.get("eventTitle")
+            or raw_market.get("groupTitle")
+            or ""
+        ).strip()
+        if direct:
+            return direct
+        events = raw_market.get("events")
+        if isinstance(events, list):
+            for raw_event in events:
+                if isinstance(raw_event, Mapping):
+                    title = str(raw_event.get("title") or raw_event.get("slug") or "").strip()
+                    if title:
+                        return title
+        return str(raw_market.get("question") or raw_market.get("title") or raw_market.get("id") or "").strip()
+
+    @staticmethod
+    def _market_outcome(raw_market: Mapping[str, Any]) -> str:
+        return str(
+            raw_market.get("groupItemTitle")
+            or raw_market.get("outcome")
+            or raw_market.get("outcomeName")
+            or raw_market.get("title")
+            or raw_market.get("id")
+            or ""
+        ).strip()
+
+    @staticmethod
+    def _market_tick_size(raw_market: Mapping[str, Any]) -> float:
+        return max(0.001, _as_float(raw_market.get("orderPriceMinTickSize"), 0.01))
+
+    @staticmethod
+    def _market_category(raw_market: Mapping[str, Any]) -> str:
+        return str(
+            raw_market.get("eventCategory")
+            or raw_market.get("category")
+            or raw_market.get("tag")
+            or "unknown"
+        ).strip() or "unknown"
+
+    @staticmethod
+    def _estimate_resolution_hours(raw_market: Mapping[str, Any]) -> float | None:
+        end_date_str = raw_market.get("endDate") or raw_market.get("end_date_iso")
+        if not end_date_str:
+            return None
+        for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d"):
+            try:
+                end_dt = datetime.strptime(str(end_date_str), fmt).replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+            hours = (end_dt - datetime.now(timezone.utc)).total_seconds() / 3600.0
+            if hours > 0:
+                return hours
+        return None
+
+    def group_market_siblings(self, raw_markets: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        grouped: dict[str, dict[str, Any]] = {}
+        seen_outcomes: dict[str, set[str]] = {}
+        for raw_market in raw_markets:
+            if not isinstance(raw_market, Mapping):
+                continue
+            if _as_bool(raw_market.get("closed")):
+                continue
+            if raw_market.get("active") is False:
+                continue
+            question = str(raw_market.get("question") or raw_market.get("title") or "").strip()
+            if not question:
+                continue
+            event_id = self._market_event_id(raw_market)
+            event_key = event_id or _question_skeleton(question) or _norm_text(question) or question.lower()
+            outcome = self._market_outcome(raw_market)
+            outcome_key = _norm_text(outcome) or str(raw_market.get("id") or "").strip()
+            if not outcome_key:
+                continue
+            if event_key not in grouped:
+                grouped[event_key] = {
+                    "event_id": event_id or event_key,
+                    "event_key": event_key,
+                    "event_title": self._market_event_title(raw_market),
+                    "question": question,
+                    "markets": [],
+                }
+                seen_outcomes[event_key] = set()
+            if outcome_key in seen_outcomes[event_key]:
+                continue
+            grouped[event_key]["markets"].append(dict(raw_market))
+            seen_outcomes[event_key].add(outcome_key)
+
+        ordered = sorted(
+            grouped.values(),
+            key=lambda row: (-len(row["markets"]), str(row["event_title"]).lower(), str(row["event_id"]).lower()),
+        )
+        return [row for row in ordered if len(row["markets"]) >= self.min_event_markets]
+
+    def _fetch_order_book(self, token_id: str) -> dict[str, Any] | None:
+        clean_id = str(token_id).strip()
+        if not clean_id:
+            return None
+        try:
+            resp = self._session.get(
+                CLOB_BOOK_URL,
+                params={"token_id": clean_id},
+                timeout=self.timeout_seconds,
+            )
+        except requests.RequestException:
+            return None
+        if resp.status_code != 200:
+            return None
+        payload = resp.json()
+        return payload if isinstance(payload, dict) else None
+
+    @staticmethod
+    def _best_bid_ask(book: Mapping[str, Any] | None) -> tuple[float | None, float | None]:
+        if not isinstance(book, Mapping):
+            return None, None
+
+        def _pick(levels: Any, *, side: str) -> float | None:
+            if not isinstance(levels, list) or not levels:
+                return None
+            prices: list[float] = []
+            for level in levels:
+                if not isinstance(level, Mapping):
+                    continue
+                price = _as_float(level.get("price"), default=-1.0)
+                if 0.0 <= price <= 1.0:
+                    prices.append(price)
+            if not prices:
+                return None
+            return max(prices) if side == "bid" else min(prices)
+
+        best_bid = _pick(book.get("bids"), side="bid")
+        best_ask = _pick(book.get("asks"), side="ask")
+        if best_bid is None:
+            fallback = _as_float(book.get("best_bid"), default=-1.0)
+            best_bid = fallback if 0.0 <= fallback <= 1.0 else None
+        if best_ask is None:
+            fallback = _as_float(book.get("best_ask"), default=-1.0)
+            best_ask = fallback if 0.0 <= fallback <= 1.0 else None
+        return best_bid, best_ask
+
+    @staticmethod
+    def _depth_usd(levels: Any) -> float:
+        if not isinstance(levels, list):
+            return 0.0
+        depth = 0.0
+        for level in levels:
+            if not isinstance(level, Mapping):
+                continue
+            price = _as_float(level.get("price"), default=-1.0)
+            size = _as_float(level.get("size"), default=-1.0)
+            if 0.0 <= price <= 1.0 and size > 0.0:
+                depth += price * size
+        return round(depth, 4)
+
+    def scan_market_violations(
+        self,
+        markets: Sequence[Mapping[str, Any]] | None = None,
+        *,
+        threshold: float = 0.05,
+    ) -> list[SumViolationOpportunity]:
+        """Detect executable multi-outcome sum violations from Gamma `/markets`."""
+        threshold = max(0.0, float(threshold))
+        prefilter_slack = min(self.prefilter_buffer, threshold * 0.5)
+        prefilter_threshold = max(0.0, threshold - prefilter_slack)
+
+        grouped = self.group_market_siblings(markets or self.fetch_active_markets())
+        candidates: list[tuple[float, dict[str, Any], float]] = []
+        for group in grouped:
+            approx_sum = 0.0
+            valid_legs = 0
+            for raw_market in group["markets"]:
+                _, yes_ask = extract_gamma_yes_quotes(raw_market)
+                if yes_ask is None:
+                    continue
+                approx_sum += yes_ask
+                valid_legs += 1
+            if valid_legs < self.min_event_markets:
+                continue
+            violation = abs(approx_sum - 1.0)
+            if violation + 1e-9 < prefilter_threshold:
+                continue
+            candidates.append((violation, group, approx_sum))
+
+        candidates.sort(key=lambda row: row[0], reverse=True)
+        opportunities: list[SumViolationOpportunity] = []
+
+        for _, group, _approx_sum in candidates[: self.max_events]:
+            legs: list[SumViolationLeg] = []
+            for raw_market in group["markets"]:
+                yes_token_id, no_token_id = parse_clob_token_ids(raw_market.get("clobTokenIds"))
+                yes_book = self._fetch_order_book(yes_token_id) if yes_token_id else None
+                no_book = self._fetch_order_book(no_token_id) if no_token_id else None
+                yes_bid, yes_ask = self._best_bid_ask(yes_book)
+                no_bid, no_ask = self._best_bid_ask(no_book)
+
+                if yes_bid is None or yes_ask is None:
+                    fallback_bid, fallback_ask = extract_gamma_yes_quotes(raw_market)
+                    yes_bid = yes_bid if yes_bid is not None else fallback_bid
+                    yes_ask = yes_ask if yes_ask is not None else fallback_ask
+                if no_bid is None and yes_ask is not None:
+                    inferred = 1.0 - yes_ask
+                    no_bid = inferred if 0.0 <= inferred <= 1.0 else None
+                if no_ask is None and yes_bid is not None:
+                    inferred = 1.0 - yes_bid
+                    no_ask = inferred if 0.0 <= inferred <= 1.0 else None
+
+                leg = SumViolationLeg(
+                    market_id=str(raw_market.get("id") or raw_market.get("market_id") or "").strip(),
+                    event_id=str(group["event_id"]),
+                    question=str(raw_market.get("question") or raw_market.get("title") or group["question"]).strip(),
+                    outcome=self._market_outcome(raw_market),
+                    category=self._market_category(raw_market),
+                    yes_token_id=yes_token_id,
+                    no_token_id=no_token_id,
+                    yes_bid=yes_bid,
+                    yes_ask=yes_ask,
+                    no_bid=no_bid,
+                    no_ask=no_ask,
+                    yes_depth_usd=self._depth_usd(yes_book.get("asks") if isinstance(yes_book, Mapping) else None),
+                    no_depth_usd=self._depth_usd(no_book.get("asks") if isinstance(no_book, Mapping) else None),
+                    resolution_hours=self._estimate_resolution_hours(raw_market),
+                    tick_size=self._market_tick_size(raw_market),
+                    raw_market=dict(raw_market),
+                )
+                if leg.market_id:
+                    legs.append(leg)
+
+            if len(legs) < self.min_event_markets:
+                continue
+
+            sum_yes_ask = (
+                float(sum(leg.yes_ask for leg in legs if leg.yes_ask is not None))
+                if all(leg.yes_ask is not None for leg in legs)
+                else None
+            )
+            sum_yes_bid = (
+                float(sum(leg.yes_bid for leg in legs if leg.yes_bid is not None))
+                if all(leg.yes_bid is not None for leg in legs)
+                else None
+            )
+            sum_no_ask = (
+                float(sum(leg.no_ask for leg in legs if leg.no_ask is not None))
+                if all(leg.no_ask is not None for leg in legs)
+                else None
+            )
+            sum_no_bid = (
+                float(sum(leg.no_bid for leg in legs if leg.no_bid is not None))
+                if all(leg.no_bid is not None for leg in legs)
+                else None
+            )
+
+            if sum_yes_ask is None:
+                continue
+
+            trade_side = ""
+            execution_cost = 0.0
+            payout_per_basket = 0.0
+            violation_amount = 0.0
+            gross_profit_per_basket = 0.0
+            can_trade_half_dollar = False
+
+            if sum_yes_ask <= 1.0 - threshold + 1e-9:
+                trade_side = "buy_yes_basket"
+                execution_cost = float(sum_yes_ask)
+                payout_per_basket = 1.0
+                violation_amount = float(1.0 - sum_yes_ask)
+                gross_profit_per_basket = payout_per_basket - execution_cost
+                can_trade_half_dollar = all(leg.yes_depth_usd + 1e-9 >= 0.50 for leg in legs)
+            elif sum_yes_ask >= 1.0 + threshold - 1e-9:
+                trade_side = "buy_no_basket"
+                execution_cost = float(sum_no_ask) if sum_no_ask is not None else 0.0
+                payout_per_basket = float(max(0, len(legs) - 1))
+                violation_amount = float(sum_yes_ask - 1.0)
+                gross_profit_per_basket = payout_per_basket - execution_cost if execution_cost > 0.0 else 0.0
+                can_trade_half_dollar = all(leg.no_depth_usd + 1e-9 >= 0.50 for leg in legs)
+            else:
+                continue
+
+            gross_profit_per_dollar = (
+                float(gross_profit_per_basket / execution_cost)
+                if execution_cost > 0.0
+                else 0.0
+            )
+            raw_id = "|".join(
+                [
+                    str(group["event_id"]),
+                    trade_side,
+                    f"{sum_yes_ask:.6f}",
+                    ",".join(sorted(leg.market_id for leg in legs)),
+                ]
+            )
+            opportunities.append(
+                SumViolationOpportunity(
+                    violation_id=hashlib.sha1(raw_id.encode("utf-8")).hexdigest()[:20],
+                    event_id=str(group["event_id"]),
+                    event_key=str(group["event_key"]),
+                    event_title=str(group["event_title"]),
+                    market_ids=tuple(leg.market_id for leg in legs),
+                    outcomes=tuple(leg.outcome for leg in legs),
+                    legs=tuple(legs),
+                    threshold=threshold,
+                    sum_yes_bid=sum_yes_bid,
+                    sum_yes_ask=sum_yes_ask,
+                    sum_no_bid=sum_no_bid,
+                    sum_no_ask=sum_no_ask,
+                    trade_side=trade_side,
+                    violation_amount=violation_amount,
+                    gross_profit_per_basket=float(gross_profit_per_basket),
+                    gross_profit_per_dollar=float(gross_profit_per_dollar),
+                    execution_cost=float(execution_cost),
+                    payout_per_basket=float(payout_per_basket),
+                    can_trade_fifty_cents_per_leg=bool(can_trade_half_dollar),
+                )
+            )
+
+        opportunities.sort(key=lambda row: row.violation_amount, reverse=True)
+        return opportunities
 
     def _event_is_candidate(self, raw_event: Mapping[str, Any]) -> bool:
         if _as_bool(raw_event.get("cumulativeMarkets")):
@@ -406,6 +826,24 @@ class SumViolationScanner:
         violations = engine.scan_sum_violations(now_ts=now_ts)
         self._append_violations(violations)
         engine.db.write_shadow_report(self.report_path, days=14)
+
+        # Build executable A6Opportunity objects from the same engine state.
+        self._latest_opportunities = []
+        if A6SumScanner is not None:
+            try:
+                a6_scanner = A6SumScanner(
+                    config=A6ScannerConfig(
+                        buy_threshold=self.buy_threshold,
+                        upper_signal_threshold=self.unwind_threshold,
+                        stale_quote_seconds=self.stale_quote_seconds,
+                    )
+                )
+                batch = a6_scanner.scan_engine(engine, now_ts=now_ts)
+                self._latest_opportunities = [
+                    opp for opp in batch.opportunities if opp.executable
+                ]
+            except Exception as exc:
+                logger.debug("A6 opportunity extraction failed: %s", exc)
 
         return ScanStats(
             timestamp_ts=now_ts,

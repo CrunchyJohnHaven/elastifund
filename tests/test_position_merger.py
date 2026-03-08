@@ -117,6 +117,50 @@ class TestPositionMergeService:
         assert candidates[0].execution_ready is False
         assert candidates[0].note == "neg_risk_unresolved"
 
+    def test_find_duplicate_outcome_positions_groups_same_side_lots(self):
+        condition_id = "0x" + ("13" * 32)
+        positions = [
+            _position(
+                condition_id=condition_id,
+                token_id="0x" + ("07" * 20),
+                opposite_token_id="0x" + ("08" * 20),
+                outcome="Yes",
+                size=1.5,
+                avg_price=0.35,
+                current_value=0.7,
+                negative_risk=False,
+            ),
+            _position(
+                condition_id=condition_id,
+                token_id="0x" + ("07" * 20),
+                opposite_token_id="0x" + ("08" * 20),
+                outcome="YES",
+                size=2.25,
+                avg_price=0.38,
+                current_value=0.9,
+                negative_risk=False,
+            ),
+            _position(
+                condition_id=condition_id,
+                token_id="0x" + ("08" * 20),
+                opposite_token_id="0x" + ("07" * 20),
+                outcome="No",
+                size=1.0,
+                avg_price=0.62,
+                current_value=0.5,
+                negative_risk=False,
+            ),
+        ]
+
+        duplicates = PositionMergeService.find_duplicate_outcome_positions(positions)
+
+        assert len(duplicates) == 1
+        duplicate = duplicates[0]
+        assert duplicate.condition_id == condition_id
+        assert duplicate.outcome == "YES"
+        assert duplicate.position_count == 2
+        assert duplicate.total_size == pytest.approx(3.75)
+
 
 class TestCalldataBuilders:
     def test_build_standard_merge_calldata_matches_expected_layout(self):

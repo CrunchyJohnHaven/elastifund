@@ -76,24 +76,33 @@ bot_root = Path(__file__).resolve().parent
 project_root = bot_root.parent
 sys.path.insert(0, str(bot_root))
 sys.path.insert(0, str(project_root))
-# Support this repository layout where src lives under polymarket-bot/src.
-poly_root = project_root / "polymarket-bot"
-if (poly_root / "src").exists():
-    sys.path.insert(0, str(poly_root))
-
-from src.scanner import MarketScanner
-from src.claude_analyzer import ClaudeAnalyzer
-
-# LLM Ensemble: multi-model + agentic RAG (preferred over single Claude)
 try:
-    from bot.llm_ensemble import LLMEnsemble, disagreement_kelly_modifier
+    from bot.polymarket_runtime import (
+        ClaudeAnalyzer,
+        MarketScanner,
+        TelegramBot,
+        TelegramNotifier,
+    )
+except ImportError:
+    from polymarket_runtime import (  # type: ignore
+        ClaudeAnalyzer,
+        MarketScanner,
+        TelegramBot,
+        TelegramNotifier,
+    )
+
+try:
+    from bot.ensemble_estimator import EnsembleEstimator, LLMCostTracker
+    from bot.disagreement_signal import confidence_multiplier_from_std
 except ImportError:
     try:
-        from llm_ensemble import LLMEnsemble, disagreement_kelly_modifier
+        from ensemble_estimator import EnsembleEstimator, LLMCostTracker  # type: ignore
+        from disagreement_signal import confidence_multiplier_from_std  # type: ignore
     except ImportError:
-        LLMEnsemble = None
+        EnsembleEstimator = None
+        LLMCostTracker = None
 
-        def disagreement_kelly_modifier(std_dev: float) -> float:
+        def confidence_multiplier_from_std(std_dev: float, model_count: int = 1) -> float:
             return 1.0
 
 # Use official py-clob-client for order placement (the custom src/bot.py
@@ -109,15 +118,6 @@ except ImportError:
     OrderType = None
     BUY = None
     SELL = None
-
-# Handle different Telegram class names across codebase versions
-try:
-    from src.telegram import TelegramNotifier
-except ImportError:
-    try:
-        from src.telegram import TelegramBot as TelegramNotifier
-    except ImportError:
-        TelegramNotifier = None
 
 # Signal sources #2 and #3
 try:
@@ -210,6 +210,49 @@ except ImportError:
     except ImportError:
         SumViolationScanner = None
 
+try:
+    from bot.sum_violation_strategy import SumViolationStrategy
+except ImportError:
+    try:
+        from sum_violation_strategy import SumViolationStrategy  # type: ignore
+    except ImportError:
+        SumViolationStrategy = None
+
+try:
+    from bot.adaptive_platt import PlattCalibrator as RuntimePlattCalibrator
+except ImportError:
+    try:
+        from adaptive_platt import PlattCalibrator as RuntimePlattCalibrator  # type: ignore
+    except ImportError:
+        RuntimePlattCalibrator = None
+
+try:
+    from bot.fill_tracker import FillTracker, OrderFillEvent
+except ImportError:
+    try:
+        from fill_tracker import FillTracker, OrderFillEvent  # type: ignore
+    except ImportError:
+        FillTracker = None
+        OrderFillEvent = None
+
+try:
+    from bot.position_merger import (
+        LivePositionMerger,
+        NodePolyMergerExecutor,
+        RelayerMergeExecutor,
+    )
+except ImportError:
+    try:
+        from position_merger import (  # type: ignore
+            LivePositionMerger,
+            NodePolyMergerExecutor,
+            RelayerMergeExecutor,
+        )
+    except ImportError:
+        LivePositionMerger = None
+        NodePolyMergerExecutor = None
+        RelayerMergeExecutor = None
+
 # A-6 live execution: state machine + order routing
 try:
     from bot.a6_executor import A6BasketExecutor, A6ExecutorConfig, A6BasketState
@@ -248,7 +291,10 @@ logger = logging.getLogger("JJ")
 # ---------------------------------------------------------------------------
 # JJ Configuration
 # ---------------------------------------------------------------------------
-MAX_POSITION_USD = float(os.environ.get("JJ_MAX_POSITION_USD", "2.00"))
+MAX_POSITION_USD = float(os.environ.get("JJ_MAX_POSITION_USD", "5.00"))
+_CLOB_HARD_MIN_SHARES = 5.0  # Polymarket CLOB protocol minimum — not configurable
+_CLOB_HARD_MIN_NOTIONAL_USD = 5.0  # Polymarket live orders must also be at least $5 notional
+POLY_MIN_ORDER_SHARES = max(_CLOB_HARD_MIN_SHARES, float(os.environ.get("JJ_POLY_MIN_ORDER_SHARES", "5.0")))
 MAX_DAILY_LOSS_USD = float(os.environ.get("JJ_MAX_DAILY_LOSS_USD", "10"))
 MAX_EXPOSURE_PCT = float(os.environ.get("JJ_MAX_EXPOSURE_PCT", "0.90"))
 KELLY_FRACTION = float(os.environ.get("JJ_KELLY_FRACTION", "0.25"))
@@ -258,18 +304,22 @@ MAX_OPEN_POSITIONS = int(os.environ.get("JJ_MAX_OPEN_POSITIONS", "30"))
 MIN_EDGE = float(os.environ.get("JJ_MIN_EDGE", "0.05"))
 INITIAL_BANKROLL = float(os.environ.get("JJ_INITIAL_BANKROLL", "247.51"))
 
-# Adaptive calibration and ensemble conviction controls (Instance 6)
+# Adaptive calibration and ensemble disagreement controls
 ADAPTIVE_PLATT_ENABLED = os.environ.get("JJ_ADAPTIVE_PLATT_ENABLED", "false").lower() in ("true", "1", "yes")
-ADAPTIVE_PLATT_MIN_SAMPLES = int(os.environ.get("JJ_ADAPTIVE_PLATT_MIN_SAMPLES", "50"))
+ADAPTIVE_PLATT_MIN_SAMPLES = int(os.environ.get("JJ_ADAPTIVE_PLATT_MIN_SAMPLES", "30"))
 ADAPTIVE_PLATT_WINDOW = int(os.environ.get("JJ_ADAPTIVE_PLATT_WINDOW", "100"))
 ADAPTIVE_PLATT_REFIT_SECONDS = int(os.environ.get("JJ_ADAPTIVE_PLATT_REFIT_SECONDS", "300"))
-ENSEMBLE_MIN_AGREEMENT = float(os.environ.get("JJ_ENSEMBLE_MIN_AGREEMENT", "0.25"))
-DISAGREEMENT_LOW_STD = float(os.environ.get("JJ_DISAGREEMENT_LOW_STD", "0.05"))
-DISAGREEMENT_HIGH_STD = float(os.environ.get("JJ_DISAGREEMENT_HIGH_STD", "0.15"))
-DISAGREEMENT_MIN_KELLY = float(os.environ.get("JJ_DISAGREEMENT_MIN_KELLY", f"{1.0 / 32.0:.5f}"))
-ENSEMBLE_SKIP_FRAGILE_CONVICTION = os.environ.get(
-    "JJ_ENSEMBLE_SKIP_FRAGILE_CONVICTION",
-    "true",
+ADAPTIVE_PLATT_RUNTIME_VARIANT = os.environ.get("JJ_ADAPTIVE_PLATT_VARIANT", "auto").strip().lower()
+ADAPTIVE_PLATT_REPORT_PATH = os.environ.get("JJ_ADAPTIVE_PLATT_REPORT_PATH", "reports/platt_comparison.md")
+ADAPTIVE_PLATT_REPORT_JSON_PATH = os.environ.get("JJ_ADAPTIVE_PLATT_REPORT_JSON_PATH", "reports/platt_comparison.json")
+DISAGREEMENT_CONFIRMATION_STD = float(os.environ.get("JJ_DISAGREEMENT_CONFIRMATION_STD", "0.05"))
+DISAGREEMENT_SIGNAL_STD = float(os.environ.get("JJ_DISAGREEMENT_SIGNAL_STD", "0.10"))
+DISAGREEMENT_REDUCE_SIZE_STD = float(os.environ.get("JJ_DISAGREEMENT_REDUCE_SIZE_STD", "0.15"))
+DISAGREEMENT_WIDE_STD = float(os.environ.get("JJ_DISAGREEMENT_WIDE_STD", "0.20"))
+ENSEMBLE_DAILY_COST_CAP_USD = float(os.environ.get("JJ_ENSEMBLE_DAILY_COST_CAP_USD", "2.0"))
+ENSEMBLE_ENABLE_SECOND_CLAUDE = os.environ.get(
+    "JJ_ENSEMBLE_ENABLE_SECOND_CLAUDE",
+    "false",
 ).lower() in ("true", "1", "yes")
 
 # Velocity filter — maximum hours until resolution (default: 48 = 2 days)
@@ -277,8 +327,28 @@ ENSEMBLE_SKIP_FRAGILE_CONVICTION = os.environ.get(
 # Set to 0 to disable (allow all markets regardless of resolution time)
 MAX_RESOLUTION_HOURS = float(os.environ.get("JJ_MAX_RESOLUTION_HOURS", "48"))
 
+# Telegram signal deduplication — prevents restart-spam flooding
+# Key: (market_id, direction) → timestamp of last notification
+
+
+def _round_up(value: float, decimals: int = 2) -> float:
+    scale = 10 ** max(0, int(decimals))
+    return math.ceil(max(0.0, float(value)) * scale - 1e-12) / scale
+
+
+def clob_min_order_size(price: float, *, min_shares: float = _CLOB_HARD_MIN_SHARES) -> float:
+    price = max(0.0, float(price))
+    required = max(float(min_shares), (_CLOB_HARD_MIN_NOTIONAL_USD / price) if price > 0.0 else float(min_shares))
+    return _round_up(required, decimals=2)
+
+SIGNAL_DEDUP_TTL_SECONDS = int(os.environ.get("JJ_SIGNAL_DEDUP_TTL", "3600"))  # 1 hour default
+
 # Paper trading mode — simulate trades without posting to CLOB
 PAPER_TRADING = os.environ.get("PAPER_TRADING", "false").lower() in ("true", "1", "yes")
+MAX_ORDER_AGE_HOURS = float(os.environ.get("JJ_MAX_ORDER_AGE_HOURS", "2"))
+FILL_REPORT_HOURS = int(os.environ.get("JJ_FILL_REPORT_HOURS", "24"))
+AUTO_MERGE_POSITIONS = os.environ.get("JJ_AUTO_MERGE_POSITIONS", "false").lower() in ("true", "1", "yes")
+MIN_MERGE_FREED_USDC = float(os.environ.get("JJ_MIN_MERGE_FREED_USDC", "0.50"))
 
 # Multi-bankroll simulation levels
 BANKROLL_LEVELS = [1_000, 10_000, 100_000]
@@ -291,8 +361,18 @@ DB_FILE = Path("data/jj_trades.db")
 # Fitted on 70% of 532 resolved markets, validated on 30% test set
 # Test-set Brier: 0.286 (raw) → 0.245 (Platt) — improvement of +0.041
 # ---------------------------------------------------------------------------
-PLATT_A = float(os.environ.get("PLATT_A", "0.5914"))
-PLATT_B = float(os.environ.get("PLATT_B", "-0.3977"))
+def _float_env(name: str, default: str) -> float:
+    raw = os.environ.get(name)
+    if raw in (None, ""):
+        return float(default)
+    try:
+        return float(raw)
+    except ValueError:
+        return float(default)
+
+
+PLATT_A = _float_env("PLATT_A", "0.5914")
+PLATT_B = _float_env("PLATT_B", "-0.3977")
 
 
 def calibrate_probability_with_params(raw_prob: float, a: float, b: float) -> float:
@@ -366,13 +446,51 @@ def fit_platt_parameters(raw_probs: list[float], outcomes: list[int]) -> tuple[f
 
 
 # ---------------------------------------------------------------------------
+# Telegram Signal Dedup Cache
+# ---------------------------------------------------------------------------
+class SignalDedupCache:
+    """Prevents duplicate Telegram notifications on bot restarts.
+
+    Stores (market_id, direction) → timestamp. Notifications are suppressed
+    if the same signal was sent within SIGNAL_DEDUP_TTL_SECONDS.
+    """
+
+    def __init__(self, ttl_seconds: int = SIGNAL_DEDUP_TTL_SECONDS):
+        self._cache: dict[tuple[str, str], float] = {}
+        self._ttl = ttl_seconds
+
+    def should_notify(self, market_id: str, direction: str) -> bool:
+        """Return True if this signal hasn't been notified recently."""
+        key = (str(market_id), str(direction))
+        now = time.time()
+        # Prune expired entries (cheap, runs every call)
+        expired = [k for k, ts in self._cache.items() if now - ts > self._ttl]
+        for k in expired:
+            del self._cache[k]
+        if key in self._cache:
+            return False
+        self._cache[key] = now
+        return True
+
+    def mark_notified(self, market_id: str, direction: str) -> None:
+        """Explicitly mark a signal as notified (used after successful send)."""
+        self._cache[(str(market_id), str(direction))] = time.time()
+
+    @property
+    def size(self) -> int:
+        return len(self._cache)
+
+
+# ---------------------------------------------------------------------------
 # Category Classification (ported from local claude_analyzer.py)
 # ---------------------------------------------------------------------------
 CATEGORY_KEYWORDS = {
     "politics": ["election", "president", "congress", "senate", "governor", "vote",
                  "democrat", "republican", "trump", "biden", "party", "primary",
                  "legislation", "bill", "law", "executive order", "cabinet",
-                 "impeach", "poll", "ballot", "nominee", "campaign"],
+                 "impeach", "poll", "ballot", "nominee", "campaign",
+                 "prime minister", "chancellor", "parliament", "coalition",
+                 "ruling party", "seats", "mayor", "referendum"],
     "weather": ["temperature", "rain", "snow", "weather", "hurricane", "storm",
                 "heat", "cold", "wind", "flood", "drought", "celsius", "fahrenheit",
                 "high of", "low of", "degrees"],
@@ -425,9 +543,21 @@ CATEGORY_KEYWORDS = {
                "bnp paribas", "roland garros", "wimbledon", "us open tennis",
                "australian open",
                # Other
-               "super league", "copa america", "euro 202", "nations league"],
+               "super league", "copa america", "euro 202", "nations league",
+               # German/Italian/French lower-league teams that slip through
+               "darmstadt", "heidenheim", "hoffenheim", "holstein kiel",
+               "strasbourg", "reggiana", "avellino", "padova", "venezia",
+               "smouha", "mallorca", "gamecocks", "miners", "cougars",
+               "villanova", "marquette", "huskies", "golden eagles",
+               # Betting line patterns
+               "leading at halftime", "halftime", "first half",
+               "win on 2026", "win on 2027",
+               # FIFA qualification
+               "qualify for the 202", "qualify for the fifa"],
     "geopolitical": ["war", "invasion", "nato", "china", "russia", "taiwan",
-                     "sanctions", "ceasefire", "nuclear", "military", "conflict"],
+                     "sanctions", "ceasefire", "nuclear", "military", "conflict",
+                     "strike on", "airstrike", "missile", "occupation",
+                     "annex", "blockade", "coup", "regime change"],
     "financial_speculation": ["dip to", "drop to", "fall to", "rise to",
                               "stock price", "share price", "ipo",
                               "close above", "close below",
@@ -451,7 +581,7 @@ CATEGORY_PRIORITY = {
     "financial_speculation": 0,  # No LLM edge on precise price movements
     "geopolitical": 1,  # ~30% worse than experts (RAND)
     "fed_rates": 0,     # Worst category — systematic overconfidence
-    "unknown": 2,       # Default — still analyze
+    "unknown": 0,       # REJECT — unclassifiable markets have no structural LLM edge
 }
 
 # Polymarket taker fee rates (introduced Feb 18, 2026)
@@ -686,6 +816,60 @@ def is_low_edge_category(question: str) -> bool:
     return priority < MIN_CATEGORY_PRIORITY
 
 
+def apply_llm_market_filters(
+    question: str,
+    *,
+    resolution_hours: float | None,
+) -> tuple[bool, str, str, float | None]:
+    """Enforce the LLM category and velocity gates in one place.
+
+    Returns:
+        (allowed, reason, category, normalized_resolution_hours)
+    """
+    category = classify_market_category(question)
+    if CATEGORY_PRIORITY.get(category, 2) < MIN_CATEGORY_PRIORITY:
+        return False, "category", category, resolution_hours
+
+    normalized_resolution = resolution_hours
+    if MAX_RESOLUTION_HOURS > 0:
+        if normalized_resolution is None:
+            # Preserve the existing behavior for markets without parseable
+            # end dates: treat them as 24h markets rather than disabling
+            # the signal path entirely.
+            normalized_resolution = 24.0
+        if normalized_resolution > MAX_RESOLUTION_HOURS:
+            return False, "velocity", category, normalized_resolution
+
+    return True, "ok", category, normalized_resolution
+
+
+def normalize_token_ids(raw: Any) -> list[str]:
+    """Normalize Gamma/Scanner token-id payloads into clean strings."""
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        if not stripped:
+            return []
+        try:
+            return normalize_token_ids(json.loads(stripped))
+        except json.JSONDecodeError:
+            raw = stripped.split(",")
+
+    token_ids: list[str] = []
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, str):
+                cleaned = item.strip().strip("[]").strip().strip('"').strip("'")
+                if cleaned:
+                    token_ids.append(cleaned)
+            elif isinstance(item, dict):
+                token = item.get("token_id") or item.get("tokenId") or item.get("id")
+                if isinstance(token, str):
+                    cleaned = token.strip()
+                    if cleaned:
+                        token_ids.append(cleaned)
+    return token_ids
+
+
 def _safe_float(value, default: float = 0.5) -> float:
     """Parse a float from mixed analyzer payloads."""
     try:
@@ -860,7 +1044,7 @@ def build_trade_record(
         "model_spread": _safe_float(signal.get("model_spread"), None),
         "model_stddev": _safe_float(signal.get("model_stddev"), None),
         "agreement": _safe_float(signal.get("agreement"), None),
-        "kelly_multiplier": _safe_float(signal.get("kelly_multiplier"), None),
+        "kelly_multiplier": _safe_float(signal.get("confidence_multiplier", signal.get("kelly_multiplier")), None),
         "disagreement_kelly_fraction": _safe_float(
             signal.get("disagreement_kelly_fraction"),
             None,
@@ -1503,7 +1687,7 @@ class TradeDatabase:
 # Adaptive Rolling Platt Calibration (Instance 6 / D-12)
 # ---------------------------------------------------------------------------
 class AdaptivePlattCalibrator:
-    """Select between static and rolling Platt params using recent Brier."""
+    """Thin wrapper around bot.adaptive_platt.PlattCalibrator for live use."""
 
     def __init__(
         self,
@@ -1513,113 +1697,71 @@ class AdaptivePlattCalibrator:
         min_samples: int = ADAPTIVE_PLATT_MIN_SAMPLES,
         window: int = ADAPTIVE_PLATT_WINDOW,
         refit_seconds: int = ADAPTIVE_PLATT_REFIT_SECONDS,
+        runtime_variant: str = ADAPTIVE_PLATT_RUNTIME_VARIANT,
     ):
-        self.db = db
-        self.enabled = enabled
-        self.min_samples = max(20, int(min_samples))
-        self.window = max(self.min_samples, int(window))
-        self.refit_seconds = max(30, int(refit_seconds))
+        selected_variant = runtime_variant
+        if selected_variant in ("rolling", "window"):
+            selected_variant = f"rolling_{max(30, int(window))}"
 
-        self.active_a = float(PLATT_A)
-        self.active_b = float(PLATT_B)
-        self.active_mode = "static"
-        self.last_refit_ts = 0.0
-        self.sample_size = 0
-        self.static_brier = None
-        self.rolling_brier = None
-
-    def _recent_resolved_rows(self) -> list[tuple[float, int]]:
-        """Load only LLM-calibrated trades with trustworthy raw probabilities."""
-        c = self.db.conn.cursor()
-        rows = c.execute(
-            """
-            SELECT raw_prob, resolution_price
-            FROM trades
-            WHERE outcome IS NOT NULL
-              AND raw_prob IS NOT NULL
-              AND resolution_price IS NOT NULL
-              AND platt_mode IS NOT NULL
-            ORDER BY resolved_at DESC
-            LIMIT ?
-            """,
-            (self.window,),
-        ).fetchall()
-        parsed: list[tuple[float, int]] = []
-        for row in rows:
-            raw_prob = _safe_float(row[0], None)
-            resolved_price = _safe_float(row[1], None)
-            if raw_prob is None or resolved_price is None:
-                continue
-            if not (0.0 <= raw_prob <= 1.0):
-                continue
-            outcome = 1 if resolved_price >= 0.5 else 0
-            parsed.append((raw_prob, outcome))
-        return parsed
-
-    def _brier(self, rows: list[tuple[float, int]], a: float, b: float) -> float:
-        if not rows:
-            return float("inf")
-        errs = [
-            (calibrate_probability_with_params(raw, a, b) - float(outcome)) ** 2
-            for raw, outcome in rows
-        ]
-        return float(sum(errs) / len(errs))
-
-    def refresh(self, force: bool = False) -> None:
-        """Refit rolling Platt and choose static vs rolling by recent Brier."""
-        if not self.enabled:
-            self.active_mode = "static"
-            self.active_a = float(PLATT_A)
-            self.active_b = float(PLATT_B)
-            return
-
-        now_ts = time.time()
-        if not force and (now_ts - self.last_refit_ts) < self.refit_seconds:
-            return
-
-        rows = self._recent_resolved_rows()
-        self.sample_size = len(rows)
-        self.last_refit_ts = now_ts
-
-        if len(rows) < self.min_samples:
-            self.active_mode = "static"
-            self.active_a = float(PLATT_A)
-            self.active_b = float(PLATT_B)
-            self.static_brier = self._brier(rows, PLATT_A, PLATT_B) if rows else None
-            self.rolling_brier = None
-            return
-
-        raw_probs = [r[0] for r in rows]
-        outcomes = [r[1] for r in rows]
-        rolling_a, rolling_b = fit_platt_parameters(raw_probs, outcomes)
-
-        static_brier = self._brier(rows, PLATT_A, PLATT_B)
-        rolling_brier = self._brier(rows, rolling_a, rolling_b)
-        self.static_brier = static_brier
-        self.rolling_brier = rolling_brier
-
-        if rolling_brier + 1e-6 < static_brier:
-            self.active_mode = "rolling"
-            self.active_a = rolling_a
-            self.active_b = rolling_b
+        self._impl = None
+        if RuntimePlattCalibrator is not None:
+            self._impl = RuntimePlattCalibrator(
+                db,
+                enabled=enabled,
+                min_observations=min_samples,
+                runtime_variant=selected_variant,
+                refit_seconds=refit_seconds,
+                report_path=ADAPTIVE_PLATT_REPORT_PATH,
+                report_json_path=ADAPTIVE_PLATT_REPORT_JSON_PATH,
+                static_a=PLATT_A,
+                static_b=PLATT_B,
+            )
         else:
+            logger.warning("Adaptive Platt module unavailable; falling back to static Platt")
+            self.enabled = False
             self.active_mode = "static"
             self.active_a = float(PLATT_A)
             self.active_b = float(PLATT_B)
+            self.sample_size = 0
+            self.selected_variant = "static"
+
+    def __getattr__(self, name: str):
+        if self._impl is not None:
+            return getattr(self._impl, name)
+        raise AttributeError(name)
+
+    def ensure_report(self, force: bool = False) -> dict | None:
+        if self._impl is None:
+            return None
+        return self._impl.ensure_report(force=force)
+
+    def refresh(self, force: bool = False) -> bool:
+        if self._impl is None:
+            return False
+        return self._impl.refresh(force=force)
 
     def calibrate(self, raw_prob: float) -> float:
-        return calibrate_probability_with_params(raw_prob, self.active_a, self.active_b)
+        if self._impl is None:
+            return calibrate_probability_with_params(raw_prob, PLATT_A, PLATT_B)
+        return self._impl.calibrate(raw_prob)
 
     def summary(self) -> dict:
-        return {
-            "enabled": self.enabled,
-            "mode": self.active_mode,
-            "a": self.active_a,
-            "b": self.active_b,
-            "samples": self.sample_size,
-            "static_brier": self.static_brier,
-            "rolling_brier": self.rolling_brier,
-        }
+        if self._impl is None:
+            return {
+                "enabled": False,
+                "selected_variant": "static",
+                "active_mode": "static",
+                "mode": "static",
+                "a": float(PLATT_A),
+                "b": float(PLATT_B),
+                "samples": 0,
+                "last_refit_at": "",
+                "last_refit_rows": 0,
+                "report_path": ADAPTIVE_PLATT_REPORT_PATH,
+            }
+        summary = dict(self._impl.summary())
+        summary["mode"] = summary.get("active_mode", summary.get("mode"))
+        return summary
 
 
 # ---------------------------------------------------------------------------
@@ -1761,8 +1903,9 @@ def apply_disagreement_size_modifier(
     std_dev: float | None,
     *,
     modifier: float | None = None,
+    model_count: int = 2,
 ) -> tuple[float, float]:
-    """Apply the Stream 6 disagreement multiplier to a Kelly-sized trade."""
+    """Apply the ensemble confidence multiplier to a Kelly-sized trade."""
     if size_usd <= 0:
         return 0.0, 1.0
     if std_dev is None:
@@ -1771,7 +1914,7 @@ def apply_disagreement_size_modifier(
     resolved_modifier = (
         max(0.0, float(modifier))
         if modifier is not None
-        else disagreement_kelly_modifier(std_dev)
+        else confidence_multiplier_from_std(std_dev, model_count)
     )
     final_size = round(size_usd * resolved_modifier, 2)
     if final_size < 0.50:
@@ -1908,17 +2051,59 @@ class JJState:
     def record_trade(self, market_id: str, question: str, direction: str,
                      price: float, size_usd: float, edge: float,
                      confidence: float, order_id: str = ""):
-        """Record a new trade."""
-        self.state["open_positions"][market_id] = {
-            "question": question,
-            "direction": direction,
-            "entry_price": price,
-            "size_usd": size_usd,
-            "edge": edge,
-            "confidence": confidence,
-            "order_id": order_id,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
+        """Record a new filled trade, aggregating repeated fills on the same side."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        existing = self.state["open_positions"].get(market_id)
+        if existing and existing.get("direction") == direction:
+            prev_price = _safe_float(existing.get("entry_price"), price) or price
+            prev_size_usd = _safe_float(existing.get("size_usd"), 0.0) or 0.0
+            prev_shares = prev_size_usd / prev_price if prev_price > 0 else 0.0
+            new_shares = size_usd / price if price > 0 else 0.0
+            total_shares = prev_shares + new_shares
+            total_size_usd = prev_size_usd + size_usd
+            avg_entry_price = (
+                total_size_usd / total_shares
+                if total_shares > 0
+                else price
+            )
+            order_ids = [
+                oid
+                for oid in existing.get("order_ids", [existing.get("order_id", "")])
+                if oid
+            ]
+            if order_id and order_id not in order_ids:
+                order_ids.append(order_id)
+            self.state["open_positions"][market_id] = {
+                "question": question or existing.get("question", ""),
+                "direction": direction,
+                "entry_price": avg_entry_price,
+                "size_usd": total_size_usd,
+                "shares": total_shares,
+                "edge": ((existing.get("edge", edge) or edge) * prev_size_usd + edge * size_usd)
+                / max(total_size_usd, 1e-9),
+                "confidence": (
+                    (_safe_float(existing.get("confidence"), confidence) or confidence) * prev_size_usd
+                    + confidence * size_usd
+                ) / max(total_size_usd, 1e-9),
+                "order_id": order_id or existing.get("order_id", ""),
+                "order_ids": order_ids,
+                "timestamp": existing.get("timestamp", now_iso),
+                "updated_at": now_iso,
+            }
+        else:
+            self.state["open_positions"][market_id] = {
+                "question": question,
+                "direction": direction,
+                "entry_price": price,
+                "size_usd": size_usd,
+                "shares": size_usd / price if price > 0 else 0.0,
+                "edge": edge,
+                "confidence": confidence,
+                "order_id": order_id,
+                "order_ids": [order_id] if order_id else [],
+                "timestamp": now_iso,
+                "updated_at": now_iso,
+            }
         self.state["total_deployed"] += size_usd
         self.state["total_trades"] += 1
         self.state["trades_today"] += 1
@@ -1932,7 +2117,7 @@ class JJState:
             "size_usd": size_usd,
             "edge": edge,
             "order_id": order_id,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": now_iso,
         })
         self.state["trade_log"] = self.state["trade_log"][-100:]
 
@@ -2073,36 +2258,65 @@ class JJLive:
         else:
             self.quarantine = None
 
-        # LLM Analyzer: prefer ensemble (multi-model + RAG) over single Claude
-        self.ensemble_mode = False
-        if LLMEnsemble is not None:
-            try:
-                self.analyzer = LLMEnsemble(enable_rag=True, enable_brier=True)
-                self.ensemble_mode = True
-                logger.info(f"LLM Ensemble initialized: {len(self.analyzer.models)} models, RAG=ON, Brier=ON")
-            except Exception as e:
-                logger.warning(f"LLM Ensemble init failed, falling back to Claude-only: {e}")
-                self.analyzer = ClaudeAnalyzer()
-        else:
-            self.analyzer = ClaudeAnalyzer()
-            logger.info("Using single-model ClaudeAnalyzer (LLM Ensemble not available)")
-
         self.notifier = self._init_telegram()
+        self.signal_dedup = SignalDedupCache(ttl_seconds=SIGNAL_DEDUP_TTL_SECONDS)
         self.db = TradeDatabase()
         self.adaptive_platt = AdaptivePlattCalibrator(self.db)
+        if self.adaptive_platt.enabled:
+            try:
+                self.adaptive_platt.ensure_report(force=False)
+            except Exception as e:
+                logger.warning(f"Adaptive Platt report generation failed (non-fatal): {e}")
         self.adaptive_platt.refresh(force=True)
         if self.adaptive_platt.enabled:
             cal = self.adaptive_platt.summary()
             logger.info(
-                "Adaptive Platt: mode=%s A=%.4f B=%.4f samples=%d static_brier=%s rolling_brier=%s",
-                cal["mode"],
+                "Adaptive Platt: winner=%s active=%s A=%.4f B=%.4f samples=%d refit_rows=%d report=%s",
+                cal.get("selected_variant", "static"),
+                cal.get("active_mode", cal.get("mode", "static")),
                 cal["a"],
                 cal["b"],
                 cal["samples"],
-                f"{cal['static_brier']:.4f}" if cal["static_brier"] is not None else "n/a",
-                f"{cal['rolling_brier']:.4f}" if cal["rolling_brier"] is not None else "n/a",
+                cal.get("last_refit_rows", 0),
+                cal.get("report_path", ADAPTIVE_PLATT_REPORT_PATH),
             )
         self.multi_sim = MultiBankrollSimulator(self.db)
+
+        # LLM Analyzer: prefer the new multi-model ensemble over single Claude.
+        self.ensemble_mode = False
+        self.ensemble_cost_tracker = None
+        if EnsembleEstimator is not None:
+            try:
+                if LLMCostTracker is not None:
+                    self.ensemble_cost_tracker = LLMCostTracker(
+                        daily_cap_usd=ENSEMBLE_DAILY_COST_CAP_USD,
+                    )
+                self.analyzer = EnsembleEstimator(
+                    calibrate_fn=self.adaptive_platt.calibrate,
+                    min_edge=MIN_EDGE,
+                    daily_cost_cap_usd=ENSEMBLE_DAILY_COST_CAP_USD,
+                    cost_tracker=self.ensemble_cost_tracker,
+                    enable_second_claude=ENSEMBLE_ENABLE_SECOND_CLAUDE,
+                )
+                self.ensemble_cost_tracker = self.analyzer.cost_tracker
+                self.ensemble_mode = True
+                logger.info(
+                    "Ensemble estimator initialized: models=%s cost_cap=$%.2f second_claude=%s",
+                    ", ".join(self.analyzer.models) or "none",
+                    ENSEMBLE_DAILY_COST_CAP_USD,
+                    ENSEMBLE_ENABLE_SECOND_CLAUDE,
+                )
+            except Exception as e:
+                logger.warning(f"Ensemble estimator init failed, falling back to Claude-only: {e}")
+                self.analyzer = ClaudeAnalyzer()
+        else:
+            self.analyzer = ClaudeAnalyzer()
+            logger.info("Using single-model ClaudeAnalyzer (ensemble estimator not available)")
+        self.fill_tracker = (
+            FillTracker(db_path=self.db.db_path, report_path=Path("reports/fill_rate_report.md"))
+            if FillTracker is not None
+            else None
+        )
 
         # Only init CLOB client for live trading
         if not self.paper_mode:
@@ -2110,6 +2324,23 @@ class JJLive:
         else:
             self.clob = None
             logger.info("PAPER TRADING MODE — orders will be simulated locally")
+
+        merge_executor = None
+        if not self.paper_mode:
+            if NodePolyMergerExecutor is not None and os.environ.get("POLY_MERGER_SCRIPT"):
+                merge_executor = NodePolyMergerExecutor(os.environ.get("POLY_MERGER_SCRIPT"))
+            elif RelayerMergeExecutor is not None:
+                merge_executor = RelayerMergeExecutor()
+        self.position_merger = (
+            LivePositionMerger(
+                user_address=os.environ.get("POLY_SAFE_ADDRESS") or os.environ.get("POLYMARKET_FUNDER"),
+                executor=merge_executor,
+                min_freed_capital_usdc=MIN_MERGE_FREED_USDC,
+                auto_submit=AUTO_MERGE_POSITIONS,
+            )
+            if LivePositionMerger is not None
+            else None
+        )
 
         # Signal source #2: LMSR Bayesian Engine
         if LMSREngine is not None:
@@ -2166,6 +2397,40 @@ class JJLive:
                 self.lead_lag = None
         else:
             logger.warning("Lead-lag engine not available — running without")
+
+        # Signal source #7: Multi-outcome sum-violation scanner
+        self.sum_violation_scanner = None
+        self.sum_violation_strategy = None
+        if SumViolationScanner is not None and SumViolationStrategy is not None:
+            try:
+                self.sum_violation_scanner = SumViolationScanner(
+                    interval_seconds=SCAN_INTERVAL,
+                    max_pages=int(os.environ.get("JJ_SUM_VIOLATION_MAX_PAGES", "20")),
+                    page_size=int(os.environ.get("JJ_SUM_VIOLATION_PAGE_SIZE", "100")),
+                    max_events=int(os.environ.get("JJ_SUM_VIOLATION_MAX_EVENTS", "60")),
+                    min_event_markets=3,
+                    prefilter_buffer=float(os.environ.get("JJ_SUM_VIOLATION_PREFILTER_BUFFER", "0.025")),
+                    timeout_seconds=float(os.environ.get("JJ_SUM_VIOLATION_TIMEOUT_SECONDS", "12.0")),
+                    use_websocket=False,
+                )
+                self.sum_violation_strategy = SumViolationStrategy(
+                    scanner=self.sum_violation_scanner,
+                    threshold=float(os.environ.get("JJ_SUM_VIOLATION_THRESHOLD", "0.05")),
+                    min_depth_usd=float(os.environ.get("JJ_SUM_VIOLATION_MIN_DEPTH_USD", "50.0")),
+                    max_resolution_hours=MAX_RESOLUTION_HOURS,
+                    position_size_usd=min(MAX_POSITION_USD, 0.50),
+                    report_path=os.environ.get(
+                        "JJ_SUM_VIOLATION_REPORT_PATH",
+                        "reports/sum_violations_log.md",
+                    ),
+                )
+                logger.info("Signal source #7: Multi-outcome Sum Violation initialized")
+            except Exception as e:
+                logger.warning(f"Sum-violation strategy init failed: {e}")
+                self.sum_violation_scanner = None
+                self.sum_violation_strategy = None
+        else:
+            logger.warning("Sum-violation strategy not available — running without")
 
         # Signals 5/6: A-6 + B-1 structural alpha integration.
         self.combinatorial_cfg = (
@@ -2260,28 +2525,66 @@ class JJLive:
             len(self.state.state["open_positions"]),
             self.state.count_active_linked_baskets(),
         )
+        logger.info(
+            "  Effective config: position=$%.2f max_positions=%d daily_loss=$%.2f kelly=%.2f max_res=%.1fh paper=%s",
+            MAX_POSITION_USD,
+            MAX_OPEN_POSITIONS,
+            MAX_DAILY_LOSS_USD,
+            KELLY_FRACTION,
+            MAX_RESOLUTION_HOURS,
+            self.paper_mode,
+        )
         logger.info(f"  Max per trade: ${MAX_POSITION_USD}")
         logger.info(f"  Daily loss limit: ${MAX_DAILY_LOSS_USD}")
         logger.info(f"  Kelly fraction: {KELLY_FRACTION} (max {MAX_KELLY_FRACTION})")
         logger.info(f"  Scan interval: {SCAN_INTERVAL}s")
+        logger.info(
+            "  Fill tracker: %s | stale order age=%.1fh | report=%sh",
+            "ON" if self.fill_tracker is not None else "OFF",
+            MAX_ORDER_AGE_HOURS,
+            FILL_REPORT_HOURS,
+        )
+        logger.info(
+            "  Position merger: %s | auto_submit=%s | min_freed=$%.2f",
+            "ON" if self.position_merger is not None else "OFF",
+            AUTO_MERGE_POSITIONS,
+            MIN_MERGE_FREED_USDC,
+        )
         logger.info(f"  Platt calibration: A={PLATT_A}, B={PLATT_B}")
         if self.adaptive_platt.enabled:
+            cal = self.adaptive_platt.summary()
             logger.info(
-                f"  Adaptive Platt: EXPERIMENTAL ON (window={ADAPTIVE_PLATT_WINDOW}, "
-                f"min={ADAPTIVE_PLATT_MIN_SAMPLES}, refit={ADAPTIVE_PLATT_REFIT_SECONDS}s)"
+                "  Adaptive Platt: ON (winner=%s active=%s min=%d refit=%ss report=%s)",
+                cal.get("selected_variant", "static"),
+                cal.get("active_mode", cal.get("mode", "static")),
+                ADAPTIVE_PLATT_MIN_SAMPLES,
+                ADAPTIVE_PLATT_REFIT_SECONDS,
+                cal.get("report_path", ADAPTIVE_PLATT_REPORT_PATH),
             )
         else:
             logger.info("  Adaptive Platt: OFF (static params preserved)")
         logger.info(
-            f"  Ensemble agreement floor: {ENSEMBLE_MIN_AGREEMENT:.2f} "
-            f"(fragile conviction skip={'ON' if ENSEMBLE_SKIP_FRAGILE_CONVICTION else 'OFF'})"
+            "  Disagreement bands: confirmation<%.2f signal>%.2f reduce_size>%.2f wide>%.2f",
+            DISAGREEMENT_CONFIRMATION_STD,
+            DISAGREEMENT_SIGNAL_STD,
+            DISAGREEMENT_REDUCE_SIZE_STD,
+            DISAGREEMENT_WIDE_STD,
         )
         logger.info(
-            f"  Disagreement Kelly: std<={DISAGREEMENT_LOW_STD:.2f} => {MAX_KELLY_FRACTION:.4f}, "
-            f"std>={DISAGREEMENT_HIGH_STD:.2f} => {DISAGREEMENT_MIN_KELLY:.5f}"
+            "  Ensemble cost cap: $%.2f/day (fallback=Haiku-only, second_claude=%s)",
+            ENSEMBLE_DAILY_COST_CAP_USD,
+            ENSEMBLE_ENABLE_SECOND_CLAUDE,
         )
         logger.info(f"  Thresholds: YES={YES_THRESHOLD:.0%}, NO={NO_THRESHOLD:.0%}")
         logger.info(f"  Category filter: skip priority < {MIN_CATEGORY_PRIORITY}")
+        if self.sum_violation_strategy is not None:
+            logger.info(
+                "  Sum violation: threshold=%.3f min_depth=$%.2f per_leg=$%.2f max_res=%.1fh",
+                self.sum_violation_strategy.threshold,
+                self.sum_violation_strategy.min_depth_usd,
+                self.sum_violation_strategy.position_size_usd,
+                self.sum_violation_strategy.max_resolution_hours,
+            )
         if self.combinatorial_cfg is not None:
             logger.info(
                 "  Combinatorial flags: A6(shadow=%s live=%s) B1(shadow=%s live=%s)",
@@ -2291,11 +2594,11 @@ class JJLive:
                 self.combinatorial_cfg.enable_b1_live,
             )
             logger.info(
-                "  Combinatorial caps: max_leg=$%.2f arb_budget=$%.2f stale=%ss fill_timeout=%sms merge_min=$%.2f",
+                "  Combinatorial caps: max_leg=$%.2f arb_budget=$%.2f stale=%ss fill_timeout=%ss merge_min=$%.2f",
                 self.combinatorial_cfg.max_notional_per_leg_usd,
                 self.combinatorial_cfg.arb_budget_usd,
                 self.combinatorial_cfg.stale_book_max_age_seconds,
-                self.combinatorial_cfg.fill_timeout_ms,
+                self.combinatorial_cfg.fill_timeout_seconds,
                 self.combinatorial_cfg.merge_min_notional_usd,
             )
         logger.info(f"  Database: {DB_FILE}")
@@ -2324,6 +2627,91 @@ class JJLive:
                 except Exception:
                     logger.warning("Could not init Telegram — notifications disabled")
                     return _DummyNotifier()
+
+    def _cancel_live_order(self, order_id: str) -> bool:
+        """Cancel a live CLOB order, tolerating response shape differences."""
+        if not order_id or self.clob is None:
+            return False
+        try:
+            response = self.clob.cancel(order_id)
+            if isinstance(response, dict):
+                if response.get("error"):
+                    return False
+                if response.get("success") is False:
+                    return False
+            return True
+        except Exception:
+            return False
+
+    async def _record_live_fill(self, fill_event: "OrderFillEvent") -> None:
+        """Translate a detected maker fill into a trade record and state update."""
+        metadata = fill_event.metadata if isinstance(fill_event.metadata, dict) else {}
+        trade_record = dict(metadata.get("trade_record") or {})
+        signal_context = dict(metadata.get("signal_context") or {})
+        trade_record.update(
+            {
+                "market_id": fill_event.market_id,
+                "question": fill_event.question or trade_record.get("question", ""),
+                "direction": fill_event.direction or trade_record.get("direction", ""),
+                "entry_price": fill_event.fill_price,
+                "position_size_usd": fill_event.fill_size_usd,
+                "category": fill_event.category or trade_record.get("category", "unknown"),
+                "token_id": fill_event.token_id or trade_record.get("token_id", ""),
+                "order_id": fill_event.order_id,
+            }
+        )
+        trade_id = self.db.log_trade(trade_record)
+        if self.fill_tracker is not None:
+            self.fill_tracker.attach_trade_id(fill_event.order_id, trade_id)
+
+        signal_for_sim = {
+            "edge": _safe_float(signal_context.get("edge"), _safe_float(trade_record.get("edge"), 0.0)),
+            "market_price": _safe_float(
+                signal_context.get("market_price"),
+                fill_event.order_price if fill_event.order_price is not None else fill_event.fill_price,
+            ),
+            "direction": trade_record.get("direction", fill_event.direction),
+            "_kelly_override": signal_context.get("_kelly_override"),
+        }
+        try:
+            self.multi_sim.simulate_trade(signal_for_sim, trade_id)
+        except Exception as e:
+            logger.debug("Multi-bankroll fill simulation failed: %s", e)
+
+        self.state.record_trade(
+            market_id=fill_event.market_id,
+            question=trade_record.get("question", fill_event.question),
+            direction=trade_record.get("direction", fill_event.direction),
+            price=fill_event.fill_price,
+            size_usd=fill_event.fill_size_usd,
+            edge=_safe_float(trade_record.get("edge"), 0.0),
+            confidence=_safe_float(trade_record.get("confidence"), 0.5),
+            order_id=fill_event.order_id,
+        )
+        logger.info(
+            "FILL DETECTED: order=%s market=%s size=%.4f price=%.3f latency=%.1fs",
+            fill_event.order_id[:16],
+            fill_event.market_id,
+            fill_event.fill_size,
+            fill_event.fill_price,
+            fill_event.latency_seconds,
+        )
+        try:
+            fill_line = (
+                self.fill_tracker.format_fill_rate_line(hours=FILL_REPORT_HOURS)
+                if self.fill_tracker is not None
+                else "Fill rate last 24h: n/a"
+            )
+            await self.notifier.send_message(
+                f"JJ LIVE FILL\n"
+                f"{trade_record.get('direction', fill_event.direction).upper()} ${fill_event.fill_size_usd:.2f}\n"
+                f"{trade_record.get('question', fill_event.question)[:60]}\n"
+                f"Fill: {fill_event.fill_size:.2f} @ {fill_event.fill_price:.3f}\n"
+                f"Latency: {fill_event.latency_seconds / 60:.1f}m\n"
+                f"{fill_line}"
+            )
+        except Exception:
+            pass
 
     def _run_embedded_a6_shadow_scan(self) -> tuple[dict, list]:
         """Refresh the shared constraint DB and extract A6Opportunity objects.
@@ -2480,6 +2868,207 @@ class JJLive:
             await self.notifier.send_message(message)
         except Exception:
             pass
+
+    async def _execute_sum_violation_signals(self, signals: list[dict]) -> tuple[int, dict[str, str]]:
+        """Place maker orders for multi-leg sum-violation baskets."""
+        if not signals:
+            return 0, {}
+        if not self.paper_mode and (self.clob is None or OrderArgs is None or OrderType is None or BUY is None):
+            return 0, {
+                str(signal.get("signal_id") or signal.get("violation_id") or ""): "order_failed"
+                for signal in signals
+                if signal.get("signal_id") or signal.get("violation_id")
+            }
+
+        orders_placed = 0
+        action_map: dict[str, str] = {}
+        per_leg_usd = min(MAX_POSITION_USD, 0.50)
+
+        for signal in signals:
+            signal_id = str(signal.get("signal_id") or signal.get("violation_id") or "")
+            legs = signal.get("sum_violation_legs") or []
+            if not signal_id or not isinstance(legs, list) or not legs:
+                if signal_id:
+                    action_map[signal_id] = "killed_by_filter"
+                continue
+
+            active_slots = len(self.state.state["open_positions"]) + self.state.count_active_linked_baskets()
+            if active_slots + len(legs) > MAX_OPEN_POSITIONS:
+                action_map[signal_id] = "killed_by_filter"
+                continue
+            if not self.state.check_exposure_limit():
+                action_map[signal_id] = "killed_by_filter"
+                continue
+            if any(self.state.has_position(str(leg.get("market_id", ""))) for leg in legs):
+                action_map[signal_id] = "killed_by_filter"
+                continue
+
+            basket_successes = 0
+            for leg in legs:
+                market_id = str(leg.get("market_id") or "").strip()
+                token_id = str(leg.get("token_id") or "").strip()
+                outcome = str(leg.get("outcome") or market_id).strip()
+                price = _safe_float(leg.get("limit_price"), 0.0)
+                order_price = round(price, 2)
+                if not market_id or not token_id or not (0.0 < price < 1.0) or not (0.0 < order_price < 1.0):
+                    continue
+
+                size_usd = min(per_leg_usd, _safe_float(leg.get("position_size_usd"), per_leg_usd))
+                if size_usd <= 0.0:
+                    continue
+                shares = _round_up(size_usd / order_price, 2)
+                min_order_size = clob_min_order_size(order_price, min_shares=POLY_MIN_ORDER_SHARES)
+                if shares < min_order_size:
+                    bumped_usd = round(min_order_size * order_price, 2)
+                    if bumped_usd > MAX_POSITION_USD * 2:
+                        logger.info(
+                            "  SKIP sum-violation leg (%.2f shares / $%.2f below live min %.2f shares / $%.2f): %s",
+                            shares,
+                            shares * order_price,
+                            min_order_size,
+                            _CLOB_HARD_MIN_NOTIONAL_USD,
+                            outcome,
+                        )
+                        continue
+                    shares = min_order_size
+                    size_usd = bumped_usd
+                else:
+                    size_usd = round(shares * order_price, 2)
+                direction = "buy_yes" if str(leg.get("quote_side")).upper() == "YES" else "buy_no"
+                category = str(leg.get("category") or "unknown")
+                leg_signal = {
+                    "market_id": market_id,
+                    "question": f"{signal.get('question', '')} - {outcome}",
+                    "direction": direction,
+                    "edge": _safe_float(signal.get("edge"), 0.0),
+                    "confidence": _safe_float(signal.get("confidence"), 0.95),
+                    "reasoning": signal.get("reasoning", ""),
+                    "estimated_prob": price,
+                    "raw_prob": price,
+                    "calibrated_prob": price,
+                    "taker_fee": 0.0,
+                    "source": signal.get("source", "sum_violation"),
+                    "strategy_type": signal.get("strategy_type", "combinatorial"),
+                    "relation_type": signal.get("relation_type", "same_event_sum"),
+                }
+                trade_record = build_trade_record(
+                    leg_signal,
+                    market_id=market_id,
+                    category=category,
+                    entry_price=price,
+                    position_size_usd=size_usd,
+                    token_id=token_id,
+                )
+
+                if self.paper_mode:
+                    order_id = f"paper-sumv-{uuid.uuid4().hex[:8]}"
+                    trade_record["order_id"] = order_id
+                    trade_id = self.db.log_trade(trade_record)
+                    self.multi_sim.simulate_trade(leg_signal, trade_id)
+                    self.state.record_trade(
+                        market_id=market_id,
+                        question=leg_signal["question"],
+                        direction=direction,
+                        price=price,
+                        size_usd=size_usd,
+                        edge=leg_signal["edge"],
+                        confidence=leg_signal["confidence"],
+                        order_id=order_id,
+                    )
+                    basket_successes += 1
+                    orders_placed += 1
+                    continue
+
+                min_order_size = clob_min_order_size(order_price, min_shares=POLY_MIN_ORDER_SHARES)
+                if shares < min_order_size:
+                    logger.info(
+                        "  SKIP sum-viol leg (%.2f shares / $%.2f below live min %.2f shares / $%.2f): %s",
+                        shares,
+                        shares * order_price,
+                        min_order_size,
+                        _CLOB_HARD_MIN_NOTIONAL_USD,
+                        outcome,
+                    )
+                    continue
+
+                try:
+                    order_args = OrderArgs(
+                        token_id=token_id,
+                        price=order_price,
+                        size=shares,
+                        side=BUY,
+                    )
+                    signed_order = self.clob.create_order(order_args)
+                    result = self.clob.post_order(
+                        signed_order,
+                        OrderType.GTC,
+                        post_only=True,
+                    )
+                    order_id = ""
+                    success = False
+                    if isinstance(result, dict):
+                        order_id = result.get("orderID", result.get("id", ""))
+                        success = not result.get("error")
+                    else:
+                        success = bool(result)
+
+                    if not success:
+                        logger.warning(
+                            "SUM-VIOL order failed: event=%s leg=%s result=%s",
+                            signal.get("event_id", ""),
+                            market_id,
+                            result,
+                        )
+                        continue
+
+                    trade_record["order_id"] = order_id
+                    trade_id = self.db.log_trade(trade_record)
+                    self.multi_sim.simulate_trade(leg_signal, trade_id)
+                    self.state.record_trade(
+                        market_id=market_id,
+                        question=leg_signal["question"],
+                        direction=direction,
+                        price=price,
+                        size_usd=size_usd,
+                        edge=leg_signal["edge"],
+                        confidence=leg_signal["confidence"],
+                        order_id=order_id,
+                    )
+                    basket_successes += 1
+                    orders_placed += 1
+                except Exception as e:
+                    logger.warning(
+                        "SUM-VIOL order error: event=%s leg=%s error=%s",
+                        signal.get("event_id", ""),
+                        market_id,
+                        e,
+                    )
+
+                await asyncio.sleep(0.1)
+
+            if basket_successes == len(legs):
+                action_map[signal_id] = "traded"
+            elif basket_successes > 0:
+                action_map[signal_id] = "partial_execution"
+            else:
+                action_map[signal_id] = "order_failed"
+
+            if basket_successes > 0:
+                try:
+                    await self.notifier.send_message(
+                        "SUM VIOLATION {mode}\n{event}\nSide: {side}\nViolation: {violation:.3f}\nOrders: {filled}/{total}".format(
+                            mode="PAPER" if self.paper_mode else "LIVE",
+                            event=signal.get("question", "")[:100],
+                            side=signal.get("trade_side", ""),
+                            violation=_safe_float(signal.get("details", {}).get("violation_amount"), 0.0),
+                            filled=basket_successes,
+                            total=len(legs),
+                        )
+                    )
+                except Exception:
+                    pass
+
+        return orders_placed, action_map
 
     def _on_a6_basket_complete(self, basket, event) -> None:
         """Handle A-6 basket completion: log fill, update position tracking."""
@@ -2947,6 +3536,19 @@ class JJLive:
             synced = self.state.sync_resolved_positions(self.db)
             if synced > 0:
                 logger.info(f"Cleared {synced} resolved positions")
+                if self.adaptive_platt.enabled:
+                    changed = self.adaptive_platt.refresh(force=False)
+                    cal = self.adaptive_platt.summary()
+                    if changed:
+                        logger.info(
+                            "Adaptive Platt refit after resolution sync: winner=%s active=%s A=%.6f B=%.6f samples=%d rows=%d",
+                            cal.get("selected_variant", "static"),
+                            cal.get("active_mode", cal.get("mode", "static")),
+                            cal["a"],
+                            cal["b"],
+                            cal["samples"],
+                            cal.get("last_refit_rows", 0),
+                        )
         except Exception as e:
             logger.warning(f"Position sync failed (non-fatal): {e}")
 
@@ -2961,9 +3563,61 @@ class JJLive:
 
         # Refresh adaptive calibration window from latest resolved trades.
         try:
-            self.adaptive_platt.refresh()
+            changed = self.adaptive_platt.refresh()
+            if changed:
+                cal = self.adaptive_platt.summary()
+                logger.info(
+                    "Adaptive Platt refit: winner=%s active=%s A=%.6f B=%.6f samples=%d rows=%d",
+                    cal.get("selected_variant", "static"),
+                    cal.get("active_mode", cal.get("mode", "static")),
+                    cal["a"],
+                    cal["b"],
+                    cal["samples"],
+                    cal.get("last_refit_rows", 0),
+                )
         except Exception as e:
             logger.warning(f"Adaptive Platt refresh failed (non-fatal): {e}")
+
+        fill_reconciliation = None
+        if not self.paper_mode and self.fill_tracker is not None and self.clob is not None:
+            try:
+                fill_reconciliation = self.fill_tracker.reconcile_open_orders(
+                    fetch_order=self.clob.get_order,
+                    cancel_order=self._cancel_live_order,
+                    max_order_age_hours=MAX_ORDER_AGE_HOURS,
+                )
+                if (
+                    fill_reconciliation.fills_detected > 0
+                    or fill_reconciliation.stale_cancelled > 0
+                ):
+                    logger.info(
+                        "Live order reconciliation: checked=%d fills=%d stale_cancelled=%d",
+                        fill_reconciliation.orders_checked,
+                        fill_reconciliation.fills_detected,
+                        fill_reconciliation.stale_cancelled,
+                    )
+                for fill_event in fill_reconciliation.fill_events:
+                    await self._record_live_fill(fill_event)
+                for stale_order_id in fill_reconciliation.stale_order_ids:
+                    logger.info("STALE ORDER CANCELLED: %s", stale_order_id[:16])
+            except Exception as e:
+                logger.warning(f"Fill reconciliation failed (non-fatal): {e}")
+
+        merge_result = None
+        if not self.paper_mode and self.position_merger is not None:
+            try:
+                merge_result = self.position_merger.check_and_merge()
+                if merge_result.get("candidates_found", 0) > 0 or merge_result.get("duplicate_groups", 0) > 0:
+                    logger.info(
+                        "Position merger: duplicates=%d candidates=%d submitted=%d freed=$%.2f reason=%s",
+                        merge_result.get("duplicate_groups", 0),
+                        merge_result.get("candidates_found", 0),
+                        merge_result.get("submitted", 0),
+                        _safe_float(merge_result.get("freed_capital_usdc"), 0.0),
+                        merge_result.get("reason", "unknown"),
+                    )
+            except Exception as e:
+                logger.warning(f"Position merge audit failed (non-fatal): {e}")
 
         combinatorial_signals, combinatorial_cycle = self._process_combinatorial_cycle(cycle_num)
         if combinatorial_cycle["a6_detected"] or combinatorial_cycle["b1_detected"]:
@@ -3030,27 +3684,21 @@ class JJLive:
                         skipped_quarantined += 1
                         continue
 
-                # Category filter: skip sports/crypto where LLM has low edge
                 question = m.get("question", "")
-                if is_low_edge_category(question):
-                    skipped_category += 1
-                    continue
-
-                # Velocity filter: skip markets that resolve too slowly
-                # NOTE: If resolution time is unknown, ALLOW the market through
-                # with a default estimate. Rejecting unknowns killed all markets
-                # because most Polymarket markets lack parseable endDate fields.
-                if MAX_RESOLUTION_HOURS > 0:
-                    res_hours = estimate_resolution_hours(m)
-                    if res_hours is None:
-                        # Default: assume 24h resolution for unknown markets
-                        # This lets them through the filter while deprioritizing
-                        # them in velocity scoring vs markets with known times.
-                        res_hours = 24.0
-                    if res_hours > MAX_RESOLUTION_HOURS:
+                raw_resolution_hours = estimate_resolution_hours(m) if MAX_RESOLUTION_HOURS > 0 else None
+                allowed, filter_reason, category, res_hours = apply_llm_market_filters(
+                    question,
+                    resolution_hours=raw_resolution_hours,
+                )
+                if not allowed:
+                    if filter_reason == "category":
+                        skipped_category += 1
+                    elif filter_reason == "velocity":
                         skipped_too_slow += 1
-                        continue
-                    # Store for later use in velocity scoring
+                    continue
+                if res_hours is not None:
+                    # Store for later use in velocity scoring and execution-time
+                    # revalidation so no later path can bypass the filter.
                     m["_resolution_hours"] = res_hours
 
                 # Extract YES price — handle multiple formats
@@ -3094,16 +3742,11 @@ class JJLive:
                     token_ids = self.scanner.extract_token_ids(m)
                 except Exception:
                     pass
+                token_ids = normalize_token_ids(token_ids)
 
                 if not token_ids:
                     raw_tokens = m.get("clobTokenIds", "")
-                    if isinstance(raw_tokens, str) and raw_tokens:
-                        try:
-                            token_ids = json.loads(raw_tokens)
-                        except json.JSONDecodeError:
-                            pass
-                    elif isinstance(raw_tokens, list):
-                        token_ids = raw_tokens
+                    token_ids = normalize_token_ids(raw_tokens)
 
                 # Extract market ID
                 market_id = m.get("id", m.get("condition_id", m.get("market_id", "")))
@@ -3120,6 +3763,7 @@ class JJLive:
                     "volume": float(m.get("volume", 0) or 0),
                     "liquidity": float(m.get("liquidity", 0) or 0),
                     "tags": m.get("tags", []) or [],
+                    "category": category,
                     "resolution_hours": res_hours,
                 }
             except Exception as e:
@@ -3161,18 +3805,26 @@ class JJLive:
 
         # Build batch for analyzer — skip markets we already hold
         markets_for_analysis = []
-        active_position_slots = len(self.state.state["open_positions"]) + self.state.count_active_linked_baskets()
+        pending_order_count = self.fill_tracker.pending_order_count() if self.fill_tracker is not None else 0
+        pending_market_ids = self.fill_tracker.pending_market_ids() if self.fill_tracker is not None else set()
+        pending_order_notional = self.fill_tracker.pending_order_notional() if self.fill_tracker is not None else 0.0
+        active_position_slots = (
+            len(self.state.state["open_positions"])
+            + self.state.count_active_linked_baskets()
+            + pending_order_count
+        )
         for m in actionable[:20]:
             market_id = m.get("id", m.get("condition_id", ""))
 
-            if self.state.has_position(market_id):
+            if self.state.has_position(market_id) or str(market_id) in pending_market_ids:
                 continue
 
             if active_position_slots + len(markets_for_analysis) >= MAX_OPEN_POSITIONS:
                 logger.info(f"Position limit reached ({MAX_OPEN_POSITIONS})")
                 break
 
-            if not self.state.check_exposure_limit():
+            effective_deployed = self.state.state["total_deployed"] + pending_order_notional
+            if effective_deployed >= self.state.state["bankroll"] * MAX_EXPOSURE_PCT:
                 logger.info("Exposure limit reached")
                 break
 
@@ -3181,6 +3833,7 @@ class JJLive:
                 "market_id": str(market_id),
                 "question": m.get("question", ""),
                 "current_price": mdata_lookup.get("yes_price", 0.5),
+                "category": mdata_lookup.get("category", "unknown"),
             })
 
         if markets_for_analysis:
@@ -3208,24 +3861,30 @@ class JJLive:
                     for mkt in markets_for_analysis:
                         try:
                             # Try various call signatures
+                            kwargs = {"question": mkt["question"]}
+                            if 'category' in params:
+                                kwargs["category"] = mkt.get("category", "unknown")
+                            if 'market_id' in params:
+                                kwargs["market_id"] = mkt["market_id"]
+
                             if 'current_price' in params:
                                 r = self.analyzer.analyze_market(
-                                    question=mkt["question"],
                                     current_price=mkt["current_price"],
+                                    **kwargs,
                                 )
                             elif 'market_price' in params:
                                 r = self.analyzer.analyze_market(
-                                    question=mkt["question"],
                                     market_price=mkt["current_price"],
+                                    **kwargs,
                                 )
                             elif 'price' in params:
                                 r = self.analyzer.analyze_market(
-                                    question=mkt["question"],
                                     price=mkt["current_price"],
+                                    **kwargs,
                                 )
                             else:
                                 # Just pass question, let it figure it out
-                                r = self.analyzer.analyze_market(mkt["question"])
+                                r = self.analyzer.analyze_market(**kwargs)
 
                             if asyncio.iscoroutine(r):
                                 r = await r
@@ -3250,7 +3909,11 @@ class JJLive:
                 elif hasattr(self.analyzer, 'analyze'):
                     for mkt in markets_for_analysis:
                         try:
-                            r = self.analyzer.analyze(mkt["question"], mkt["current_price"])
+                            r = self.analyzer.analyze(
+                                mkt["question"],
+                                mkt["current_price"],
+                                mkt.get("category", "unknown"),
+                            )
                             if asyncio.iscoroutine(r):
                                 r = await r
                             r["market_id"] = mkt["market_id"]
@@ -3279,6 +3942,21 @@ class JJLive:
                     except (ValueError, TypeError):
                         pass
 
+                question = r.get("question", "")
+                signal_allowed, filter_reason, category, res_hours = apply_llm_market_filters(
+                    question,
+                    resolution_hours=mdata_lookup.get("resolution_hours"),
+                )
+                if not signal_allowed:
+                    logger.info(
+                        "SKIP LLM result blocked by %s filter: cat=%s res=%s | %s",
+                        filter_reason,
+                        category,
+                        f"{res_hours:.1f}h" if isinstance(res_hours, (int, float)) else "?",
+                        question[:80],
+                    )
+                    continue
+
                 market_price = mdata_lookup.get("yes_price", 0.5)
 
                 # Try format_result if available (VPS analyzer may need this)
@@ -3302,10 +3980,6 @@ class JJLive:
                         prob = prob_fields["calibrated_prob"]
 
                     if prob is not None and market_price > 0:
-                        # Classify category for fee calculation
-                        question = r.get("question", "")
-                        category = classify_market_category(question)
-
                         # Full calibrated signal: Platt + fees + thresholds
                         sig = compute_calibrated_signal(
                             prob,
@@ -3355,58 +4029,76 @@ class JJLive:
                 confidence = normalize_confidence(r.get("confidence", 0.5))
 
                 # Get resolution hours for velocity scoring
-                res_hours = mdata_lookup.get("resolution_hours")
                 vel_score = velocity_score(edge, res_hours) if res_hours else 0.0
 
                 # Ensemble metadata (if available)
                 n_models = int(_safe_float(r.get("n_models", 1), 1))
-                models_agree = r.get("models_agree", True)
-                model_spread = _safe_float(r.get("model_spread", 0.0), 0.0)
-                model_stddev = _safe_float(
-                    r.get("disagreement", r.get("model_stddev", r.get("stdev", 0.0))),
+                model_spread = _safe_float(
+                    r.get("range_estimate", r.get("model_spread", 0.0)),
                     0.0,
                 )
+                model_stddev = _safe_float(
+                    r.get("std_estimate", r.get("disagreement", r.get("model_stddev", r.get("stdev", 0.0)))),
+                    0.0,
+                )
+                models_agree = r.get("confirmation_signal", r.get("models_agree", False))
                 rag_used = r.get("search_context_used", False)
                 agreement = _safe_float(
                     r.get("agreement"),
-                    max(0.0, 1.0 - min(1.0, model_spread / 0.25)),
+                    max(0.0, 1.0 - min(1.0, model_stddev / max(DISAGREEMENT_WIDE_STD, 1e-9))),
                 )
-                kelly_multiplier = _safe_float(
-                    r.get("kelly_multiplier"),
-                    disagreement_kelly_modifier(model_stddev),
+                confidence_multiplier = _safe_float(
+                    r.get("confidence_multiplier", r.get("kelly_multiplier")),
+                    confidence_multiplier_from_std(model_stddev, n_models),
                 )
                 disagreement_kelly_fraction = _safe_float(
                     r.get("disagreement_kelly_fraction"),
-                    min(MAX_KELLY_FRACTION, max(0.0, MAX_KELLY_FRACTION * kelly_multiplier)),
+                    min(MAX_KELLY_FRACTION, max(0.0, MAX_KELLY_FRACTION * confidence_multiplier)),
                 )
-                counter_shift = _safe_float(r.get("counter_shift", 0.0), 0.0)
-                counter_fragile = r.get("counter_fragile", False)
-                if isinstance(counter_fragile, str):
-                    counter_fragile = counter_fragile.lower() in ("true", "yes", "1")
+                disagreement_signal = bool(r.get("disagreement_signal", False))
+                confirmation_signal = bool(r.get("confirmation_signal", False))
+                uncertainty_reduction = bool(r.get("uncertainty_reduction", False))
+                ensemble_call_cost = _safe_float(r.get("ensemble_call_cost_usd"), 0.0)
+                ensemble_daily_cost = _safe_float(r.get("ensemble_daily_cost_usd"), 0.0)
+                cost_cap_triggered = bool(r.get("cost_cap_triggered", False))
+                fallback_mode = str(r.get("fallback_mode", "unknown") or "unknown")
+                individual_model_estimates = r.get("individual_model_estimates", {})
+                if not isinstance(individual_model_estimates, dict):
+                    individual_model_estimates = {}
 
                 if n_models > 1:
                     logger.info(
-                        f"  Ensemble: {n_models} models, spread={model_spread:.3f}, std={model_stddev:.3f}, "
-                        f"agree={models_agree}, agreement={agreement:.3f}, "
-                        f"kelly_mult={kelly_multiplier:.2f}, kelly_cap={disagreement_kelly_fraction:.4f}, "
-                        f"counter_shift={counter_shift:.3f}, "
-                        f"fragile={counter_fragile}, RAG={rag_used}"
+                        "  Ensemble: n=%d mean=%.3f cal=%.3f std=%.3f range=%.3f confirm=%s disagree=%s "
+                        "mult=%.2f call_cost=$%.4f daily_cost=$%.4f mode=%s cost_cap=%s",
+                        n_models,
+                        raw_prob,
+                        calibrated_prob,
+                        model_stddev,
+                        model_spread,
+                        confirmation_signal,
+                        disagreement_signal,
+                        confidence_multiplier,
+                        ensemble_call_cost,
+                        ensemble_daily_cost,
+                        fallback_mode,
+                        cost_cap_triggered,
                     )
-
-                if n_models > 1 and agreement < ENSEMBLE_MIN_AGREEMENT:
                     logger.info(
-                        f"  SKIP weak ensemble agreement: {agreement:.3f} "
-                        f"< floor {ENSEMBLE_MIN_AGREEMENT:.3f} | "
-                        f"{r.get('question', '')[:60]}"
+                        "  Model estimates: %s",
+                        ", ".join(
+                            f"{model_name}={float(probability):.3f}"
+                            for model_name, probability in sorted(individual_model_estimates.items())
+                        ) or "none",
                     )
-                    continue
-
-                if ENSEMBLE_SKIP_FRAGILE_CONVICTION and counter_fragile:
+                elif n_models == 1 and self.ensemble_mode:
                     logger.info(
-                        f"  SKIP fragile conviction (shift={counter_shift:.3f}) | "
-                        f"{r.get('question', '')[:60]}"
+                        "  Ensemble fallback: single-model mode raw=%.3f cal=%.3f cost=$%.4f daily=$%.4f mode=%s",
+                        raw_prob,
+                        calibrated_prob,
+                        ensemble_call_cost,
+                        ensemble_daily_cost,
+                        fallback_mode,
                     )
-                    continue
 
                 signal_payload = {
                     "market_id": mid,
@@ -3420,7 +4112,7 @@ class JJLive:
                     "confidence": confidence,
                     "reasoning": r.get("reasoning", ""),
                     "taker_fee": float(r.get("taker_fee", 0.0)),
-                    "category": r.get("category", "unknown"),
+                    "category": category,
                     "resolution_hours": res_hours,
                     "velocity_score": vel_score,
                     "n_models": n_models,
@@ -3428,12 +4120,19 @@ class JJLive:
                     "model_stddev": model_stddev,
                     "disagreement": model_stddev,
                     "agreement": agreement,
-                    "kelly_multiplier": kelly_multiplier,
+                    "confidence_multiplier": confidence_multiplier,
+                    "kelly_multiplier": confidence_multiplier,
                     "disagreement_kelly_fraction": disagreement_kelly_fraction,
                     "models_agree": bool(models_agree),
+                    "disagreement_signal": disagreement_signal,
+                    "confirmation_signal": confirmation_signal,
+                    "uncertainty_reduction": uncertainty_reduction,
+                    "individual_model_estimates": individual_model_estimates,
+                    "ensemble_call_cost_usd": ensemble_call_cost,
+                    "ensemble_daily_cost_usd": ensemble_daily_cost,
+                    "cost_cap_triggered": cost_cap_triggered,
+                    "fallback_mode": fallback_mode,
                     "search_context_used": bool(rag_used),
-                    "counter_shift": counter_shift,
-                    "counter_fragile": bool(counter_fragile),
                     "platt_mode": self.adaptive_platt.active_mode,
                     "platt_a": self.adaptive_platt.active_a,
                     "platt_b": self.adaptive_platt.active_b,
@@ -3535,6 +4234,34 @@ class JJLive:
             except Exception as e:
                 logger.warning(f"Lead-lag scan failed (non-fatal): {e}")
 
+        # --- SIGNAL SOURCE #7: Multi-Outcome Sum Violations ---
+        sum_violation_signals = []
+        if self.sum_violation_strategy is not None:
+            try:
+                generated = self.sum_violation_strategy.generate_signals()
+                sum_violation_signals = [signal.to_signal_dict() for signal in generated]
+                if self.sum_violation_strategy.last_evaluations:
+                    ready = sum(
+                        1
+                        for evaluation in self.sum_violation_strategy.last_evaluations
+                        if evaluation.action == "ready"
+                    )
+                    logger.info(
+                        "Sum-violation scanner: %s detected, %s tradable",
+                        len(self.sum_violation_strategy.last_evaluations),
+                        ready,
+                    )
+                    for ssig in sum_violation_signals[:5]:
+                        logger.info(
+                            "  SUM-VIOL: %s | side=%s | viol=%.3f | edge=%.3f",
+                            ssig.get("question", "")[:60],
+                            ssig.get("trade_side", ""),
+                            _safe_float(ssig.get("details", {}).get("violation_amount"), 0.0),
+                            _safe_float(ssig.get("edge"), 0.0),
+                        )
+            except Exception as e:
+                logger.warning(f"Sum-violation scan failed (non-fatal): {e}")
+
         # --- VPIN GATE: filter signals where flow is toxic ---
         if self.trade_stream:
             pre_vpin = len(signals)
@@ -3573,6 +4300,7 @@ class JJLive:
             + arb_signals
             + lead_lag_signals
             + combinatorial_signals
+            + sum_violation_signals
         )
         for s in all_signals:
             attach_signal_source_metadata(s)
@@ -3658,15 +4386,28 @@ class JJLive:
         logger.info(
             f"Found {len(signals)} predictive signals + {len(combinatorial_bypass_signals)} combinatorial bypass signals "
             f"(LLM:{len([s for s in signals if 'llm' in s.get('source', '')])} "
-            f"wallet:{len(wallet_signals)} lmsr:{len(lmsr_signals)} A6:{combinatorial_cycle['a6_detected']} B1:{combinatorial_cycle['b1_detected']})"
+            f"wallet:{len(wallet_signals)} lmsr:{len(lmsr_signals)} "
+            f"A6:{combinatorial_cycle['a6_detected']} B1:{combinatorial_cycle['b1_detected']} "
+            f"sumv:{len(sum_violation_signals)})"
         )
 
         # 3. EXECUTE TRADES
         trades_placed = 0
 
         for signal in signals:
-            if len(self.state.state["open_positions"]) + self.state.count_active_linked_baskets() >= MAX_OPEN_POSITIONS:
+            pending_order_count = self.fill_tracker.pending_order_count() if self.fill_tracker is not None else 0
+            pending_order_notional = self.fill_tracker.pending_order_notional() if self.fill_tracker is not None else 0.0
+            if (
+                len(self.state.state["open_positions"])
+                + self.state.count_active_linked_baskets()
+                + pending_order_count
+                >= MAX_OPEN_POSITIONS
+            ):
                 logger.info(f"Composite position limit reached ({MAX_OPEN_POSITIONS})")
+                break
+            effective_deployed = self.state.state["total_deployed"] + pending_order_notional
+            if effective_deployed >= self.state.state["bankroll"] * MAX_EXPOSURE_PCT:
+                logger.info("Exposure limit reached by pending + filled positions")
                 break
             market_id = signal["market_id"]
             mdata = market_lookup.get(market_id)
@@ -3674,8 +4415,25 @@ class JJLive:
             if not mdata:
                 continue
 
+            if "llm" in str(signal.get("source", "")).split("+"):
+                allowed, filter_reason, category, normalized_resolution = apply_llm_market_filters(
+                    signal.get("question", ""),
+                    resolution_hours=signal.get("resolution_hours"),
+                )
+                if not allowed:
+                    logger.info(
+                        "SKIP execution blocked by %s filter: cat=%s res=%s | %s",
+                        filter_reason,
+                        category,
+                        f"{normalized_resolution:.1f}h" if isinstance(normalized_resolution, (int, float)) else "?",
+                        signal.get("question", "")[:80],
+                    )
+                    continue
+                signal["category"] = category
+                signal["resolution_hours"] = normalized_resolution
+
             # Position sizing
-            size_usd = kelly_size(
+            base_size_usd = kelly_size(
                 edge=signal["edge"],
                 market_price=signal["market_price"],
                 direction=signal["direction"],
@@ -3683,15 +4441,27 @@ class JJLive:
                 kelly_fraction_override=signal.get("_kelly_override"),
             )
             size_usd, disagreement_modifier = apply_disagreement_size_modifier(
-                size_usd,
+                base_size_usd,
                 _safe_float(signal.get("disagreement", signal.get("model_stddev")), None),
-                modifier=_safe_float(signal.get("kelly_multiplier"), None),
+                modifier=_safe_float(signal.get("confidence_multiplier", signal.get("kelly_multiplier")), None),
+                model_count=int(_safe_float(signal.get("n_models", 1), 1)),
             )
             if signal.get("disagreement", signal.get("model_stddev")) is not None:
                 logger.info(
-                    "Disagreement: %.3f, Kelly modifier: %.2f, final size: $%.2f",
+                    "Disagreement: %.3f, confidence multiplier: %.2f, final size: $%.2f",
                     _safe_float(signal.get("disagreement", signal.get("model_stddev")), 0.0),
                     disagreement_modifier,
+                    size_usd,
+                )
+
+            if (
+                size_usd <= 0
+                and 0 < MAX_POSITION_USD <= 0.50
+                and base_size_usd >= MAX_POSITION_USD
+            ):
+                size_usd = round(MAX_POSITION_USD, 2)
+                logger.info(
+                    "Micro-size override: keeping test order at $%.2f for live data collection",
                     size_usd,
                 )
 
@@ -3714,7 +4484,40 @@ class JJLive:
             # Calculate shares
             if price <= 0 or price >= 1:
                 continue
-            shares = size_usd / price
+            order_price = round(price, 2)
+            if order_price <= 0 or order_price >= 1:
+                continue
+            shares = size_usd / order_price
+            order_size = _round_up(shares, 2)
+            if order_size <= 0:
+                continue
+
+            # Polymarket minimum order size enforcement
+            min_order_size = clob_min_order_size(order_price, min_shares=POLY_MIN_ORDER_SHARES)
+            if order_size < min_order_size:
+                bumped_usd = round(min_order_size * order_price, 2)
+                if bumped_usd > MAX_POSITION_USD * 2:
+                    logger.info(
+                        "  SKIP (%.2f shares / $%.2f below live min %.2f shares / $%.2f; bump to $%.2f exceeds 2x max $%.2f): %s",
+                        order_size,
+                        order_size * order_price,
+                        min_order_size,
+                        _CLOB_HARD_MIN_NOTIONAL_USD,
+                        bumped_usd,
+                        MAX_POSITION_USD,
+                        signal.get("question", "")[:50],
+                    )
+                    continue
+                logger.info(
+                    "  Bump order from %.2f shares / $%.2f to %.2f shares / $%.2f to meet live CLOB minimum",
+                    order_size,
+                    order_size * order_price,
+                    min_order_size,
+                    bumped_usd,
+                )
+                order_size = min_order_size
+            shares = order_size
+            size_usd = round(order_size * order_price, 2)
 
             category = classify_market_category(signal.get("question", ""))
             mode_tag = "PAPER" if self.paper_mode else "LIVE"
@@ -3733,6 +4536,15 @@ class JJLive:
                 position_size_usd=size_usd,
                 token_id=token_id,
             )
+            order_metadata = {
+                "trade_record": trade_record,
+                "signal_context": {
+                    "edge": signal.get("edge", 0.0),
+                    "market_price": signal.get("market_price", 0.5),
+                    "direction": signal.get("direction", ""),
+                    "_kelly_override": signal.get("_kelly_override"),
+                },
+            }
 
             if self.paper_mode:
                 # ---- PAPER TRADING: simulate locally ----
@@ -3741,6 +4553,36 @@ class JJLive:
 
                 # Log to SQLite
                 trade_id = self.db.log_trade(trade_record)
+
+                if self.fill_tracker is not None:
+                    self.fill_tracker.record_order(
+                        order_id=paper_order_id,
+                        trade_id=trade_id,
+                        market_id=market_id,
+                        token_id=token_id,
+                        question=signal["question"],
+                        category=category,
+                        side=side,
+                        direction=signal["direction"],
+                        price=order_price,
+                        size=order_size,
+                        size_usd=size_usd,
+                        order_type="maker",
+                        paper=True,
+                        metadata=order_metadata,
+                    )
+                    self.fill_tracker.record_fill(
+                        order_id=paper_order_id,
+                        trade_id=trade_id,
+                        market_id=market_id,
+                        token_id=token_id,
+                        fill_price=price,
+                        fill_size=shares,
+                        fill_size_usd=size_usd,
+                        latency_seconds=0.0,
+                        cumulative_size_matched=shares,
+                        status="filled",
+                    )
 
                 # Multi-bankroll simulation
                 self.multi_sim.simulate_trade(signal, trade_id)
@@ -3760,16 +4602,19 @@ class JJLive:
                 logger.info(f"  PAPER TRADE LOGGED: {paper_order_id} (db: {trade_id})")
 
                 try:
-                    src = signal.get('source', 'llm')
-                    conf_tag = " [CONFIRMED]" if signal.get('_confirmation') else ""
-                    await self.notifier.send_message(
-                        f"JJ PAPER TRADE{conf_tag}\n"
-                        f"{signal['direction'].upper()} ${size_usd:.2f}\n"
-                        f"{signal['question'][:60]}\n"
-                        f"Edge: {signal['edge']:.1%} | Price: {price:.3f}\n"
-                        f"Source: {src} | Cat: {category}\n"
-                        f"ID: {paper_order_id}"
-                    )
+                    if self.signal_dedup.should_notify(market_id, signal['direction']):
+                        src = signal.get('source', 'llm')
+                        conf_tag = " [CONFIRMED]" if signal.get('_confirmation') else ""
+                        await self.notifier.send_message(
+                            f"JJ PAPER TRADE{conf_tag}\n"
+                            f"{signal['direction'].upper()} ${size_usd:.2f}\n"
+                            f"{signal['question'][:60]}\n"
+                            f"Edge: {signal['edge']:.1%} | Price: {price:.3f}\n"
+                            f"Source: {src} | Cat: {category}\n"
+                            f"ID: {paper_order_id}"
+                        )
+                    else:
+                        logger.debug("Dedup suppressed notification: %s %s", market_id[:16], signal['direction'])
                 except Exception:
                     pass
 
@@ -3783,11 +4628,23 @@ class JJLive:
                 # Previously only crypto/sports were post-only. Now universal.
                 use_post_only = True
 
+                min_order_size = clob_min_order_size(order_price, min_shares=POLY_MIN_ORDER_SHARES)
+                if order_size < min_order_size:
+                    logger.info(
+                        "  SKIP (%.2f shares / $%.2f below live min %.2f shares / $%.2f): %s",
+                        order_size,
+                        order_size * order_price,
+                        min_order_size,
+                        _CLOB_HARD_MIN_NOTIONAL_USD,
+                        signal.get("question", "")[:50],
+                    )
+                    continue
+
                 try:
                     order_args = OrderArgs(
                         token_id=token_id,
-                        price=round(price, 2),
-                        size=round(shares, 2),
+                        price=order_price,
+                        size=order_size,
                         side=BUY,
                     )
                     signed_order = self.clob.create_order(order_args)
@@ -3803,22 +4660,23 @@ class JJLive:
                     else:
                         success = bool(result)
 
-                    if success:
+                    if success and order_id:
                         logger.info(f"  ORDER PLACED: {order_id}")
-                        trade_record["order_id"] = order_id
-                        trade_id = self.db.log_trade(trade_record)
-                        self.multi_sim.simulate_trade(signal, trade_id)
-
-                        self.state.record_trade(
-                            market_id=market_id,
-                            question=signal["question"],
-                            direction=signal["direction"],
-                            price=price,
-                            size_usd=size_usd,
-                            edge=signal["edge"],
-                            confidence=signal["confidence"],
-                            order_id=order_id,
-                        )
+                        if self.fill_tracker is not None:
+                            self.fill_tracker.record_order(
+                                order_id=order_id,
+                                market_id=market_id,
+                                token_id=token_id,
+                                question=signal["question"],
+                                category=category,
+                                side=side,
+                                direction=signal["direction"],
+                                price=order_price,
+                                size=order_size,
+                                size_usd=size_usd,
+                                order_type="maker",
+                                metadata=order_metadata,
+                            )
 
                         try:
                             res_h = signal.get('resolution_hours')
@@ -3826,19 +4684,27 @@ class JJLive:
                             vel = signal.get('velocity_score', 0)
                             src = signal.get('source', 'llm')
                             conf_tag = " [CONFIRMED]" if signal.get('_confirmation') else ""
+                            fill_line = (
+                                self.fill_tracker.format_fill_rate_line(hours=FILL_REPORT_HOURS)
+                                if self.fill_tracker is not None
+                                else "Fill rate last 24h: n/a"
+                            )
                             await self.notifier.send_message(
-                                f"JJ LIVE TRADE{conf_tag}\n"
+                                f"JJ LIVE ORDER POSTED{conf_tag}\n"
                                 f"{signal['direction'].upper()} ${size_usd:.2f}\n"
                                 f"{signal['question'][:60]}\n"
                                 f"Edge: {signal['edge']:.1%} | Price: {price:.3f}\n"
                                 f"Resolves: {res_str} | Velocity: {vel:.0f}\n"
                                 f"Source: {src} | Cat: {category} | Fee: {signal['taker_fee']:.4f}\n"
+                                f"{fill_line}\n"
                                 f"Order: {order_id[:16]}..."
                             )
                         except Exception:
                             pass
 
                         trades_placed += 1
+                    elif success:
+                        logger.warning("  ORDER ACKNOWLEDGED WITHOUT ID: %s", result)
                     else:
                         err_msg = result.get("error", str(result)) if isinstance(result, dict) else str(result)
                         logger.warning(f"  ORDER FAILED: {err_msg}")
@@ -3853,9 +4719,33 @@ class JJLive:
             # Small delay between orders
             await asyncio.sleep(0.5)
 
+        sum_violation_orders = 0
+        sum_violation_actions: dict[str, str] = {}
+        if sum_violation_signals:
+            sum_violation_orders, sum_violation_actions = await self._execute_sum_violation_signals(
+                sum_violation_signals
+            )
+            trades_placed += sum_violation_orders
+        if self.sum_violation_strategy is not None:
+            try:
+                self.sum_violation_strategy.write_report(sum_violation_actions)
+            except Exception as e:
+                logger.warning(f"Sum-violation report write failed: {e}")
+
         # Update cycle count
         self.state.state["cycles_completed"] = cycle_num
         self.state.save()
+
+        fill_summary_24h = None
+        if self.fill_tracker is not None:
+            try:
+                self.fill_tracker.write_report(hours=FILL_REPORT_HOURS, live_only=not self.paper_mode)
+                fill_summary_24h = self.fill_tracker.get_summary(
+                    hours=FILL_REPORT_HOURS,
+                    live_only=not self.paper_mode,
+                )
+            except Exception as e:
+                logger.warning(f"Fill-rate report generation failed (non-fatal): {e}")
 
         elapsed = time.time() - cycle_start
         summary = {
@@ -3870,6 +4760,13 @@ class JJLive:
             "signals": len(signals) + len(combinatorial_bypass_signals),
             "predictive_signals": len(signals),
             "combinatorial_signals": len(combinatorial_bypass_signals),
+            "sum_violation_detected": (
+                len(self.sum_violation_strategy.last_evaluations)
+                if self.sum_violation_strategy is not None
+                else 0
+            ),
+            "sum_violation_tradable": len(sum_violation_signals),
+            "sum_violation_orders": sum_violation_orders,
             "trades_placed": trades_placed,
             "open_positions": len(self.state.state["open_positions"]),
             "linked_baskets": self.state.count_active_linked_baskets(),
@@ -3878,6 +4775,31 @@ class JJLive:
             "max_resolution_hours": MAX_RESOLUTION_HOURS,
             "platt_mode": self.adaptive_platt.active_mode,
             "daily_pnl": self.state.state["daily_pnl"],
+            "fills_detected": (
+                fill_reconciliation.fills_detected
+                if fill_reconciliation is not None
+                else 0
+            ),
+            "stale_orders_cancelled": (
+                fill_reconciliation.stale_cancelled
+                if fill_reconciliation is not None
+                else 0
+            ),
+            "fill_rate_24h": (
+                fill_summary_24h.get("fill_rate", 0.0)
+                if isinstance(fill_summary_24h, dict)
+                else 0.0
+            ),
+            "merge_candidates": (
+                merge_result.get("candidates_found", 0)
+                if isinstance(merge_result, dict)
+                else 0
+            ),
+            "merge_submitted": (
+                merge_result.get("submitted", 0)
+                if isinstance(merge_result, dict)
+                else 0
+            ),
             "combinatorial": combinatorial_cycle,
             "elapsed_seconds": round(elapsed, 1),
         }
@@ -3899,7 +4821,9 @@ class JJLive:
             f"scanned={len(markets)} cat_skip={skipped_category} "
             f"slow_skip={skipped_too_slow} no_res={skipped_no_resolution} "
             f"actionable={len(actionable)} predictive={len(signals)} combinatorial={len(combinatorial_bypass_signals)} "
-            f"trades={trades_placed} (max_res={MAX_RESOLUTION_HOURS}h "
+            f"sumv_orders={sum_violation_orders} trades={trades_placed} "
+            f"fills={summary['fills_detected']} stale={summary['stale_orders_cancelled']} "
+            f"fill24h={summary['fill_rate_24h']:.1%} (max_res={MAX_RESOLUTION_HOURS}h "
             f"platt={self.adaptive_platt.active_mode}) ==="
         )
 
@@ -3941,11 +4865,17 @@ class JJLive:
                 "signals_generated": summary.get("signals", 0),
                 "predictive_signals": summary.get("predictive_signals", 0),
                 "combinatorial_signals": summary.get("combinatorial_signals", 0),
+                "sum_violation_detected": summary.get("sum_violation_detected", 0),
+                "sum_violation_tradable": summary.get("sum_violation_tradable", 0),
+                "sum_violation_orders": summary.get("sum_violation_orders", 0),
                 "trades_placed": summary.get("trades_placed", 0),
                 "bankroll": summary.get("bankroll", 0),
                 "daily_pnl": summary.get("daily_pnl", 0),
                 "open_positions": summary.get("open_positions", 0),
                 "linked_baskets": summary.get("linked_baskets", 0),
+                "fills_detected": summary.get("fills_detected", 0),
+                "stale_orders_cancelled": summary.get("stale_orders_cancelled", 0),
+                "fill_rate_24h": summary.get("fill_rate_24h", 0.0),
             }
 
             # Accumulate signal details (last 100 signals for pattern detection)
@@ -4014,8 +4944,12 @@ class JJLive:
                     "adaptive_platt_mode": self.adaptive_platt.active_mode,
                     "adaptive_platt_a": self.adaptive_platt.active_a,
                     "adaptive_platt_b": self.adaptive_platt.active_b,
-                    "ensemble_min_agreement": ENSEMBLE_MIN_AGREEMENT,
-                    "ensemble_skip_fragile_conviction": ENSEMBLE_SKIP_FRAGILE_CONVICTION,
+                    "disagreement_confirmation_std": DISAGREEMENT_CONFIRMATION_STD,
+                    "disagreement_signal_std": DISAGREEMENT_SIGNAL_STD,
+                    "disagreement_reduce_size_std": DISAGREEMENT_REDUCE_SIZE_STD,
+                    "disagreement_wide_std": DISAGREEMENT_WIDE_STD,
+                    "ensemble_daily_cost_cap_usd": ENSEMBLE_DAILY_COST_CAP_USD,
+                    "ensemble_enable_second_claude": ENSEMBLE_ENABLE_SECOND_CLAUDE,
                     "paper_mode": self.paper_mode,
                 },
                 "combinatorial_params": {
@@ -4060,6 +4994,8 @@ class JJLive:
                     sources.append("VPIN/OFI")
                 if self.lead_lag:
                     sources.append("LeadLag")
+                if self.sum_violation_strategy is not None:
+                    sources.append("SumViolation")
                 if self.combinatorial_cfg and self.combinatorial_cfg.enable_a6_shadow:
                     sources.append("A6-Shadow")
                 if self.combinatorial_cfg and self.combinatorial_cfg.enable_b1_shadow:
@@ -4112,6 +5048,16 @@ class JJLive:
                     self.a6_shadow_scanner.close()
                 except Exception:
                     pass
+            if self.sum_violation_scanner is not None:
+                try:
+                    self.sum_violation_scanner.close()
+                except Exception:
+                    pass
+            if self.fill_tracker is not None:
+                try:
+                    self.fill_tracker.close()
+                except Exception:
+                    pass
 
     async def show_status(self):
         """Print current JJ state with database stats."""
@@ -4146,6 +5092,16 @@ class JJLive:
         print(f"  Total P&L (DB):    ${db_stats['total_pnl']:.2f}")
         if db_stats['brier_score'] is not None:
             print(f"  Brier score:       {db_stats['brier_score']:.4f}")
+        if self.fill_tracker is not None:
+            fill_summary = self.fill_tracker.get_summary(hours=FILL_REPORT_HOURS, live_only=not self.paper_mode)
+            print(f"\nFill Tracking ({FILL_REPORT_HOURS}h):")
+            print(f"  Orders placed:      {fill_summary['total_orders']}")
+            print(f"  Orders with fills:  {fill_summary['filled_orders']}")
+            print(f"  Fill rate:          {fill_summary['fill_rate']:.1%}")
+            print(f"  Stale cancelled:    {fill_summary['stale_cancelled']}")
+            latency = fill_summary.get("median_fill_latency_seconds")
+            if latency is not None:
+                print(f"  Median latency:     {latency / 60:.1f} min")
 
         if multi:
             print(f"\nMulti-Bankroll Simulation:")
@@ -4273,6 +5229,20 @@ def run_resolution_tracker():
                   f"(open: {len(state.state['open_positions'])} remaining)")
         except Exception as e:
             print(f"Warning: state sync failed: {e}")
+        try:
+            calibrator = AdaptivePlattCalibrator(db)
+            changed = calibrator.refresh(force=True)
+            if changed:
+                cal = calibrator.summary()
+                print(
+                    "Adaptive Platt refit: "
+                    f"winner={cal.get('selected_variant', 'static')} "
+                    f"active={cal.get('active_mode', cal.get('mode', 'static'))} "
+                    f"A={cal['a']:.6f} B={cal['b']:.6f} "
+                    f"samples={cal['samples']}"
+                )
+        except Exception as e:
+            print(f"Warning: adaptive Platt refresh failed: {e}")
 
     stats = db.get_stats()
     combinatorial_summary = db.get_combinatorial_summary(hours=24 * 14)
@@ -4352,6 +5322,12 @@ async def generate_daily_report():
     # Multi-bankroll state
     multi_sim = MultiBankrollSimulator(db)
     multi = multi_sim.get_summary()
+    fill_tracker = FillTracker(db_path=db.db_path) if FillTracker is not None else None
+    fill_summary = (
+        fill_tracker.get_summary(hours=24, live_only=not PAPER_TRADING)
+        if fill_tracker is not None
+        else None
+    )
 
     # Build report
     report_lines = [
@@ -4369,6 +5345,15 @@ async def generate_daily_report():
         f"Open positions: {unresolved}",
         f"Linked baskets: {combinatorial_summary['active_baskets']}",
     ]
+
+    if isinstance(fill_summary, dict):
+        report_lines.extend(
+            [
+                f"Fill rate (24h): {fill_summary['fill_rate']:.1%} "
+                f"({fill_summary['filled_orders']}/{fill_summary['total_orders']})",
+                f"Stale cancels (24h): {fill_summary['stale_cancelled']}",
+            ]
+        )
 
     if stats['brier_score'] is not None:
         report_lines.append(f"Brier score: {stats['brier_score']:.4f}")
@@ -4420,7 +5405,8 @@ async def generate_daily_report():
     from dotenv import load_dotenv as _ld
     _ld()
     try:
-        from src.telegram import TelegramBot
+        if TelegramBot is None:
+            raise ImportError("TelegramBot is unavailable")
         bot = TelegramBot()
         if bot.enabled:
             bot.send(report_text, parse_mode="")
@@ -4437,6 +5423,9 @@ async def generate_daily_report():
     """, (today, trades_today, resolved_today, wins_today, losses_today,
           daily_pnl, stats['total_pnl'], stats['brier_score']))
     db.conn.commit()
+    if fill_tracker is not None:
+        fill_tracker.write_report(hours=24, live_only=not PAPER_TRADING)
+        fill_tracker.close()
     db.close()
 
 

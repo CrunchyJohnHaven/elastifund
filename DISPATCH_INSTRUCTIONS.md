@@ -49,14 +49,14 @@ Do not push anything. Just prepare the fixes and report what you did.
 
 ---
 
-## INSTANCE 2: COMMAND NODE UPDATE (Claude Code or Codex)
+## INSTANCE 2: ROOT CONTEXT REFRESH (Claude Code or Codex)
 
 Paste this:
 
 ```
 You are working on the Elastifund repo. Read CLAUDE.md first — you are JJ.
 
-TASK: Update COMMAND_NODE_v1.0.2.md to reflect all changes made today. This document is the single source of truth pasted into every new AI session. It needs to be current.
+TASK: Refresh `ProjectInstructions.md` and `docs/REPO_MAP.md` to reflect all changes made today. Together they are the lightweight context package pasted into new AI coding sessions. They need to stay current and compact.
 
 Read these files first:
 - CLAUDE.md (new — JJ persona, prime directive, autonomous execution mandate)
@@ -69,7 +69,7 @@ Read these files first:
 - research/LatencyEdgeResearch.md (new — Dublin latency analysis, RTDS feed discovery)
 - FastTradeEdgeAnalysis.md (current pipeline output)
 
-Then update the Command Node to include:
+Then make sure the refreshed docs include:
 1. The JJ persona description (brief — 3 sentences)
 2. The prime directive ("John shares info, JJ decides")
 3. The dual mission (trading returns + world's best agentic trading resource)
@@ -81,9 +81,9 @@ Then update the Command Node to include:
 9. The open-source guardrails (what's public, what stays in .env)
 10. The website vision (1 paragraph summary)
 
-Bump version to v1.1.0. Update the date. Keep the document under 800 lines — it gets pasted into context windows that have limits.
+Bump the relevant version/date markers. Keep both files lean enough to fit comfortably into context windows.
 
-Do not rewrite the entire document. Surgically update the sections that changed. Preserve anything still accurate. Cut anything stale or redundant.
+Do not rewrite everything. Surgically update the sections that changed. Preserve anything still accurate. Cut anything stale or redundant, especially dead `COMMAND_NODE` references.
 ```
 
 ---

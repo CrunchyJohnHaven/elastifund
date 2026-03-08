@@ -1,6 +1,7 @@
 """Risk management for trading bot."""
 import statistics
 from datetime import datetime
+from src.core.time_utils import utc_now_naive
 
 import structlog
 
@@ -19,7 +20,7 @@ class RiskManager:
 
     def record_price_time(self, token_id: str) -> None:
         """Record when we last got a valid price for a token."""
-        self.last_price_times[token_id] = datetime.utcnow()
+        self.last_price_times[token_id] = utc_now_naive()
 
     async def check_pre_trade(
         self,
@@ -64,13 +65,13 @@ class RiskManager:
         # 4. Stale price guard
         last_price_time = self.last_price_times.get(token_id)
         if last_price_time:
-            staleness = (datetime.utcnow() - last_price_time).total_seconds()
+            staleness = (utc_now_naive() - last_price_time).total_seconds()
             threshold = 5 * settings.engine_loop_seconds
             if staleness > threshold:
                 return False, f"Stale price: {staleness:.0f}s > {threshold}s"
 
         # 5. Max daily drawdown
-        daily_pnl = await Repository.get_daily_pnl(session, datetime.utcnow())
+        daily_pnl = await Repository.get_daily_pnl(session, utc_now_naive())
         if daily_pnl < -settings.max_daily_drawdown_usd:
             await self.trigger_kill_switch(session, f"Daily drawdown exceeded: {daily_pnl:.2f}")
             return False, f"Drawdown limit: {daily_pnl:.2f} < {-settings.max_daily_drawdown_usd:.2f}"

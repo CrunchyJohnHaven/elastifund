@@ -15,6 +15,7 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
+from src.core.time_utils import utc_now_naive
 from src.store.models import Base, BotState
 from src.store.repository import Repository
 from src.broker.base import KillSwitchActiveError, OrderSide
@@ -109,7 +110,7 @@ class TestUnkillCooldown:
 
         # Move cooldown to the past
         bot_state = await Repository.get_or_create_bot_state(db_session)
-        bot_state.kill_cooldown_until = datetime.utcnow() - timedelta(seconds=1)
+        bot_state.kill_cooldown_until = utc_now_naive() - timedelta(seconds=1)
         await db_session.flush()
 
         success, message = await Repository.clear_kill_switch(db_session)
@@ -130,7 +131,7 @@ class TestUnkillCooldown:
 
         # After cooldown expires
         bot_state = await Repository.get_or_create_bot_state(db_session)
-        bot_state.kill_cooldown_until = datetime.utcnow() - timedelta(seconds=1)
+        bot_state.kill_cooldown_until = utc_now_naive() - timedelta(seconds=1)
         await db_session.flush()
         assert await Repository.is_kill_cooldown_active(db_session) is False
 

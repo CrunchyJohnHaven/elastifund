@@ -4,22 +4,24 @@
 
 ### Run All Tests
 ```bash
-cd /sessions/clever-admiring-goldberg/mnt/Quant/polymarket-bot
-pytest tests/ -v
+cd /path/to/elastifund/polymarket-bot
+python -m pytest
 ```
+
+The default pytest config targets `tests/` only and skips historical directories such as `snapshots/`.
 
 ### Run with Coverage
 ```bash
-pytest tests/ --cov=src --cov-report=term-missing
+python -m pytest --cov=src --cov-report=term-missing
 ```
 
 ### Run Specific Test Suite
 ```bash
-pytest tests/test_risk.py -v           # Risk management tests
-pytest tests/test_paper_broker.py -v   # Broker tests
-pytest tests/test_repository.py -v     # Database tests
-pytest tests/test_engine.py -v         # Engine tests
-pytest tests/test_live_blocked.py -v   # Safety tests
+python -m pytest tests/test_risk.py -v           # Risk management tests
+python -m pytest tests/test_paper_broker.py -v   # Broker tests
+python -m pytest tests/test_repository.py -v     # Database tests
+python -m pytest tests/test_engine.py -v         # Engine tests
+python -m pytest tests/test_live_blocked.py -v   # Safety tests
 ```
 
 ## Test Structure
@@ -151,22 +153,22 @@ assert number > lower_bound
 
 ### Run with Output
 ```bash
-pytest tests/ -v -s
+python -m pytest -v -s
 ```
 
 ### Run Single Test
 ```bash
-pytest tests/test_file.py::TestClass::test_method -v
+python -m pytest tests/test_file.py::TestClass::test_method -v
 ```
 
 ### Run with Python Debugger
 ```bash
-pytest tests/ --pdb
+python -m pytest --pdb
 ```
 
 ### Show Local Variables on Failure
 ```bash
-pytest tests/ -l
+python -m pytest -l
 ```
 
 ## Environment Variables for Testing
@@ -203,7 +205,7 @@ Each test:
 
 Generate HTML coverage report:
 ```bash
-pytest tests/ --cov=src --cov-report=html
+python -m pytest --cov=src --cov-report=html
 # Open htmlcov/index.html in browser
 ```
 
@@ -219,7 +221,7 @@ Coverage targets by module:
 For GitHub Actions or similar:
 ```yaml
 - name: Run Tests
-  run: pytest tests/ --cov=src --cov-report=xml
+  run: python -m pytest --cov=src --cov-report=xml
 
 - name: Upload Coverage
   uses: codecov/codecov-action@v3
@@ -230,7 +232,7 @@ For GitHub Actions or similar:
 ### Import Errors
 Ensure you're in the project root:
 ```bash
-cd /sessions/clever-admiring-goldberg/mnt/Quant/polymarket-bot
+cd /path/to/elastifund/polymarket-bot
 ```
 
 ### Async Errors

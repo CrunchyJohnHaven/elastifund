@@ -2,6 +2,7 @@
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
+from src.core.time_utils import utc_now_naive
 from typing import Optional
 
 import structlog
@@ -88,7 +89,7 @@ class Backtester:
                 "orderbook_depth": {},
                 "positions": positions,
                 "price_history": prices[:i+1],
-                "timestamp": datetime.utcnow(),
+                "timestamp": utc_now_naive(),
             }
 
             # Get signal

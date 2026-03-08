@@ -17,6 +17,7 @@ from bot.btc_5min_maker import (  # noqa: E402
     MarketHttpClient,
     PlacementResult,
     calc_trade_size_usd,
+    clob_min_order_size,
     choose_maker_buy_price,
     choose_token_id_for_direction,
     current_window_start,
@@ -87,6 +88,11 @@ def test_choose_maker_buy_price_rounds_to_tick() -> None:
 def test_calc_trade_size_usd() -> None:
     assert calc_trade_size_usd(250.0, 0.01, 2.50) == pytest.approx(2.50)
     assert calc_trade_size_usd(100.0, 0.01, 2.50) == pytest.approx(1.00)
+
+
+def test_clob_min_order_size_enforces_five_dollar_notional() -> None:
+    assert clob_min_order_size(0.92) == pytest.approx(5.44)
+    assert clob_min_order_size(0.30) == pytest.approx(16.67)
 
 
 def test_parse_json_list() -> None:
@@ -213,7 +219,7 @@ async def test_process_window_records_partial_live_fill(monkeypatch: pytest.Monk
         def place_post_only_buy(self, token_id: str, price: float, shares: float) -> PlacementResult:
             assert token_id == "tok-up"
             assert price == pytest.approx(0.92)
-            assert shares == pytest.approx(2.7174, rel=1e-4)
+            assert shares == pytest.approx(5.44)  # bumped to exchange-valid live minimum
             return PlacementResult(order_id="ord-1", success=True, status="live")
 
         def get_order_state(self, order_id: str) -> LiveOrderState:

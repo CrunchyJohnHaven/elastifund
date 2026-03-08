@@ -252,6 +252,18 @@ The current definition: individual income >$200,000 (>$300,000 with spouse) in e
 
 ---
 
+## Section 7: External bot benchmarking is a moat, not a trading edge
+
+The imported trading-bot inventory report adds an important product conclusion: **Elastifund should benchmark the broader trading-bot ecosystem, but this belongs in the website and research lane rather than the live alpha lane**. Across the major systems surveyed — Freqtrade, Hummingbot, Jesse, OctoBot, NautilusTrader, Lean, and comparable SaaS products — the field is deep in crypto execution and general quant tooling, but still thin in prediction-market-native infrastructure. That means Elastifund is not late to a crowded niche; it has room to define the public benchmark category.
+
+The right artifact is a **continuously updated catalog plus reproducible benchmark harness**, not a content-marketing listicle. The harness model is operationally simple: normalize metadata, gate on license and security checks, build container images, run smoke and soak tests, execute standardized backtest and paper-trade tracks, then publish artifacts and rankings. The strongest public value is not "which bot made the most money," but which systems are buildable, safe, reliable, and honest about simulation versus exchange-sandbox behavior.
+
+For Elastifund, this becomes a P2 roadmap item after the current structural-alpha gates. The initial cohort should stay narrow: **Freqtrade, Hummingbot, Jesse, OctoBot, NautilusTrader, and Lean**. That group is large enough to establish methodological credibility while keeping the engineering budget bounded. Legacy bots such as Zenbot and Gekko are still useful as historical baselines, but only as doc-only or low-confidence entries.
+
+This research also sharpens the positioning story. **The benchmark harness is a website moat, a recruiting tool, and a credibility engine**. It is not a substitute for proving A-6, B-1, or maker-execution alpha. The current sequencing remains correct: validate prediction-market-specific structural edges first, then publish comparative authority once the methodology can be backed by real artifacts.
+
+---
+
 ## Conclusion: a viable but legally complex opportunity
 
 The technical foundation is sound. LLM ensembles of **8–12 diverse models** with Platt scaling can achieve Brier scores within 0.02–0.05 of market prices, and the **67/33 market-price/AI-forecast blend** demonstrated by Bridgewater's AIA system consistently outperforms either component alone. Groq's free tier supports a full three-model ensemble (Llama 4 Scout + Maverick + Qwen3 32B) at 50% TPD utilization for 100 daily analyses. Polymarket's new fee structure creates a clear **maker advantage**: zero fees, daily USDC rebates (20–25% of taker fee pool), and the death of latency arbitrage strategies that previously dominated. The widest spreads — and thus the richest market-making opportunity — exist in mid-liquidity political and economics markets where only 3–4 serious providers compete.

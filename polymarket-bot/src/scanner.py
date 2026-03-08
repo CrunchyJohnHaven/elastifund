@@ -1,5 +1,6 @@
 """Gamma API market scanner for discovering tradeable markets."""
 import asyncio
+import json
 import os
 from typing import Any, Optional
 
@@ -18,6 +19,33 @@ WEATHER_KEYWORDS = [
     "rain", "snow", "wind", "humidity", "forecast", "high temp",
     "low temp", "precipitation", "heat", "cold", "storm",
 ]
+
+
+def _normalize_token_ids(raw: Any) -> list[str]:
+    """Parse Gamma `clobTokenIds` into a clean token-id list."""
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        if not stripped:
+            return []
+        try:
+            return _normalize_token_ids(json.loads(stripped))
+        except json.JSONDecodeError:
+            raw = stripped.split(",")
+
+    token_ids: list[str] = []
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, str):
+                cleaned = item.strip().strip("[]").strip().strip('"').strip("'")
+                if cleaned:
+                    token_ids.append(cleaned)
+            elif isinstance(item, dict):
+                token = item.get("token_id") or item.get("tokenId") or item.get("id")
+                if isinstance(token, str):
+                    cleaned = token.strip()
+                    if cleaned:
+                        token_ids.append(cleaned)
+    return token_ids
 
 
 class MarketScanner:
@@ -191,12 +219,7 @@ class MarketScanner:
         Returns:
             List of token ID strings (typically [YES_token, NO_token])
         """
-        clob_token_ids = market.get("clobTokenIds")
-        if isinstance(clob_token_ids, str):
-            return [tid.strip() for tid in clob_token_ids.split(",") if tid.strip()]
-        if isinstance(clob_token_ids, list):
-            return clob_token_ids
-        return []
+        return _normalize_token_ids(market.get("clobTokenIds"))
 
     @staticmethod
     def extract_prices(market: dict) -> dict[str, float]:

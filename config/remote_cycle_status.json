@@ -1,0 +1,29 @@
+{
+  "capital_sources": [
+    {
+      "account": "Polymarket",
+      "amount_usd": 247.51,
+      "source": "jj_state.json"
+    },
+    {
+      "account": "Kalshi",
+      "amount_usd": 100.0,
+      "source": "manual_tracked_balance"
+    }
+  ],
+  "deployment_finish": {
+    "status": "blocked",
+    "eta": "TBD",
+    "blockers": [
+      "jj-live is intentionally stopped while structural alpha integration is completed.",
+      "No capital is currently deployed and the current cycle has no closed trades for calibration.",
+      "A-6 maker-fill and B-1 precision promotion gates are still unresolved."
+    ],
+    "exit_criteria": [
+      "Resume jj-live in shadow or micro-live mode without triggering kill rails.",
+      "Finish the A-6 maker-fill and violation half-life evidence pass.",
+      "Finish the B-1 gold-set precision audit at or above 85%.",
+      "Record the first closed trades needed for calibration and promotion decisions."
+    ]
+  }
+}

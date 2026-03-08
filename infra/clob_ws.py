@@ -62,6 +62,8 @@ class BestBidAsk:
     best_ask: float
     updated_ts: float
     tick_size: float | None = None
+    best_bid_size: float | None = None
+    best_ask_size: float | None = None
 
 
 @dataclass(frozen=True)
@@ -94,6 +96,8 @@ class BestBidAskStore:
         best_ask: float,
         updated_ts: float | None = None,
         tick_size: float | None = None,
+        best_bid_size: float | None = None,
+        best_ask_size: float | None = None,
     ) -> None:
         if not token_id:
             return
@@ -113,6 +117,16 @@ class BestBidAskStore:
                         if prior is not None and prior.tick_size is not None
                         else self._tick_sizes.get(str(token_id))
                     )
+                ),
+                best_bid_size=(
+                    _safe_float(best_bid_size)
+                    if _safe_float(best_bid_size) is not None
+                    else (prior.best_bid_size if prior is not None else None)
+                ),
+                best_ask_size=(
+                    _safe_float(best_ask_size)
+                    if _safe_float(best_ask_size) is not None
+                    else (prior.best_ask_size if prior is not None else None)
                 ),
             )
             self._quotes[str(token_id)] = quote
@@ -210,6 +224,8 @@ def parse_best_bid_ask_messages(payload: Any) -> list[BestBidAsk]:
         token_id = str(item.get("asset_id") or item.get("token_id") or item.get("market") or "").strip()
         best_bid = _safe_float(item.get("best_bid") or item.get("bid"))
         best_ask = _safe_float(item.get("best_ask") or item.get("ask"))
+        best_bid_size = _safe_float(item.get("best_bid_size") or item.get("bid_size"))
+        best_ask_size = _safe_float(item.get("best_ask_size") or item.get("ask_size"))
         updated_ts = _safe_float(item.get("timestamp") or item.get("ts")) or now
         if not token_id or best_bid is None or best_ask is None:
             continue
@@ -221,6 +237,8 @@ def parse_best_bid_ask_messages(payload: Any) -> list[BestBidAsk]:
                 best_bid=best_bid,
                 best_ask=best_ask,
                 updated_ts=updated_ts,
+                best_bid_size=best_bid_size,
+                best_ask_size=best_ask_size,
             )
         )
     return messages
@@ -371,6 +389,8 @@ class ClobMarketWebSocketClient:
                         best_ask=msg.best_ask,
                         updated_ts=msg.updated_ts,
                         tick_size=msg.tick_size,
+                        best_bid_size=msg.best_bid_size,
+                        best_ask_size=msg.best_ask_size,
                     )
                     if self.message_hook is not None:
                         self.message_hook(msg)

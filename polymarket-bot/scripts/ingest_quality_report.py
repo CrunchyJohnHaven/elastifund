@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import desc, func, select
 
+from src.core.time_utils import utc_now_naive
 from src.data.ingest.models import (
     IngestRun,
     MarketSnapshot,
@@ -53,7 +54,7 @@ async def generate_report(num_runs: int = 10, check_drift: bool = False):
 
     print("=" * 60)
     print("DATA QUALITY REPORT")
-    print(f"Generated: {datetime.utcnow().isoformat()}Z")
+    print(f"Generated: {utc_now_naive().isoformat()}Z")
     print("=" * 60)
 
     async with DatabaseManager.get_session() as session:
@@ -69,7 +70,7 @@ async def generate_report(num_runs: int = 10, check_drift: bool = False):
 
         print("\n--- Last Successful Pull ---")
         if last_good:
-            age = datetime.utcnow() - last_good.finished_at if last_good.finished_at else None
+            age = utc_now_naive() - last_good.finished_at if last_good.finished_at else None
             age_str = f" ({age.total_seconds()/60:.0f} min ago)" if age else ""
             print(f"  Time:        {last_good.finished_at}{age_str}")
             print(f"  Status:      {last_good.status}")

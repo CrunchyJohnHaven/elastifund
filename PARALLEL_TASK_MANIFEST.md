@@ -18,13 +18,13 @@ Instance 3 (A-6 sum-violation scanner) and the current B-1 graph/runtime were ex
 
 | Task | Status | Evidence |
 |---|---|---|
-| 4.1 Upgrade A-6 discovery to `/events` | COMPLETE | [`bot/sum_violation_scanner.py`](/Users/johnbradley/Desktop/Elastifund/bot/sum_violation_scanner.py) now pages Gamma `GET /events` and flattens watchlist-safe neg-risk event groups via [`strategies/a6_sum_violation.py`](/Users/johnbradley/Desktop/Elastifund/strategies/a6_sum_violation.py) |
-| 4.2 Add market-depth WebSocket support | COMPLETE | [`infra/clob_ws.py`](/Users/johnbradley/Desktop/Elastifund/infra/clob_ws.py) now provides chunked market/user channel clients and a shared best-bid/ask store for A-6/B-1 |
+| 4.1 Upgrade A-6 discovery to `/events` | COMPLETE | [`bot/sum_violation_scanner.py`](bot/sum_violation_scanner.py) now pages Gamma `GET /events` and flattens watchlist-safe neg-risk event groups via [`strategies/a6_sum_violation.py`](strategies/a6_sum_violation.py) |
+| 4.2 Add market-depth WebSocket support | COMPLETE | [`infra/clob_ws.py`](infra/clob_ws.py) now provides chunked market/user channel clients and a shared best-bid/ask store for A-6/B-1 |
 | 4.3 Handle CLOB 404 bootstrap cleanly | COMPLETE | A-6 quote fetch quarantines missing order books as suspended legs/events instead of crashing the scan |
 | 4.4 Compute sum violations | COMPLETE | Live run: `events=100`, `candidates=2`, `selected=11`, `quotes=11`, `blocked=0`, `violations=2` |
 | 4.5 Fee-adjusted / execution-aware edge scoring | COMPLETE | `ConstraintArbEngine.scan_sum_violations()` now logs `a6_mode=neg_risk_sum`, settlement-path metadata, per-leg tick sizes, and A-6 episode ids alongside `maker_sum_bid`, spreads, fill risk, score, and execute readiness |
-| 4.6 Build B-1 candidate pruning | COMPLETE | [`strategies/b1_dependency_graph.py`](/Users/johnbradley/Desktop/Elastifund/strategies/b1_dependency_graph.py) now applies category/subcategory gates, time windows, and top-K semantic neighbor pruning |
-| 4.7 Build B-1 classifier + cache | COMPLETE | [`strategies/b1_dependency_graph.py`](/Users/johnbradley/Desktop/Elastifund/strategies/b1_dependency_graph.py) now ships the exact JSON prompt scaffold plus sqlite caching in `state/arb_graph.db` |
+| 4.6 Build B-1 candidate pruning | COMPLETE | [`strategies/b1_dependency_graph.py`](strategies/b1_dependency_graph.py) now applies category/subcategory gates, time windows, and top-K semantic neighbor pruning |
+| 4.7 Build B-1 classifier + cache | COMPLETE | [`strategies/b1_dependency_graph.py`](strategies/b1_dependency_graph.py) now ships the exact JSON prompt scaffold plus sqlite caching in `state/arb_graph.db` |
 | 4.8 Run live B-1 monitor | EXECUTED | Public-data slice runs completed on 200 and 500 active markets. Result: `edges=344` then `edges=1059`, all `same_event_sum`, `violations=0` in both runs |
 | 4.9 Historical backtest / gold set / weekly audit | IN PROGRESS | Validation harness exists; next gate is 50 human-labeled pairs with >=85% precision, not just graph volume |
 | 4.10 Integrate into `jj_live.py` | PENDING | Structural-arb execution routing, linked-leg posting, and rollback posting are still not wired into the live trader |
@@ -32,10 +32,31 @@ Instance 3 (A-6 sum-violation scanner) and the current B-1 graph/runtime were ex
 | 4.12 Research ingest + telemetry schema | COMPLETE | Dedicated `arb_scan_snapshot`, `a6_violation_episode`, `arb_order_group`, `arb_order_leg`, `arb_settlement_op`, and `arb_latency_sample` tables landed with upgraded empirical reporting |
 
 Artifacts generated:
-- [`logs/sum_violation_events.jsonl`](/Users/johnbradley/Desktop/Elastifund/logs/sum_violation_events.jsonl)
-- [`reports/constraint_arb_shadow_report.md`](/Users/johnbradley/Desktop/Elastifund/reports/constraint_arb_shadow_report.md)
-- [`reports/arb_empirical_snapshot.md`](/Users/johnbradley/Desktop/Elastifund/reports/arb_empirical_snapshot.md)
-- [`data/constraint_arb.db`](/Users/johnbradley/Desktop/Elastifund/data/constraint_arb.db)
+- [`logs/sum_violation_events.jsonl`](logs/sum_violation_events.jsonl)
+- [`reports/constraint_arb_shadow_report.md`](reports/constraint_arb_shadow_report.md)
+- [`reports/arb_empirical_snapshot.md`](reports/arb_empirical_snapshot.md)
+- [`data/constraint_arb.db`](data/constraint_arb.db)
+
+## REPRIORITIZATION UPDATE — STRUCTURAL ARB (2026-03-07)
+
+The March 7 execution-validity review changes the work order materially. We are no longer treating Stream 4 as “build the broad combinatorial stack, then measure later.”
+
+Observed live-public-data gate:
+- A-6 allowed neg-risk universe audited: **92** events after current category filters.
+- Cheapest-construction mix in that slice: **71 two-leg straddles**, **21 neg-risk-conversion variants**, **0 full-basket winners**.
+- Events under the initial executable threshold (`cost < 0.95`): **0**.
+- B-1 deterministic template audit across **1,000** active allowed markets found **0** template-compatible pairs.
+
+Implication:
+- The immediate bottleneck is **execution validity**, not architecture.
+- A-6 stays first, but as a **Guaranteed Dollar Scanner** measuring top-of-book cost, fill rate, and dwell time.
+- B-1 narrows to a **Templated Dependency Engine** and should not expand into a broad graph until one event family proves live density.
+
+New mandatory Phase 0 gate:
+1. Measure top-of-book and fill outcomes for the allowed neg-risk universe.
+2. Record cheapest guaranteed-dollar construction type by event.
+3. Record dwell time and passive fill behavior at actual `$5/leg` size.
+4. Kill the lane early if the cheapest construction almost never clears the `$0.05 on the dollar` threshold.
 
 ---
 
@@ -51,7 +72,7 @@ Artifacts generated:
 | 1.3 | Verify .env configuration | Confirm POLYMARKET_API_KEY, ANTHROPIC_API_KEY, CLOB_API_KEY, TELEGRAM_BOT_TOKEN all set | `python -c "from dotenv import load_dotenv; load_dotenv(); import os; print(os.getenv('POLYMARKET_API_KEY')[:8])"` returns non-None |
 | 1.4 | Lower position size to $0.50 | Edit jj_live.py: `MAX_POSITION_USD = 0.50`, `MAX_DAILY_LOSS_USD = 5`, `KELLY_FRACTION = 0.25` | Config confirmed in logs |
 | 1.5 | Set PAPER_TRADING = False | We need real resolved trades for calibration data | Config change committed |
-| 1.6 | Restart jj-live.service | `sudo systemctl restart jj-live.service && journalctl -u jj-live -f` | Service status: active (running) |
+| 1.6 | Restart jj-live.service | `sudo systemctl restart jj-live.service && journalctl -u jj-live -f` | Target service status after restart: active (running) |
 | 1.7 | Verify first scan cycle | Watch logs for market scan → probability estimation → order placement | First maker order placed or "no qualifying markets" logged |
 | 1.8 | Confirm Telegram notifications | Verify trade alerts arrive in Telegram channel | At least one notification received |
 
@@ -97,25 +118,23 @@ Artifacts generated:
 ---
 
 ## STREAM 4: COMBINATORIAL ARBITRAGE DEPLOYMENT (A-6 + B-1)
-**Priority:** HIGH — Highest-ranked structural alpha lane (A-6 first, B-1 second)
+**Priority:** HIGH — But now explicitly gated by live executable density
 **Owner:** Claude Code agent
 **Duration:** 10-14 days
 
 | # | Task | Detail | Done When |
 |---|------|--------|-----------|
-| 4.1 | Upgrade A-6 discovery to `/events` | Use Gamma `active=true`, `closed=false`, `limit=50`, paginated `offset`; keep only grouped `negRisk=true` events with tradable child markets | COMPLETE — reusable discovery lives in `strategies/a6_sum_violation.py` |
-| 4.2 | Add market-depth WebSocket support | Extend the shared CLOB market client and maintain shared best-bid/ask state | COMPLETE — `infra/clob_ws.py` now backs A-6/B-1 consumers |
-| 4.3 | Handle CLOB 404 bootstrap cleanly | Treat missing order books as hard execution blocks for that scan and suspend the affected event | COMPLETE — scanner drops blocked events and records no-orderbook state |
-| 4.4 | A-6 execution state machine | Enforce maker-only TTL, rollback, unwind timeout, and linked-leg tracking | IN PROGRESS — `execution/multileg_executor.py` is wired, live batch posting still pending in `bot/jj_live.py` |
-| 4.5 | Position merge path | Merge complete baskets only when collateral value exceeds `$20` | Freed capital is logged and inventory stays consistent |
-| 4.6 | Build B-1 candidate pruning | Resolution window, category/subcategory gate, and top-K semantic neighbors | COMPLETE — deterministic top-K pruning added in `strategies/b1_dependency_graph.py` |
-| 4.7 | Build B-1 classifier + cache | Structured JSON prompt and cached graph edges in sqlite | IN PROGRESS — prompt/parse contract and `state/arb_graph.db` cache exist; live transport wiring remains |
-| 4.8 | Create validation set + audits | 50-pair gold set plus weekly resolved-market audit | IN PROGRESS — precision gate raised to 85%; labeling still pending |
-| 4.9 | Run live B-1 monitor | Check implication / exclusion / complement violations with maker-relevant bid/ask constraints | IN PROGRESS — monitor exists, threshold raised to `tau >= 0.04`, shadow activation still pending |
-| 4.10 | Integrate into `jj_live.py` | Route structural-arb signals through live confirmation/risk handling and multi-leg execution | IN PROGRESS — live routing not yet connected |
-| 4.11 | Shadow mode attribution | Run 14-day paper mode with fill simulation, capture ratio, rollback-loss metrics, violation half-life, and settlement evidence | Hard GO / NO-GO report published |
-| 4.12 | Enforce kill switches | Halt on poor capture, classifier drift, or negative live P&L | Strategy self-disables when structural edge degrades |
-| 4.13 | Split binary Dutch-book A-6 lane | Keep binary YES+NO merge baskets separate from neg-risk YES baskets | BACKLOG — current repo ships `neg_risk_sum` only |
+| 4.1 | Phase 0 A-6 universe audit | Measure the current allowed neg-risk universe, cheapest construction mix, and top-of-book costs | COMPLETE — see `reports/guaranteed_dollar_audit.*` |
+| 4.2 | A-6 top-of-book instrumentation | Track YES and NO token top-of-book quotes, optional sizes, and batch `/prices` refresh | COMPLETE — `infra/clob_ws.py`, `signals/sum_violation/sum_discovery.py` |
+| 4.3 | A-6 guaranteed-dollar ranking | Rank `YES+NO`, neg-risk-conversion, and full-basket constructions by executable cost | COMPLETE — `signals/sum_violation/guaranteed_dollar.py` |
+| 4.4 | A-6 fill-rate / dwell study | Keep the scope narrow: dwell time, passive fill rate, and one-leg loss at `$5/leg` | PENDING — needs multi-hour live collection, not more architecture |
+| 4.5 | A-6 live execution state machine | Enforce maker-only TTL, rollback, unwind timeout, and linked-leg tracking | IN PROGRESS — `execution/multileg_executor.py` is wired; live posting remains partial |
+| 4.6 | B-1 template-density audit | Measure whether deterministic template families even exist in the live allowed universe | COMPLETE — `reports/b1_template_audit.*` currently shows `0` pairs in 1,000 markets |
+| 4.7 | B-1 templated dependency engine | Restrict initial scope to deterministic families and compatibility matrices | IN PROGRESS — `strategies/b1_templates.py` landed; live family-specific gold set still pending |
+| 4.8 | B-1 broad graph expansion gate | Only expand past templates if one event family shows real density and good precision | BLOCKED — current live audit does not justify broad expansion |
+| 4.9 | Integrate into `jj_live.py` | Route only after the empirical gate says the lane is worth trading | BLOCKED — premature until Phase 0 fill/dwell data exists |
+| 4.10 | Shadow mode attribution | Run 14-day paper mode with fill simulation, capture ratio, and rollback-loss metrics | PENDING |
+| 4.11 | Enforce kill switches | Halt on poor capture, sparse density, classifier drift, or negative live P&L | IN PROGRESS |
 
 **Depends on:** Stream 2 for the WebSocket data plane. Everything else is local implementation work.
 
@@ -145,7 +164,7 @@ Artifacts generated:
 
 | # | Task | Detail | Done When |
 |---|------|--------|-----------|
-| 6.1 | Add std() calculation to llm_ensemble.py | After all models return estimates, compute `np.std(estimates)` | Function returns (mean, std) tuple |
+| 6.1 | Add std() calculation to ensemble_estimator.py | After all models return estimates, compute `np.std(estimates)` | Function returns (mean, std) tuple |
 | 6.2 | Wire disagreement into Kelly sizing | High disagreement (std > 0.15) → reduce position to 1/32 Kelly. Low disagreement (std < 0.05) → allow full quarter-Kelly | Sizing modifier logged per trade |
 | 6.3 | Backtest on 532 historical markets | Compare: flat sizing vs disagreement-adjusted sizing | Simulated P&L comparison |
 | 6.4 | If positive: deploy | Update jj_live.py to use disagreement-adjusted sizing | Config change on VPS |
@@ -180,7 +199,7 @@ Artifacts generated:
 | 8.1 | Restart edge discovery daemon | `src/main.py` in continuous mode, 15-min BTC candle collection | Process running, logging to edge_discovery.db |
 | 8.2 | Fix CLOB 404 errors | Some token IDs return 404 on order book endpoint — identify and exclude or fix | Zero 404s in 24-hour window |
 | 8.3 | Expand market coverage | Currently 13 markets on 15-min. Target: 50+ markets across categories | Market count in pipeline > 50 |
-| 8.4 | Accumulate 25+ resolved signals | Pipeline needs ≥25 resolved outcomes per hypothesis family | FastTradeEdgeAnalysis.md shows ≥25 signals |
+| 8.4 | Accumulate 25+ resolved signals | Pipeline needs ≥25 resolved outcomes per hypothesis family | FAST_TRADE_EDGE_ANALYSIS.md shows ≥25 signals |
 | 8.5 | Re-run kill battery weekly | Every 7 days, execute full kill_rules.py battery on accumulated data | Weekly dispatch with CONTINUE/KILL verdicts |
 | 8.6 | Re-evaluate Chainlink basis lag (RE1) | Maker-only eliminates taker fee — does edge survive under new cost model? | Verdict: PROMOTE to BUILDING or KILL |
 
@@ -195,7 +214,7 @@ Artifacts generated:
 
 | # | Task | Detail | Done When |
 |---|------|--------|-----------|
-| 9.1 | Update COMMAND_NODE to v1.1.1 | Incorporate A-6/B-1 architecture, new module inventory, and current capital state | Version bumped, all sections current |
+| 9.1 | Refresh agent docs | Keep `AGENTS.md`, `docs/REPO_MAP.md`, and `ProjectInstructions.md` aligned with the current architecture, module inventory, and capital state | Canonical context docs all current |
 | 9.2 | Write Dispatch #79 | Document this task manifest and the parallel execution decision | Dispatch filed in research/dispatches/ |
 | 9.3 | Update edge_backlog_ranked.md | Re-rank based on maker-only pivot impact, remove stale entries | Backlog reflects current reality |
 | 9.4 | Push to GitHub | All code changes, documentation updates, new dispatches | `git push` succeeds, CI green |
@@ -242,6 +261,7 @@ Eight streams remain independent. Stream 4 benefits materially from Stream 2, bu
 - **Stream 1:** If zero fills after 48 hours of live orders, diagnose order placement (price too aggressive? wrong side of spread? API error?)
 - **Stream 2:** If WebSocket connection cannot maintain 5 min uptime after 3 days of debugging, fall back to optimized REST polling
 - **Stream 3:** If adaptive Platt shows worse OOS Brier than static, keep static. No sunk cost.
+- **Stream 4:** If A-6 never clears the initial `$0.05 on the dollar` gate in the allowed universe, or if B-1 template density stays effectively zero, KILL or freeze the lane immediately.
 - **Stream 4:** If A-6 capture falls below 50% of theoretical over 20 events, or B-1 false-positive rate exceeds 5%, KILL the affected lane immediately.
 - **Stream 5:** If zero arb opportunities across 100+ matched markets, document and deprioritize. Fee structures may have eliminated this.
 - **Stream 6:** If disagreement signal shows zero correlation with trade outcome after 50 trades, remove the modifier

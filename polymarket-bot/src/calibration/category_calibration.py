@@ -28,6 +28,8 @@ from typing import Optional, Dict, List, Tuple
 import numpy as np
 from scipy.optimize import minimize
 
+from src.core.time_utils import utc_now_naive
+
 logger = logging.getLogger(__name__)
 
 
@@ -421,7 +423,7 @@ class CategoryCalibrator:
             path: Output file path
         """
         output = {
-            "timestamp": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+            "timestamp": utc_now_naive().isoformat() + "Z",
             "category_params": self.category_params,
             "edge_thresholds": CATEGORY_EDGE_THRESHOLDS,
             "min_samples": MIN_SAMPLES_PER_CATEGORY,
@@ -611,7 +613,7 @@ class CalibrationTrainer:
         ) / sum(r.sample_count for r in category_results.values())
 
         report = CalibrationReport(
-            timestamp=__import__("datetime").datetime.utcnow().isoformat() + "Z",
+            timestamp=utc_now_naive().isoformat() + "Z",
             categories=category_results,
             overall_brier_raw=float(overall_brier_raw),
             overall_brier_calibrated=float(overall_brier_calibrated),
@@ -794,7 +796,6 @@ if __name__ == "__main__":
     """Demo: Train and validate category calibration on backtest data."""
 
     import sys
-    from datetime import datetime
 
     # Set up logging
     logging.basicConfig(
@@ -818,7 +819,7 @@ if __name__ == "__main__":
     print("=" * 80)
     print("CATEGORY CALIBRATION TRAINER")
     print("=" * 80)
-    print(f"Timestamp: {datetime.utcnow().isoformat()}Z")
+    print(f"Timestamp: {utc_now_naive().isoformat()}Z")
     print()
 
     # Train calibrator

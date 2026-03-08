@@ -1,192 +1,206 @@
 # Elastifund
 
-**An open-source, agent-run trading system. The AI makes every decision. I build the machine. 20% of all profits go to veteran suicide prevention.**
+**Open-source infrastructure for running an agentic prediction-market research and trading lab.**
 
----
+Elastifund is not a single bot. It is a working monorepo for:
 
-## What This Is
+- live and paper trading on prediction markets
+- systematic edge discovery and kill-rule validation
+- shared observability through Elastic
+- documentation, research dispatching, and public postmortems
 
-Elastifund is not a trading bot. It's a **research engine** that systematically discovers, tests, and documents trading strategies on prediction markets (Polymarket, Kalshi). The system runs autonomously — AI agents make all trading decisions. The human (John Bradley) builds the infrastructure, runs the research flywheel, and publishes every result openly.
+The repo is built to be usable by humans and by coding agents. If you want to fork it, boot it, and start making progress quickly, the fastest paths are documented below.
 
-This is also the most comprehensive open-source resource on agentic trading systems in existence. We document everything: what we built, what we tested, what worked, and — more importantly — what didn't. The diary of failures maps the territory of prediction market trading in a way nobody has done publicly before.
+**Website:** [elastifund.io](https://elastifund.io)
 
-**Website:** [johnbradleytrading.com](https://johnbradleytrading.com) (coming soon)
+## Choose Your Path
 
-## Current Status (March 7, 2026)
-
-| | |
+| I want to... | Start here |
 |---|---|
-| **Capital deployed** | $347.51 ($247.51 Polymarket USDC + $100 Kalshi USD) |
-| **Strategies catalogued** | 131 (7 deployed, 8 building, 10 rejected, 8 pre-rejected, 98 pipeline) |
-| **Tests passing** | 223 (19 test files across bot/tests/ and tests/) |
-| **Bot modules** | 27 Python modules in bot/ |
-| **Signal sources** | 4 active + 2 building (A-6 guaranteed-dollar arb, B-1 templated dependency arb) |
-| **Research dispatches** | 82 original investigations |
-| **Backtest win rate** | 68.5% on 532 resolved markets |
-| **Live validated P&L** | $0.00 (pre-revenue, building structural alpha pipeline) |
+| Boot the repo with the least friction | [docs/FORK_AND_RUN.md](docs/FORK_AND_RUN.md) |
+| Use Codex and Claude Code in parallel | [AGENTS.md](AGENTS.md) + [docs/PARALLEL_AGENT_WORKFLOW.md](docs/PARALLEL_AGENT_WORKFLOW.md) |
+| Understand the monorepo layout before editing | [docs/REPO_MAP.md](docs/REPO_MAP.md) |
+| Work only on the trading bot subproject | [polymarket-bot/README.md](polymarket-bot/README.md) |
+| Inspect the HTTP/control-plane surface | [docs/api/README.md](docs/api/README.md) |
+| Contribute code safely | [CONTRIBUTING.md](CONTRIBUTING.md) |
 
-## How the Agent Thinks
+## Fastest Local Boot
 
-```
-Every 3 minutes, the system:
+From the repo root:
 
-  1. SCAN       100+ active markets from Polymarket
-  2. FILTER     Skip categories where AI has no edge (crypto, sports)
-  3. SEARCH     Web search for recent context (agentic RAG)
-  4. ESTIMATE   3 LLMs estimate probability independently (Claude + GPT + Groq)
-               The AI never sees the market price. This prevents anchoring.
-  5. CALIBRATE  Platt scaling corrects for known LLM overconfidence
-  6. COMPARE    Calibrated estimate vs market price — is there an edge?
-  7. SIZE       Kelly criterion determines optimal bet (quarter-Kelly, conservative)
-  8. CONFIRM    If 2+ signal sources agree, boost confidence
-  9. EXECUTE    Place maker order (0% fees) on Polymarket CLOB
+```bash
+git clone https://github.com/CrunchyJohnHaven/elastifund.git
+cd elastifund
+python3 scripts/doctor.py
+python3 scripts/quickstart.py
 ```
 
-## The Research Flywheel
+That path is designed for first-time users. It prepares `.env`, writes the runtime manifest, and starts the full local coordination stack if Docker is installed.
 
-This is not "build a bot and hope." It's a systematic, repeating research cycle:
+If you want to prepare the repo without starting Docker yet:
 
-```
-┌────────────┐     ┌────────────┐     ┌────────────┐
-│  RESEARCH  │────►│ IMPLEMENT  │────►│    TEST     │
-│  Generate  │     │ Code top   │     │ Run through │
-│  hypotheses│     │ strategies │     │ kill rules  │
-└────────────┘     └────────────┘     └────────────┘
-      ▲                                      │
-      │                                      ▼
-┌────────────┐     ┌────────────┐     ┌────────────┐
-│   REPEAT   │◄────│  PUBLISH   │◄────│   RECORD   │
-│  Feed into │     │ GitHub +   │     │ Document   │
-│  next cycle│     │ website    │     │ everything │
-└────────────┘     └────────────┘     └────────────┘
+```bash
+python3 scripts/quickstart.py --prepare-only
 ```
 
-**Each 3-5 day cycle:** Generate 10-100 strategy hypotheses, implement the top 3-5, run them through the edge discovery pipeline (83 features, 10 strategy modules, 6 model types, automated kill rules), record every result (pass or fail), publish to GitHub and the website, and feed findings into the next research prompt.
+If you want the full developer verification pass as well:
 
-After 10 cycles, we've tested 50+ strategies. After 20, we've mapped the entire territory of what works and what doesn't in AI prediction market trading — in public, with code.
-
-## What We've Proven
-
-- **LLM anti-anchoring works.** Hiding the market price from the AI and asking it to estimate independently produces calibrated probability estimates (Brier 0.217).
-- **NO-side structural edge.** YES contracts are systematically overpriced. NO-side win rate: 70.2% across 532 markets (cf. jbecker.dev 72.1M trade analysis).
-- **Calibration matters.** Raw LLM confidence at 90% is really ~71%. Platt scaling corrects this.
-- **Makers win, takers lose.** +1.12% excess return for makers, -1.12% for takers across 72.1M Polymarket trades.
-
-## What We've Honestly Failed At
-
-- **All 10 tested strategies rejected.** 0% survival rate through the kill battery. Every rejection documented with specific numbers in [research/what_doesnt_work_diary_v1.md](research/what_doesnt_work_diary_v1.md).
-- **Taker fees kill 60% of strategies.** 1.56% taker fee at 50/50 odds makes speed-based and most statistical strategies unviable. Maker-only (0% fees + 20% rebate) is the only viable execution path.
-- **Signal sparsity kills 25%.** Most strategies produce 0-30 signals/month. You need 100+ for preliminary validation.
-- **Kalshi weather rounding killed.** 27-35% accuracy on 4-bracket markets (chance is 25%). Edge too small.
-- **ML feature discovery: zero surviving features.** 83-feature pipeline found nothing that survived walk-forward validation.
-- **No validated live P&L yet.** Everything is backtest or shadow-tracking. We say this plainly.
-
-These failures are not embarrassments — they are the most valuable content in the repo. They map the territory. See the full [failure diary](research/what_doesnt_work_diary_v1.md) for details.
-
-## The Stack
-
-```
-bot/                         27 modules, 223 tests
-├── jj_live.py              Autonomous trading loop + 6-source confirmation layer
-├── llm_ensemble.py          Multi-model estimation (Claude + GPT + Groq) + agentic RAG
-├── wallet_flow_detector.py  Smart wallet consensus signals
-├── lmsr_engine.py           Bayesian pricing + market inefficiency detection
-├── cross_platform_arb.py    Polymarket vs Kalshi arbitrage scanner
-├── constraint_arb_engine.py Resolution-normalized structural arb engine
-├── a6_executor.py           Multi-leg state machine + deterministic rollback
-├── execution_readiness.py   Feed/restart/one-leg-loss gating for structural alpha
-├── dependency_graph.py      B-1 implication/exclusion graph pipeline
-├── b1_template_engine.py    Deterministic B-1 template families + compatibility matrices
-├── relation_classifier.py   LLM relation classification with caching
-├── ws_trade_stream.py       WebSocket CLOB feed + VPIN + OFI
-├── vpin_toxicity.py         Flow toxicity detection (informed trading gate)
-├── kill_rules.py            6 automated rejection criteria
-├── lead_lag_engine.py       Granger causality + semantic verification
-└── tests/                   223 unit + integration tests
-
-polymarket-bot/src/
-├── claude_analyzer.py       Single-model LLM estimation + Platt calibration
-├── scanner.py               Gamma API market discovery
-├── ensemble.py              Multi-model framework
-├── safety.py                Kill switch, drawdown limits, exposure caps
-├── risk/                    Kelly sizing, risk management
-├── broker/                  Paper + live execution
-├── calibration/             Category-specific Platt scaling
-└── app/                     FastAPI monitoring dashboard
-
-src/                         Edge Discovery Pipeline
-├── data_pipeline.py         Market data collection (83 features)
-├── strategies/              10 hypothesis families
-├── models/                  6 competing model types
-├── backtest.py              Walk-forward validation + kill rules
-└── reporting.py             Auto-generated strategy reports
-
-backtest/                    Backtesting + Monte Carlo simulation
-simulator/                   Fill model + sensitivity analysis
-research/                    74+ research dispatches + strategy docs
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+make bootstrap
+make verify
 ```
 
-## The Mission
+## Verified On March 8, 2026
 
-**20% of all net trading profits go to veteran suicide prevention.** Non-negotiable.
+These commands were run successfully in this repo state:
+
+- `python3 scripts/doctor.py`
+- `python3 scripts/quickstart.py --prepare-only`
+- `make hygiene`
+- `make test`
+- `make test-polymarket`
+
+The non-Docker path was verified directly. Docker still requires Docker Desktop or Docker Engine on the machine running the stack.
+
+## Optimized For Codex And Claude Code
+
+This repo now has a small canonical entrypoint set for LLM-driven work:
+
+1. [AGENTS.md](AGENTS.md) for commands, guardrails, and safe task routing
+2. [docs/PARALLEL_AGENT_WORKFLOW.md](docs/PARALLEL_AGENT_WORKFLOW.md) for Codex/Claude split patterns
+3. [docs/REPO_MAP.md](docs/REPO_MAP.md) for directory ownership and edit boundaries
+4. [ProjectInstructions.md](ProjectInstructions.md) for the current operating context
+5. [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing, and PR rules
+
+The intent is simple: an agent should be able to enter the repo, find the right lane, run the right checks, and avoid trampling unrelated work.
+
+## What This Repo Is
+
+Elastifund is a public research engine for prediction-market trading. It tries to answer three questions honestly:
+
+1. Where do LLMs actually help on prediction markets?
+2. Which strategies survive realistic costs, sparse signals, and execution constraints?
+3. How do you run a multi-agent trading/research stack without hiding the failures?
+
+That means the repo contains both implementation code and the evidence trail behind it. The failures matter as much as the wins.
+
+## Long-Term Vision
+
+Prediction markets are phase one, not the terminal state. The longer-term target is an autonomous market operator that can:
+
+- compare opportunities across a defined eligible universe, including equities, without hard-coded favoritism toward one venue
+- decide when a new market is worth entering
+- build the data, execution, and settlement adapter required to trade it
+- keep new lanes in paper or shadow mode until they survive evidence-based promotion gates
+
+The cautionary precedent is Enron: rapid internal market creation was powerful, but opaque risk, leverage, and instruments the company did not understand were fatal. Elastifund wants the upside of autonomous market discovery without the "trade it before you can explain it" failure mode. The working thesis lives in [docs/website/autonomous-market-operators.md](docs/website/autonomous-market-operators.md).
+
+## Current Snapshot
+
+| Area | Current state |
+|---|---|
+| Capital tracked in docs | `$347.51` total (`$247.51` Polymarket + `$100` Kalshi) |
+| Strategy catalog | `131` tracked (`7` deployed, `8` building, `10` rejected, `8` pre-rejected, `98` pipeline) |
+| Verified tests | repo-root regression suite plus the standalone `polymarket-bot` suite |
+| `bot/` Python modules | `38` |
+| Research dispatches | `95` markdown dispatch files |
+| Active signal lanes | forecasting, flow/microstructure, structural arb, validation lanes |
+| Live validated P&L | still effectively pre-revenue; no inflated claims here |
+
+## What The System Actually Does
+
+At a high level, the live loop works like this:
+
+1. Scan current markets.
+2. Filter out lanes where the model has no defensible edge.
+3. Pull recent context and structured inputs.
+4. Estimate probabilities without anchoring the model to the market price.
+5. Calibrate those probabilities.
+6. Compare estimated value to market pricing, fees, and execution constraints.
+7. Size conservatively.
+8. Route only when risk rules and lane-specific gates pass.
+
+That is the trading side. Around it sits a larger flywheel:
+
+`research -> implement -> test -> record -> publish -> repeat`
+
+## Repo Tour
+
+| Path | Purpose |
+|---|---|
+| `bot/` | live trading loop, signal wiring, structural-arb scanners, runtime decisions |
+| `execution/` | multi-leg order orchestration and rollback rules |
+| `strategies/` + `signals/` | strategy-specific logic and shared signal helpers |
+| `src/`, `backtest/`, `simulator/` | edge-discovery and validation pipeline |
+| `hub/`, `data_layer/`, `orchestration/` | APIs, persistence, flywheel/control-plane plumbing |
+| `polymarket-bot/` | self-contained trading bot subproject with dashboard and tests |
+| `inventory/` | benchmark lane for comparing external systems cleanly |
+| `docs/` + `research/` | durable docs, ADRs, prompts, dispatches, and findings |
+| `deploy/` | bootstrap scripts and deployment assets |
+
+If you want the deeper map, use [docs/REPO_MAP.md](docs/REPO_MAP.md).
+
+## What We’ve Proven
+
+- **Anti-anchoring helps.** Hiding the market price from the model and asking for an independent estimate produces better-behaved probabilities.
+- **Calibration is mandatory.** Raw model confidence is not trustworthy enough on its own; post-hoc correction materially improves the output.
+- **Execution quality matters as much as prediction quality.** Thin edges vanish quickly under taker fees, bad fills, or slow routing.
+- **Negative results are valuable.** The repo is strongest where it records why a lane died, not where it hand-waves a success story.
+
+## What We Refuse To Fake
+
+- live profitability before it exists
+- leaderboard results before clean-room benchmark runs exist
+- strategy edges that disappear once fees or sparse signals are modeled
+- “multi-agent autonomy” claims that are broader than the code and docs support
+
+## Why Fork This
+
+Forking Elastifund is useful if you want:
+
+- a working prediction-market experimentation base instead of a blank repo
+- a monorepo already organized for LLM-only or LLM-heavy development
+- a hub-and-spoke collaboration model where multiple forks can point at one shared control plane
+- a public record of what failed, not just what looked impressive on a landing page
+
+## Key Documents
+
+| Document | Purpose |
+|---|---|
+| [docs/FORK_AND_RUN.md](docs/FORK_AND_RUN.md) | easiest bootstrap and host/spoke onboarding flow |
+| [AGENTS.md](AGENTS.md) | machine-first entrypoint and core commands |
+| [docs/PARALLEL_AGENT_WORKFLOW.md](docs/PARALLEL_AGENT_WORKFLOW.md) | how to split work between Codex and Claude Code safely |
+| [docs/REPO_MAP.md](docs/REPO_MAP.md) | canonical monorepo map and edit boundaries |
+| [ProjectInstructions.md](ProjectInstructions.md) | current build priorities and operating context |
+| [SECURITY.md](SECURITY.md) | vulnerability reporting and disclosure expectations |
+| [SUPPORT.md](SUPPORT.md) | where to start when setup or runtime behavior looks wrong |
+| [polymarket-bot/README.md](polymarket-bot/README.md) | standalone trading bot subproject guide |
+| [docs/api/README.md](docs/api/README.md) | API surfaces and OpenAPI generation |
+| [research/dispatches/README.md](research/dispatches/README.md) | dispatch system for parallel research and implementation |
+| [docs/website/autonomous-market-operators.md](docs/website/autonomous-market-operators.md) | long-term vision for cross-market autonomy and neutral capital allocation |
+| [research/what_doesnt_work_diary_v1.md](research/what_doesnt_work_diary_v1.md) | failure diary and dead-lane evidence |
+
+## Mission
+
+**20% of all net trading profits go to veteran suicide prevention.**
 
 - [Veterans Crisis Line](https://www.veteranscrisisline.net/)
 - [Stop Soldier Suicide](https://stopsoldiersuicide.org/)
 - [22Until None](https://www.22untilnone.org/)
 
-## Get Involved
+## Contributing
 
-We're building this in public because the open-source approach makes the system better. Contributors get scrutiny, collaboration, and credibility that a closed system can't match.
+The repo is open because scrutiny is useful. If you contribute:
 
-**What you can work on:**
-- **Edge research** — Find strategies where AI beats the crowd. We have 100 hypotheses queued.
-- **Model improvement** — Better prompts, ensemble methods, calibration techniques
-- **Infrastructure** — Faster scanning, better execution, monitoring, dashboards
-- **Data science** — Backtest analysis, Monte Carlo, portfolio optimization
-- **Market expansion** — Kalshi, Metaculus, new platforms
-- **Education** — Write explanations that make this accessible to beginners
+- be explicit about whether something is live, paper, backtest, or research
+- bring tests or evidence when behavior changes
+- do not leak secrets, wallets, or private operational settings
+- prefer a clean failure over a vague success claim
 
-### Quick Start
-
-```bash
-git clone git@github.com:CrunchyJohnHaven/elastifund.git
-cd elastifund/polymarket-bot
-cp .env.example .env        # Edit with your API keys
-pip install -e .             # Install dependencies
-python -m pytest tests/ -v   # Verify (345 tests should pass)
-python -m src.main           # Start paper trading
-```
-
-### The Social Contract
-
-You contribute. You can run your own instance. 20% of your trading profits go to veterans. Not a legal obligation — a handshake between people who care about building something that matters.
-
-## Risks (We're Honest)
-
-- **Competition:** Jump Trading, Susquehanna, Jane Street have dedicated prediction market teams. We're a lean operation competing on methodology, not capital.
-- **Efficiency:** Only 7.6% of Polymarket wallets are profitable. The base rate is brutal.
-- **Regulatory:** CFTC oversight of prediction markets is evolving.
-- **Live vs backtest:** Backtests look great. Live results are unproven.
-- **Scale:** At large sizes, orders move the market. Edge shrinks with capital.
-
-This is a science experiment with real money at stake. We think the research methodology is sound. But we document our honest uncertainty alongside our confident results.
-
-## Key Documents
-
-| Document | Purpose |
-|----------|---------|
-| [FLYWHEEL_STRATEGY.md](FLYWHEEL_STRATEGY.md) | The master project strategy — how the research cycle works |
-| [COMMAND_NODE_v1.1.0.md](COMMAND_NODE_v1.1.0.md) | Single source of truth for all system state (paste into AI sessions) |
-| [research/edge_backlog_ranked.md](research/edge_backlog_ranked.md) | 131 strategies ranked, tracked, and updated every cycle |
-| [research/what_doesnt_work_diary_v1.md](research/what_doesnt_work_diary_v1.md) | Comprehensive failure documentation — the most valuable doc in the repo |
-| [EDGE_DISCOVERY_SYSTEM.md](EDGE_DISCOVERY_SYSTEM.md) | Technical spec for the automated edge research pipeline |
-| [FastTradeEdgeAnalysis.md](FastTradeEdgeAnalysis.md) | Auto-generated status of all tested strategies |
-| [ProjectInstructions.md](ProjectInstructions.md) | Quick-start guide for AI coding sessions |
+Start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT — use it, fork it, improve it, run it. Just remember the mission.
-
----
-
-Built by [John Bradley](https://github.com/CrunchyJohnHaven). The AI makes the trades. I build the machine.
+MIT.

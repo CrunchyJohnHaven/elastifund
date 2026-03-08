@@ -5,7 +5,7 @@
 #   ./scripts/deploy.sh                              # deploy to Dublin VPS (reads VPS_IP from .env)
 #   ./scripts/deploy.sh ubuntu@your-vps-ip            # deploy to specific host
 #
-# Deploys: bot/jj_live.py, bot/llm_ensemble.py, src/claude_analyzer.py
+# Deploys the live JJ bot plus the runtime shims it imports on the VPS.
 # Does NOT deploy: .env, jj_state.json, credentials, API keys
 #
 # Pre-requisites on VPS:
@@ -30,12 +30,23 @@ echo ""
 # Main bot files to sync
 BOT_FILES=(
     "bot/jj_live.py"
-    "bot/llm_ensemble.py"
+    "bot/polymarket_runtime.py"
+    "bot/fill_tracker.py"
+    "bot/ensemble_estimator.py"
+    "bot/disagreement_signal.py"
 )
 
 # Legacy src/ files (still needed for fallback)
 SRC_FILES=(
     "src/claude_analyzer.py"
+)
+
+# polymarket-bot shared modules (imported by bot/jj_live.py)
+POLYBOT_FILES=(
+    "polymarket-bot/src/__init__.py"
+    "polymarket-bot/src/scanner.py"
+    "polymarket-bot/src/claude_analyzer.py"
+    "polymarket-bot/src/telegram.py"
 )
 
 # Sync bot/ files — create directory on VPS if needed
@@ -63,6 +74,18 @@ for f in "${SRC_FILES[@]}"; do
     fi
 done
 
+# Sync polymarket-bot/ shared modules
+ssh $SSH_OPTS "$VPS" "mkdir -p $BOT_DIR/polymarket-bot/src"
+for f in "${POLYBOT_FILES[@]}"; do
+    local_path="$PROJECT_DIR/$f"
+    if [ -f "$local_path" ]; then
+        echo "  Syncing $f..."
+        scp $SSH_OPTS -q "$local_path" "$VPS:$BOT_DIR/$f"
+    else
+        echo "  WARN: $f not found locally, skipping"
+    fi
+done
+
 # Also sync jj_live.py to root dir (VPS expects it there for systemd)
 echo "  Syncing jj_live.py to root bot dir..."
 scp $SSH_OPTS -q "$PROJECT_DIR/bot/jj_live.py" "$VPS:$BOT_DIR/jj_live.py"
@@ -72,10 +95,10 @@ echo ""
 echo "  Installing Python dependencies on VPS..."
 ssh $SSH_OPTS "$VPS" "cd $BOT_DIR && source venv/bin/activate && pip install -q anthropic openai duckduckgo-search httpx 2>&1 | tail -3"
 
-# Verify syntax on VPS
+# Verify imports on VPS using the same PYTHONPATH shape as systemd
 echo ""
 echo "  Verifying import..."
-ssh $SSH_OPTS "$VPS" "cd $BOT_DIR && source venv/bin/activate && python3 -c 'import jj_live; print(\"Import OK\")'"
+ssh $SSH_OPTS "$VPS" "cd $BOT_DIR && source venv/bin/activate && PYTHONPATH=\"$BOT_DIR:$BOT_DIR/bot:$BOT_DIR/polymarket-bot\" python3 -c 'import importlib.util; spec = importlib.util.spec_from_file_location(\"jj_live_runtime\", \"bot/jj_live.py\"); mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod); print(\"Import OK\")'"
 
 # Restart jj-live service if running
 echo ""

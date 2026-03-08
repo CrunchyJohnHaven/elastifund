@@ -1,0 +1,303 @@
+{
+  "alert_rules": {
+    "rules": [
+      {
+        "current_change_pct": null,
+        "current_total": 0.0,
+        "id": "collective-revenue-drop-gt-20pct",
+        "name": "Collective revenue drop >20%",
+        "notes": "Compares the latest two snapshot dates across all stored strategy snapshots.",
+        "previous_total": null,
+        "status": "insufficient_data",
+        "threshold_pct": -20.0
+      },
+      {
+        "affected_agents": [],
+        "id": "drawdown-gt-15pct",
+        "name": "Max drawdown >15%",
+        "status": "ok",
+        "threshold_pct": 15.0
+      },
+      {
+        "affected_agents": [],
+        "id": "agent-offline-gt-1h",
+        "name": "Agent offline >1 hour",
+        "status": "ok",
+        "threshold_minutes": 60.0
+      }
+    ]
+  },
+  "charitable_impact": {
+    "by_strategy": [
+      {
+        "lane": "fast_flow",
+        "reserved_donation_usd": 0.0,
+        "strategy": "polymarket-bot:runtime-live"
+      }
+    ],
+    "donation_rate": 0.2,
+    "milestones": [
+      {
+        "hit": false,
+        "label": "Seed",
+        "progress_pct": 0.0,
+        "target_usd": 100.0
+      },
+      {
+        "hit": false,
+        "label": "First Meaningful Month",
+        "progress_pct": 0.0,
+        "target_usd": 500.0
+      },
+      {
+        "hit": false,
+        "label": "Five Figures Annualized",
+        "progress_pct": 0.0,
+        "target_usd": 1000.0
+      }
+    ],
+    "reserved_total_usd": 0.0
+  },
+  "collective_health": {
+    "agent_totals": {
+      "non_trading_agents": 1,
+      "total_agents": 2,
+      "trading_agents": 1
+    },
+    "by_environment": {
+      "paper": {
+        "kill_events": 0,
+        "max_drawdown_pct": 0.0,
+        "open_positions": 0,
+        "realized_pnl": 0.0,
+        "strategies": 1,
+        "unrealized_pnl": 0.0
+      }
+    },
+    "drawdown_heatmap": [
+      {
+        "environment": "paper",
+        "lane": "fast_flow",
+        "max_drawdown_pct": 0.0,
+        "realized_pnl": 0.0,
+        "strategies": 1
+      }
+    ],
+    "financials": {
+      "aggregate_realized_pnl": 0.0,
+      "aggregate_sharpe": 0.0,
+      "aggregate_unrealized_pnl": 0.0,
+      "reserved_donation_usd": 0.0
+    },
+    "latest_snapshot_count": 1,
+    "non_trading_operational": {
+      "campaigns": 1,
+      "configured": true,
+      "deliverability_status": "green",
+      "heartbeat_age_minutes": 28.82
+    },
+    "risk": {
+      "closed_trades": 0,
+      "kill_events": 0,
+      "max_drawdown_pct": 0.0,
+      "open_positions": 0
+    }
+  },
+  "generated_at": "2026-03-07T22:15:52+00:00",
+  "knowledge_flow": {
+    "allocator": {
+      "configured": false
+    },
+    "cycle_status_counts": {
+      "completed": 1
+    },
+    "cycles_total": 1,
+    "exported_peer_improvements": 1,
+    "high_priority_open_tasks": 0,
+    "imported_bulletins": 0,
+    "imported_peer_improvements": 0,
+    "open_tasks": 1,
+    "revenue_agent": {
+      "campaigns": 1,
+      "configured": true,
+      "db_path": "data/revenue_agent.db",
+      "deliverability_status": "green",
+      "global_kill_switch": false,
+      "heartbeat_age_minutes": 28.82,
+      "leads": 6,
+      "outbox_messages": 3,
+      "outbox_status_counts": {
+        "dry_run": 3
+      },
+      "sends_today": 3,
+      "suppression_entries": 0,
+      "unsubscribes_today": 0
+    },
+    "top_open_tasks": [
+      {
+        "action": "observe",
+        "priority": 40,
+        "title": "HOLD: polymarket-bot:runtime-live paper -> paper"
+      }
+    ]
+  },
+  "leaderboard": {
+    "rows": [
+      {
+        "decision": "hold",
+        "environment": "paper",
+        "fill_rate": null,
+        "lane": "fast_flow",
+        "max_drawdown_pct": 0.0,
+        "rank": 1,
+        "realized_pnl": 0.0,
+        "reason_code": "insufficient_evidence",
+        "risk_adjusted_return": 0.0,
+        "risk_metric": "cumulative_return",
+        "strategy": "polymarket-bot:runtime-live",
+        "win_rate": null
+      }
+    ]
+  },
+  "market_regime": {
+    "configured": true,
+    "current_regime": "unstable",
+    "next_actions": [
+      "Increase data collection horizon to reach >=100 signals for top strategy.",
+      "Tighten entry thresholds or drop low-confidence signals for top strategy.",
+      "Retune confidence calibration bins/prior and re-evaluate top strategy calibration drift.",
+      "Promote top informed-flow convergence variant to focused shadow tracking until it clears signal-count and p-value gates.",
+      "Run ML scanner on next 6-hour interval for new feature proposals."
+    ],
+    "performance_breakdown": [
+      {
+        "ev_maker": -2.4962423688179842,
+        "regime_decay": true,
+        "sharpe": -0.5952900190568617,
+        "signals": 34,
+        "strategy": "Volatility Regime Mismatch",
+        "strategy_key": "vol_regime",
+        "win_rate": 0.3235294117647059
+      },
+      {
+        "ev_maker": -3.1306868999999997,
+        "regime_decay": false,
+        "sharpe": -0.5,
+        "signals": 5,
+        "strategy": "Order Book / Flow Imbalance",
+        "strategy_key": "book_imbalance",
+        "win_rate": 0.0
+      },
+      {
+        "ev_maker": -6.299900982745642,
+        "regime_decay": false,
+        "sharpe": -0.7161637701932647,
+        "signals": 21,
+        "strategy": "Cross-Timeframe Constraint Violation",
+        "strategy_key": "cross_timeframe",
+        "win_rate": 0.0
+      },
+      {
+        "ev_maker": -50.43751286736205,
+        "regime_decay": false,
+        "sharpe": 0.0,
+        "signals": 1,
+        "strategy": "Post-Extreme Mean Reversion",
+        "strategy_key": "mean_reversion",
+        "win_rate": 0.0
+      },
+      {
+        "ev_maker": 0.0,
+        "regime_decay": false,
+        "sharpe": 0.0,
+        "signals": 8,
+        "strategy": "Residual Horizon Fair Value",
+        "strategy_key": "residual_horizon",
+        "win_rate": 0.5
+      },
+      {
+        "ev_maker": 0.0,
+        "regime_decay": false,
+        "sharpe": 0.0,
+        "signals": 0,
+        "strategy": "Chainlink vs Binance Basis Lag",
+        "strategy_key": "chainlink_basis",
+        "win_rate": 0.0
+      }
+    ],
+    "reasoning": "All active hypotheses failed kill rules or expectancy tests.",
+    "recommendation": "REJECT ALL",
+    "regime_inference": "Latest volatility-regime diagnostics show regime decay.",
+    "report_path": "reports/run_20260307_190738_metrics.json",
+    "vol_regime": {
+      "ev_maker": -2.4962423688179842,
+      "notes": [
+        "Insufficient sample size (<100 signals).",
+        "Negative expectancy after taker costs.",
+        "Recent sample shows regime decay.",
+        "Avg maker fill probability: 0.061",
+        "Maker fill model: trade_through",
+        "Trade-through tape coverage: 15/34 signals",
+        "Confidence calibration: sequential_bayes_isotonic (raw=0.623 -> calibrated=0.212, mean_adjustment=0.165)"
+      ],
+      "regime_decay": true,
+      "signals": 34,
+      "win_rate": 0.3235294117647059
+    }
+  },
+  "sources": {
+    "allocator_db_path": "data/allocator.db",
+    "b1_template_audit_path": "reports/b1_template_audit.json",
+    "guaranteed_dollar_audit_path": "reports/guaranteed_dollar_audit.json",
+    "research_metrics_glob": "reports/run_*_metrics.json",
+    "revenue_db_path": "data/revenue_agent.db"
+  },
+  "strategy_diversity": {
+    "a6_audit": {
+      "best_construction_counts": {
+        "full_event_basket": 2,
+        "neg_risk_conversion": 112,
+        "two_leg_straddle": 449
+      },
+      "events_scanned": 563,
+      "executable_events": 0,
+      "max_maker_gross_edge": 0.045,
+      "ready_events": 1
+    },
+    "b1_audit": {
+      "dominant_template": "winner_margin",
+      "template_market_counts": {
+        "state_winner_margin": 34,
+        "winner_balance_of_power": 19,
+        "winner_margin": 478
+      },
+      "template_pair_count": 0
+    },
+    "crowding_alerts": [
+      {
+        "count": 449,
+        "label": "two_leg_straddle",
+        "status": "watch"
+      },
+      {
+        "count": 112,
+        "label": "neg_risk_conversion",
+        "status": "watch"
+      },
+      {
+        "count": 2,
+        "label": "full_event_basket",
+        "status": "ok"
+      }
+    ],
+    "decision_counts": {
+      "hold": 1
+    },
+    "environment_counts": {
+      "paper": 1
+    },
+    "lane_counts": {
+      "fast_flow": 1
+    }
+  }
+}

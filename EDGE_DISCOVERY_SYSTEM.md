@@ -28,14 +28,14 @@ At the time of this document update:
 ## 3.1 One cycle (collect + evaluate + report)
 
 ```bash
-cd /Users/johnbradley/Desktop/Elastifund
+cd /path/to/elastifund
 python3 src/main.py --run-once --log-level INFO
 ```
 
 ## 3.2 Continuous mode (every 30 minutes)
 
 ```bash
-cd /Users/johnbradley/Desktop/Elastifund
+cd /path/to/elastifund
 python3 src/main.py --log-level INFO
 ```
 
