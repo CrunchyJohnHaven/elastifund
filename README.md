@@ -111,6 +111,7 @@ That starts Elasticsearch, Kibana, Kafka, Redis, and a FastAPI hub gateway at `h
 - [docs/RESEARCH_LOG.md](docs/RESEARCH_LOG.md) — Experiment history
 - [LLM_CONTEXT_MANIFEST.md](LLM_CONTEXT_MANIFEST.md) — Canonical root context standard
 - [KARPATHY_AUTORESEARCH_REPORT.md](KARPATHY_AUTORESEARCH_REPORT.md) — Detailed `autoresearch` comparison and adoption plan
+- [research/programs/calibration_lane.md](research/programs/calibration_lane.md) — Lane-local `program.md` equivalent for bounded calibration experiments
 - [research/what_doesnt_work_diary_v1.md](research/what_doesnt_work_diary_v1.md) — Failure diary
 - [research/edge_backlog_ranked.md](research/edge_backlog_ranked.md) — Strategy backlog
 - [docs/ops/Flywheel_Incentive_System.md](docs/ops/Flywheel_Incentive_System.md) — Community model
