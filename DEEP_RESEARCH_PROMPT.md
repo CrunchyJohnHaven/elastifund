@@ -1,8 +1,10 @@
-# DEEP RESEARCH PROMPT v7.0 — Combinatorial Arbitrage: Parallel Codex Execution Plan
-**Date:** 2026-03-07
+# DEEP RESEARCH PROMPT — Combinatorial Arbitrage: Parallel Codex Execution Plan
+**Date:** 2026-03-08
+**Source Version:** v7.0
 **Dispatch:** P3_26
 **From:** JJ (Principal, Elastifund)
-**Supersedes:** DEEP_RESEARCH_PROMPT_v6.md, v5.md
+**Canonical Filename:** `DEEP_RESEARCH_PROMPT.md`
+**Supersedes:** archived prompt variants under `archive/root-history/prompts/`
 **Execution Mode:** 4 parallel Codex instances + 1 ChatGPT Deep Research instance
 
 ---
@@ -15,16 +17,16 @@ This prompt is designed to be pasted verbatim into OpenAI Codex. It defines **5 
 
 | # | File | Purpose |
 |---|------|---------|
-| 1 | This file (DEEP_RESEARCH_PROMPT_v7.md) | The prompt — each instance reads only its assigned section |
+| 1 | This file (DEEP_RESEARCH_PROMPT.md) | The prompt — each instance reads only its assigned section |
 | 2 | CLAUDE.md | Operating instructions, persona, coding standards |
-| 3 | COMMAND_NODE_v1.0.2.md | Full system architecture, all signal sources, API details |
-| 4 | ProjectInstructions.md | Sprint plan, risk parameters, infrastructure |
+| 3 | COMMAND_NODE.md | Full system architecture, all signal sources, API details |
+| 4 | PROJECT_INSTRUCTIONS.md | Sprint plan, risk parameters, infrastructure |
 | 5 | EDGE_DISCOVERY_SYSTEM.md | Hypothesis testing pipeline |
-| 6 | FastTradeEdgeAnalysis.md | Current pipeline state (REJECT ALL) |
-| 7 | DEEP_RESEARCH_OUTPUT_v3.md | 100-strategy taxonomy, A-6 and B-1 source specs |
-| 8 | JJ_ASSESSMENT_DISPATCH_v3.md | JJ's prioritization and kill decisions |
+| 6 | FAST_TRADE_EDGE_ANALYSIS.md | Current pipeline state (REJECT ALL) |
+| 7 | DEEP_RESEARCH_OUTPUT.md | 100-strategy taxonomy, A-6 and B-1 source specs |
+| 8 | JJ_ASSESSMENT_DISPATCH.md | JJ's prioritization and kill decisions |
 
-**Launch instructions:** Create 5 Codex tasks. Each task gets the full context package above. Each task's prompt is: "Read DEEP_RESEARCH_PROMPT_v7.md. Execute INSTANCE [N] only. Ignore all other instance sections. Output your deliverables as specified."
+**Launch instructions:** Create 5 Codex tasks. Each task gets the full context package above. Each task's prompt is: "Read DEEP_RESEARCH_PROMPT.md. Execute INSTANCE [N] only. Ignore all other instance sections. Output your deliverables as specified."
 
 ---
 
@@ -38,7 +40,7 @@ This prompt is designed to be pasted verbatim into OpenAI Codex. It defines **5 
 - LLM analyzer: 71.2% win rate on 532 backtested markets, static Platt (A=0.5914, B=-0.3977)
 - Service currently STOPPED — upgrading to add Signal Sources 5 and 6
 - Zero live resolved trades. Zero real P&L.
-- 345 passing tests across 22 bot modules
+- README currently claims 553 passing tests across the repo; refresh the exact count before repeating it externally
 - Kill discipline: 9 fast-trade hypotheses rejected, 8 strategies permanently killed
 
 ### What We're Building
@@ -485,5 +487,5 @@ In 30 days:
 
 ---
 
-*Filed as Dispatch P3_26. Supersedes DEEP_RESEARCH_PROMPT_v6.md.*
+*Filed as Dispatch P3_26. Supersedes the archived pre-canonical prompt set.*
 *— JJ*

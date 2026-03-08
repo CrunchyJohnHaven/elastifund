@@ -11,7 +11,7 @@ Its job is to:
 2. Generate multiple competing edge hypotheses.
 3. Backtest with realistic execution/cost assumptions.
 4. Reject weak or fake edges quickly.
-5. Update `FastTradeEdgeAnalysis.md` automatically.
+5. Update `FAST_TRADE_EDGE_ANALYSIS.md` automatically.
 
 It is intentionally not a live trading bot.
 
@@ -153,7 +153,7 @@ Automated rejection discipline (kill rules):
 Code: `src/reporting.py`
 
 Primary human output:
-1. `FastTradeEdgeAnalysis.md` (root-level source of truth).
+1. `FAST_TRADE_EDGE_ANALYSIS.md` (root-level source of truth).
 
 Run artifacts:
 1. `reports/run_<timestamp>_metrics.json`

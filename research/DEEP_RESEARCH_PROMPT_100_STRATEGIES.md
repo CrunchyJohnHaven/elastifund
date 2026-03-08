@@ -51,7 +51,7 @@ We are building the most comprehensive publicly available resource on agentic tr
 ### What We've Already Built (Real, Working, 345 Tests Passing)
 
 **4 Signal Sources (all implemented and tested):**
-1. LLM Ensemble — Claude Haiku + GPT-4.1-mini + Groq Llama 3.3 run in parallel, anti-anchoring (models never see market price), Platt-calibrated (A=0.5914, B=-0.3977, OOS Brier 0.2451), consensus gating (75%+ agreement), category routing (skip sports/crypto for LLM), 71.2% backtest win rate on 532 markets
+1. LLM Ensemble — Claude Haiku + GPT-4.1-mini + Groq Llama 3.3 run in parallel, anti-anchoring (models never see market price), Platt-calibrated on the 532-market dataset (OOS Brier 0.2451), consensus gating (75%+ agreement), category routing (skip sports/crypto for LLM), 71.2% backtest win rate on 532 markets
 2. Smart Wallet Flow Detector — monitors top Polymarket wallets via Data API, 5-factor activity scoring, convergence detection (N of top-K wallets on same side), 76%+ confidence threshold
 3. LMSR Bayesian Engine — sequential Bayesian update in log-space with LMSR softmax pricing, blended 60% posterior + 40% flow price, 828ms avg cycle time
 4. Cross-Platform Arb Scanner — matches Polymarket to Kalshi markets via title similarity, detects YES_ask + NO_ask < $1.00 after fees
@@ -62,7 +62,7 @@ We are building the most comprehensive publicly available resource on agentic tr
 - 6 automated kill rules with specific thresholds
 - Walk-forward temporal cross-validation
 - Monte Carlo simulation (10,000 paths)
-- Auto-generated reports (FastTradeEdgeAnalysis.md)
+- Auto-generated reports (FAST_TRADE_EDGE_ANALYSIS.md)
 
 **Infrastructure:**
 - Dublin AWS Lightsail VPS (eu-west-1), 5-10ms to Polymarket CLOB

@@ -67,7 +67,7 @@ We still have a weather strategy in the pipeline: NOAA Multi-Model Weather Conse
 ## Code
 
 Strategy implementation: `src/strategies/weather_bracket.py`
-Validation report: `WEATHER_BRACKET_VALIDATION_REPORT.md`
+Validation report: `research/imports/WEATHER_BRACKET_VALIDATION_REPORT.md`
 NOAA client: `polymarket-bot/src/noaa_client.py`
 
 ---

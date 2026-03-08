@@ -72,7 +72,7 @@ This is what "agentic trading" actually means — not "AI-assisted trading" but 
 
 **Output:** Working code committed to GitHub, updated task list, new data collection running.
 
-**Key document:** `ProjectInstructions.md` Section 9 (Priority Queue) updated to reflect current build targets.
+**Key document:** `PROJECT_INSTRUCTIONS.md` Section 9 (Priority Queue) updated to reflect current build targets.
 
 **Where results go:** GitHub commits on `main`. Each strategy implementation gets a PR with the hypothesis write-up in the description.
 
@@ -84,7 +84,7 @@ This is what "agentic trading" actually means — not "AI-assisted trading" but 
 
 **Output:** Pass/fail verdict with detailed metrics (win rate, EV, Sharpe, drawdown, calibration error, regime stability).
 
-**Key document:** `FastTradeEdgeAnalysis.md` auto-updated after each pipeline run.
+**Key document:** `FAST_TRADE_EDGE_ANALYSIS.md` auto-updated after each pipeline run.
 
 **Where results go:** `reports/run_<timestamp>_summary.md` and `reports/run_<timestamp>_metrics.json`.
 
@@ -95,9 +95,9 @@ This is what "agentic trading" actually means — not "AI-assisted trading" but 
 **Input:** Test results from Phase 3.
 
 **Documents updated:**
-- `FastTradeEdgeAnalysis.md` — Current status of all tested strategies
+- `FAST_TRADE_EDGE_ANALYSIS.md` — Current status of all tested strategies
 - `EDGE_DISCOVERY_SYSTEM.md` — Updated with new strategy families or pipeline changes
-- `COMMAND_NODE_v1.0.2.md` — Updated with latest findings, deployed strategies, lessons learned
+- `COMMAND_NODE.md` — Updated with latest findings, deployed strategies, lessons learned
 - `research/edge_backlog_ranked.md` — Re-ranked based on test results
 - `README.md` — Updated metrics if any strategy is promoted to live
 
@@ -109,8 +109,8 @@ This is what "agentic trading" actually means — not "AI-assisted trading" but 
 
 **The copy sequence:**
 1. Push updated docs to GitHub (`git push origin main`)
-2. Copy `COMMAND_NODE_v1.0.2.md` into new ChatGPT and Claude web sessions
-3. Copy `ProjectInstructions.md` into new Claude Code sessions
+2. Copy `COMMAND_NODE.md` into new ChatGPT and Claude web sessions
+3. Copy `PROJECT_INSTRUCTIONS.md` into new Claude Code sessions
 4. Update website with new diary entries and strategy analyses
 
 ### Phase 6: REPEAT — Feed Results Into Next Research Cycle
@@ -314,13 +314,13 @@ johnbradleytrading.com/
 
 ```
 ALWAYS UPDATED (every cycle):
-├── FastTradeEdgeAnalysis.md
+├── FAST_TRADE_EDGE_ANALYSIS.md
 ├── research/edge_backlog_ranked.md
 └── Diary entry on website
 
 UPDATED ON MEANINGFUL CHANGES:
-├── COMMAND_NODE_v1.0.2.md
-├── ProjectInstructions.md
+├── COMMAND_NODE.md
+├── PROJECT_INSTRUCTIONS.md
 ├── EDGE_DISCOVERY_SYSTEM.md
 └── README.md
 

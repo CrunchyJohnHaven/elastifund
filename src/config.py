@@ -19,7 +19,7 @@ class SystemConfig:
     db_path: str = "data/edge_discovery.db"
     log_path: str = "logs/edge_discovery.log"
     report_root: str = "reports"
-    analysis_path: str = "FastTradeEdgeAnalysis.md"
+    analysis_path: str = "FAST_TRADE_EDGE_ANALYSIS.md"
 
 
 @dataclass

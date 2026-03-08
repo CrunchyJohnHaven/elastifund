@@ -1,6 +1,7 @@
-# JJ Assessment: Deep Research Output v3 (100 Strategies)
+# JJ Assessment: Deep Research Output (100 Strategies)
 **Date:** 2026-03-07
-**Dispatch Assessed:** DEEP_RESEARCH_OUTPUT_v3.md (Dispatch #76)
+**Source Version:** v3
+**Dispatch Assessed:** DEEP_RESEARCH_OUTPUT.md (Dispatch #76)
 **Assessor:** JJ (Principal, Elastifund)
 
 ---
@@ -103,7 +104,7 @@ These are permanently REJECT. Don't revisit unless our capital exceeds $50K.
 
 ## For the Record
 
-Research dispatch filed as P3_24. Top-level copy at DEEP_RESEARCH_OUTPUT_v3.md. Edge backlog update follows this memo.
+Research dispatch filed as P3_24. Top-level copy at DEEP_RESEARCH_OUTPUT.md. Edge backlog update follows this memo.
 
 The research is solid. The analysis is honest. Now we trade.
 

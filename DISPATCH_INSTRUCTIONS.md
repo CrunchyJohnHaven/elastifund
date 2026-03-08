@@ -15,7 +15,7 @@ TASK: Audit the entire repo for leaked credentials before we make it public. Thi
 Step 1: Search every file for anything that looks like a secret:
 - Private keys (0x... strings longer than 20 chars)
 - API keys, tokens, passphrases
-- Wallet addresses that should be private (the proxy wallet in ProjectInstructions.md is intentionally public)
+- Wallet addresses that should be private (the proxy wallet in PROJECT_INSTRUCTIONS.md is intentionally public)
 - .pem file contents
 - Hardcoded passwords or secrets in Python files
 - Any .env files that aren't .env.example
@@ -40,7 +40,7 @@ Step 4: Verify .env.example exists and has placeholder values (not real keys) fo
 - OPENAI_API_KEY
 - GROQ_API_KEY
 - TELEGRAM_BOT_TOKEN / CHAT_ID
-- KALSHI_API_KEY_ID (the one in ProjectInstructions.md was scrubbed, verify)
+- KALSHI_API_KEY_ID (the one in PROJECT_INSTRUCTIONS.md was scrubbed, verify)
 
 Step 5: Write a report of everything you found. Fix anything fixable (add to .gitignore, replace hardcoded values with os.environ.get() calls). Flag anything that needs key rotation.
 
@@ -56,18 +56,18 @@ Paste this:
 ```
 You are working on the Elastifund repo. Read CLAUDE.md first — you are JJ.
 
-TASK: Update COMMAND_NODE_v1.0.2.md to reflect all changes made today. This document is the single source of truth pasted into every new AI session. It needs to be current.
+TASK: Update COMMAND_NODE.md to reflect all changes made today. This document is the single source of truth pasted into every new AI session. It needs to be current.
 
 Read these files first:
 - CLAUDE.md (new — JJ persona, prime directive, autonomous execution mandate)
 - FLYWHEEL_STRATEGY.md (rewritten — 6-phase flywheel, website vision, dual mission)
 - README.md (rewritten — agent-run framing, research engine positioning, honest failures section)
 - research/edge_backlog_ranked.md (restructured — 6 deployed, 5 building, 10 rejected, 30 pipeline)
-- ProjectInstructions.md (credential scrubbed, priority queue)
+- PROJECT_INSTRUCTIONS.md (credential scrubbed, priority queue)
 - research/DEEP_RESEARCH_PROMPT_100_STRATEGIES.md (new — 100-strategy prompt with composite scoring)
 - research/RTDS_MAKER_EDGE_IMPLEMENTATION.md (new — WebSocket + maker order strategy spec)
 - research/LatencyEdgeResearch.md (new — Dublin latency analysis, RTDS feed discovery)
-- FastTradeEdgeAnalysis.md (current pipeline output)
+- FAST_TRADE_EDGE_ANALYSIS.md (current pipeline output)
 
 Then update the Command Node to include:
 1. The JJ persona description (brief — 3 sentences)
