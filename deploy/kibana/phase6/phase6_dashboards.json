@@ -1,0 +1,32 @@
+[
+  {
+    "description": "Portfolio-wide health across trading and non-trading lanes.",
+    "markdown": "## Collective Health\n\n| Metric | Value |\n| --- | --- |\n| Total agents | 2 |\n| Trading agents | 1 |\n| Non-trading agents | 1 |\n| Aggregate realized PnL | $0.00 |\n| Aggregate unrealized PnL | $0.00 |\n| Aggregate Sharpe | 0 |\n| Reserved donations | $0.00 |\n| Open positions | 0 |\n| Closed trades | 0 |\n| Kill events | 0 |\n| Max drawdown | 0.0% |\n\n### By Environment\n\n| Environment | Strategies | Realized PnL | Unrealized PnL | Open Positions | Max Drawdown |\n| --- | --- | --- | --- | --- | --- |\n| paper | 1 | 0.00 | 0.00 | 0 | 0.0% |\n\n### Alert Snapshot\n\n| Rule | Status | Current | Threshold |\n| --- | --- | --- | --- |\n| Collective revenue drop >20% | insufficient_data | - | -20 |\n| Max drawdown >15% | ok | 0 | 15 |\n| Agent offline >1 hour | ok | 0 | 60 |",
+    "title": "Collective Health"
+  },
+  {
+    "description": "Risk-adjusted ranking of active Elastifund strategies.",
+    "markdown": "## Leaderboard\n\n| Rank | Strategy | Lane | Env | Risk-Adj | Metric | Realized PnL | Win Rate | Fill Rate | Max DD | Decision |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n| 1 | polymarket-bot:runtime-live | fast_flow | paper | 0.000 | cumulative_return | $0.00 | - | - | 0.0% | hold |",
+    "title": "Leaderboard"
+  },
+  {
+    "description": "Lane mix, environment concentration, and structural crowding signals.",
+    "markdown": "## Strategy Diversity\n\n### Lane Mix\n\n| Lane | Strategies |\n| --- | --- |\n| fast_flow | 1 |\n\n### Environment Mix\n\n| Environment | Strategies |\n| --- | --- |\n| paper | 1 |\n\n### A-6 / B-1 Structural Audit\n\n| Metric | Value |\n| --- | --- |\n| A-6 events scanned | 563 |\n| A-6 executable events | 0 |\n| A-6 ready events | 1 |\n| A-6 max maker gross edge | 0.045 |\n| B-1 template pairs | 0 |\n| B-1 dominant template | winner_margin |\n\n### Crowding Watchlist\n\n| Construction | Count | Status |\n| --- | --- | --- |\n| two_leg_straddle | 449 | watch |\n| neg_risk_conversion | 112 | watch |\n| full_event_basket | 2 | ok |",
+    "title": "Strategy Diversity"
+  },
+  {
+    "description": "Latest research-regime read and regime-specific performance breakdown.",
+    "markdown": "## Market Regime\n\n| Metric | Value |\n| --- | --- |\n| Current regime | unstable |\n| Inference | Latest volatility-regime diagnostics show regime decay. |\n| Recommendation | REJECT ALL |\n| Vol-regime signals | 34 |\n| Vol-regime win rate | 32.4% |\n| Vol-regime maker EV | -2.496 |\n| Vol-regime decay | yes |\n\n### Performance Breakdown\n\n| Strategy | Signals | Win Rate | Maker EV | Sharpe | Regime Decay |\n| --- | --- | --- | --- | --- | --- |\n| Volatility Regime Mismatch | 34 | 32.4% | -2.496 | -0.595 | yes |\n| Order Book / Flow Imbalance | 5 | 0.0% | -3.131 | -0.500 | no |\n| Cross-Timeframe Constraint Violation | 21 | 0.0% | -6.300 | -0.716 | no |\n| Post-Extreme Mean Reversion | 1 | 0.0% | -50.438 | 0.000 | no |\n| Residual Horizon Fair Value | 8 | 50.0% | 0.000 | 0.000 | no |\n| Chainlink vs Binance Basis Lag | 0 | 0.0% | 0.000 | 0.000 | no |\n\n### Next Actions\n\n- Increase data collection horizon to reach >=100 signals for top strategy.\n- Tighten entry thresholds or drop low-confidence signals for top strategy.\n- Retune confidence calibration bins/prior and re-evaluate top strategy calibration drift.\n- Promote top informed-flow convergence variant to focused shadow tracking until it clears signal-count and p-value gates.\n- Run ML scanner on next 6-hour interval for new feature proposals.",
+    "title": "Market Regime"
+  },
+  {
+    "description": "Flywheel cycles, peer exchange, allocator posture, and revenue-agent state.",
+    "markdown": "## Knowledge Flow\n\n| Metric | Value |\n| --- | --- |\n| Flywheel cycles | 1 |\n| Open tasks | 1 |\n| High-priority open tasks | 0 |\n| Imported bulletins | 0 |\n| Imported improvements | 0 |\n| Exported improvements | 1 |\n| Allocator configured | no |\n| Allocator mode | n/a |\n| Trading share | - |\n| Non-trading share | - |\n| Revenue agent configured | yes |\n| Deliverability | green |\n| Revenue heartbeat age | 28.8m |\n\n### Top Open Tasks\n\n| Priority | Action | Title |\n| --- | --- | --- |\n| 40 | observe | HOLD: polymarket-bot:runtime-live paper -> paper |",
+    "title": "Knowledge Flow"
+  },
+  {
+    "description": "Donation reserve tracking and milestone progress.",
+    "markdown": "## Charitable Impact\n\n| Metric | Value |\n| --- | --- |\n| Donation reserve rate | 20.0% |\n| Reserved total | $0.00 |\n\n### Strategy Contributions\n\n| Strategy | Lane | Reserved Donation |\n| --- | --- | --- |\n| polymarket-bot:runtime-live | fast_flow | $0.00 |\n\n### Milestones\n\n| Milestone | Target | Progress | Hit |\n| --- | --- | --- | --- |\n| Seed | $100 | 0.0% | no |\n| First Meaningful Month | $500 | 0.0% | no |\n| Five Figures Annualized | $1000 | 0.0% | no |",
+    "title": "Charitable Impact"
+  }
+]

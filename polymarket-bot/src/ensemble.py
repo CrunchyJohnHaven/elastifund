@@ -34,8 +34,18 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 # CalibrationV2 Platt scaling parameters (same as claude_analyzer.py)
-PLATT_A = float(os.environ.get("PLATT_A", "0.5914"))
-PLATT_B = float(os.environ.get("PLATT_B", "-0.3977"))
+def _float_env(name: str, default: str) -> float:
+    raw = os.environ.get(name)
+    if raw in (None, ""):
+        return float(default)
+    try:
+        return float(raw)
+    except ValueError:
+        return float(default)
+
+
+PLATT_A = _float_env("PLATT_A", "0.5914")
+PLATT_B = _float_env("PLATT_B", "-0.3977")
 
 # Anti-anchoring prompt — identical structure across all models.
 # Market price NOT shown. Base-rate-first. Explicit debiasing.

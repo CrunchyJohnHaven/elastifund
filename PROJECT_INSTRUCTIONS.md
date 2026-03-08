@@ -170,7 +170,10 @@ NOTIFY  → Telegram alerts on every trade
 
 ```
 Elastifund/
+├── AGENTS.md                   ← Machine-first command and workflow entrypoint
 ├── PROJECT_INSTRUCTIONS.md     ← YOU ARE HERE (paste to any AI session)
+├── docs/REPO_MAP.md            ← Canonical directory map and task routing
+├── docs/FORK_AND_RUN.md        ← Beginner-friendly local boot and shared-hub guide
 ├── COMMAND_NODE.md             ← Deep technical reference
 ├── LLM_CONTEXT_MANIFEST.md     ← Canonical root context standard
 ├── KARPATHY_AUTORESEARCH_REPORT.md ← Loop-design and benchmark discipline notes
@@ -199,12 +202,10 @@ Elastifund/
 │   ├── ops/                    ← Deploy guides, checklists, audits
 │   └── templates/              ← Report templates
 │
-├── fund/
-│   ├── investor/               ← Investor reports, pitch sheets, task lists
-│   └── legal/                  ← PPM, subscription agreements, credentials
-│
 └── archive/                    ← Superseded files (Replit builds, old handoffs)
 ```
+
+Private investor and legal materials are intentionally kept outside this repo in a separate private materials directory.
 
 ---
 
@@ -286,7 +287,7 @@ Other completed modules still available for parallel promotion work:
 3. **Cycle 3:** Run first 3 systems (Freqtrade, Hummingbot, NautilusTrader) through T0-T5. Publish system profile pages.
 4. **Cycle 4:** Run 6 more systems. Launch interactive leaderboard. Publish license risk guide.
 5. **Post-sprint:** Quarterly updates, expand to commercial SaaS feature comparisons, add legacy systems as historical baselines.
-See `research/dispatches/DISPATCH_097_competitive_inventory_benchmark_blueprint.md` for the implementation brief, `research/competitive_inventory_benchmark_deep_research.md` for the full integrated research, and `REPLIT_DASHBOARD_v8.md` for page specification.
+See `research/dispatches/DISPATCH_097_competitive_inventory_benchmark_blueprint.md` for the implementation brief, `research/competitive_inventory_benchmark_deep_research.md` for the full integrated research, and `docs/website/benchmark-methodology.md` for the first public-facing benchmark page.
 
 ### P3 — Hard Kill Rules (Non-Negotiable)
 1. **A-6 kill:** reject if realized capture `<50%` of theoretical over a trailing 20-event window.
@@ -340,4 +341,4 @@ See `research/dispatches/DISPATCH_097_competitive_inventory_benchmark_blueprint.
 
 ---
 
-*v3.2.0 — Updated 2026-03-08. Adopted stable canonical root filenames, added the root-context standard, and kept `PROJECT_INSTRUCTIONS.md` as the in-place quick-start handoff document. See `COMMAND_NODE.md` for deep technical reference.*
+*v3.2.0 — Updated 2026-03-08. Adopted stable canonical root filenames, added the root-context standard, and aligned the lightweight coding-session package around `AGENTS.md`, `PROJECT_INSTRUCTIONS.md`, and `docs/REPO_MAP.md`. See `COMMAND_NODE.md` for deep technical reference.*

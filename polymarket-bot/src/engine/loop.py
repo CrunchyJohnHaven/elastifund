@@ -12,7 +12,8 @@ additional live-trading behaviours are active:
 import asyncio
 import time as _time
 from datetime import datetime
-from typing import Optional
+from src.core.time_utils import utc_now_naive
+from typing import Optional, TYPE_CHECKING
 
 import structlog
 
@@ -34,6 +35,9 @@ from src.store.database import DatabaseManager
 from src.store.repository import Repository
 from src.telegram import TelegramNotifier
 
+if TYPE_CHECKING:
+    from src.telemetry.elastic import ElasticTelemetry
+
 logger = structlog.get_logger(__name__)
 
 # Price offset for limit buys (get filled or miss, never overpay)
@@ -53,6 +57,7 @@ class EngineLoop:
         safety_rails: SafetyRails | None = None,
         notifier: TelegramNotifier | None = None,
         exit_config: ExitStrategyConfig | None = None,
+        telemetry: "ElasticTelemetry | None" = None,
     ):
         """Initialize the engine loop.
 
@@ -77,6 +82,7 @@ class EngineLoop:
         self._price_history: dict[str, list[float]] = {}
         self._is_live = self._check_is_live()
         self.exit_strategy = ExitStrategy(broker, exit_config or ExitStrategyConfig())
+        self.telemetry = telemetry
 
         # Bayesian signal processor for sequential belief updating
         self.bayesian = BayesianSignalProcessor(
@@ -103,6 +109,7 @@ class EngineLoop:
             loop_seconds=settings.engine_loop_seconds,
             markets=len(self.markets),
         )
+        await self._emit_elastic_agent_status("running")
 
         while self._running:
             try:
@@ -115,6 +122,10 @@ class EngineLoop:
                 async with DatabaseManager.get_session() as session:
                     if await Repository.get_kill_switch(session):
                         logger.warning("engine_paused_kill_switch")
+                        await self._emit_elastic_agent_status(
+                            "paused",
+                            extra={"kill_switch": True},
+                        )
                         await self._kill_switch_cancel_all()
                         await asyncio.sleep(settings.engine_loop_seconds)
                         continue
@@ -148,6 +159,7 @@ class EngineLoop:
                 if self._is_live:
                     await self._cancel_timed_out_orders()
 
+                await self._emit_elastic_cycle_metrics()
                 await asyncio.sleep(settings.engine_loop_seconds)
 
             except asyncio.CancelledError:
@@ -155,6 +167,10 @@ class EngineLoop:
                 break
             except Exception as e:
                 logger.error("engine_loop_error", error=str(e))
+                await self._emit_elastic_agent_status(
+                    "error",
+                    extra={"last_error": str(e)[:500]},
+                )
                 if self.notifier and self.notifier.is_configured:
                     await self.notifier.send_error(str(e)[:300], context="engine_loop")
                 await asyncio.sleep(settings.engine_loop_seconds)
@@ -165,6 +181,7 @@ class EngineLoop:
         """Stop the engine loop. Cancel all open orders if live."""
         logger.info("stopping_engine")
         self._running = False
+        await self._emit_elastic_agent_status("stopping")
 
         # Cancel all open orders on shutdown (live safety)
         if self._is_live:
@@ -210,7 +227,7 @@ class EngineLoop:
             "orderbook_depth": {},
             "positions": positions,
             "price_history": self._price_history.get(token_id, []),
-            "timestamp": datetime.utcnow(),
+            "timestamp": utc_now_naive(),
         }
 
         # ── BAYESIAN UPDATE (price action evidence) ──────────────
@@ -290,7 +307,7 @@ class EngineLoop:
             total_exposure = sum(
                 p.size * p.avg_entry_price for p in all_positions
             )
-            daily_pnl = await Repository.get_daily_pnl(session, datetime.utcnow())
+            daily_pnl = await Repository.get_daily_pnl(session, utc_now_naive())
 
         bankroll = total_exposure + settings.max_position_usd
 
@@ -435,6 +452,23 @@ class EngineLoop:
                 size=size,
             )
             await session.commit()
+
+        await self._emit_elastic_trade(
+            order=order,
+            market_config=market_config,
+            action=action,
+            signal=signal,
+            order_price=order_price,
+            size=size,
+            metadata={
+                "mode": "live" if self._is_live else "paper",
+                "token_id": effective_token,
+                "confidence": signal.get("confidence"),
+                "estimated_prob": signal.get("estimated_prob"),
+                "reason": signal.get("reason"),
+                "execution_mode": settings.execution_mode.upper(),
+            },
+        )
 
         # ── EXECUTION INSTRUMENTATION ──────────────────────────────
         try:
@@ -637,6 +671,22 @@ class EngineLoop:
                 size=sandbox_size,
                 status=sandbox_order.status.value,
             )
+            await self._emit_elastic_trade(
+                order=sandbox_order,
+                market_config={"market_id": market_id, "question": market_id},
+                action=f"{side.value}_maker_sandbox",
+                signal={},
+                order_price=sandbox_price,
+                size=sandbox_size,
+                metadata={
+                    "mode": "live" if self._is_live else "paper",
+                    "token_id": token_id,
+                    "execution_mode": "MAKER_SANDBOX",
+                    "is_maker_sandbox": True,
+                    "expected_edge": edge_after_fee,
+                    "mid_price": mid_price,
+                },
+            )
 
         except Exception as e:
             logger.warning("maker_sandbox_order_failed", market_id=market_id, error=str(e))
@@ -702,3 +752,118 @@ class EngineLoop:
                     await session.commit()
         except Exception as e:
             logger.error("kill_cancel_all_failed", error=str(e))
+
+    def _strategy_id(self) -> str:
+        strategy_name = getattr(self.strategy, "name", "default")
+        if self.telemetry:
+            return self.telemetry.resolve_strategy_id(strategy_name)
+        return strategy_name
+
+    async def _emit_elastic_agent_status(
+        self,
+        status: str,
+        extra: dict | None = None,
+    ) -> None:
+        if not self.telemetry or not self.telemetry.enabled:
+            return
+        settings = get_settings()
+        metadata = {
+            "mode": "live" if self._is_live else "paper",
+            "strategy": getattr(self.strategy, "name", "unknown"),
+            "strategy_id": self._strategy_id(),
+            "markets": len(self.markets),
+            "engine_loop_seconds": settings.engine_loop_seconds,
+            "live_trading": settings.live_trading,
+            "no_trade_mode": settings.no_trade_mode,
+            "notifier_enabled": bool(self.notifier and self.notifier.is_configured),
+        }
+        if extra:
+            metadata.update(extra)
+        await self.telemetry.upsert_agent_status(status=status, metadata=metadata)
+
+    async def _emit_elastic_cycle_metrics(self) -> None:
+        if not self.telemetry or not self.telemetry.enabled:
+            return
+
+        try:
+            positions = await self.broker.get_positions()
+        except Exception as exc:
+            logger.debug("elastic_metrics_positions_unavailable", error=str(exc))
+            positions = []
+
+        pnl_usd = round(sum(float(getattr(pos, "pnl", 0.0) or 0.0) for pos in positions), 6)
+        settings = get_settings()
+        drawdown_pct = 0.0
+        if settings.max_daily_drawdown_usd > 0 and pnl_usd < 0:
+            drawdown_pct = min(
+                100.0,
+                abs(pnl_usd) / settings.max_daily_drawdown_usd * 100,
+            )
+
+        async with DatabaseManager.get_session() as session:
+            summary = await Repository.get_execution_summary(session)
+            bot_state = await Repository.get_or_create_bot_state(session)
+            open_orders = await Repository.get_open_orders(session)
+
+        total_cost = float(summary.get("avg_actual_fee") or 0.0) * float(
+            summary.get("filled") or 0
+        )
+        await self.telemetry.emit_metrics(
+            strategy_id=self._strategy_id(),
+            pnl_usd=pnl_usd,
+            drawdown_pct=drawdown_pct,
+            revenue_usd=pnl_usd,
+            sharpe_ratio=0.0,
+            cost_usd=total_cost,
+        )
+        await self._emit_elastic_agent_status(
+            "running",
+            extra={
+                "kill_switch": bot_state.kill_switch,
+                "last_error": bot_state.last_error,
+                "last_heartbeat": (
+                    bot_state.last_heartbeat.isoformat()
+                    if bot_state.last_heartbeat
+                    else None
+                ),
+                "open_positions": len(positions),
+                "open_orders": len(open_orders),
+                "tracked_orders": summary.get("total_orders_tracked", 0),
+                "fill_rate": summary.get("fill_rate", 0.0),
+                "cancel_rate": summary.get("cancel_rate", 0.0),
+                "paper_pnl_usd": pnl_usd,
+            },
+        )
+
+    async def _emit_elastic_trade(
+        self,
+        *,
+        order,
+        market_config: dict,
+        action: str,
+        signal: dict,
+        order_price: float,
+        size: float,
+        metadata: dict | None = None,
+    ) -> None:
+        if not self.telemetry or not self.telemetry.enabled:
+            return
+        side = getattr(order.side, "value", str(order.side)).upper()
+        status = getattr(order.status, "value", str(order.status)).upper()
+        trade_metadata = {
+            "question": market_config.get("question", ""),
+            "action": action,
+            "reason": signal.get("reason"),
+            **(metadata or {}),
+        }
+        await self.telemetry.emit_trade(
+            trade_id=order.id,
+            strategy_id=self._strategy_id(),
+            market_id=market_config["market_id"],
+            side=side,
+            order_type="LIMIT",
+            status=status,
+            price=order_price,
+            size=size,
+            metadata=trade_metadata,
+        )

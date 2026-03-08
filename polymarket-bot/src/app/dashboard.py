@@ -9,6 +9,7 @@ Includes:
 import os
 import secrets
 from datetime import datetime
+from src.core.time_utils import utc_now_naive
 from typing import Optional
 
 from fastapi import FastAPI, Depends, HTTPException, Query, Request, status
@@ -20,11 +21,12 @@ import structlog
 
 from src.app.dependencies import get_db_session, verify_token, get_config
 from src.store.repository import Repository
+from src.telemetry.elastic import get_elastic_telemetry
 
 logger = structlog.get_logger(__name__)
 
 app = FastAPI(title="Polymarket Bot Dashboard", version="0.2.0")
-_start_time = datetime.utcnow()
+_start_time = utc_now_naive()
 
 
 # ---------------------------------------------------------------------------
@@ -342,7 +344,7 @@ async def recent_trades(
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Check if the API is running."""
-    uptime = int((datetime.utcnow() - _start_time).total_seconds())
+    uptime = int((utc_now_naive() - _start_time).total_seconds())
     return HealthResponse(status="ok", version="0.2.0", uptime_seconds=uptime)
 
 
@@ -372,7 +374,10 @@ async def get_metrics(session: AsyncSession = Depends(get_db_session), _=Depends
     bot_state = await Repository.get_or_create_bot_state(session)
     positions = await Repository.get_all_positions(session)
     orders = await Repository.get_open_orders(session)
-    uptime = int((datetime.utcnow() - _start_time).total_seconds())
+    uptime = int((utc_now_naive() - _start_time).total_seconds())
+    telemetry = get_elastic_telemetry(get_config())
+    if telemetry.enabled:
+        await telemetry.ping()
     return {
         "order_count": len(orders),
         "position_count": len(positions),
@@ -380,6 +385,7 @@ async def get_metrics(session: AsyncSession = Depends(get_db_session), _=Depends
         "last_heartbeat": bot_state.last_heartbeat.isoformat() if bot_state.last_heartbeat else None,
         "kill_switch": bot_state.kill_switch,
         "last_error": bot_state.last_error,
+        "elastic": telemetry.snapshot(),
     }
 
 

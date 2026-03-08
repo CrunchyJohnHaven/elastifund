@@ -24,14 +24,16 @@ class B1ViolationMonitor:
         *,
         graph_store: GraphStore,
         quote_store: BestBidAskStore,
-        implication_threshold: float = 0.04,
-        complementary_threshold: float = 0.02,
+        implication_threshold: float = 0.05,
+        complementary_threshold: float = 0.05,
+        min_spread_multiple: float = 2.0,
         max_stale_seconds: float = 2.0,
     ) -> None:
         self.graph_store = graph_store
         self.quote_store = quote_store
         self.implication_threshold = float(implication_threshold)
         self.complementary_threshold = float(complementary_threshold)
+        self.min_spread_multiple = float(min_spread_multiple)
         self.max_stale_seconds = float(max_stale_seconds)
 
     def scan(self, *, min_confidence: float = 0.8) -> list[B1ViolationSignal]:
@@ -63,51 +65,65 @@ class B1ViolationMonitor:
         ask_a = float(quote_a.best_ask)
         bid_b = float(quote_b.best_bid)
         ask_b = float(quote_b.best_ask)
+        spread_a = max(0.0, ask_a - bid_a)
+        spread_b = max(0.0, ask_b - bid_b)
+        combined_spread = spread_a + spread_b
 
-        if edge.label in {"A_implies_B", "subset"} and bid_a > ask_b + self.implication_threshold:
-            return B1ViolationSignal(
-                edge_label=edge.label,
-                market_ids=(market_a.market_id, market_b.market_id),
-                action="sell_A_buy_B",
-                gross_edge=bid_a - ask_b,
-                details={"bid_a": bid_a, "ask_b": ask_b},
-            )
+        def spread_adjusted(gross_edge: float, threshold: float) -> bool:
+            if gross_edge < threshold:
+                return False
+            return gross_edge >= self.min_spread_multiple * combined_spread
 
-        if edge.label == "B_implies_A" and bid_b > ask_a + self.implication_threshold:
-            return B1ViolationSignal(
-                edge_label=edge.label,
-                market_ids=(market_a.market_id, market_b.market_id),
-                action="sell_B_buy_A",
-                gross_edge=bid_b - ask_a,
-                details={"bid_b": bid_b, "ask_a": ask_a},
-            )
+        if edge.label in {"A_implies_B", "subset"}:
+            gross_edge = bid_a - ask_b
+            if spread_adjusted(gross_edge, self.implication_threshold):
+                return B1ViolationSignal(
+                    edge_label=edge.label,
+                    market_ids=(market_a.market_id, market_b.market_id),
+                    action="sell_A_buy_B",
+                    gross_edge=gross_edge,
+                    details={"bid_a": bid_a, "ask_b": ask_b, "combined_spread": combined_spread},
+                )
 
-        if edge.label == "mutually_exclusive" and bid_a + bid_b > 1.0 + self.implication_threshold:
-            return B1ViolationSignal(
-                edge_label=edge.label,
-                market_ids=(market_a.market_id, market_b.market_id),
-                action="buy_no_pair",
-                gross_edge=(bid_a + bid_b) - 1.0,
-                details={"bid_a": bid_a, "bid_b": bid_b},
-            )
+        if edge.label == "B_implies_A":
+            gross_edge = bid_b - ask_a
+            if spread_adjusted(gross_edge, self.implication_threshold):
+                return B1ViolationSignal(
+                    edge_label=edge.label,
+                    market_ids=(market_a.market_id, market_b.market_id),
+                    action="sell_B_buy_A",
+                    gross_edge=gross_edge,
+                    details={"bid_b": bid_b, "ask_a": ask_a, "combined_spread": combined_spread},
+                )
+
+        if edge.label == "mutually_exclusive":
+            gross_edge = (bid_a + bid_b) - 1.0
+            if spread_adjusted(gross_edge, self.implication_threshold):
+                return B1ViolationSignal(
+                    edge_label=edge.label,
+                    market_ids=(market_a.market_id, market_b.market_id),
+                    action="buy_no_pair",
+                    gross_edge=gross_edge,
+                    details={"bid_a": bid_a, "bid_b": bid_b, "combined_spread": combined_spread},
+                )
 
         if edge.label == "complementary":
             total_bid = bid_a + bid_b
-            if total_bid < 1.0 - self.complementary_threshold:
+            if spread_adjusted(1.0 - total_bid, self.complementary_threshold):
                 return B1ViolationSignal(
                     edge_label=edge.label,
                     market_ids=(market_a.market_id, market_b.market_id),
                     action="buy_yes_pair",
                     gross_edge=1.0 - total_bid,
-                    details={"bid_a": bid_a, "bid_b": bid_b},
+                    details={"bid_a": bid_a, "bid_b": bid_b, "combined_spread": combined_spread},
                 )
-            if total_bid > 1.0 + self.complementary_threshold:
+            if spread_adjusted(total_bid - 1.0, self.complementary_threshold):
                 return B1ViolationSignal(
                     edge_label=edge.label,
                     market_ids=(market_a.market_id, market_b.market_id),
                     action="buy_no_pair",
                     gross_edge=total_bid - 1.0,
-                    details={"bid_a": bid_a, "bid_b": bid_b},
+                    details={"bid_a": bid_a, "bid_b": bid_b, "combined_spread": combined_spread},
                 )
 
         return None

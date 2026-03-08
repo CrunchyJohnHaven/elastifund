@@ -98,6 +98,8 @@ This is what "agentic trading" actually means — not "AI-assisted trading" but 
 - `FAST_TRADE_EDGE_ANALYSIS.md` — Current status of all tested strategies
 - `EDGE_DISCOVERY_SYSTEM.md` — Updated with new strategy families or pipeline changes
 - `COMMAND_NODE.md` — Updated with latest findings, deployed strategies, lessons learned
+- `PROJECT_INSTRUCTIONS.md` — Updated with latest findings, deployed strategies, and live priorities
+- `AGENTS.md` / `docs/REPO_MAP.md` — Updated if workflow surface or repo layout changed
 - `research/edge_backlog_ranked.md` — Re-ranked based on test results
 - `README.md` — Updated metrics if any strategy is promoted to live
 
@@ -109,8 +111,8 @@ This is what "agentic trading" actually means — not "AI-assisted trading" but 
 
 **The copy sequence:**
 1. Push updated docs to GitHub (`git push origin main`)
-2. Copy `COMMAND_NODE.md` into new ChatGPT and Claude web sessions
-3. Copy `PROJECT_INSTRUCTIONS.md` into new Claude Code sessions
+2. Copy `COMMAND_NODE.md` into new ChatGPT and Claude web sessions when deep context is needed
+3. Attach `AGENTS.md`, `docs/REPO_MAP.md`, and `PROJECT_INSTRUCTIONS.md` to new AI coding sessions
 4. Update website with new diary entries and strategy analyses
 
 ### Phase 6: REPEAT — Feed Results Into Next Research Cycle
@@ -321,12 +323,13 @@ ALWAYS UPDATED (every cycle):
 UPDATED ON MEANINGFUL CHANGES:
 ├── COMMAND_NODE.md
 ├── PROJECT_INSTRUCTIONS.md
+├── AGENTS.md / docs/REPO_MAP.md
 ├── EDGE_DISCOVERY_SYSTEM.md
 └── README.md
 
 UPDATED MONTHLY:
 ├── docs/strategy/STRATEGY_REPORT.md
-└── Fund investor update
+└── Private external update (outside repo)
 ```
 
 ---

@@ -1,0 +1,7 @@
+email,company_name,country_code,explicit_opt_in,source
+info@usbiz.com,US Biz,US,false,manual_csv
+sales@vendor.example.com,Vendor Inc,US,false,manual_csv
+owner@optedin-us.com,Opted In US,US,true,manual_csv
+jane@eucompany.nl,EU Company,NL,true,manual_csv
+founder@gmail.com,Personal Gmail,US,false,manual_csv
+support@yahoo.com,Role On Personal Domain,US,false,manual_csv

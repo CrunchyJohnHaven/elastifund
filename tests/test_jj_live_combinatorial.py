@@ -45,6 +45,37 @@ class TestJJLiveCombinatorialState(unittest.TestCase):
             self.assertEqual(state.count_active_linked_baskets(), 0)
             self.assertEqual(state.get_arb_budget_in_use_usd(), 0.0)
 
+    def test_record_trade_aggregates_multiple_fills_on_same_market_side(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state = JJState(state_file=Path(tmp) / "jj_state.json")
+
+            state.record_trade(
+                market_id="mkt-1",
+                question="Will the bill pass?",
+                direction="buy_yes",
+                price=0.40,
+                size_usd=0.50,
+                edge=0.12,
+                confidence=0.70,
+                order_id="ord-1",
+            )
+            state.record_trade(
+                market_id="mkt-1",
+                question="Will the bill pass?",
+                direction="buy_yes",
+                price=0.50,
+                size_usd=0.50,
+                edge=0.15,
+                confidence=0.80,
+                order_id="ord-2",
+            )
+
+            pos = state.state["open_positions"]["mkt-1"]
+            self.assertAlmostEqual(pos["size_usd"], 1.0)
+            self.assertAlmostEqual(pos["shares"], 2.25)
+            self.assertAlmostEqual(pos["entry_price"], 1.0 / 2.25)
+            self.assertEqual(pos["order_ids"], ["ord-1", "ord-2"])
+
 
 class TestJJLiveCombinatorialDatabase(unittest.TestCase):
     def test_trade_database_summarizes_combinatorial_rows(self) -> None:

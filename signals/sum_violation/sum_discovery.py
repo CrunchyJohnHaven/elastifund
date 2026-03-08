@@ -16,6 +16,7 @@ from strategies.a6_sum_violation import A6WatchlistBuilder, EventWatch
 GAMMA_EVENTS_URL = "https://gamma-api.polymarket.com/events"
 CLOB_PRICES_URL = "https://clob.polymarket.com/prices"
 CLOB_BOOK_URL = "https://clob.polymarket.com/book"
+MAX_PRICE_BATCH_TOKENS = 500
 
 
 def _safe_float(value: Any) -> float | None:
@@ -25,28 +26,36 @@ def _safe_float(value: Any) -> float | None:
         return None
 
 
-def _best_price(levels: Sequence[Any], *, side: str) -> float | None:
-    prices: list[float] = []
+def _best_level(levels: Sequence[Any], *, side: str) -> tuple[float | None, float | None]:
+    priced_levels: list[tuple[float, float | None]] = []
     for level in levels:
         if isinstance(level, Mapping):
             price = _safe_float(level.get("price"))
+            size = _safe_float(level.get("size"))
         elif isinstance(level, Sequence) and not isinstance(level, (str, bytes, bytearray)) and level:
             price = _safe_float(level[0])
+            size = _safe_float(level[1]) if len(level) > 1 else None
         else:
             price = None
+            size = None
         if price is None:
             continue
         if 0.0 <= price <= 1.0:
-            prices.append(price)
-    if not prices:
-        return None
-    return max(prices) if side == "bid" else min(prices)
+            priced_levels.append((price, size))
+    if not priced_levels:
+        return None, None
+    best = max(priced_levels, key=lambda item: item[0]) if side == "bid" else min(priced_levels, key=lambda item: item[0])
+    return best
 
 
-def _extract_book_quotes(payload: Mapping[str, Any]) -> tuple[float | None, float | None]:
+def _extract_book_quotes(
+    payload: Mapping[str, Any],
+) -> tuple[float | None, float | None, float | None, float | None]:
     bids = payload.get("bids") or []
     asks = payload.get("asks") or []
-    return _best_price(bids, side="bid"), _best_price(asks, side="ask")
+    bid, bid_size = _best_level(bids, side="bid")
+    ask, ask_size = _best_level(asks, side="ask")
+    return bid, ask, bid_size, ask_size
 
 
 def _normalize_prices_response(payload: Any, side: str) -> dict[str, float]:
@@ -136,18 +145,25 @@ class A6PriceSnapshotter:
         session: requests.Session | None = None,
         timeout_seconds: float = 12.0,
         quarantine: A6QuarantineCache | None = None,
+        use_book_fallback: bool = True,
     ) -> None:
         self.session = session or requests.Session()
         self.timeout_seconds = max(1.0, float(timeout_seconds))
         self.quarantine = quarantine or A6QuarantineCache()
+        self.use_book_fallback = bool(use_book_fallback)
 
     def refresh_store(self, watches: Sequence[EventWatch], store: BestBidAskStore) -> int:
+        return self.refresh_store_for_tokens(
+            self._token_ids_for_watches(watches, include_no_tokens=False),
+            store,
+        )
+
+    def refresh_store_for_tokens(self, token_ids: Sequence[str], store: BestBidAskStore) -> int:
         token_ids = sorted(
             {
-                leg.yes_token_id
-                for watch in watches
-                for leg in watch.legs
-                if leg.yes_token_id and not self.quarantine.is_quarantined(leg.yes_token_id)
+                str(token_id).strip()
+                for token_id in token_ids
+                if str(token_id).strip() and not self.quarantine.is_quarantined(str(token_id).strip())
             }
         )
         if not token_ids:
@@ -160,39 +176,76 @@ class A6PriceSnapshotter:
         for token_id in token_ids:
             best_ask = asks.get(token_id)
             best_bid = bids.get(token_id)
-            if best_bid is None or best_ask is None:
-                book_bid, book_ask = self._fetch_book_fallback(token_id)
+            if self.use_book_fallback and (best_bid is None or best_ask is None):
+                book_bid, book_ask, book_bid_size, book_ask_size = self._fetch_book_fallback(token_id)
                 if book_bid is not None:
                     best_bid = book_bid
                 if book_ask is not None:
                     best_ask = book_ask
+            else:
+                book_bid_size = None
+                book_ask_size = None
 
             if best_bid is None or best_ask is None:
                 continue
 
-            store.update(token_id, best_bid=best_bid, best_ask=best_ask)
+            store.update(
+                token_id,
+                best_bid=best_bid,
+                best_ask=best_ask,
+                best_bid_size=book_bid_size,
+                best_ask_size=book_ask_size,
+            )
             self.quarantine.mark_success(token_id)
             updated += 1
 
         return updated
 
-    def _fetch_prices(self, token_ids: Sequence[str], *, side: str) -> dict[str, float]:
-        body = [{"token_id": token_id, "side": side} for token_id in token_ids]
-        resp = self.session.post(CLOB_PRICES_URL, json=body, timeout=self.timeout_seconds)
-        resp.raise_for_status()
-        return _normalize_prices_response(resp.json(), side)
+    @staticmethod
+    def _token_ids_for_watches(
+        watches: Sequence[EventWatch],
+        *,
+        include_no_tokens: bool,
+    ) -> list[str]:
+        token_ids: list[str] = []
+        for watch in watches:
+            for leg in watch.legs:
+                if leg.yes_token_id:
+                    token_ids.append(leg.yes_token_id)
+                if include_no_tokens and leg.no_token_id:
+                    token_ids.append(leg.no_token_id)
+        return token_ids
 
-    def _fetch_book_fallback(self, token_id: str) -> tuple[float | None, float | None]:
+    def refresh_store_with_no_tokens(self, watches: Sequence[EventWatch], store: BestBidAskStore) -> int:
+        return self.refresh_store_for_tokens(
+            self._token_ids_for_watches(watches, include_no_tokens=True),
+            store,
+        )
+
+    def _fetch_prices(self, token_ids: Sequence[str], *, side: str) -> dict[str, float]:
+        out: dict[str, float] = {}
+        for idx in range(0, len(token_ids), MAX_PRICE_BATCH_TOKENS):
+            chunk = token_ids[idx : idx + MAX_PRICE_BATCH_TOKENS]
+            body = [{"token_id": token_id, "side": side} for token_id in chunk]
+            resp = self.session.post(CLOB_PRICES_URL, json=body, timeout=self.timeout_seconds)
+            resp.raise_for_status()
+            out.update(_normalize_prices_response(resp.json(), side))
+        return out
+
+    def _fetch_book_fallback(
+        self,
+        token_id: str,
+    ) -> tuple[float | None, float | None, float | None, float | None]:
         resp = self.session.get(CLOB_BOOK_URL, params={"token_id": token_id}, timeout=self.timeout_seconds)
         if resp.status_code == 404:
             self.quarantine.mark_failure(token_id, reason="book_404", status_code=404)
-            return None, None
+            return None, None, None, None
         resp.raise_for_status()
-        bid, ask = _extract_book_quotes(resp.json())
+        bid, ask, bid_size, ask_size = _extract_book_quotes(resp.json())
         if bid is None or ask is None:
             self.quarantine.mark_failure(token_id, reason="book_missing_quotes", status_code=resp.status_code)
-            return None, None
-        return bid, ask
+            return None, None, None, None
+        return bid, ask, bid_size, ask_size
 
 
 def ensure_quarantine_file(path: str | Path = Path("data") / "a6_quarantine_tokens.json") -> Path:

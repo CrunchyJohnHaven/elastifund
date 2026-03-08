@@ -1,11 +1,12 @@
-.PHONY: install dev test lint migrate run-engine run-api docker-up docker-down docker-logs docker-build clean help
+.PHONY: install dev test test-cov lint migrate run-engine run-api docker-up docker-down docker-logs docker-build clean help
 
 help:
 	@echo "Polymarket Trading Bot - Available Commands"
 	@echo "============================================"
 	@echo "make install       - Install dependencies with Poetry"
 	@echo "make dev           - Install dependencies with dev extras"
-	@echo "make test          - Run test suite with coverage"
+	@echo "make test          - Run the default pytest suite"
+	@echo "make test-cov      - Run the pytest suite with coverage"
 	@echo "make lint          - Run code linting and formatting checks"
 	@echo "make migrate       - Run database migrations"
 	@echo "make run-engine    - Run the trading engine locally"
@@ -23,7 +24,10 @@ dev:
 	poetry install
 
 test:
-	poetry run pytest --cov=src --cov-report=term-missing --cov-report=html
+	poetry run python -m pytest
+
+test-cov:
+	poetry run python -m pytest --cov=src --cov-report=term-missing --cov-report=html
 
 lint:
 	poetry run black --check src tests

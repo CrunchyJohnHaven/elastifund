@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,8 +15,45 @@ from bot.jj_live import (  # noqa: E402
     AdaptivePlattCalibrator,
     TradeDatabase,
     build_trade_record,
+    clob_min_order_size,
     extract_probability_fields,
 )
+
+
+def test_jj_live_imports_after_root_src_is_preloaded():
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    env = os.environ.copy()
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        str(repo_root)
+        if not existing_pythonpath
+        else f"{repo_root}{os.pathsep}{existing_pythonpath}"
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from pathlib import Path\n"
+                "import src\n"
+                f"repo_root = Path({str(repo_root)!r})\n"
+                "assert Path(src.__file__).resolve() == repo_root / 'src' / '__init__.py'\n"
+                "import bot.jj_live as jj_live\n"
+                "assert str((repo_root / 'polymarket-bot' / 'src').resolve()) in "
+                "{str(Path(p).resolve()) for p in src.__path__}\n"
+                "assert jj_live.MarketScanner.__module__ == 'src.scanner'\n"
+                "assert jj_live.ClaudeAnalyzer.__module__ == 'src.claude_analyzer'\n"
+            ),
+        ],
+        capture_output=True,
+        check=False,
+        cwd=repo_root,
+        env=env,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
 
 
 def test_extract_probability_fields_keeps_raw_and_calibrated_separate():
@@ -29,6 +68,11 @@ def test_extract_probability_fields_keeps_raw_and_calibrated_separate():
     assert fields["calibrated_prob"] == 0.61
     assert fields["execution_prob"] == 0.61
     assert fields["already_calibrated"] is False
+
+
+def test_clob_min_order_size_enforces_five_dollar_notional():
+    assert clob_min_order_size(0.93) == 5.38
+    assert clob_min_order_size(0.30) == 16.67
 
 
 def test_build_trade_record_preserves_stream6_metadata():
@@ -46,7 +90,7 @@ def test_build_trade_record_preserves_stream6_metadata():
             "model_spread": 0.08,
             "model_stddev": 0.04,
             "agreement": 0.81,
-            "kelly_multiplier": 1.0,
+            "confidence_multiplier": 1.0,
             "disagreement_kelly_fraction": 0.25,
             "models_agree": True,
             "search_context_used": True,
@@ -69,6 +113,7 @@ def test_build_trade_record_preserves_stream6_metadata():
     assert record["n_models"] == 3
     assert record["models_agree"] is True
     assert record["search_context_used"] is True
+    assert record["kelly_multiplier"] == 1.0
     assert record["platt_mode"] == "rolling"
     assert record["platt_a"] == 0.55
     assert record["platt_b"] == -0.31
@@ -177,4 +222,3 @@ def test_trade_db_logs_stream6_fields_and_calibrator_ignores_untracked_rows(tmp_
     recent = calibrator._recent_resolved_rows()
 
     assert recent == [(0.74, 1)]
-

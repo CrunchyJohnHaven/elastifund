@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
+from src.core.time_utils import utc_now_naive
+
 
 @dataclass(frozen=True)
 class Opportunity:
@@ -22,7 +24,7 @@ class Opportunity:
     edge_pct: float  # estimated edge as a percentage (e.g. 5.2 means 5.2%)
     detail: str  # human-readable explanation
     prices: dict[str, float] = field(default_factory=dict)  # market_id -> price
-    detected_at: datetime = field(default_factory=datetime.utcnow)
+    detected_at: datetime = field(default_factory=utc_now_naive)
     meta: dict = field(default_factory=dict)  # extra data for downstream use
 
 

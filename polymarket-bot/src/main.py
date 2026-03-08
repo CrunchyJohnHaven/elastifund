@@ -23,6 +23,7 @@ import structlog
 
 from src.core.config import get_settings
 from src.store.database import DatabaseManager
+from src.telemetry.elastic import get_elastic_telemetry
 
 
 def configure_logging(log_level: str = "INFO") -> None:
@@ -128,6 +129,7 @@ async def run_engine() -> None:
 
     logger = structlog.get_logger("main")
     settings = get_settings()
+    telemetry = get_elastic_telemetry(settings)
 
     await DatabaseManager.init_db()
     logger.info("database_initialized")
@@ -168,6 +170,7 @@ async def run_engine() -> None:
         markets=markets,
         safety_rails=safety_rails,
         notifier=notifier,
+        telemetry=telemetry,
     )
 
     mode = "LIVE" if settings.live_trading else "PAPER"
@@ -182,6 +185,18 @@ async def run_engine() -> None:
             max_daily_drawdown=settings.max_daily_drawdown_usd,
         )
 
+        await telemetry.upsert_agent_status(
+            status="starting",
+            metadata={
+                "mode": mode.lower(),
+                "bot_mode": "engine",
+                "live_trading": settings.live_trading,
+                "no_trade_mode": settings.no_trade_mode,
+                "markets": len(markets),
+                "strategy": strategy.name,
+            },
+        )
+
         # Send startup notification
         if notifier.is_configured:
             await notifier.send_startup(mode=mode.lower())
@@ -191,6 +206,15 @@ async def run_engine() -> None:
         logger.info("engine_interrupted")
     finally:
         await engine.stop()
+        await telemetry.upsert_agent_status(
+            status="stopped",
+            metadata={
+                "mode": mode.lower(),
+                "bot_mode": "engine",
+                "live_trading": settings.live_trading,
+                "strategy": strategy.name,
+            },
+        )
         if notifier:
             await notifier.close()
         await DatabaseManager.close()

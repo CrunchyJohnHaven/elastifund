@@ -1,0 +1,41 @@
+name: Bug report
+description: Report a reproducible defect in the repo, setup flow, or runtime.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What broke?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Include exact commands, file paths, and output.
+      placeholder: |
+        1. Run `make bootstrap`
+        2. Run `python3 scripts/quickstart.py --prepare-only`
+        3. Run `docker compose up --build`
+        4. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Python version, OS, Docker status, and whether the issue is in the root stack or polymarket-bot.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Verification
+      options:
+        - label: I ran `make doctor`
+        - label: I ran `make hygiene`
+        - label: I ran `make test`
+        - label: I ran `make test-polymarket` if the issue is in `polymarket-bot/`

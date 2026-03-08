@@ -158,16 +158,35 @@ class A6CommandRouter:
         """Look up the CLOB order ID for an internal order tag."""
         return self._order_map.get(internal_id)
 
+    _CLOB_HARD_MIN_SHARES = 5.0  # Polymarket CLOB protocol minimum
+
     def _place(self, cmd) -> A6OrderResult:
         """Place a BUY maker order."""
         if self.paper_mode:
             return self._paper_place(cmd)
 
+        size = round(cmd.quantity, 2)
+        if size < self._CLOB_HARD_MIN_SHARES:
+            logger.warning(
+                "A6 order below CLOB min: %.2f shares < %d for %s",
+                size, int(self._CLOB_HARD_MIN_SHARES), cmd.market_id,
+            )
+            return A6OrderResult(
+                command_action=cmd.action,
+                basket_id=cmd.basket_id,
+                leg_id=cmd.leg_id,
+                market_id=cmd.market_id,
+                token_id=cmd.token_id,
+                order_id="",
+                success=False,
+                error=f"size {size} below CLOB minimum {self._CLOB_HARD_MIN_SHARES}",
+            )
+
         side = self._BUY
         order_args = self._OrderArgs(
             token_id=cmd.token_id,
             price=round(cmd.limit_price, 2),
-            size=round(cmd.quantity, 2),
+            size=size,
             side=side,
         )
         signed = self.clob.create_order(order_args)
@@ -230,10 +249,27 @@ class A6CommandRouter:
                 error="SELL constant unavailable",
             )
 
+        size = round(cmd.quantity, 2)
+        if size < self._CLOB_HARD_MIN_SHARES:
+            logger.warning(
+                "A6 sell order below CLOB min: %.2f shares < %d for %s",
+                size, int(self._CLOB_HARD_MIN_SHARES), cmd.market_id,
+            )
+            return A6OrderResult(
+                command_action=cmd.action,
+                basket_id=cmd.basket_id,
+                leg_id=cmd.leg_id,
+                market_id=cmd.market_id,
+                token_id=cmd.token_id,
+                order_id="",
+                success=False,
+                error=f"size {size} below CLOB minimum {self._CLOB_HARD_MIN_SHARES}",
+            )
+
         order_args = self._OrderArgs(
             token_id=cmd.token_id,
             price=round(cmd.limit_price, 2),
-            size=round(cmd.quantity, 2),
+            size=size,
             side=side,
         )
         signed = self.clob.create_order(order_args)

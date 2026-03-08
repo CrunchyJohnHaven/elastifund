@@ -35,6 +35,13 @@ class TestSchema:
             "markets", "orderbook_snapshots", "trade_ticks",
             "detector_runs", "edge_cards", "opportunities",
             "experiments", "system_logs",
+            "strategy_versions", "strategy_deployments",
+            "daily_snapshots", "promotion_decisions",
+            "flywheel_cycles", "flywheel_findings", "flywheel_tasks",
+            "peer_improvement_bundles",
+            "agent_runtimes", "agent_commands",
+            "contributor_profiles", "reputation_events",
+            "funding_rounds", "funding_proposals", "funding_allocations",
         }
         with engine.connect() as conn:
             rows = conn.execute(
@@ -51,7 +58,7 @@ class TestSchema:
     def test_db_status(self, engine):
         info = db_status(engine)
         assert "tables" in info
-        assert len(info["tables"]) == 8
+        assert len(info["tables"]) == len(Base.metadata.tables)
         for count in info["tables"].values():
             assert count == 0
 
@@ -265,3 +272,166 @@ class TestSystemLogCRUD:
 
         ingest = crud.get_logs(session, component="ingest")
         assert len(ingest) == 1
+
+
+class TestPeerImprovementBundleCRUD:
+    def test_create_and_query_peer_bundle(self, session):
+        row = crud.create_peer_improvement_bundle(
+            session,
+            bundle_id="bundle-1",
+            peer_name="alpha-fork",
+            strategy_key="wallet-flow",
+            version_label="wf-v1",
+            lane="fast_flow",
+            outcome="improved",
+            direction="imported",
+            verification_status="verified",
+            status="review_pending",
+            summary="Improved fill rate",
+            hypothesis="Tighter routing logic helps",
+            bundle_sha256="a" * 64,
+            raw_bundle={"bundle_id": "bundle-1"},
+        )
+        session.commit()
+
+        fetched = crud.get_peer_improvement_bundle(session, "bundle-1")
+        assert fetched is not None
+        assert fetched.id == row.id
+        assert fetched.peer_name == "alpha-fork"
+
+        listed = crud.list_peer_improvement_bundles(session, peer_name="alpha-fork")
+        assert len(listed) == 1
+        assert listed[0].strategy_key == "wallet-flow"
+
+
+class TestFlywheelFindingsAndTasksCRUD:
+    def test_create_and_filter_findings_and_tasks(self, session):
+        cycle = crud.create_flywheel_cycle(session, cycle_key="cycle-1", status="completed")
+        version = crud.create_strategy_version(
+            session,
+            strategy_key="wallet-flow",
+            version_label="wf-v1",
+            lane="fast_flow",
+        )
+        finding = crud.create_flywheel_finding(
+            session,
+            finding_key="finding-1",
+            cycle_id=cycle.id,
+            strategy_version_id=version.id,
+            lane="fast_flow",
+            environment="paper",
+            source_kind="policy_cycle",
+            finding_type="promotion",
+            title="Wallet flow cleared paper gate",
+            summary="Promotion criteria passed.",
+            lesson="Promotion follows evidence, not intuition.",
+            evidence={"closed_trades": 24},
+            priority=20,
+        )
+        task = crud.create_flywheel_task(
+            session,
+            cycle_id=cycle.id,
+            strategy_version_id=version.id,
+            finding_id=finding.id,
+            action="promote",
+            title="Promote wallet-flow to shadow",
+            details="Paper gate passed.",
+            priority=20,
+            status="open",
+            lane="fast_flow",
+            environment="paper",
+            source_kind="policy_cycle",
+            source_ref="cycle:cycle-1",
+            metadata={"closed_trades": 24},
+        )
+        session.commit()
+
+        findings = crud.list_flywheel_findings(session, lane="fast_flow", source_kind="policy_cycle")
+        tasks = crud.list_flywheel_tasks(session, lane="fast_flow", source_kind="policy_cycle", status="open")
+
+        assert len(findings) == 1
+        assert findings[0].id == finding.id
+        assert findings[0].lesson == "Promotion follows evidence, not intuition."
+        assert len(tasks) == 1
+        assert tasks[0].id == task.id
+        assert tasks[0].finding_id == finding.id
+        assert tasks[0].metadata_json["closed_trades"] == 24
+
+
+class TestContributorIncentiveCRUD:
+    def test_create_contributor_and_reputation_event(self, session):
+        contributor = crud.get_or_create_contributor_profile(
+            session,
+            contributor_key="john",
+            display_name="John Bradley",
+            github_handle="CrunchyJohnHaven",
+        )
+        event = crud.create_reputation_event(
+            session,
+            event_key="evt-1",
+            contributor_profile_id=contributor.id,
+            event_type="code_contribution",
+            points_delta=40,
+            source_kind="github_activity",
+            source_ref="pr-1",
+        )
+        session.commit()
+
+        fetched = crud.get_contributor_profile(session, "john")
+        assert fetched is not None
+        assert fetched.github_handle == "CrunchyJohnHaven"
+
+        fetched_event = crud.get_reputation_event(session, "evt-1")
+        assert fetched_event is not None
+        assert fetched_event.id == event.id
+
+        summary = crud.summarize_reputation_events(session, contributor.id)
+        assert summary["code_contribution"] == 40
+
+    def test_create_round_proposal_and_allocation(self, session):
+        contributor = crud.get_or_create_contributor_profile(
+            session,
+            contributor_key="jj",
+            display_name="JJ",
+        )
+        round_row = crud.create_funding_round(
+            session,
+            round_key="round-1",
+            title="Week 1 Priorities",
+            status="open",
+            matching_pool_usd=500.0,
+        )
+        proposal = crud.create_funding_proposal(
+            session,
+            round_id=round_row.id,
+            proposal_key="wallet-flow-dash",
+            title="Wallet Flow Dashboard",
+            description="Ship a leaderboard and diagnostics dashboard.",
+            owner_contributor_profile_id=contributor.id,
+        )
+        allocation = crud.upsert_funding_allocation(
+            session,
+            round_id=round_row.id,
+            proposal_id=proposal.id,
+            contributor_profile_id=contributor.id,
+            voice_credits=12,
+            notes="Highest leverage runtime visibility work.",
+        )
+        session.commit()
+
+        fetched_round = crud.get_funding_round(session, "round-1")
+        fetched_proposal = crud.get_funding_proposal(
+            session,
+            round_id=round_row.id,
+            proposal_key="wallet-flow-dash",
+        )
+        allocations = crud.list_funding_allocations(
+            session,
+            round_id=round_row.id,
+            contributor_profile_id=contributor.id,
+        )
+
+        assert fetched_round is not None
+        assert fetched_proposal is not None
+        assert allocation.voice_credits == 12
+        assert len(allocations) == 1

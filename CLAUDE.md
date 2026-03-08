@@ -101,6 +101,8 @@ This project has two outputs, and both matter equally:
 |----------|------|-----------------|
 | `CLAUDE.md` | Agent operating instructions (YOU ARE HERE) | Rarely — only on process changes |
 | `COMMAND_NODE.md` | Full project context for any AI session | Every flywheel cycle |
+| `AGENTS.md` | Machine-first entrypoint with commands, boundaries, and canonical docs | When workflow changes |
+| `docs/REPO_MAP.md` | Directory map and task routing for coding sessions | When repo layout changes |
 | `PROJECT_INSTRUCTIONS.md` | Quick-start context with priority queue | When priorities change |
 | `LLM_CONTEXT_MANIFEST.md` | Canonical root package and naming standard | When package rules change |
 | `FLYWHEEL_STRATEGY.md` | Master project strategy and website vision | Monthly or on strategic shifts |

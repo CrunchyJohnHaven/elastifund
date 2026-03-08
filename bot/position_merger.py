@@ -262,6 +262,15 @@ class MergeAudit:
         return len(self.candidates)
 
 
+@dataclass(frozen=True)
+class DuplicateOutcomeGroup:
+    condition_id: str
+    outcome: str
+    title: str
+    position_count: int
+    total_size: float
+
+
 class PositionMergeService:
     """Audit mergeable positions for a wallet and prepare execution payloads."""
 
@@ -418,6 +427,41 @@ class PositionMergeService:
 
         candidates.sort(key=lambda candidate: candidate.freed_capital_usdc, reverse=True)
         return candidates
+
+    @staticmethod
+    def find_duplicate_outcome_positions(
+        positions: Sequence[PositionSnapshot],
+        *,
+        min_count: int = 2,
+    ) -> list[DuplicateOutcomeGroup]:
+        grouped: dict[tuple[str, str], list[PositionSnapshot]] = {}
+        for position in positions:
+            if not position.condition_id or position.size <= 0:
+                continue
+            outcome = normalize_binary_outcome(position.outcome)
+            if outcome not in {"YES", "NO"}:
+                continue
+            grouped.setdefault((position.condition_id, outcome), []).append(position)
+
+        duplicates: list[DuplicateOutcomeGroup] = []
+        for (condition_id, outcome), group in grouped.items():
+            if len(group) < max(2, int(min_count)):
+                continue
+            duplicates.append(
+                DuplicateOutcomeGroup(
+                    condition_id=condition_id,
+                    outcome=outcome,
+                    title=group[0].title,
+                    position_count=len(group),
+                    total_size=sum(position.size for position in group),
+                )
+            )
+
+        duplicates.sort(
+            key=lambda item: (item.total_size, item.position_count),
+            reverse=True,
+        )
+        return duplicates
 
     @staticmethod
     def prepare_transaction(candidate: MergeCandidate) -> PreparedTransaction:
@@ -871,6 +915,70 @@ class NodePolyMergerExecutor:
                 )
             )
         return results
+
+
+class LivePositionMerger:
+    """Audit the wallet after each cycle and optionally execute merges."""
+
+    def __init__(
+        self,
+        *,
+        user_address: str | None = None,
+        service: PositionMergeService | None = None,
+        executor: RelayerMergeExecutor | NodePolyMergerExecutor | None = None,
+        min_freed_capital_usdc: float = 0.0,
+        auto_submit: bool = False,
+        limit: int = 250,
+    ) -> None:
+        self.user_address = user_address or default_user_address()
+        self.service = service or PositionMergeService()
+        self.executor = executor
+        self.min_freed_capital_usdc = max(0.0, float(min_freed_capital_usdc))
+        self.auto_submit = bool(auto_submit)
+        self.limit = max(1, int(limit))
+
+    def check_and_merge(self) -> dict[str, Any]:
+        if not self.user_address:
+            return {
+                "checked": False,
+                "reason": "user_address_missing",
+                "duplicate_groups": 0,
+                "candidates_found": 0,
+                "submitted": 0,
+                "freed_capital_usdc": 0.0,
+            }
+
+        audit = self.service.build_audit(
+            self.user_address,
+            limit=self.limit,
+            min_freed_capital_usdc=self.min_freed_capital_usdc,
+        )
+        duplicates = PositionMergeService.find_duplicate_outcome_positions(audit.positions)
+        candidates = list(audit.candidates)
+        results: list[MergeExecutionResult] = []
+        reason = "audit_only"
+
+        if candidates and self.executor is not None:
+            dry_run = not self.auto_submit
+            results = list(self.executor.execute(candidates, dry_run=dry_run))
+            reason = "submitted" if self.auto_submit else "dry_run"
+        elif candidates:
+            reason = "executor_unconfigured"
+        elif duplicates:
+            reason = "duplicate_lots_no_complementary_pair"
+        else:
+            reason = "no_merge_candidates"
+
+        return {
+            "checked": True,
+            "reason": reason,
+            "duplicate_groups": len(duplicates),
+            "duplicates": duplicates,
+            "candidates_found": len(candidates),
+            "submitted": sum(1 for result in results if result.submitted),
+            "freed_capital_usdc": audit.total_freed_capital_usdc,
+            "results": results,
+        }
 
 
 def default_user_address() -> str | None:

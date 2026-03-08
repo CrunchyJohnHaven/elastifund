@@ -22,6 +22,7 @@ import hashlib
 import inspect
 import json
 import logging
+import math
 import os
 import sqlite3
 import time
@@ -50,6 +51,8 @@ logger = logging.getLogger("BTC5Maker")
 
 WINDOW_SECONDS = 300
 DEFAULT_DB_PATH = Path("data/btc_5min_maker.db")
+CLOB_HARD_MIN_SHARES = 5.0
+CLOB_HARD_MIN_NOTIONAL_USD = 5.0
 
 
 def _safe_float(value: Any, default: float | None = None) -> float | None:
@@ -87,6 +90,17 @@ def _round_down_to_tick(price: float, tick_size: float) -> float:
     tick = Decimal(str(tick_size))
     steps = (Decimal(str(price)) / tick).to_integral_value(rounding=ROUND_FLOOR)
     return float(steps * tick)
+
+
+def _round_up(value: float, decimals: int = 2) -> float:
+    scale = 10 ** max(0, int(decimals))
+    return math.ceil(max(0.0, float(value)) * scale - 1e-12) / scale
+
+
+def clob_min_order_size(price: float, *, min_shares: float = CLOB_HARD_MIN_SHARES) -> float:
+    price = max(0.0, float(price))
+    required = max(float(min_shares), (CLOB_HARD_MIN_NOTIONAL_USD / price) if price > 0.0 else float(min_shares))
+    return _round_up(required, decimals=2)
 
 
 def _parse_order_size(value: Any) -> float | None:
@@ -705,7 +719,7 @@ class CLOBExecutor:
         kwargs: dict[str, Any] = {
             "token_id": token_id,
             "price": round(price, 2),
-            "size": round(shares, 2),
+            "size": _round_up(shares, 2),
             "side": BUY,
         }
         if "fee_rate_bps" in order_sig.parameters:
@@ -1049,7 +1063,39 @@ class BTC5MinMakerBot:
             self.db.upsert_window(row)
             return {"window_start_ts": window_start_ts, "status": row["order_status"]}
 
-        shares = round(size_usd / max(order_price, 1e-6), 4)
+        shares = _round_up(size_usd / max(order_price, 1e-6), 2)
+        _btc5_min_shares = max(CLOB_HARD_MIN_SHARES, float(os.environ.get("JJ_POLY_MIN_ORDER_SHARES", "5.0")))
+        required_shares = clob_min_order_size(order_price, min_shares=_btc5_min_shares)
+        if shares < required_shares:
+            bumped_usd = round(required_shares * order_price, 2)
+            if bumped_usd > self.cfg.max_trade_usd * 2:
+                logger.info(
+                    "SKIP: %.2f shares / $%.2f below live min %.2f shares / $%.2f, bump $%.2f > 2x max",
+                    shares,
+                    shares * order_price,
+                    required_shares,
+                    CLOB_HARD_MIN_NOTIONAL_USD,
+                    bumped_usd,
+                )
+                row = {
+                    "window_start_ts": window_start_ts,
+                    "window_end_ts": window_end_ts,
+                    "slug": slug,
+                    "direction": direction,
+                    "open_price": open_price,
+                    "current_price": current_price,
+                    "delta": delta,
+                    "token_id": token_id,
+                    "best_bid": best_bid,
+                    "best_ask": best_ask,
+                    "order_price": order_price,
+                    "trade_size_usd": size_usd,
+                    "order_status": "skip_below_min_shares",
+                }
+                self.db.upsert_window(row)
+                return {"window_start_ts": window_start_ts, "status": row["order_status"]}
+            shares = required_shares
+            size_usd = bumped_usd
         order_id = None
         filled: int | None = None
         order_status = "order_error"

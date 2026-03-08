@@ -1,7 +1,7 @@
 """Configuration management for Polymarket trading bot."""
 from typing import Optional
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 
 
@@ -294,7 +294,89 @@ class Settings(BaseSettings):
         default=120, description="NOAA scan interval"
     )
 
-    model_config = {"env_file": ".env", "case_sensitive": False}
+    # Elastic telemetry
+    elastic_telemetry_enabled: bool = Field(
+        default=False,
+        description="Enable Elastic Stack telemetry export for heartbeats, metrics, and trade docs.",
+        validation_alias=AliasChoices(
+            "ELASTIC_TELEMETRY_ENABLED",
+            "ELASTIFUND_AGENT_TELEMETRY_ENABLED",
+        ),
+    )
+    elasticsearch_url: str = Field(
+        default="http://localhost:9200",
+        description="Elasticsearch base URL for telemetry writes.",
+        validation_alias=AliasChoices("ELASTICSEARCH_URL", "ELASTIC_URL"),
+    )
+    elasticsearch_api_key: str = Field(
+        default="",
+        description="Elastic API key for telemetry writes.",
+        validation_alias=AliasChoices("ELASTIC_API_KEY"),
+    )
+    elasticsearch_username: str = Field(
+        default="elastic",
+        description="Elastic username for basic-auth telemetry writes.",
+        validation_alias=AliasChoices("ELASTICSEARCH_USERNAME", "ELASTIC_USERNAME"),
+    )
+    elasticsearch_password: str = Field(
+        default="",
+        description="Elastic password for basic-auth telemetry writes.",
+        validation_alias=AliasChoices("ELASTIC_PASSWORD", "ELASTICSEARCH_PASSWORD"),
+    )
+    elasticsearch_verify_certs: bool = Field(
+        default=False,
+        description="Verify TLS certs for telemetry writes.",
+        validation_alias=AliasChoices(
+            "ELASTICSEARCH_VERIFY_CERTS",
+            "ELASTIC_VERIFY_TLS",
+        ),
+    )
+    elastic_timeout_seconds: float = Field(
+        default=5.0,
+        description="Timeout for telemetry requests to Elasticsearch.",
+        validation_alias=AliasChoices("ELASTIC_TIMEOUT_SECONDS"),
+    )
+    elastic_agent_id: str = Field(
+        default="polymarket-bot",
+        description="Stable Elastic agent identifier for this bot instance.",
+        validation_alias=AliasChoices("ELASTIC_AGENT_ID", "ELASTIFUND_AGENT_ID"),
+    )
+    elastic_agent_name: str = Field(
+        default="Polymarket Bot",
+        description="Human-readable Elastic agent name.",
+        validation_alias=AliasChoices("ELASTIC_AGENT_NAME", "ELASTIFUND_AGENT_NAME"),
+    )
+    elastic_agent_type: str = Field(
+        default="trading_bot",
+        description="Elastic agent type label.",
+        validation_alias=AliasChoices("ELASTIC_AGENT_TYPE"),
+    )
+    elastic_strategy_id: str = Field(
+        default="",
+        description="Optional override for the strategy_id written to Elastic metrics/trades.",
+        validation_alias=AliasChoices("ELASTIC_STRATEGY_ID"),
+    )
+    elastic_metrics_data_stream: str = Field(
+        default="elastifund-metrics",
+        description="Elastic metrics data stream name.",
+        validation_alias=AliasChoices("ELASTIC_METRICS_DATA_STREAM"),
+    )
+    elastic_trades_alias: str = Field(
+        default="elastifund-trades",
+        description="Elastic rollover alias for trade documents.",
+        validation_alias=AliasChoices("ELASTIC_TRADES_ALIAS"),
+    )
+    elastic_agents_alias: str = Field(
+        default="elastifund-agents",
+        description="Elastic rollover alias for agent heartbeat documents.",
+        validation_alias=AliasChoices("ELASTIC_AGENTS_ALIAS"),
+    )
+
+    model_config = {
+        "env_file": ".env",
+        "case_sensitive": False,
+        "populate_by_name": True,
+    }
 
     @property
     def effective_private_key(self) -> str:

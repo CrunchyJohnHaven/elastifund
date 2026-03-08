@@ -48,6 +48,14 @@ DEFAULT_DEBATE_PROMPT_VERSION = "relation-haiku-debate-v1"
 DEFAULT_MODEL = os.environ.get("RELATION_CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 DEFAULT_INPUT_COST_PER_MTOK = float(os.environ.get("RELATION_HAIKU_INPUT_COST_PER_MTOK_USD", "0"))
 DEFAULT_OUTPUT_COST_PER_MTOK = float(os.environ.get("RELATION_HAIKU_OUTPUT_COST_PER_MTOK_USD", "0"))
+_PLACEHOLDER_PREFIXES = ("your-", "example", "replace", "changeme", "placeholder")
+_PLACEHOLDER_VALUES = {
+    "",
+    "your-anthropic-api-key-here",
+    "your-openai-api-key-here",
+    "replace-me",
+    "changeme",
+}
 
 _LABEL_ALIASES = {
     "a_implies_b": "A_implies_B",
@@ -189,6 +197,15 @@ def _safe_bool(value: Any, default: bool = False) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "y", "on"}
     return default
+
+
+def _is_placeholder_secret(value: str | None) -> bool:
+    if value is None:
+        return True
+    normalized = value.strip().lower()
+    if normalized in _PLACEHOLDER_VALUES:
+        return True
+    return any(normalized.startswith(prefix) for prefix in _PLACEHOLDER_PREFIXES)
 
 
 def _compact_text(value: str, max_len: int = 220) -> str:
@@ -424,7 +441,7 @@ class ClaudeHaikuAdapter:
     def available(self) -> bool:
         if self._client is not None:
             return True
-        if not self.api_key:
+        if _is_placeholder_secret(self.api_key):
             return False
         try:
             import anthropic  # type: ignore

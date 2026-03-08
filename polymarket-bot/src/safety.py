@@ -9,6 +9,7 @@ All checks here are additional to the existing risk manager. They enforce:
 """
 import time
 from datetime import datetime, timedelta
+from src.core.time_utils import utc_now_naive
 
 import structlog
 
@@ -81,7 +82,7 @@ class SafetyRails:
             )
 
         # 4. Rollout: daily trade count
-        today = datetime.utcnow().strftime("%Y-%m-%d")
+        today = utc_now_naive().strftime("%Y-%m-%d")
         if today != self._daily_trade_date:
             self._daily_trade_count = 0
             self._daily_trade_date = today
@@ -114,7 +115,7 @@ class SafetyRails:
 
     def record_trade(self) -> None:
         """Call after a trade is successfully placed."""
-        today = datetime.utcnow().strftime("%Y-%m-%d")
+        today = utc_now_naive().strftime("%Y-%m-%d")
         if today != self._daily_trade_date:
             self._daily_trade_count = 0
             self._daily_trade_date = today

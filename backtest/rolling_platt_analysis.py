@@ -12,8 +12,19 @@ import os
 from pathlib import Path
 from typing import Iterable, Sequence
 
-STATIC_A = float(os.environ.get("PLATT_A", "0.55"))
-STATIC_B = float(os.environ.get("PLATT_B", "-0.40"))
+
+def _float_env(name: str, default: str) -> float:
+    raw = os.environ.get(name)
+    if raw in (None, ""):
+        return float(default)
+    try:
+        return float(raw)
+    except ValueError:
+        return float(default)
+
+
+STATIC_A = _float_env("PLATT_A", "0.55")
+STATIC_B = _float_env("PLATT_B", "-0.40")
 
 
 @dataclass(frozen=True)

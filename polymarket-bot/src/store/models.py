@@ -1,5 +1,6 @@
 """SQLAlchemy 2.0 async models for Polymarket trading bot."""
 from datetime import datetime
+from src.core.time_utils import utc_now_naive
 from typing import Optional
 
 from sqlalchemy import JSON, Boolean, ForeignKey, String
@@ -27,12 +28,12 @@ class Order(Base):
     filled_size: Mapped[float] = mapped_column(default=0.0)
     status: Mapped[str] = mapped_column(String(50), default="PENDING")
     created_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.utcnow(),
+        default=lambda: utc_now_naive(),
         server_default="CURRENT_TIMESTAMP",
     )
     updated_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.utcnow(),
-        onupdate=lambda: datetime.utcnow(),
+        default=lambda: utc_now_naive(),
+        onupdate=lambda: utc_now_naive(),
         server_default="CURRENT_TIMESTAMP",
     )
 
@@ -65,7 +66,7 @@ class Fill(Base):
     size: Mapped[float]
     fee: Mapped[float] = mapped_column(default=0.0)
     created_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.utcnow(),
+        default=lambda: utc_now_naive(),
         server_default="CURRENT_TIMESTAMP",
     )
 
@@ -95,8 +96,8 @@ class Position(Base):
     estimated_days_to_resolution: Mapped[Optional[float]] = mapped_column(default=None)
     velocity_score: Mapped[Optional[float]] = mapped_column(default=None)
     updated_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.utcnow(),
-        onupdate=lambda: datetime.utcnow(),
+        default=lambda: utc_now_naive(),
+        onupdate=lambda: utc_now_naive(),
         server_default="CURRENT_TIMESTAMP",
     )
 
@@ -122,12 +123,12 @@ class BotState(Base):
     last_error: Mapped[Optional[str]] = mapped_column(String(500), default=None)
     version: Mapped[str] = mapped_column(String(50), default="0.0.1")
     created_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.utcnow(),
+        default=lambda: utc_now_naive(),
         server_default="CURRENT_TIMESTAMP",
     )
     updated_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.utcnow(),
-        onupdate=lambda: datetime.utcnow(),
+        default=lambda: utc_now_naive(),
+        onupdate=lambda: utc_now_naive(),
         server_default="CURRENT_TIMESTAMP",
     )
 
@@ -154,7 +155,7 @@ class DetectorOpportunity(Base):
     prices: Mapped[dict] = mapped_column(JSON, default=dict)
     meta_data: Mapped[dict] = mapped_column(JSON, default=dict)
     detected_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.utcnow(),
+        default=lambda: utc_now_naive(),
         server_default="CURRENT_TIMESTAMP",
     )
 
@@ -187,7 +188,7 @@ class SizingDecision(Base):
     decision: Mapped[str] = mapped_column(String(10), default="skip")  # "trade" or "skip"
     skip_reason: Mapped[str] = mapped_column(String(255), default="")
     created_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.utcnow(),
+        default=lambda: utc_now_naive(),
         server_default="CURRENT_TIMESTAMP",
     )
 
@@ -215,7 +216,7 @@ class ShadowOrder(Base):
     estimated_fee: Mapped[float] = mapped_column(default=0.0)
     signal_edge: Mapped[float] = mapped_column(default=0.0)
     created_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.utcnow(),
+        default=lambda: utc_now_naive(),
         server_default="CURRENT_TIMESTAMP",
     )
 
@@ -254,7 +255,7 @@ class ExecutionStat(Base):
     execution_mode: Mapped[str] = mapped_column(String(20), default="MAKER")
     is_maker_sandbox: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.utcnow(),
+        default=lambda: utc_now_naive(),
         server_default="CURRENT_TIMESTAMP",
     )
 
@@ -280,7 +281,7 @@ class PortfolioSnapshot(Base):
     open_positions: Mapped[int] = mapped_column(default=0)
     win_rate: Mapped[Optional[float]] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.utcnow(),
+        default=lambda: utc_now_naive(),
         server_default="CURRENT_TIMESTAMP",
     )
 
@@ -304,7 +305,7 @@ class ExitEvent(Base):
     realized_pnl: Mapped[float]
     pnl_pct: Mapped[float]
     created_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.utcnow(),
+        default=lambda: utc_now_naive(),
         server_default="CURRENT_TIMESTAMP",
     )
 
@@ -325,7 +326,7 @@ class RiskEvent(Base):
     message: Mapped[str] = mapped_column(String(500))
     data: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.utcnow(),
+        default=lambda: utc_now_naive(),
         server_default="CURRENT_TIMESTAMP",
     )
 

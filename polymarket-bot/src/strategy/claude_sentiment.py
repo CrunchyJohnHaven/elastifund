@@ -1,5 +1,6 @@
 """Claude sentiment analysis strategy using Anthropic API, enriched with news data."""
 from datetime import datetime, timedelta
+from src.core.time_utils import utc_now_naive
 from typing import Optional
 
 import structlog
@@ -125,7 +126,7 @@ class ClaudeSentimentStrategy(Strategy):
                 }
 
             # Record analysis time
-            self.last_analysis[market_id] = datetime.utcnow()
+            self.last_analysis[market_id] = utc_now_naive()
 
             # Compare Claude estimate vs market price
             market_estimate = current_price
@@ -300,7 +301,7 @@ DAYS: 7"""
         if market_id not in self.last_analysis:
             return True
 
-        time_since_last = datetime.utcnow() - self.last_analysis[market_id]
+        time_since_last = utc_now_naive() - self.last_analysis[market_id]
         return time_since_last >= timedelta(minutes=self.cooldown_minutes)
 
     def _check_env_api_key(self) -> bool:

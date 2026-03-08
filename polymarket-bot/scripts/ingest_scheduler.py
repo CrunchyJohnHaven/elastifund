@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import structlog
 
+from src.core.time_utils import utc_now_naive
 from src.data.ingest.fetcher import MarketDataFetcher, extract_token_ids
 from src.data.ingest.models import IngestRun, MarketSnapshot, OrderbookSnapshot, TradeSnapshot
 from src.data.ingest.repository import IngestRepository
@@ -241,7 +242,7 @@ async def run_ingest(ob_limit: int = 50):
         elapsed_sec=elapsed,
     )
     print(
-        f"[{datetime.utcnow().isoformat()}] Ingest {status}: "
+        f"[{utc_now_naive().isoformat()}] Ingest {status}: "
         f"{market_count} markets, {ob_count} orderbooks, "
         f"{trade_count} trades, {errors} errors ({elapsed}s)"
     )

@@ -1,0 +1,35 @@
+{
+  "benchmark_id": "calibration_v1",
+  "mutable_surface": "bot/adaptive_platt.py",
+  "objective": {
+    "name": "benchmark_score",
+    "formula": "-(brier + 0.25 * ece)",
+    "higher_is_better": true
+  },
+  "data": {
+    "markets_path": "backtest/data/historical_markets_532.json",
+    "markets_sha256": "821318712dc020b2c9f1e924e0309a2a0a1cc80999616bbb40e6e54e66bb8f14",
+    "cache_path": "backtest/data/claude_cache.json",
+    "cache_sha256": "090946021033e0714f1295aa5e945576e6cc51c45ea33ee3bb7ea4af3353d1a5"
+  },
+  "split": {
+    "order_by": "resolved_at_then_market_id",
+    "total_rows": 532,
+    "warmup_rows": 372,
+    "holdout_rows": 160,
+    "warmup_end_resolved_at": "2021-08-11T00:00:00Z",
+    "holdout_start_resolved_at": "2021-08-12T00:00:00Z"
+  },
+  "evaluator": {
+    "candidate_variants": [
+      "static",
+      "expanding",
+      "rolling_100",
+      "rolling_200"
+    ],
+    "min_samples": 30,
+    "ece_bins": 10,
+    "max_iter": 1000,
+    "c_value": 1000.0
+  }
+}

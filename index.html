@@ -571,6 +571,168 @@ body {
 .mono { font-family: var(--font-mono); }
 .divider { height: 1px; background: var(--border-primary); margin: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
+
+/* ── Vision Section ── */
+.vision-banner {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.08), rgba(59, 130, 246, 0.06));
+  border: 1px solid rgba(16, 185, 129, 0.15);
+  border-radius: var(--radius-lg);
+  padding: 48px;
+  margin-bottom: 48px;
+  position: relative;
+  overflow: hidden;
+}
+.vision-banner::before {
+  content: '';
+  position: absolute; top: -50%; right: -20%; width: 60%; height: 200%;
+  background: radial-gradient(ellipse, rgba(16, 185, 129, 0.04), transparent 70%);
+  pointer-events: none;
+}
+.vision-banner h3 {
+  font-size: 28px; font-weight: 800; color: var(--text-bright);
+  margin-bottom: 16px; letter-spacing: -0.5px;
+}
+.vision-banner p { font-size: 16px; color: var(--text-secondary); line-height: 1.8; max-width: 800px; }
+.vision-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 32px; }
+.vision-col {
+  background: var(--bg-card); border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md); padding: 28px;
+}
+.vision-col h4 {
+  font-size: 15px; font-weight: 700; color: var(--text-bright);
+  margin-bottom: 8px; display: flex; align-items: center; gap: 8px;
+}
+.vision-col p { font-size: 14px; color: var(--text-secondary); line-height: 1.7; }
+.vision-icon {
+  width: 32px; height: 32px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; flex-shrink: 0;
+}
+.vi-green { background: var(--accent-green-dim); color: var(--accent-green); }
+.vi-blue { background: var(--accent-blue-dim); color: var(--accent-blue); }
+.vi-purple { background: var(--accent-purple-dim); color: var(--accent-purple); }
+.vi-amber { background: var(--accent-amber-dim); color: var(--accent-amber); }
+
+/* ── Elastic Stack Section ── */
+.elastic-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+  margin: 32px 0;
+}
+.elastic-card {
+  background: var(--bg-card); border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md); padding: 28px;
+  transition: all 0.3s; position: relative;
+  overflow: hidden;
+}
+.elastic-card:hover {
+  border-color: rgba(16, 185, 129, 0.3);
+  box-shadow: var(--shadow-glow); transform: translateY(-2px);
+}
+.elastic-card-icon {
+  font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+  padding: 4px 10px; border-radius: 4px;
+  display: inline-block; margin-bottom: 14px;
+  text-transform: uppercase; letter-spacing: 1px;
+}
+.elastic-card h4 {
+  font-size: 16px; font-weight: 700; color: var(--text-bright);
+  margin-bottom: 8px;
+}
+.elastic-card p { font-size: 13px; color: var(--text-secondary); line-height: 1.7; }
+.elastic-card .use-case {
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-dim);
+  font-family: var(--font-mono); font-size: 11px; color: var(--accent-green);
+}
+
+.moat-compare {
+  display: grid; grid-template-columns: 1fr auto 1fr; gap: 24px;
+  align-items: center; margin: 48px 0;
+}
+.moat-box {
+  background: var(--bg-card); border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg); padding: 32px;
+}
+.moat-box h4 {
+  font-family: var(--font-mono); font-size: 13px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 2px;
+  margin-bottom: 20px;
+}
+.moat-box.elastic-side { border-color: rgba(16, 185, 129, 0.3); }
+.moat-box.elastic-side h4 { color: var(--accent-green); }
+.moat-box.competitor-side h4 { color: var(--accent-red); }
+.moat-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 0; border-bottom: 1px solid var(--border-dim);
+  font-size: 13px; color: var(--text-secondary);
+}
+.moat-item:last-child { border-bottom: none; }
+.moat-check { color: var(--accent-green); font-weight: 700; font-size: 16px; flex-shrink: 0; width: 20px; text-align: center; }
+.moat-x { color: var(--accent-red); font-weight: 700; font-size: 14px; flex-shrink: 0; width: 20px; text-align: center; }
+.moat-vs {
+  font-family: var(--font-mono); font-size: 24px; font-weight: 800;
+  color: var(--text-dim); text-align: center;
+}
+
+/* ── Roadmap Section ── */
+.roadmap-phases {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px;
+  background: var(--border-primary); border-radius: var(--radius-md);
+  overflow: hidden; margin: 32px 0;
+}
+.roadmap-phase {
+  background: var(--bg-card); padding: 28px 20px;
+  transition: background 0.2s; position: relative;
+}
+.roadmap-phase:hover { background: var(--bg-card-hover); }
+.roadmap-phase.current { border-top: 3px solid var(--accent-green); }
+.roadmap-phase.current::after {
+  content: 'CURRENT'; position: absolute; top: 8px; right: 12px;
+  font-family: var(--font-mono); font-size: 9px; font-weight: 700;
+  color: var(--accent-green); letter-spacing: 1px;
+}
+.roadmap-phase-num {
+  font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+  color: var(--text-dim); margin-bottom: 8px; letter-spacing: 1px;
+}
+.roadmap-phase h4 { font-size: 15px; font-weight: 700; color: var(--text-bright); margin-bottom: 8px; }
+.roadmap-phase p { font-size: 12px; color: var(--text-dim); line-height: 1.6; }
+.roadmap-phase ul {
+  list-style: none; margin-top: 12px; padding: 0;
+}
+.roadmap-phase li {
+  font-size: 12px; color: var(--text-secondary); padding: 3px 0;
+  display: flex; align-items: baseline; gap: 6px;
+}
+.roadmap-phase li::before {
+  content: ''; width: 4px; height: 4px; border-radius: 50%;
+  background: var(--accent-green); flex-shrink: 0; margin-top: 5px;
+}
+
+/* ── Pitch Quote ── */
+.pitch-quote {
+  background: var(--bg-secondary);
+  border-left: 4px solid var(--accent-green);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  padding: 32px 40px; margin: 48px 0;
+  font-size: 16px; color: var(--text-primary);
+  line-height: 1.8; font-style: italic;
+}
+.pitch-quote .attribution {
+  font-style: normal; font-family: var(--font-mono); font-size: 12px;
+  color: var(--text-dim); margin-top: 16px; display: block;
+}
+
+@media (max-width: 1024px) {
+  .elastic-grid { grid-template-columns: repeat(2, 1fr); }
+  .moat-compare { grid-template-columns: 1fr; }
+  .moat-vs { transform: rotate(90deg); padding: 10px 0; }
+  .vision-columns { grid-template-columns: 1fr; }
+  .roadmap-phases { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 768px) {
+  .elastic-grid { grid-template-columns: 1fr; }
+  .roadmap-phases { grid-template-columns: 1fr; }
+}
 </style>
 </head>
 <body>
@@ -587,6 +749,8 @@ body {
     <a href="#architecture">Architecture</a>
     <a href="#diary">Build Diary</a>
     <a href="#education">Education</a>
+    <a href="#vision">Vision</a>
+    <a href="#elastic">Why Elastic</a>
     <a href="#about">About</a>
   </nav>
   <div class="topbar-actions">
@@ -605,14 +769,14 @@ body {
   <div class="container">
     <div class="hero-grid">
       <div>
-        <div class="hero-eyebrow">Agentic Trading Intelligence</div>
+        <div class="hero-eyebrow">Agentic Trading Intelligence Platform</div>
         <h1>The AI decides<br>what to <span class="gradient">trade.</span></h1>
         <p class="hero-sub">
-          An autonomous trading system that scans prediction markets, estimates probabilities without seeing prices, and executes when it finds edge. Everything is open source. Every failure documented. The research is the product.
+          An autonomous trading system that scans prediction markets, estimates probabilities without seeing prices, and executes when it finds edge. Powered by Elastic Stack. Everything is open source. Every failure documented. The research is the product.
         </p>
         <div class="hero-stats-row">
           <div class="hero-stat">
-            <span class="hero-stat-val">52</span>
+            <span class="hero-stat-val">62</span>
             <span class="hero-stat-label">Strategies Tracked</span>
           </div>
           <div class="hero-stat">
@@ -620,7 +784,7 @@ body {
             <span class="hero-stat-label">Backtest Win Rate</span>
           </div>
           <div class="hero-stat">
-            <span class="hero-stat-val">77</span>
+            <span class="hero-stat-val">76</span>
             <span class="hero-stat-label">Research Dispatches</span>
           </div>
           <div class="hero-stat">
@@ -631,7 +795,8 @@ body {
         <div class="hero-badges">
           <span class="badge badge-green">MIT License</span>
           <span class="badge badge-blue">Polymarket + Kalshi</span>
-          <span class="badge badge-purple">4 Signal Sources</span>
+          <span class="badge badge-purple">6 Signal Sources</span>
+          <span class="badge" style="background: rgba(6,182,212,0.15); color: #06b6d4; border: 1px solid rgba(6,182,212,0.2);">Elastic Stack</span>
         </div>
       </div>
       <div class="hero-terminal">
@@ -1529,6 +1694,218 @@ body {
 
 <hr class="divider">
 
+<!-- ═══════════ PLATFORM VISION ═══════════ -->
+<section class="section" id="vision">
+  <div class="container">
+    <div class="sh">
+      <div class="sh-eyebrow">Platform Vision</div>
+      <h2>Elastifund.io: Where This Is Going</h2>
+      <p>From single trading agent to federated intelligence platform. The architecture scales from one agent to thousands &mdash; and that changes everything.</p>
+    </div>
+
+    <div class="vision-banner">
+      <h3>The Thesis: Collective Intelligence Beats Any Individual Agent</h3>
+      <p>Numerai proved it with their hedge fund: aggregate thousands of imperfect signals into a meta-model and the ensemble outperforms any single contributor. Metaculus research confirms: the full community prediction always outperforms even the top 5 individual forecasters. Elastifund applies this principle to autonomous trading agents &mdash; with Elastic Stack as the nervous system that makes it possible.</p>
+      <div class="vision-columns">
+        <div class="vision-col">
+          <h4><span class="vision-icon vi-green">1</span> Trading Agents</h4>
+          <p>Autonomous prediction market liquidity providers. Each instance scans markets, estimates probabilities with multi-model ensembles, sizes positions via Kelly criterion, and places maker-only orders. Currently live on Polymarket and Kalshi with $347 deployed capital, 345 tests passing, and 76 research dispatches documenting what works and what doesn't.</p>
+        </div>
+        <div class="vision-col">
+          <h4><span class="vision-icon vi-blue">2</span> Non-Trading Revenue Agents</h4>
+          <p>AI digital product pipelines, content generation, and marketplace automation. The same agent framework &mdash; autonomous decision-making within safety constraints &mdash; applied to revenue streams that don't require market prediction. Diversification across uncorrelated income sources means the combined portfolio Sharpe always exceeds either stream alone.</p>
+        </div>
+        <div class="vision-col">
+          <h4><span class="vision-icon vi-purple">3</span> Federated Knowledge Hub</h4>
+          <p>Elasticsearch-powered intelligence layer where all agents share learnings without revealing proprietary strategy details. Strategy fingerprinting via ELSER vector search detects crowding before it destroys edge. Stake-weighted aggregation ensures agents with real results have proportionally more influence on the collective model.</p>
+        </div>
+        <div class="vision-col">
+          <h4><span class="vision-icon vi-amber">4</span> Fork-and-Run Deployment</h4>
+          <p><span class="mono">git clone</span> &rarr; configure API keys &rarr; <span class="mono">docker-compose up</span> &rarr; agent registers with hub, starts operating. One-command deployment for anyone. Every forked instance makes the network smarter. 20% of all net profits across the entire network flow to veteran suicide prevention.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="pitch-quote">
+      The honest framing: AI-assisted autonomous agents with continuous collective improvement &mdash; not set-it-and-forget-it money machines. Every successful system in 2026 still requires periodic human oversight. The architecture is designed for that reality.
+      <span class="attribution">&mdash; Elastifund Platform Architecture Assessment, March 2026</span>
+    </div>
+  </div>
+</section>
+
+<hr class="divider">
+
+<!-- ═══════════ WHY ELASTIC STACK ═══════════ -->
+<section class="section" id="elastic">
+  <div class="container">
+    <div class="sh">
+      <div class="sh-eyebrow">Why Elastic Stack</div>
+      <h2>One Platform Replaces Six</h2>
+      <p>Elastic Stack isn't just good enough for this use case. It's the only technology that unifies all six required capabilities in a single platform.</p>
+    </div>
+
+    <div class="elastic-grid">
+      <div class="elastic-card">
+        <span class="elastic-card-icon" style="background: var(--accent-green-dim); color: var(--accent-green);">Elasticsearch</span>
+        <h4>Knowledge Backbone</h4>
+        <p>Strategy indexing with full-text search. TSDS for time-series performance data with 60&ndash;80% storage savings via synthetic <span class="mono">_source</span>. Aggregations powering real-time leaderboard rankings across thousands of agents.</p>
+        <div class="use-case">Indexes every strategy, trade, and performance metric</div>
+      </div>
+      <div class="elastic-card">
+        <span class="elastic-card-icon" style="background: var(--accent-blue-dim); color: var(--accent-blue);">ELSER + Vector Search</span>
+        <h4>Strategy Discovery</h4>
+        <p>Semantic strategy matching without custom ML models. Search "mean reversion strategy for volatile markets" and find semantically relevant strategies even without exact keyword matches. Hybrid BM25 + vector + filters in a single query.</p>
+        <div class="use-case">Crowding detection when cosine similarity > 0.85</div>
+      </div>
+      <div class="elastic-card">
+        <span class="elastic-card-icon" style="background: var(--accent-purple-dim); color: var(--accent-purple);">Kibana + Canvas</span>
+        <h4>Investor-Grade Dashboards</h4>
+        <p>Real-time leaderboards, auto-refreshing performance visualizations, and pixel-perfect Canvas workpads that export to PDF. No other analytics backend has this built in. Six dashboards: Collective Health, Leaderboard, Strategy Diversity, Market Regime, Knowledge Flow, Charitable Impact.</p>
+        <div class="use-case">The dashboard Elastic leadership shows at all-hands</div>
+      </div>
+      <div class="elastic-card">
+        <span class="elastic-card-icon" style="background: var(--accent-amber-dim); color: var(--accent-amber);">Elastic APM</span>
+        <h4>Distributed Agent Observability</h4>
+        <p>Service maps auto-generate visual topologies showing agent-to-exchange connections. Distributed tracing via W3C <span class="mono">traceparent</span> headers tracks knowledge-sharing requests across the entire system. Named a Leader in Gartner's 2024 Magic Quadrant for Observability.</p>
+        <div class="use-case">Monitors thousands of distributed agent instances</div>
+      </div>
+      <div class="elastic-card">
+        <span class="elastic-card-icon" style="background: var(--accent-cyan); color: #0a0e17;">Elastic ML</span>
+        <h4>Anomaly Detection</h4>
+        <p>Runs on the same cluster where data lives &mdash; no external Spark/Flink jobs, no data pipeline to a separate ML platform. Anomaly detection automatically learns baselines for each agent's revenue stream and alerts on strategy degradation. Population analysis detects rogue agents.</p>
+        <div class="use-case">Early warning system preventing catastrophic losses</div>
+      </div>
+      <div class="elastic-card">
+        <span class="elastic-card-icon" style="background: var(--accent-green-dim); color: var(--accent-green);">Logstash + Beats</span>
+        <h4>Edge Data Collection</h4>
+        <p>Filebeat ships agent logs, Metricbeat reports performance metrics, and Logstash pipelines consume from Kafka to index strategy events. At-least-once delivery with persistent queues. Every agent's heartbeat, trade, and learning event flows into the central nervous system.</p>
+        <div class="use-case">Data ingestion from every agent in the network</div>
+      </div>
+    </div>
+
+    <!-- Competitive Moat Comparison -->
+    <div class="moat-compare">
+      <div class="moat-box elastic-side">
+        <h4>Elastic Stack (1 Platform)</h4>
+        <div class="moat-item"><span class="moat-check">&check;</span> Full-text search + analytics</div>
+        <div class="moat-item"><span class="moat-check">&check;</span> Vector search (ELSER)</div>
+        <div class="moat-item"><span class="moat-check">&check;</span> Time-series (TSDS)</div>
+        <div class="moat-item"><span class="moat-check">&check;</span> APM + distributed tracing</div>
+        <div class="moat-item"><span class="moat-check">&check;</span> ML anomaly detection</div>
+        <div class="moat-item"><span class="moat-check">&check;</span> Dashboards + Canvas</div>
+        <div class="moat-item"><span class="moat-check">&check;</span> Alerting + notifications</div>
+        <div class="moat-item"><span class="moat-check">&check;</span> Single cluster to manage</div>
+      </div>
+      <div class="moat-vs">VS</div>
+      <div class="moat-box competitor-side">
+        <h4>Without Elastic (6 Systems)</h4>
+        <div class="moat-item"><span class="moat-x">&times;</span> ClickHouse (analytics)</div>
+        <div class="moat-item"><span class="moat-x">&times;</span> Pinecone/Milvus (vectors)</div>
+        <div class="moat-item"><span class="moat-x">&times;</span> Datadog (APM)</div>
+        <div class="moat-item"><span class="moat-x">&times;</span> Custom ML pipeline</div>
+        <div class="moat-item"><span class="moat-x">&times;</span> Grafana/Superset (dashboards)</div>
+        <div class="moat-item"><span class="moat-x">&times;</span> Kafka/Fluentd (ingestion)</div>
+        <div class="moat-item"><span class="moat-x">&times;</span> 6 integration points to maintain</div>
+        <div class="moat-item"><span class="moat-x">&times;</span> 6 vendors, 6 bills, 6 failure modes</div>
+      </div>
+    </div>
+
+    <div class="pitch-quote">
+      Elastifund demonstrates that Elastic Stack isn't just search or observability &mdash; it's the nervous system of an autonomous AI economy. Every product line is load-bearing. This is the reference architecture that shows enterprise customers why one unified platform beats six separate tools.
+      <span class="attribution">&mdash; The pitch to Elastic leadership</span>
+    </div>
+  </div>
+</section>
+
+<hr class="divider">
+
+<!-- ═══════════ ROADMAP ═══════════ -->
+<section class="section" id="roadmap">
+  <div class="container">
+    <div class="sh">
+      <div class="sh-eyebrow">Roadmap</div>
+      <h2>Build Phases: From Trading Agent to Platform</h2>
+      <p>Four phases from current single-agent system to full federated intelligence platform. Each phase ships working code. No vaporware.</p>
+    </div>
+
+    <div class="roadmap-phases">
+      <div class="roadmap-phase current">
+        <div class="roadmap-phase-num">PHASE 1</div>
+        <h4>Single Agent &mdash; Prove the Edge</h4>
+        <p>Validate live trading with real capital. Accumulate 100 resolved trades for statistical significance.</p>
+        <ul>
+          <li>Live on Dublin VPS (AWS Lightsail)</li>
+          <li>Maker-only execution, $5 daily loss cap</li>
+          <li>62 strategies tracked, 345 tests passing</li>
+          <li>VPIN + WebSocket integration in progress</li>
+          <li>Multi-agent debate pipeline (B8) built</li>
+        </ul>
+      </div>
+      <div class="roadmap-phase">
+        <div class="roadmap-phase-num">PHASE 2</div>
+        <h4>Elasticsearch Integration</h4>
+        <p>Wire all agent telemetry into Elastic Stack. Build the knowledge layer that enables Phase 3.</p>
+        <ul>
+          <li>Strategy index with TSDS time-series metrics</li>
+          <li>ELSER vector embeddings for strategy fingerprints</li>
+          <li>Kibana leaderboard + 6 monitoring dashboards</li>
+          <li>Elastic APM for agent observability</li>
+          <li>ML anomaly detection on strategy performance</li>
+        </ul>
+      </div>
+      <div class="roadmap-phase">
+        <div class="roadmap-phase-num">PHASE 3</div>
+        <h4>Federated Learning Hub</h4>
+        <p>Multiple agents share encrypted model updates. Stake-weighted aggregation. Crowding detection.</p>
+        <ul>
+          <li>Flower FL server with differential privacy</li>
+          <li>Kafka event bus for knowledge propagation</li>
+          <li>Strategy similarity search via kNN</li>
+          <li>Three-layer capital allocator (Risk Parity &rarr; Thompson &rarr; Kelly)</li>
+          <li>Fork-and-run one-command deployment</li>
+        </ul>
+      </div>
+      <div class="roadmap-phase">
+        <div class="roadmap-phase-num">PHASE 4</div>
+        <h4>Multi-Agent Platform</h4>
+        <p>Trading + non-trading agents. Community contributions. Reputation system. Network effects compound.</p>
+        <ul>
+          <li>Non-trading agent templates (digital products)</li>
+          <li>Reputation system + contributor rewards</li>
+          <li>Quadratic funding for community features</li>
+          <li>Byzantine fault tolerance (Krum aggregation)</li>
+          <li>20% network-wide donation engine live</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="vision-banner" style="margin-top: 48px;">
+      <h3>Why Open Source Matters Here</h3>
+      <p>The architecture, framework, research methodology, and backtesting engine are public under MIT License. Specific calibration parameters, API keys, and live edge signals stay private &mdash; standard practice. Quantopian was open-source but nobody published their live alpha signals. We get credibility from transparency without giving away the fishing spots.</p>
+      <div style="margin-top: 20px; display: flex; gap: 32px; flex-wrap: wrap;">
+        <div>
+          <div style="font-family: var(--font-mono); font-size: 28px; font-weight: 700; color: var(--accent-green);">MIT</div>
+          <div style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">License</div>
+        </div>
+        <div>
+          <div style="font-family: var(--font-mono); font-size: 28px; font-weight: 700; color: var(--accent-green);">345</div>
+          <div style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">Tests Passing</div>
+        </div>
+        <div>
+          <div style="font-family: var(--font-mono); font-size: 28px; font-weight: 700; color: var(--accent-green);">76+</div>
+          <div style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">Research Dispatches</div>
+        </div>
+        <div>
+          <div style="font-family: var(--font-mono); font-size: 28px; font-weight: 700; color: var(--accent-green);">20%</div>
+          <div style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">Profits &rarr; Veteran Suicide Prevention</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider">
+
 <!-- ═══════════ ABOUT + MISSION ═══════════ -->
 <section class="section" id="about">
   <div class="container">
@@ -1562,9 +1939,11 @@ body {
       <a href="#architecture">Architecture</a>
       <a href="#diary">Build Diary</a>
       <a href="#education">Education</a>
+      <a href="#vision">Vision</a>
+      <a href="#elastic">Why Elastic</a>
     </div>
     <p class="footer-copy">
-      <span class="mono">ELASTIFUND v7</span> &mdash; Generated March 7, 2026 &mdash; MIT License &mdash; <span class="mono">345</span> tests passing
+      <span class="mono">ELASTIFUND v9</span> &mdash; Generated March 7, 2026 &mdash; MIT License &mdash; <span class="mono">345</span> tests passing &mdash; Powered by Elastic Stack
     </p>
   </div>
 </footer>

@@ -1,0 +1,98 @@
+[
+  {
+    "niche_slug": "teacher-worksheets",
+    "title": "Teacher Worksheets Bundle",
+    "product_type": "educational_worksheets",
+    "marketplace": "etsy",
+    "keywords": ["teacher", "classroom", "printable", "homeschool"],
+    "monthly_demand": 1800,
+    "competition_count": 2400,
+    "average_price": 11.5,
+    "profit_margin": 0.88,
+    "source": "sample_fixture",
+    "metadata": {
+      "trend": "back_to_school",
+      "estimated_monthly_sales": 156
+    }
+  },
+  {
+    "niche_slug": "adhd-planner",
+    "title": "ADHD Planner System",
+    "product_type": "printable_planner",
+    "marketplace": "etsy",
+    "keywords": ["adhd", "planner", "productivity", "digital"],
+    "monthly_demand": 960,
+    "competition_count": 320,
+    "average_price": 14.0,
+    "profit_margin": 0.9,
+    "source": "sample_fixture",
+    "metadata": {
+      "trend": "evergreen",
+      "estimated_monthly_sales": 68
+    }
+  },
+  {
+    "niche_slug": "baby-shower-games",
+    "title": "Baby Shower Game Pack",
+    "product_type": "party_games",
+    "marketplace": "etsy",
+    "keywords": ["baby shower", "games", "printable", "party"],
+    "monthly_demand": 1200,
+    "competition_count": 1100,
+    "average_price": 8.0,
+    "profit_margin": 0.84,
+    "source": "sample_fixture",
+    "metadata": {
+      "trend": "seasonal",
+      "estimated_monthly_sales": 112
+    }
+  },
+  {
+    "niche_slug": "minimalist-wall-art",
+    "title": "Minimalist Wall Art Set",
+    "product_type": "wall_art",
+    "marketplace": "etsy",
+    "keywords": ["wall art", "minimalist", "printable", "home decor"],
+    "monthly_demand": 1500,
+    "competition_count": 6400,
+    "average_price": 7.5,
+    "profit_margin": 0.92,
+    "source": "sample_fixture",
+    "metadata": {
+      "trend": "evergreen",
+      "estimated_monthly_sales": 95
+    }
+  },
+  {
+    "niche_slug": "wedding-planner",
+    "title": "Wedding Planner Template",
+    "product_type": "digital_template",
+    "marketplace": "etsy",
+    "keywords": ["wedding", "planner", "checklist", "template"],
+    "monthly_demand": 1300,
+    "competition_count": 950,
+    "average_price": 16.0,
+    "profit_margin": 0.86,
+    "source": "sample_fixture",
+    "metadata": {
+      "trend": "seasonal",
+      "estimated_monthly_sales": 84
+    }
+  },
+  {
+    "niche_slug": "crypto-market-journal",
+    "title": "Crypto Market Journal",
+    "product_type": "trading_journal",
+    "marketplace": "gumroad",
+    "keywords": ["crypto", "journal", "trading", "template"],
+    "monthly_demand": 300,
+    "competition_count": 55,
+    "average_price": 19.0,
+    "profit_margin": 0.91,
+    "source": "sample_fixture",
+    "metadata": {
+      "trend": "volatile",
+      "estimated_monthly_sales": 20
+    }
+  }
+]

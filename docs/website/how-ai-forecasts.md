@@ -1,6 +1,6 @@
 # How AI Forecasts: The Science of Machine Probability Estimation
 
-*Part of the Elastifund Education Center — [johnbradleytrading.com/learn/how-ai-forecasts](/learn/how-ai-forecasts)*
+*Part of the Elastifund Education Center — [elastifund.io/learn/how-ai-forecasts](https://elastifund.io/learn/how-ai-forecasts)*
 
 ---
 
@@ -59,7 +59,7 @@ Raw AI estimates are unreliable in a specific, measurable way:
 
 Claude is overconfident across the board, but especially on high-confidence YES estimates. Platt scaling is a logistic regression in logit space that corrects this: it maps the AI's stated confidence to the historically observed accuracy.
 
-Our Platt parameters (A=0.5914, B=-0.3977) were trained on 372 resolved markets and validated on 160 held-out markets (temporal split, not random — you can't use future data to calibrate past estimates). The improvement: Brier score from 0.286 to 0.245 on the held-out set.
+Our fitted Platt curve was trained on 372 resolved markets and validated on 160 held-out markets (temporal split, not random — you can't use future data to calibrate past estimates). The improvement: Brier score from 0.286 to 0.245 on the held-out set. The exact live coefficients are intentionally not published in the public docs.
 
 ---
 
@@ -94,7 +94,7 @@ calibrated_prob = 1 / (1 + exp(A × logit(raw_prob) + B))
 
 Where logit(p) = log(p / (1-p)), and A and B are learned parameters.
 
-Our calibration: A=0.5914, B=-0.3977. What this means geometrically: the logistic curve is compressed (A < 1 pulls extreme estimates toward 50%) and shifted (B < 0 shifts the whole curve slightly toward lower probabilities, correcting the YES-overconfidence).
+Our calibration uses a compressed and shifted logistic curve. Geometrically, that means extreme estimates are pulled back toward 50% and the whole curve leans slightly lower to correct YES-overconfidence.
 
 **Training process:**
 1. Run Claude on 532 resolved markets (anti-anchoring mode, no market price shown)

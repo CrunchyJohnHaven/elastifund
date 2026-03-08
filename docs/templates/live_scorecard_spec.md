@@ -350,21 +350,11 @@ Computed from `daily_snapshot` table every Sunday at 23:59 UTC.
 
 ---
 
-## 8. Stale Claims in INVESTOR_REPORT.md (SOP Compliance)
+## 8. Private External Reporting Boundary
 
-The following items in `INVESTOR_REPORT.md` will become stale or incorrect once live metrics exist and should be updated:
+Private investor and legal materials are intentionally kept outside this repo.
 
-| Line/Section | Current Claim | Required Update |
-|-------------|---------------|-----------------|
-| Executive Summary "Estimated annual return" | "+269% to +1,124%" | Replace with live annualized return once 30+ trades resolve |
-| "Win rate: 64.9%" | Backtest only | Add live win rate alongside, clearly labeled |
-| Monte Carlo projections | Based on backtest parameters | Re-run Monte Carlo with live win rate + slippage + fees once 100+ trades |
-| "Probability of total loss: 0.0%" | Backtest Monte Carlo | Caveat: "based on backtest parameters; live validation pending" |
-| Infrastructure table "Position sizing: Half-Kelly" | States half-Kelly | Should say quarter-Kelly (matches COMMAND_NODE) |
-| Infrastructure table "AI models" | "Claude Haiku, GPT-4o-mini, Grok-2 (ensemble)" | Ensemble not yet implemented — say "Claude Haiku (primary; multi-model planned)" |
-| Strategy section "An AI ensemble (Claude, GPT, Grok)" | Claims ensemble exists | Single-model currently; update when ensemble ships |
-| Monthly projected returns table | Hypothetical projections | Replace with actual monthly returns once live |
-| "How it works" Step 5 "Learn" | Claims continuous learning loop | Not yet implemented — remove or mark as planned |
+This spec governs live operational scorecards only. If you later prepare external reporting artifacts, treat them as a separate private workflow and do not route routine coding work toward them from this repo.
 
 ---
 

@@ -216,7 +216,7 @@ Objective: replace directional forecasting with structural alpha (semantic lead-
 - Deliverable: no LLM direct price placement in execution path.
 
 **Task 9: Calibration Lock (Day 6)**
-- Hardcode Platt parameters `A=0.5914`, `B=-0.3977` in the cognitive output parser.
+- Load the current fitted Platt coefficients from secure runtime configuration in the cognitive output parser.
 - Block any Kelly sizing inputs that are not Platt-calibrated.
 - Deliverable: calibration gate enforced in backtest and live decision codepaths.
 

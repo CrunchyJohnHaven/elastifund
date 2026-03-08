@@ -1,0 +1,165 @@
+{
+  "benchmark_id": "calibration_v1",
+  "comparison": {
+    "improvement_vs_static": 0.005534,
+    "selected_variant": "rolling_100"
+  },
+  "dataset": {
+    "cache_path": "backtest/data/claude_cache.json",
+    "checksums": [
+      {
+        "path": "backtest/data/historical_markets_532.json",
+        "sha256": "821318712dc020b2c9f1e924e0309a2a0a1cc80999616bbb40e6e54e66bb8f14"
+      },
+      {
+        "path": "backtest/data/claude_cache.json",
+        "sha256": "090946021033e0714f1295aa5e945576e6cc51c45ea33ee3bb7ea4af3353d1a5"
+      }
+    ],
+    "holdout_rows": 160,
+    "holdout_start_resolved_at": "2021-08-12T00:00:00Z",
+    "markets_path": "backtest/data/historical_markets_532.json",
+    "missing_resolved_at_rows": 10,
+    "source": "claude_cache",
+    "total_rows": 532,
+    "warmup_end_resolved_at": "2021-08-11T00:00:00Z",
+    "warmup_rows": 372
+  },
+  "description": "freeze calibration benchmark baseline",
+  "diagnostics": {
+    "confidence_bands": [
+      {
+        "abs_gap": 0.032426,
+        "avg_confidence": 0.157426,
+        "count": 8,
+        "label": "0.1-0.2",
+        "win_rate": 0.125
+      },
+      {
+        "abs_gap": 0.070807,
+        "avg_confidence": 0.262527,
+        "count": 6,
+        "label": "0.2-0.3",
+        "win_rate": 0.333333
+      },
+      {
+        "abs_gap": 0.131875,
+        "avg_confidence": 0.342401,
+        "count": 19,
+        "label": "0.3-0.4",
+        "win_rate": 0.210526
+      },
+      {
+        "abs_gap": 0.062392,
+        "avg_confidence": 0.452636,
+        "count": 41,
+        "label": "0.4-0.5",
+        "win_rate": 0.390244
+      },
+      {
+        "abs_gap": 0.011992,
+        "avg_confidence": 0.546475,
+        "count": 58,
+        "label": "0.5-0.6",
+        "win_rate": 0.534483
+      },
+      {
+        "abs_gap": 0.009506,
+        "avg_confidence": 0.637553,
+        "count": 17,
+        "label": "0.6-0.7",
+        "win_rate": 0.647059
+      },
+      {
+        "abs_gap": 0.154219,
+        "avg_confidence": 0.725647,
+        "count": 7,
+        "label": "0.7-0.8",
+        "win_rate": 0.571429
+      },
+      {
+        "abs_gap": 0.164504,
+        "avg_confidence": 0.835496,
+        "count": 4,
+        "label": "0.8-0.9",
+        "win_rate": 1.0
+      }
+    ]
+  },
+  "generated_at": "2026-03-08T08:21:02Z",
+  "git": {
+    "branch": "main",
+    "dirty": true,
+    "sha": "32a452964b7e461ac82d408c82c6b3fee53d98ee"
+  },
+  "manifest_path": "benchmarks/calibration_v1/manifest.json",
+  "mutable_surface": "bot/adaptive_platt.py",
+  "mutable_surface_sha256": "de4ce61a16a9f8ed4396a1e343eac72d875b94cb89e5442f4f24d766d2278d08",
+  "objective": {
+    "formula": "-(brier + 0.25 * ece)",
+    "higher_is_better": true,
+    "name": "benchmark_score"
+  },
+  "selected_variant": {
+    "benchmark_score": -0.235722,
+    "brier": 0.222686,
+    "ece": 0.052142,
+    "fallback_predictions": 0,
+    "final_a": 0.565968,
+    "final_b": -0.236308,
+    "log_loss": 0.635115,
+    "n_predictions": 160,
+    "name": "rolling_100",
+    "window": 100
+  },
+  "variants": [
+    {
+      "benchmark_score": -0.241256,
+      "brier": 0.217883,
+      "ece": 0.093491,
+      "fallback_predictions": 0,
+      "final_a": 0.5914,
+      "final_b": -0.3977,
+      "log_loss": 0.624732,
+      "n_predictions": 160,
+      "name": "static",
+      "window": null
+    },
+    {
+      "benchmark_score": -0.23681,
+      "brier": 0.226111,
+      "ece": 0.042795,
+      "fallback_predictions": 0,
+      "final_a": 0.482372,
+      "final_b": -0.413634,
+      "log_loss": 0.642587,
+      "n_predictions": 160,
+      "name": "expanding",
+      "window": null
+    },
+    {
+      "benchmark_score": -0.235722,
+      "brier": 0.222686,
+      "ece": 0.052142,
+      "fallback_predictions": 0,
+      "final_a": 0.565968,
+      "final_b": -0.236308,
+      "log_loss": 0.635115,
+      "n_predictions": 160,
+      "name": "rolling_100",
+      "window": 100
+    },
+    {
+      "benchmark_score": -0.236006,
+      "brier": 0.224103,
+      "ece": 0.047611,
+      "fallback_predictions": 0,
+      "final_a": 0.505876,
+      "final_b": -0.321041,
+      "log_loss": 0.637987,
+      "n_predictions": 160,
+      "name": "rolling_200",
+      "window": 200
+    }
+  ]
+}

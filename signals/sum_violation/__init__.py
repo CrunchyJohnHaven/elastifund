@@ -1,2 +1,1 @@
-"""A-6 sum-violation modules."""
-
+"""A-6 guaranteed-dollar and sum-violation modules."""

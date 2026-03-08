@@ -1,0 +1,61 @@
+{
+  "capital_sources": [
+    {
+      "account": "Polymarket",
+      "amount_usd": 247.51,
+      "source": "jj_state.json"
+    },
+    {
+      "account": "Kalshi",
+      "amount_usd": 100.0,
+      "source": "manual_tracked_balance"
+    }
+  ],
+  "pull_policy": {
+    "pull_cadence_minutes": 30,
+    "full_cycle_cadence_minutes": 60,
+    "freshness_sla_minutes": 45,
+    "expected_next_data_note": "Expect the next synced dataset on the next 30-minute pull. Expect material new trading evidence only after the runtime records the first closed trades or structural alpha samples.",
+    "manual_pull_triggers": [
+      "Immediately before any deploy.",
+      "Immediately after any deploy or service restart.",
+      "After any remote incident, kill event, or unexpected runtime stop.",
+      "Before writing any daily, investor, or operator summary."
+    ]
+  },
+  "velocity_forecast": {
+    "metric_name": "annualized_return_run_rate_pct",
+    "definition": "Operator forecast for annualized return run-rate on currently tracked capital; not realized performance.",
+    "status": "speculative",
+    "confidence": "low",
+    "current_annualized_return_pct": 0.0,
+    "next_target_annualized_return_pct": 10.0,
+    "next_target_after_hours_of_work": 3.0,
+    "basis": "Best guess assumes one more focused engineering session clears the immediate deployment blockers and gets a small live or shadow sleeve collecting calibration data.",
+    "assumptions": [
+      "jj-live can resume without new safety or import failures.",
+      "A-6 maker-fill and B-1 precision gating work can be closed in one focused session.",
+      "The first resumed sleeve starts producing decision-grade telemetry quickly enough to move us off a zero run-rate."
+    ],
+    "invalidators": [
+      "If jj-live remains paused after the next focused session, the 10% target is too aggressive.",
+      "If A-6 or B-1 evidence fails the current gate, the near-term run-rate forecast should be revised downward.",
+      "If resumed runtime still generates zero closed trades, annualized return remains effectively unobservable."
+    ]
+  },
+  "deployment_finish": {
+    "status": "blocked",
+    "eta": "TBD",
+    "blockers": [
+      "jj-live is intentionally stopped while structural alpha integration is completed.",
+      "No capital is currently deployed and the current cycle has no closed trades for calibration.",
+      "A-6 maker-fill and B-1 precision promotion gates are still unresolved."
+    ],
+    "exit_criteria": [
+      "Resume jj-live in shadow or micro-live mode without triggering kill rails.",
+      "Finish the A-6 maker-fill and violation half-life evidence pass.",
+      "Finish the B-1 gold-set precision audit at or above 85%.",
+      "Record the first closed trades needed for calibration and promotion decisions."
+    ]
+  }
+}

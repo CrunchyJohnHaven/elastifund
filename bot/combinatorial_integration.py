@@ -16,7 +16,7 @@ from signals.dep_graph.dep_graph_store import DepGraphStore
 
 DEFAULT_CONSTRAINT_DB_PATH = Path("data") / "constraint_arb.db"
 DEFAULT_DEP_GRAPH_DB_PATH = Path("data") / "dep_graph.sqlite"
-COMBINATORIAL_SOURCE_KEYS = {"a6", "b1"}
+COMBINATORIAL_SOURCE_KEYS = {"a6", "b1", "sum_violation"}
 
 
 def _env_bool(name: str, default: bool = False, *, env: Mapping[str, str] | None = None) -> bool:
@@ -103,7 +103,8 @@ SOURCE_REGISTRY: dict[str, SignalSourceMeta] = {
     "cross_platform_arb": SignalSourceMeta("cross_platform_arb", 4, "Signal 4", "predictive"),
     "a6": SignalSourceMeta("a6", 5, "Signal 5 / A-6", "bypass", "combinatorial"),
     "b1": SignalSourceMeta("b1", 6, "Signal 6 / B-1", "bypass", "combinatorial"),
-    "lead_lag": SignalSourceMeta("lead_lag", 7, "Signal 7", "predictive"),
+    "sum_violation": SignalSourceMeta("sum_violation", 7, "Signal 7 / Sum Violation", "bypass", "combinatorial"),
+    "lead_lag": SignalSourceMeta("lead_lag", 8, "Signal 8", "predictive"),
     "unknown": SignalSourceMeta("unknown", 0, "Unknown", "predictive"),
 }
 
@@ -116,6 +117,8 @@ SOURCE_ALIASES = {
     "constraint_graph": "b1",
     "graph_relation": "b1",
     "signal_6": "b1",
+    "signal_7": "sum_violation",
+    "structural_sum_violation": "sum_violation",
 }
 
 

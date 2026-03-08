@@ -6,10 +6,12 @@ import math
 import os
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import llm_ensemble
 from llm_ensemble import (
     calibrate_probability,
     build_prompt,
@@ -360,6 +362,66 @@ class TestEnsembleResult(unittest.TestCase):
         self.assertEqual(d["model_stddev"], 0.0)
         self.assertEqual(len(d["model_estimates"]), 1)
         self.assertEqual(d["model_estimates"][0]["model_name"], "test")
+
+
+class TestCompatibilityWrapper(unittest.TestCase):
+    """Ensure legacy imports delegate to the canonical estimator runtime."""
+
+    def test_llm_ensemble_wraps_ensemble_estimator(self):
+        runtime_result = SimpleNamespace(
+            mean_estimate=0.62,
+            calibrated_mean=0.58,
+            confidence="medium",
+            reasoning="wrapped result",
+            range_estimate=0.08,
+            std_estimate=0.04,
+            confidence_multiplier=1.0,
+            disagreement_signal={
+                "signal_fired": False,
+                "confirmation_signal": True,
+                "uncertainty_reduction": False,
+            },
+            model_estimates=[
+                SimpleNamespace(
+                    model_name="claude-haiku",
+                    raw_probability=0.62,
+                    confidence="medium",
+                    reasoning="wrapped model",
+                    latency_ms=18.0,
+                    error="",
+                )
+            ],
+            errors=[],
+        )
+
+        with patch("llm_ensemble.EnsembleEstimator") as mock_estimator_cls:
+            mock_estimator = mock_estimator_cls.return_value
+            mock_estimator.models = ["claude-haiku"]
+            mock_estimator.estimate = AsyncMock(return_value=runtime_result)
+
+            ensemble = LLMEnsemble(enable_brier=False)
+            result = asyncio.run(
+                ensemble.estimate(
+                    "Will X happen?",
+                    category="politics",
+                    market_id="m-1",
+                    timeout=12.5,
+                )
+            )
+
+        self.assertEqual(mock_estimator.timeout_seconds, 12.5)
+        mock_estimator.estimate.assert_awaited_once_with(
+            "Will X happen?",
+            market_price=0.0,
+            category="politics",
+            market_id="m-1",
+            context="",
+            news_section="",
+        )
+        self.assertAlmostEqual(result.probability, 0.62, delta=1e-9)
+        self.assertAlmostEqual(result.calibrated_probability, 0.58, delta=1e-9)
+        self.assertEqual(result.n_models, 1)
+        self.assertTrue(result.models_agree)
 
 
 if __name__ == "__main__":
