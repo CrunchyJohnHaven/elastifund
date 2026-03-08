@@ -14,12 +14,18 @@ An `autoresearch`-style progress export is now part of this repo via `scripts/re
 
 - `research/autoresearch_progress.tsv`
 - `research/autoresearch_progress.svg`
+- `research/autoresearch_velocity.tsv`
+- `research/autoresearch_velocity.svg`
 
 That gives Elastifund the same keep/discard visual grammar, using the current top-hypothesis composite score as an interim metric until a stricter benchmark metric is frozen.
 
 On the current artifact set, the graph shows 18 recorded runs and only 1 kept high-water mark. That is not a failure of the graph. It is evidence that Elastifund needs a tighter benchmark contract if it wants autonomous iteration to produce a visible frontier of improvement.
 
+The new velocity export makes the next question explicit: how fast is the frontier moving, and is that rate itself rising or flattening. On the current proxy artifact set, the answer is flat after the initial baseline, which is useful evidence in its own right.
+
 ![Autoresearch-style progress](research/autoresearch_progress.svg)
+
+![Autoresearch improvement velocity](research/autoresearch_velocity.svg)
 
 ## Source Bundle for Deep Research
 
@@ -200,7 +206,7 @@ The `progress.png` graph in `autoresearch` is deceptively important. It turns do
 - how often do changes help?
 - what ideas became new high-water marks?
 
-Elastifund had the logs but not the same visual frontier. That gap is now partially closed with `scripts/render_autoresearch_progress.py`, which renders the same keep/discard/running-best pattern for current run artifacts.
+Elastifund had the logs but not the same visual frontier. That gap is now partially closed with `scripts/render_autoresearch_progress.py`, which renders the same keep/discard/running-best pattern for current run artifacts and now derives a second velocity view from the same ledger.
 
 Important caveat: the current graph uses top-hypothesis composite score from `reports/run_*_metrics.json`. That is useful as a visualization, but it is still an interim proxy. The long-term graph should switch to a frozen benchmark objective.
 
