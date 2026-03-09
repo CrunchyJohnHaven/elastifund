@@ -86,9 +86,9 @@ for f in "${POLYBOT_FILES[@]}"; do
     fi
 done
 
-# Also sync jj_live.py to root dir (VPS expects it there for systemd)
-echo "  Syncing jj_live.py to root bot dir..."
-scp $SSH_OPTS -q "$PROJECT_DIR/bot/jj_live.py" "$VPS:$BOT_DIR/jj_live.py"
+# Clean up any stale root-level jj_live.py (systemd runs bot/jj_live.py, not root copy)
+echo "  Removing stale root jj_live.py if present..."
+ssh $SSH_OPTS "$VPS" "rm -f $BOT_DIR/jj_live.py 2>/dev/null; echo 'OK'"
 
 # Install Python dependencies on VPS
 echo ""
