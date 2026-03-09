@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -417,3 +418,82 @@ def test_run_cycle_hydrates_recent_fast_markets_when_primary_scan_misses_them(tm
     assert captured_orders
     assert captured_orders[0]["market_id"] == "m-recent"
     assert captured_orders[0]["price"] == 0.44
+
+
+def test_run_cycle_late_hydrates_wallet_signal_when_scan_has_other_fast_market(tmp_path, monkeypatch):
+    live = _make_live(
+        tmp_path,
+        markets=[
+            {
+                "id": "m-scanner",
+                "conditionId": "cond-scanner",
+                "question": "Bitcoin Up or Down - March 9, 8:00AM-8:15AM ET",
+                "outcomePrices": [0.42, 0.58],
+                "clobTokenIds": ["scanner-yes", "scanner-no"],
+                "volume": 500.0,
+                "liquidity": 200.0,
+                "endDate": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
+            }
+        ],
+    )
+
+    live.wallet_flow_scores_file.write_text(
+        json.dumps({"wallets": {"0xabc": {"address": "0xabc", "activity_score": 80.0}}})
+    )
+    live.wallet_flow_db_file.touch()
+
+    monkeypatch.setattr(
+        jj_live_module,
+        "wallet_flow_get_signals",
+        lambda: [
+            {
+                "market_id": "cond-missing",
+                "question": "Bitcoin Up or Down - March 9, 8:00AM-8:15AM ET",
+                "direction": "buy_no",
+                "market_price": 0.5,
+                "estimated_prob": 0.74,
+                "edge": 0.18,
+                "confidence": 0.74,
+                "reasoning": "Wallet flow consensus",
+                "source": "wallet_flow",
+                "resolution_hours": 0.25,
+                "velocity_score": 120.0,
+            }
+        ],
+    )
+
+    hydrated_market_ids: list[str] = []
+
+    async def _fetch_market_metadata_for_signal(market_id, market_lookup):
+        hydrated_market_ids.append(market_id)
+        market_lookup["cond-missing"] = {
+            "question": "Bitcoin Up or Down - March 9, 8:00AM-8:15AM ET",
+            "token_ids": ["missing-yes", "missing-no"],
+            "yes_price": 0.44,
+            "volume": 750.0,
+            "liquidity": 300.0,
+            "tags": [],
+            "category": "crypto",
+            "resolution_hours": 0.25,
+            "llm_allowed": False,
+        }
+        return market_lookup["cond-missing"]
+
+    live._fetch_market_metadata_for_signal = _fetch_market_metadata_for_signal
+
+    captured_orders: list[dict] = []
+
+    async def _place_order(**kwargs):
+        captured_orders.append(kwargs)
+        return True
+
+    live.place_order = _place_order
+
+    summary = asyncio.run(live.run_cycle())
+
+    assert summary["status"] == "ok"
+    assert summary["trades_placed"] == 1
+    assert hydrated_market_ids == ["cond-missing"]
+    assert captured_orders
+    assert captured_orders[0]["market_id"] == "cond-missing"
+    assert captured_orders[0]["price"] == 0.56

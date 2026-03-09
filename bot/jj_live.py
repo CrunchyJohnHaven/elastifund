@@ -3969,6 +3969,170 @@ class JJLive:
                 _safe_float(signal.get("resolution_hours"), 1.0),
             )
 
+    async def _fetch_market_metadata_for_signal(
+        self,
+        market_id: str,
+        market_lookup: dict[str, dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        market_id = str(market_id or "").strip()
+        if not market_id:
+            return None
+
+        existing = market_lookup.get(market_id)
+        if isinstance(existing, dict):
+            return existing
+
+        fetched_market: dict[str, Any] | None = None
+        timeout = httpx.Timeout(10.0, connect=10.0)
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                fetch_attempts = (
+                    (
+                        "https://gamma-api.polymarket.com/markets",
+                        {"condition_ids": market_id},
+                    ),
+                    (
+                        f"https://gamma-api.polymarket.com/markets/{market_id}",
+                        None,
+                    ),
+                )
+                for url, params in fetch_attempts:
+                    try:
+                        response = await client.get(url, params=params)
+                        response.raise_for_status()
+                        payload = response.json()
+                    except Exception:
+                        continue
+
+                    if isinstance(payload, list):
+                        payload = payload[0] if payload else None
+                    if isinstance(payload, dict):
+                        fetched_market = payload
+                        break
+        except Exception as exc:
+            logger.debug("Late market hydration failed for %s: %s", market_id[:16], exc)
+            return None
+
+        if not isinstance(fetched_market, dict):
+            return None
+        if bool(fetched_market.get("closed")):
+            return None
+        if not bool(fetched_market.get("acceptingOrders", True)):
+            return None
+
+        question = str(fetched_market.get("question", "") or "")
+        raw_resolution_hours = estimate_resolution_hours(fetched_market) if MAX_RESOLUTION_HOURS > 0 else None
+        allowed, _, category, llm_resolution_hours = apply_llm_market_filters(
+            question,
+            resolution_hours=raw_resolution_hours,
+        )
+
+        yes_price = None
+        try:
+            prices = self.scanner.extract_prices(fetched_market)
+            yes_price = prices.get("YES", prices.get("yes", None))
+        except Exception:
+            pass
+
+        if yes_price is None:
+            raw_prices = fetched_market.get("outcomePrices", "")
+            if isinstance(raw_prices, str) and raw_prices:
+                try:
+                    parsed = json.loads(raw_prices)
+                    if isinstance(parsed, list) and len(parsed) >= 1:
+                        yes_price = float(parsed[0])
+                except (json.JSONDecodeError, ValueError):
+                    yes_price = None
+            elif isinstance(raw_prices, list) and len(raw_prices) >= 1:
+                yes_price = float(raw_prices[0])
+
+        if yes_price is None:
+            yes_price = fetched_market.get("price", fetched_market.get("yes_price", None))
+            if yes_price is not None:
+                yes_price = float(yes_price)
+
+        if yes_price is None or not (0.10 <= yes_price <= 0.90):
+            return None
+
+        token_ids = []
+        try:
+            token_ids = self.scanner.extract_token_ids(fetched_market)
+        except Exception:
+            pass
+        token_ids = normalize_token_ids(token_ids)
+
+        if not token_ids:
+            token_ids = normalize_token_ids(fetched_market.get("clobTokenIds", ""))
+        if not token_ids:
+            return None
+
+        primary_market_id = str(fetched_market.get("id", "") or "").strip()
+        condition_market_id = str(
+            fetched_market.get("condition_id", fetched_market.get("conditionId", fetched_market.get("market_id", "")))
+            or ""
+        ).strip()
+        resolution_hours = (
+            llm_resolution_hours
+            if allowed and llm_resolution_hours is not None
+            else raw_resolution_hours
+        )
+        market_payload = {
+            "question": question,
+            "token_ids": token_ids,
+            "yes_price": yes_price,
+            "volume": float(fetched_market.get("volume", 0) or 0),
+            "liquidity": float(fetched_market.get("liquidity", 0) or 0),
+            "tags": fetched_market.get("tags", []) or [],
+            "category": category,
+            "resolution_hours": resolution_hours,
+            "llm_allowed": allowed,
+        }
+        aliases = {
+            market_id,
+            primary_market_id,
+            condition_market_id,
+            str(fetched_market.get("market_id", "") or "").strip(),
+        }
+        aliases.discard("")
+        if not aliases:
+            return None
+
+        for alias in aliases:
+            market_lookup[alias] = market_payload
+            self._elastic_market_lookup[str(alias)] = dict(market_payload)
+
+        canonical_market_id = primary_market_id or condition_market_id or market_id
+        for token_id in token_ids:
+            clean_token = str(token_id).strip()
+            if not clean_token:
+                continue
+            self._elastic_token_market_index[clean_token] = canonical_market_id
+            if self.trade_stream is not None:
+                self.trade_stream.add_token(clean_token)
+
+        logger.info(
+            "Late-hydrated market metadata for %s | %s",
+            market_id[:16],
+            question[:60],
+        )
+        return market_lookup.get(market_id, market_payload)
+
+    async def _late_hydrate_signal_markets(
+        self,
+        signals: list[dict[str, Any]],
+        market_lookup: dict[str, dict[str, Any]],
+    ) -> None:
+        for signal in signals:
+            market_id = str(signal.get("market_id", "") or "").strip()
+            if not market_id:
+                continue
+            if isinstance(market_lookup.get(market_id), dict):
+                self._hydrate_signal_market_context(signal, market_lookup)
+                continue
+            hydrated = await self._fetch_market_metadata_for_signal(market_id, market_lookup)
+            if hydrated is not None:
+                self._hydrate_signal_market_context(signal, market_lookup)
+
     async def _collect_cross_platform_arb_signals(
         self,
         market_lookup: dict[str, dict[str, Any]],
@@ -6483,6 +6647,7 @@ class JJLive:
                         ws["source"] = "wallet_flow"
                         self._hydrate_signal_market_context(ws, market_lookup)
                         attach_signal_source_metadata(ws)
+                    await self._late_hydrate_signal_markets(wallet_signals, market_lookup)
                 except Exception as e:
                     logger.warning(f"Wallet flow scan failed (non-fatal): {e}")
 
@@ -6819,6 +6984,10 @@ class JJLive:
                 break
             market_id = signal["market_id"]
             mdata = market_lookup.get(market_id)
+            if not mdata:
+                mdata = await self._fetch_market_metadata_for_signal(str(market_id), market_lookup)
+                if mdata is not None:
+                    self._hydrate_signal_market_context(signal, market_lookup)
 
             if not mdata:
                 logger.warning(

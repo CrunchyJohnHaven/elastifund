@@ -660,6 +660,15 @@ class CLOBExecutor:
         self.cfg = cfg
         self.client = None
 
+    @staticmethod
+    def _signature_type() -> int:
+        raw = os.environ.get("JJ_CLOB_SIGNATURE_TYPE", "1")
+        try:
+            return int(raw)
+        except ValueError:
+            logger.warning("Invalid JJ_CLOB_SIGNATURE_TYPE=%r; defaulting to 1", raw)
+            return 1
+
     def _init_client(self) -> Any:
         try:
             from py_clob_client.client import ClobClient
@@ -675,12 +684,13 @@ class CLOBExecutor:
             raise RuntimeError("POLY_SAFE_ADDRESS or POLYMARKET_FUNDER is required for live mode")
         if not private_key.startswith("0x"):
             private_key = f"0x{private_key}"
+        signature_type = self._signature_type()
 
         base_client = ClobClient(
             host="https://clob.polymarket.com",
             key=private_key,
             chain_id=137,
-            signature_type=1,
+            signature_type=signature_type,
             funder=safe_address,
         )
         try:
@@ -698,9 +708,16 @@ class CLOBExecutor:
             key=private_key,
             chain_id=137,
             creds=creds,
-            signature_type=1,
+            signature_type=signature_type,
             funder=safe_address,
         )
+        logger.info("BTC5 CLOB signing mode: signature_type=%s", signature_type)
+        try:
+            client.get_orders()
+            logger.info("BTC5 CLOB auth verified — orders endpoint accessible")
+        except Exception as exc:
+            logger.warning("BTC5 CLOB auth verification warning: %s", exc)
+        return client
 
     def ensure_client(self) -> Any:
         if self.client is None:
