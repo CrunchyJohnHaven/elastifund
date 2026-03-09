@@ -42,6 +42,8 @@ SystemDesignResearch_*.md
 STRATEGY_REPORT.md
 REPLIT_DASHBOARD*.md
 REPLIT_BUILD*.md
+!REPLIT_NEXT_BUILD.md
+!docs/REPLIT_BUILD_GUIDE.md
 DISPATCH_LIBRARY.md
 
 # Databases
@@ -100,6 +102,7 @@ temp/
 
 # Logs
 *.log
+*.json.log
 
 # OS
 .DS_Store
@@ -110,6 +113,13 @@ node_modules/
 
 # Docker (local only)
 docker-compose.override.yml
+infra/es-data/
+infra/kibana-data/
+infra/generated-credentials/
+infra/*.token
+infra/*.credentials
+infra/*-credentials.txt
+infra/*-password.txt
 
 # Claude Code internal
 .claude/
@@ -132,3 +142,4 @@ logs/
 reports/
 data/
 state/elastifund/
+state/local/
