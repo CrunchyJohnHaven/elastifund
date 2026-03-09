@@ -107,6 +107,16 @@ Core loop:
 | Active signal lanes | forecasting, flow/microstructure, structural arb, validation lanes |
 | Live validated P&L | still effectively pre-revenue; no inflated claims here |
 
+## Velocity Charts
+
+These repo-root charts reconcile the March 9 runtime truth with the diary, backlog funnel, and non-trading lane status.
+
+![Improvement velocity](improvement_velocity.svg)
+
+![ARR estimate](arr_estimate.svg)
+
+Machine-readable dataset: [improvement_velocity.json](improvement_velocity.json)
+
 ## Why This Is Different
 
 - **Autonomous keep-or-kill discipline.** Strategies survive only if they clear real validation gates.
