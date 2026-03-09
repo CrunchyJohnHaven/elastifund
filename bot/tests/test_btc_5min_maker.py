@@ -111,6 +111,19 @@ def test_choose_maker_buy_price_respects_custom_aggression_ticks() -> None:
     assert price == pytest.approx(0.49)
 
 
+def test_choose_maker_buy_price_supports_post_only_safety_ticks() -> None:
+    price = choose_maker_buy_price(
+        best_bid=0.49,
+        best_ask=0.50,
+        max_price=0.95,
+        min_price=0.45,
+        tick_size=0.01,
+        aggression_ticks=0,
+        post_only_safety_ticks=1,
+    )
+    assert price == pytest.approx(0.48)
+
+
 def test_summarize_recent_direction_regime_tightens_weaker_direction() -> None:
     rows = [
         {"id": idx, "direction": "DOWN", "order_price": 0.49, "pnl_usd": 5.0}
@@ -508,6 +521,114 @@ async def test_process_window_records_cancelled_unfilled_live_order(
     assert result["status"] == "live_cancelled_unfilled"
     assert result["filled"] == 0
     assert result["size_usd"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_process_window_retries_post_only_cross_with_safer_quote(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=False,
+        db_path=tmp_path / "btc5.db",
+        bankroll_usd=250.0,
+        risk_fraction=0.01,
+        max_trade_usd=2.50,
+        min_trade_usd=0.25,
+        min_delta=0.0003,
+        max_buy_price=0.95,
+        min_buy_price=0.45,
+        tick_size=0.01,
+        cancel_seconds_before_close=2,
+        retry_post_only_cross=True,
+        retry_post_only_safety_ticks=1,
+    )
+    bot = BTC5MinMakerBot(cfg)
+
+    async def fake_resolve(http, through_window_start: int) -> None:
+        return None
+
+    async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
+        return 100.0, 100.05
+
+    class RetryBookHTTP:
+        top_of_book = staticmethod(MarketHttpClient.top_of_book)
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def fetch_market_by_slug(self, slug: str) -> dict:
+            return {
+                "slug": slug,
+                "tokens": [
+                    {"outcome": "Up", "token_id": "tok-up"},
+                    {"outcome": "Down", "token_id": "tok-down"},
+                ],
+            }
+
+        async def fetch_book(self, token_id: str) -> dict:
+            assert token_id == "tok-up"
+            self.calls += 1
+            return {
+                "bids": [{"price": 0.49, "size": 50}],
+                "asks": [{"price": 0.50, "size": 50}],
+            }
+
+    class FakeCLOB:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, float, float]] = []
+            self.states = [
+                LiveOrderState(
+                    order_id="ord-retry",
+                    status="cancelled",
+                    original_size=10.42,
+                    size_matched=0.0,
+                    price=0.48,
+                )
+            ]
+
+        def place_post_only_buy(self, token_id: str, price: float, shares: float) -> PlacementResult:
+            self.calls.append((token_id, price, shares))
+            assert token_id == "tok-up"
+            if len(self.calls) == 1:
+                raise RuntimeError(
+                    "PolyApiException[status_code=400, error_message={'error': 'invalid post-only order: order crosses book'}]"
+                )
+            assert price == pytest.approx(0.48)
+            assert shares == pytest.approx(10.42)
+            return PlacementResult(order_id="ord-retry", success=True, status="live")
+
+        def get_order_state(self, order_id: str) -> LiveOrderState:
+            assert order_id == "ord-retry"
+            return self.states[0]
+
+        def cancel_order(self, order_id: str) -> bool:
+            assert order_id == "ord-retry"
+            return True
+
+    monkeypatch.setattr(bot, "_resolve_unsettled", fake_resolve)
+    monkeypatch.setattr(bot, "_get_open_and_current_price", fake_prices)
+    bot.clob = FakeCLOB()
+
+    http = RetryBookHTTP()
+    window_start_ts = current_window_start(time.time()) - (2 * 300)
+    result = await bot._process_window(window_start_ts=window_start_ts, http=http)
+
+    assert result["status"] == "live_cancelled_unfilled"
+    assert result["price"] == pytest.approx(0.48)
+    assert len(bot.clob.calls) == 2
+    assert http.calls == 2
+
+    with bot.db._connect() as conn:
+        row = conn.execute(
+            "SELECT best_bid, best_ask, order_price, reason, order_status FROM window_trades WHERE window_start_ts = ?",
+            (window_start_ts,),
+        ).fetchone()
+    assert row["best_bid"] == pytest.approx(0.49)
+    assert row["best_ask"] == pytest.approx(0.50)
+    assert row["order_price"] == pytest.approx(0.48)
+    assert "post_only_retry" in (row["reason"] or "")
+    assert row["order_status"] == "live_cancelled_unfilled"
 
 
 @pytest.mark.asyncio

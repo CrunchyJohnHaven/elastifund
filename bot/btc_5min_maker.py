@@ -166,6 +166,7 @@ def choose_maker_buy_price(
     min_price: float,
     tick_size: float,
     aggression_ticks: int = 1,
+    post_only_safety_ticks: int = 0,
 ) -> float | None:
     if best_bid is None or best_ask is None:
         return None
@@ -175,13 +176,20 @@ def choose_maker_buy_price(
         return None
 
     min_valid = _round_down_to_tick(min_price, tick_size)
-    max_valid = _round_down_to_tick(min(max_price, best_ask - tick_size), tick_size)
+    safety_ticks = max(0, int(post_only_safety_ticks))
+    max_valid = _round_down_to_tick(
+        min(max_price, best_ask - ((1 + safety_ticks) * tick_size)),
+        tick_size,
+    )
     if max_valid <= 0 or max_valid < min_valid:
         return None
 
     # Stay maker: bid below best ask. Improve by one tick from current best bid.
     quote_ticks = max(0, int(aggression_ticks))
-    candidate = _round_down_to_tick(best_bid + (quote_ticks * tick_size), tick_size)
+    candidate = _round_down_to_tick(
+        best_bid + ((quote_ticks - safety_ticks) * tick_size),
+        tick_size,
+    )
     price = min(max(candidate, min_valid), max_valid)
     if price >= best_ask:
         return None
@@ -393,6 +401,8 @@ class MakerConfig:
     probe_max_abs_delta: float | None = _optional_env_float("BTC5_PROBE_MAX_ABS_DELTA")
     probe_up_max_buy_price: float | None = _optional_env_float("BTC5_PROBE_UP_MAX_BUY_PRICE")
     probe_down_max_buy_price: float | None = _optional_env_float("BTC5_PROBE_DOWN_MAX_BUY_PRICE")
+    retry_post_only_cross: bool = _env_flag("BTC5_RETRY_POST_ONLY_CROSS", True)
+    retry_post_only_safety_ticks: int = int(os.environ.get("BTC5_RETRY_POST_ONLY_SAFETY_TICKS", "1"))
     paper_fill_probability: float = float(os.environ.get("BTC5_PAPER_FILL_PROBABILITY", "0.20"))
     clob_fee_rate_bps: int = int(os.environ.get("BTC5_CLOB_FEE_RATE_BPS", "0"))
     request_timeout_sec: float = float(os.environ.get("BTC5_REQUEST_TIMEOUT_SEC", "8"))
@@ -1051,6 +1061,122 @@ class BTC5MinMakerBot:
             "hard_daily_loss_hit": hard_daily_loss_hit,
         }
 
+    @staticmethod
+    def _is_post_only_cross_error(error_msg: str | None) -> bool:
+        text = str(error_msg or "").strip().lower()
+        return "post-only" in text and "crosses book" in text
+
+    async def _retry_post_only_cross(
+        self,
+        *,
+        http: MarketHttpClient,
+        token_id: str,
+        direction: str,
+        quote_ticks: int,
+        max_buy_price: float,
+        min_price: float,
+        requested_shares: float,
+        prior_price: float,
+    ) -> dict[str, Any] | None:
+        if not self.cfg.retry_post_only_cross:
+            return None
+
+        refreshed_book = await http.fetch_book(token_id)
+        if not refreshed_book:
+            return {
+                "placement": PlacementResult(
+                    order_id=None,
+                    success=False,
+                    status="retry_no_book",
+                    error_msg="post_only_retry_no_book",
+                ),
+                "best_bid": None,
+                "best_ask": None,
+                "order_price": prior_price,
+                "reason": "post_only_retry_no_book",
+            }
+
+        best_bid, best_ask = http.top_of_book(refreshed_book)
+        retry_price = choose_maker_buy_price(
+            best_bid=best_bid,
+            best_ask=best_ask,
+            max_price=max_buy_price,
+            min_price=min_price,
+            tick_size=self.cfg.tick_size,
+            aggression_ticks=quote_ticks,
+            post_only_safety_ticks=self.cfg.retry_post_only_safety_ticks,
+        )
+        if retry_price is None:
+            return {
+                "placement": PlacementResult(
+                    order_id=None,
+                    success=False,
+                    status="retry_no_safe_price",
+                    error_msg="post_only_retry_no_safe_price",
+                ),
+                "best_bid": best_bid,
+                "best_ask": best_ask,
+                "order_price": prior_price,
+                "reason": (
+                    "post_only_retry_no_safe_price "
+                    f"direction={direction} best_bid={best_bid} best_ask={best_ask}"
+                ),
+            }
+
+        retry_shares = float(requested_shares)
+        _btc5_min_shares = max(
+            CLOB_HARD_MIN_SHARES,
+            float(os.environ.get("JJ_POLY_MIN_ORDER_SHARES", "5.0")),
+        )
+        retry_required_shares = clob_min_order_size(retry_price, min_shares=_btc5_min_shares)
+        if retry_shares < retry_required_shares:
+            retry_shares = retry_required_shares
+        retry_notional_usd = round(retry_shares * retry_price, 2)
+        if retry_notional_usd > (self.cfg.max_trade_usd * 2):
+            return {
+                "placement": PlacementResult(
+                    order_id=None,
+                    success=False,
+                    status="retry_size_too_large",
+                    error_msg="post_only_retry_size_too_large",
+                ),
+                "best_bid": best_bid,
+                "best_ask": best_ask,
+                "order_price": retry_price,
+                "shares": retry_shares,
+                "reason": (
+                    "post_only_retry_size_too_large "
+                    f"direction={direction} retry_price={retry_price:.2f} "
+                    f"retry_shares={retry_shares:.2f} retry_notional_usd={retry_notional_usd:.2f}"
+                ),
+            }
+
+        try:
+            placement = self.clob.place_post_only_buy(
+                token_id=token_id,
+                price=retry_price,
+                shares=retry_shares,
+            )
+        except Exception as exc:
+            placement = PlacementResult(
+                order_id=None,
+                success=False,
+                status="retry_failed",
+                error_msg=str(exc),
+            )
+        return {
+            "placement": placement,
+            "best_bid": best_bid,
+            "best_ask": best_ask,
+            "order_price": retry_price,
+            "shares": retry_shares,
+            "reason": (
+                "post_only_retry "
+                f"direction={direction} from={prior_price:.2f} to={retry_price:.2f} "
+                f"best_bid={best_bid} best_ask={best_ask} shares={retry_shares:.2f}"
+            ),
+        }
+
     async def _resolve_unsettled(self, http: MarketHttpClient, through_window_start: int) -> None:
         rows = self.db.unsettled_rows(max_window_start_ts=through_window_start)
         for row in rows:
@@ -1424,21 +1550,62 @@ class BTC5MinMakerBot:
             if filled == 0:
                 executed_shares = 0.0
         else:
+            placement = PlacementResult(
+                order_id=None,
+                success=False,
+                status="order_failed",
+                error_msg=None,
+            )
+            retry_note: str | None = None
             try:
                 placement = self.clob.place_post_only_buy(token_id=token_id, price=order_price, shares=shares)
-                order_id = placement.order_id
-                order_status = f"live_{placement.status}" if placement.status else "live_order_placed"
-                reason = _join_reasons(reason, placement.error_msg or regime_reason)
             except Exception as exc:
-                logger.error("Live order placement failed: %s", exc)
                 placement = PlacementResult(
                     order_id=None,
                     success=False,
                     status="order_failed",
                     error_msg=str(exc),
                 )
+
+            if not placement.success and self._is_post_only_cross_error(placement.error_msg):
+                retry_payload = await self._retry_post_only_cross(
+                    http=http,
+                    token_id=token_id,
+                    direction=direction,
+                    quote_ticks=quote_ticks,
+                    max_buy_price=mode_max_buy_price,
+                    min_price=self.cfg.min_buy_price,
+                    requested_shares=shares,
+                    prior_price=order_price,
+                )
+                if retry_payload is not None:
+                    retry_note = retry_payload.get("reason")
+                    retry_bid = retry_payload.get("best_bid")
+                    retry_ask = retry_payload.get("best_ask")
+                    retry_price = retry_payload.get("order_price")
+                    retry_shares = retry_payload.get("shares")
+                    if retry_bid is not None:
+                        best_bid = retry_bid
+                    if retry_ask is not None:
+                        best_ask = retry_ask
+                    if retry_price is not None:
+                        order_price = float(retry_price)
+                    if retry_shares is not None:
+                        shares = float(retry_shares)
+                    retry_placement = retry_payload.get("placement")
+                    if isinstance(retry_placement, PlacementResult):
+                        placement = retry_placement
+                    logger.info("Retried post-only cross for %s: %s", slug, retry_note or "retry")
+
+            if placement.success:
+                order_id = placement.order_id
+                order_status = f"live_{placement.status}" if placement.status else "live_order_placed"
+                reason = _join_reasons(reason, retry_note)
+            else:
                 order_status = "live_order_failed"
-                reason = _join_reasons(reason, str(exc))
+                if placement.error_msg:
+                    logger.error("Live order placement failed: %s", placement.error_msg)
+                reason = _join_reasons(reason, retry_note, placement.error_msg)
 
             if order_id and placement.success:
                 order_status, filled, executed_shares, reconcile_reason = await self._reconcile_live_order(
@@ -1589,7 +1756,7 @@ async def _run(args: argparse.Namespace) -> None:
         raise SystemExit("--windows must be >= 1")
 
     logger.info(
-        "Starting BTC5 maker | mode=%s | bankroll=%.2f | risk_fraction=%.4f | max_trade=%.2f | max_abs_delta=%s | up_max=%.2f | down_max=%.2f | improve_ticks=%d | regime_skew=%s | probe_daily_loss=%s | probe_recent=%s",
+        "Starting BTC5 maker | mode=%s | bankroll=%.2f | risk_fraction=%.4f | max_trade=%.2f | max_abs_delta=%s | up_max=%.2f | down_max=%.2f | improve_ticks=%d | regime_skew=%s | probe_daily_loss=%s | probe_recent=%s | retry_post_only_cross=%s safety_ticks=%d",
         "paper" if cfg.paper_trading else "live",
         cfg.bankroll_usd,
         cfg.risk_fraction,
@@ -1601,6 +1768,8 @@ async def _run(args: argparse.Namespace) -> None:
         "enabled" if cfg.enable_recent_regime_skew else "disabled",
         "enabled" if cfg.enable_probe_after_daily_loss else "disabled",
         "enabled" if cfg.enable_probe_after_recent_loss else "disabled",
+        "enabled" if cfg.retry_post_only_cross else "disabled",
+        max(0, int(cfg.retry_post_only_safety_ticks)),
     )
     await bot.run_windows(count=args.windows, continuous=args.continuous)
     bot.print_status()
