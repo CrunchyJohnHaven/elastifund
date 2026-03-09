@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,15 @@ ALLOWED_CATEGORIES: dict[str, int] = {
     "geopolitical": 1,
 }
 REJECT_CATEGORIES = {"sports", "fed_rates", "unknown"}
+KEYWORDS: dict[str, tuple[str, ...]] = {
+    "crypto": ("bitcoin", "btc", "ethereum", "eth", "solana", "xrp", "crypto", "up or down"),
+    "politics": ("election", "president", "prime minister", "senate", "congress", "campaign", "trump", "biden"),
+    "weather": ("temperature", "rain", "snow", "hurricane", "storm", "flood", "weather"),
+    "economic": ("inflation", "cpi", "gdp", "jobs", "unemployment", "retail sales", "fomc"),
+    "financial_speculation": ("stock", "nasdaq", "s&p", "dow", "ipo", "market cap", "fdv"),
+    "geopolitical": ("war", "ceasefire", "invade", "taiwan", "russia", "ukraine", "nato", "sanctions"),
+    "sports": ("nba", "nfl", "mlb", "soccer", "fifa", "super bowl", "playoffs", "championship", " vs ", "o/u "),
+}
 
 
 @dataclass
@@ -79,6 +89,27 @@ def normalize_category(value: Any) -> str:
     return raw or "unknown"
 
 
+def infer_category(question: str, fallback: str) -> str:
+    text = _safe_str(question).lower()
+    for category, keys in KEYWORDS.items():
+        if any(keyword_matches(text, key) for key in keys):
+            return category
+    return fallback
+
+
+def looks_like_sports_question(question: str) -> bool:
+    text = _safe_str(question).lower()
+    return any(keyword_matches(text, marker) for marker in (" vs ", " vs. ", "o/u ", "over/under", "mlb", "nba", "nfl", "nhl", "fifa", "world cup"))
+
+
+def keyword_matches(text: str, keyword: str) -> bool:
+    if not keyword:
+        return False
+    if " " in keyword or "/" in keyword or "." in keyword:
+        return keyword in text
+    return re.search(rf"\\b{re.escape(keyword)}\\b", text) is not None
+
+
 def parse_iso_datetime(value: Any) -> datetime | None:
     text = _safe_str(value).strip()
     if not text:
@@ -111,12 +142,32 @@ def market_resolution_dt(market: dict[str, Any]) -> datetime | None:
 
 def hours_to_resolution(market: dict[str, Any], now: datetime) -> float | None:
     dt = market_resolution_dt(market)
-    if dt is None:
-        return None
-    hours = (dt - now).total_seconds() / 3600.0
-    if hours <= 0:
-        return None
-    return hours
+    if dt is not None:
+        hours = (dt - now).total_seconds() / 3600.0
+        if hours <= 0:
+            return None
+        return hours
+
+    question = _safe_str(market.get("question")).lower()
+    if any(key in question for key in ("5-minute", "5 minute", " 5m", " 5 m")):
+        return 5.0 / 60.0
+    if any(key in question for key in ("15-minute", "15 minute", " 15m", " 15 m", "up or down")):
+        return 15.0 / 60.0
+    if "today" in question or "tonight" in question:
+        return 12.0
+    if "tomorrow" in question:
+        return 24.0
+
+    match = re.search(r"\\b(\\d{1,2}):(\\d{2})\\b", question)
+    if match:
+        hour = int(match.group(1))
+        minute = int(match.group(2))
+        candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if candidate <= now:
+            candidate = candidate + timedelta(days=1)
+        return max(0.01, (candidate - now).total_seconds() / 3600.0)
+
+    return None
 
 
 def parse_outcome_prices(raw: Any) -> list[float]:
@@ -229,7 +280,11 @@ def compute_velocity_score(yes_price: float, resolution_hours: float) -> float:
 
 
 def to_candidate(market: dict[str, Any], now: datetime) -> Candidate | None:
-    category = normalize_category(market.get("category"))
+    question = _safe_str(market.get("question"))
+    if looks_like_sports_question(question):
+        return None
+
+    category = infer_category(_safe_str(market.get("question")), normalize_category(market.get("category")))
     if category in REJECT_CATEGORIES or category not in ALLOWED_CATEGORIES:
         return None
 
@@ -303,7 +358,7 @@ async def fetch_markets(session: aiohttp.ClientSession) -> list[dict[str, Any]]:
     seen_ids: set[str] = set()
 
     for _ in range(MAX_GAMMA_PAGES):
-        params = {"active": "true", "limit": str(limit), "offset": str(offset)}
+        params = {"active": "true", "closed": "false", "limit": str(limit), "offset": str(offset)}
         async with session.get(GAMMA_URL, params=params, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
             resp.raise_for_status()
             payload = await resp.json()
