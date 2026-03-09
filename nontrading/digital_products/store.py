@@ -6,15 +6,19 @@ import json
 import sqlite3
 from pathlib import Path
 
+from nontrading.models import Account, Lead, Opportunity
+from nontrading.store import RevenueStore
+
 from .embeddings import build_embedding, cosine_similarity
-from .models import DiscoveryRun, NicheCandidate, RankedNiche, SimilarNicheMatch, utc_now
+from .models import CRMSyncSummary, DiscoveryRun, GeneratedLead, NicheCandidate, RankedNiche, SimilarNicheMatch, utc_now
 
 
 class DigitalProductStore:
     """Persistence for repeatable niche discovery runs and rankings."""
 
-    def __init__(self, db_path: str | Path):
+    def __init__(self, db_path: str | Path, revenue_store: RevenueStore | None = None):
         self.db_path = Path(db_path)
+        self.revenue_store = revenue_store
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.initialize()
 
@@ -59,6 +63,8 @@ class DigitalProductStore:
                     demand_value REAL NOT NULL DEFAULT 0,
                     competition_penalty REAL NOT NULL DEFAULT 0,
                     composite_score REAL NOT NULL DEFAULT 0,
+                    audit_opportunity REAL NOT NULL DEFAULT 0,
+                    icp_match_score REAL NOT NULL DEFAULT 0,
                     saturation_band TEXT NOT NULL DEFAULT 'unknown',
                     search_text TEXT NOT NULL DEFAULT '',
                     embedding_json TEXT NOT NULL DEFAULT '[]',
@@ -74,6 +80,23 @@ class DigitalProductStore:
                     ON dp_niche_rankings(marketplace, niche_slug, created_at DESC);
                 """
             )
+            self._ensure_column(conn, "dp_niche_rankings", "audit_opportunity", "REAL NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "dp_niche_rankings", "icp_match_score", "REAL NOT NULL DEFAULT 0")
+
+    @staticmethod
+    def _ensure_column(
+        conn: sqlite3.Connection,
+        table_name: str,
+        column_name: str,
+        ddl: str,
+    ) -> None:
+        existing = {
+            str(row["name"])
+            for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
+        if column_name in existing:
+            return
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl}")
 
     def start_run(self, run: DiscoveryRun) -> DiscoveryRun:
         with self._connect() as conn:
@@ -166,6 +189,8 @@ class DigitalProductStore:
                     demand_value,
                     competition_penalty,
                     composite_score,
+                    audit_opportunity,
+                    icp_match_score,
                     saturation_band,
                     search_text,
                     embedding_json,
@@ -173,7 +198,7 @@ class DigitalProductStore:
                     rank_position,
                     captured_at,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     int(run_id),
@@ -190,6 +215,8 @@ class DigitalProductStore:
                     niche.demand_value,
                     niche.competition_penalty,
                     niche.composite_score,
+                    niche.audit_opportunity,
+                    niche.icp_match_score,
                     niche.saturation_band,
                     candidate.search_text,
                     json.dumps(list(niche.embedding)),
@@ -205,12 +232,102 @@ class DigitalProductStore:
                 composite_score=niche.composite_score,
                 demand_value=niche.demand_value,
                 competition_penalty=niche.competition_penalty,
+                audit_opportunity=niche.audit_opportunity,
+                icp_match_score=niche.icp_match_score,
                 saturation_band=niche.saturation_band,
                 embedding=niche.embedding,
                 id=int(cursor.lastrowid),
                 run_id=run_id,
                 created_at=niche.created_at,
             )
+
+    def sync_to_revenue_store(
+        self,
+        ranked_niches: list[RankedNiche],
+        lead_list: list[GeneratedLead],
+        *,
+        include_synthetic: bool = False,
+    ) -> CRMSyncSummary:
+        if self.revenue_store is None:
+            return CRMSyncSummary()
+
+        leads_processed = 0
+        accounts_processed = 0
+        opportunities_processed = 0
+        ranked_by_slug = {item.candidate.niche_slug: item for item in ranked_niches}
+
+        for generated in lead_list:
+            if generated.synthetic and not include_synthetic:
+                continue
+            lead_metadata = dict(generated.metadata)
+            lead_metadata.update(
+                {
+                    "website_url": generated.website_url,
+                    "domain": generated.domain,
+                    "industry": generated.industry,
+                    "niche_slug": generated.niche_slug,
+                    "niche_title": generated.niche_title,
+                    "marketplace": generated.marketplace,
+                    "synthetic": generated.synthetic,
+                    "source_module": "digital_products",
+                }
+            )
+            self.revenue_store.upsert_lead(
+                Lead(
+                    email=generated.email,
+                    company_name=generated.company_name,
+                    country_code=generated.country_code,
+                    source=generated.source,
+                    explicit_opt_in=generated.explicit_opt_in,
+                    opt_in_recorded_at=generated.opt_in_recorded_at,
+                    metadata=lead_metadata,
+                )
+            )
+            leads_processed += 1
+
+            account, _ = self.revenue_store.upsert_account(
+                Account(
+                    name=generated.company_name,
+                    domain=generated.domain,
+                    industry=generated.industry,
+                    website_url=generated.website_url,
+                    status="researching",
+                    metadata=lead_metadata,
+                )
+            )
+            accounts_processed += 1
+
+            ranked = ranked_by_slug.get(generated.niche_slug)
+            if ranked is None or account.id is None:
+                continue
+
+            opportunity_name = f"{generated.company_name} Website Growth Audit"
+            estimated_value = round(500.0 + (2000.0 * ranked.audit_fit_score), 2)
+            self.revenue_store.upsert_opportunity(
+                Opportunity(
+                    account_id=account.id,
+                    name=opportunity_name,
+                    offer_name="Website Growth Audit",
+                    stage="research",
+                    status="open",
+                    score=ranked.audit_fit_score,
+                    score_breakdown={
+                        "composite_score": ranked.composite_score,
+                        "audit_opportunity": ranked.audit_opportunity,
+                        "icp_match_score": ranked.icp_match_score,
+                    },
+                    estimated_value=estimated_value,
+                    next_action="Review generated website-audit target.",
+                    metadata=lead_metadata,
+                )
+            )
+            opportunities_processed += 1
+
+        return CRMSyncSummary(
+            leads_processed=leads_processed,
+            accounts_processed=accounts_processed,
+            opportunities_processed=opportunities_processed,
+        )
 
     def latest_run(self) -> DiscoveryRun | None:
         with self._connect() as conn:
@@ -291,6 +408,8 @@ class DigitalProductStore:
             composite_score=row["composite_score"],
             demand_value=row["demand_value"],
             competition_penalty=row["competition_penalty"],
+            audit_opportunity=row["audit_opportunity"],
+            icp_match_score=row["icp_match_score"],
             saturation_band=row["saturation_band"],
             embedding=tuple(json.loads(row["embedding_json"])),
             created_at=row["created_at"],

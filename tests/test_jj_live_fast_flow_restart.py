@@ -333,3 +333,73 @@ def test_run_cycle_executes_wallet_signal_in_fast_flow_mode(tmp_path, monkeypatc
     assert captured_orders
     assert captured_orders[0]["market_id"] == "m-crypto"
     assert captured_orders[0]["price"] == 0.42
+
+
+def test_run_cycle_hydrates_recent_fast_markets_when_primary_scan_misses_them(tmp_path, monkeypatch):
+    live = _make_live(tmp_path, markets=[])
+
+    live.wallet_flow_scores_file.write_text(
+        json.dumps({"wallets": {"0xabc": {"address": "0xabc", "activity_score": 80.0}}})
+    )
+    live.wallet_flow_db_file.touch()
+
+    monkeypatch.setattr(
+        jj_live_module,
+        "wallet_flow_get_signals",
+        lambda: [
+            {
+                "market_id": "m-recent",
+                "question": "Bitcoin Up or Down - March 8, 10:15PM-10:20PM ET",
+                "direction": "buy_yes",
+                "market_price": 0.5,
+                "estimated_prob": 0.79,
+                "edge": 0.19,
+                "confidence": 0.79,
+                "reasoning": "Wallet flow consensus",
+                "source": "wallet_flow",
+                "resolution_hours": 0.25,
+                "velocity_score": 120.0,
+            }
+        ],
+    )
+
+    async def _fetch_recent_trade_hydrated_markets():
+        return (
+            [
+                {
+                    "id": "m-recent",
+                    "conditionId": "m-recent",
+                    "question": "Bitcoin Up or Down - March 8, 10:15PM-10:20PM ET",
+                    "outcomePrices": [0.44, 0.56],
+                    "clobTokenIds": ["recent-yes", "recent-no"],
+                    "volume": 750.0,
+                    "liquidity": 300.0,
+                    "endDate": "2026-03-09T03:20:00Z",
+                    "acceptingOrders": True,
+                    "closed": False,
+                }
+            ],
+            {
+                "recent_trades_fetched": 1000,
+                "recent_market_hydrations": 1,
+                "recent_fast_markets_seen": 1,
+            },
+        )
+
+    live._fetch_recent_trade_hydrated_markets = _fetch_recent_trade_hydrated_markets
+
+    captured_orders: list[dict] = []
+
+    async def _place_order(**kwargs):
+        captured_orders.append(kwargs)
+        return True
+
+    live.place_order = _place_order
+
+    summary = asyncio.run(live.run_cycle())
+
+    assert summary["status"] == "ok"
+    assert summary["trades_placed"] == 1
+    assert captured_orders
+    assert captured_orders[0]["market_id"] == "m-recent"
+    assert captured_orders[0]["price"] == 0.44

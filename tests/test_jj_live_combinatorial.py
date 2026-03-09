@@ -58,6 +58,10 @@ class TestJJLiveCombinatorialState(unittest.TestCase):
                 edge=0.12,
                 confidence=0.70,
                 order_id="ord-1",
+                source="llm",
+                source_combo="llm",
+                source_components=["llm"],
+                source_count=1,
             )
             state.record_trade(
                 market_id="mkt-1",
@@ -68,6 +72,10 @@ class TestJJLiveCombinatorialState(unittest.TestCase):
                 edge=0.15,
                 confidence=0.80,
                 order_id="ord-2",
+                source="wallet_flow",
+                source_combo="wallet_flow",
+                source_components=["wallet_flow"],
+                source_count=1,
             )
 
             pos = state.state["open_positions"]["mkt-1"]
@@ -75,6 +83,10 @@ class TestJJLiveCombinatorialState(unittest.TestCase):
             self.assertAlmostEqual(pos["shares"], 2.25)
             self.assertAlmostEqual(pos["entry_price"], 1.0 / 2.25)
             self.assertEqual(pos["order_ids"], ["ord-1", "ord-2"])
+            self.assertEqual(pos["source"], "llm")
+            self.assertEqual(pos["source_combo"], "llm+wallet_flow")
+            self.assertEqual(pos["source_components"], ["llm", "wallet_flow"])
+            self.assertEqual(pos["source_count"], 2)
 
 
 class TestJJLiveCombinatorialDatabase(unittest.TestCase):

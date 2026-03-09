@@ -9,6 +9,7 @@ from hub.elastic.bootstrap import (
     main,
     verify_bootstrap,
 )
+from hub.elastic.specs import build_nontrading_control_plane_spec
 
 
 class FakeElasticClient:
@@ -167,3 +168,12 @@ def test_plan_command_writes_json_file(tmp_path, capsys):
     assert "ilm_policies" in saved
     stdout = json.loads(capsys.readouterr().out)
     assert stdout["settings"]["vector_dims"] == 768
+
+
+def test_nontrading_control_plane_spec_lists_required_dashboards_and_alerts():
+    spec = build_nontrading_control_plane_spec()
+
+    assert "engine_scoreboard_latest" in spec["documents"]
+    assert spec["dashboards"]["checkout_funnel"] == ["execution_event", "cashflow_event"]
+    assert spec["alert_thresholds"]["checkout_webhook_failures"]["threshold"] == 1
+    assert spec["kill_switches"]["per_engine"]["field"] == "kill_switch_active"

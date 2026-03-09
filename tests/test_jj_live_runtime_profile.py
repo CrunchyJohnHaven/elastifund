@@ -87,3 +87,42 @@ def test_compute_calibrated_signal_flips_with_profile_thresholds() -> None:
         for key, original in originals.items():
             _restore_env(key, original)
         jj_live_module._reload_runtime_settings(persist=False)
+
+
+def test_reload_runtime_settings_applies_paper_aggressive_profile() -> None:
+    originals = {
+        "JJ_RUNTIME_PROFILE": os.environ.get("JJ_RUNTIME_PROFILE"),
+        "JJ_YES_THRESHOLD": os.environ.get("JJ_YES_THRESHOLD"),
+        "JJ_NO_THRESHOLD": os.environ.get("JJ_NO_THRESHOLD"),
+    }
+    try:
+        os.environ["JJ_RUNTIME_PROFILE"] = "paper_aggressive"
+        bundle = jj_live_module._reload_runtime_settings(persist=False)
+
+        assert bundle.selected_profile == "paper_aggressive"
+        assert jj_live_module.RUNTIME_EXECUTION_MODE == "shadow"
+        assert jj_live_module.PAPER_TRADING is True
+        assert jj_live_module.ALLOW_ORDER_SUBMISSION is True
+        assert jj_live_module.SCAN_INTERVAL == 120
+        assert jj_live_module.KELLY_FRACTION == 0.25
+        assert jj_live_module.MIN_EDGE == 0.03
+        assert jj_live_module.MIN_CATEGORY_PRIORITY == 0
+        assert jj_live_module.CATEGORY_PRIORITY["crypto"] == 2
+        assert jj_live_module.CATEGORY_PRIORITY["sports"] == 1
+    finally:
+        for key, original in originals.items():
+            _restore_env(key, original)
+        jj_live_module._reload_runtime_settings(persist=False)
+
+
+def test_sum_violation_lane_disabled_for_paper_aggressive_profile() -> None:
+    original = os.environ.get("ENABLE_SUM_VIOLATION")
+    try:
+        os.environ["ENABLE_SUM_VIOLATION"] = "true"
+        assert jj_live_module._sum_violation_lane_enabled("paper_aggressive") is False
+        assert jj_live_module._sum_violation_lane_enabled("shadow_fast_flow") is True
+
+        os.environ["ENABLE_SUM_VIOLATION"] = "false"
+        assert jj_live_module._sum_violation_lane_enabled("shadow_fast_flow") is False
+    finally:
+        _restore_env("ENABLE_SUM_VIOLATION", original)

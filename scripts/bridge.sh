@@ -25,6 +25,8 @@ FYWHEEL_CONFIG="${FLYWHEEL_CONFIG:-$PROJECT_DIR/config/flywheel_runtime.local.js
 FYWHEEL_LATEST="${FLYWHEEL_LATEST:-$PROJECT_DIR/reports/flywheel/latest_sync.json}"
 REMOTE_SERVICE_STATUS="${REMOTE_SERVICE_STATUS:-$PROJECT_DIR/reports/remote_service_status.json}"
 ROOT_TEST_STATUS="${ROOT_TEST_STATUS:-$PROJECT_DIR/reports/root_test_status.json}"
+AUTO_PUSH_GITHUB="${ELASTIFUND_AUTO_PUSH_GITHUB:-false}"
+AUTO_PUSH_MESSAGE_PREFIX="${ELASTIFUND_AUTO_PUSH_MESSAGE_PREFIX:-auto: remote cycle publish}"
 
 # ── Find SSH key ──
 KEY="${ELASTIFUND_BRIDGE_KEY:-}"
@@ -167,6 +169,28 @@ write_status_report() {
     printf '%s\n' "$report_output"
 }
 
+auto_push_github() {
+    case "${AUTO_PUSH_GITHUB}" in
+        1|true|TRUE|yes|YES)
+            ;;
+        *)
+            echo "[GIT] Skipped (ELASTIFUND_AUTO_PUSH_GITHUB disabled)."
+            return 0
+            ;;
+    esac
+
+    echo "[GIT] Publishing material cycle updates to GitHub..."
+    local push_output
+    if ! push_output=$("$PYTHON_BIN" "$PROJECT_DIR/scripts/self_push.py" \
+        --repo-root "$PROJECT_DIR" \
+        --message "${AUTO_PUSH_MESSAGE_PREFIX} $(date -u +%Y-%m-%dT%H:%M:%SZ)" 2>&1); then
+        printf '%s\n' "$push_output"
+        return 1
+    fi
+
+    printf '%s\n' "$push_output"
+}
+
 run_local_flywheel() {
     if ! $RUN_FLYWHEEL; then
         echo "[FLYWHEEL] Skipped (--skip-flywheel)."
@@ -268,6 +292,7 @@ do_sync() {
 
     capture_remote_service_status
     write_status_report
+    auto_push_github
 
     # ── Quick status ──
     echo "[STATUS] Current bot state:"

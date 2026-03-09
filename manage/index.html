@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Elastifund / Manage | Public-safe operator surface stub</title>
+  <meta name="description" content="Public-safe preview of the operator surface for run ledgers, approval queues, deployment checks, and change review.">
+  <link rel="stylesheet" href="/site.css">
+  <script src="/site.js" defer></script>
+</head>
+<body data-page="manage">
+  <div class="page-wrap">
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="/">
+          <span class="brand-mark"></span>
+          <span class="brand-text">
+            <span class="brand-name">Elastifund</span>
+            <span class="brand-subtitle">Operator surface preview</span>
+          </span>
+        </a>
+        <nav class="header-nav" aria-label="Primary">
+          <a class="nav-link" data-page="home" href="/">Home</a>
+          <a class="nav-link" data-page="elastic" href="/elastic/">Elastic</a>
+          <a class="nav-link" data-page="develop" href="/develop/">Develop</a>
+          <a class="nav-link" data-page="trading" href="/leaderboards/trading/">Trading</a>
+          <a class="nav-link" data-page="worker" href="/leaderboards/worker/">Worker</a>
+        </nav>
+        <div class="header-actions">
+          <span class="status-pill" data-role="status-pill">runtime syncing</span>
+          <a class="header-link" href="https://github.com/CrunchyJohnHaven/elastifund" target="_blank" rel="noopener">GitHub</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="route-hero">
+        <div class="container route-hero-grid">
+          <div>
+            <span class="eyebrow">Manage</span>
+            <h1>A public-safe preview of the operator surface, not the private control plane itself.</h1>
+            <p class="route-copy">
+              The real `/manage` surface should answer four questions fast: what your instance ran, what it changed, what is waiting for approval, and what is blocked. This public stub shows the jobs that surface will own without pretending it is an authenticated dashboard yet.
+            </p>
+            <div class="cta-row">
+              <a class="button button-primary" href="/develop/">Follow the contributor path</a>
+              <a class="button button-secondary" href="/#status">Read the homepage status board</a>
+            </div>
+          </div>
+          <aside class="status-panel">
+            <div class="status-panel-header">
+              <div>
+                <div class="panel-kicker">Current operator facts</div>
+                <h3>What the public surface can say today</h3>
+              </div>
+              <span class="tag warn"><span data-fill="launch_posture"></span></span>
+            </div>
+            <dl class="info-list">
+              <div class="info-row">
+                <dt>Service state</dt>
+                <dd><span data-fill="service_surface"></span></dd>
+              </div>
+              <div class="info-row">
+                <dt>Launch blockers</dt>
+                <dd><span data-fill="launch_reasons"></span></dd>
+              </div>
+              <div class="info-row">
+                <dt>Deploy blocker</dt>
+                <dd><span data-fill="deploy_blocker"></span></dd>
+              </div>
+              <div class="info-row">
+                <dt>Next action</dt>
+                <dd><span data-fill="next_action"></span></dd>
+              </div>
+            </dl>
+          </aside>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">Planned panes</div>
+            <h2>What the operator surface is supposed to make legible.</h2>
+          </div>
+          <div class="surface-grid">
+            <article class="surface-card">
+              <div class="tag good">Run ledger</div>
+              <h3>What ran, when, and with which evidence artifacts.</h3>
+              <p class="surface-copy">Every pass should write a small, reviewable record instead of leaving operators to reconstruct reality from shell history.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag good">Approval queue</div>
+              <h3>What needs a human before it can move.</h3>
+              <p class="surface-copy">Capital transitions, outbound commercial actions, and ambiguous deploy choices stay above the loop.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag good">Deployment state</div>
+              <h3>Bundle validation, service posture, and drift.</h3>
+              <p class="surface-copy">The surface should make it obvious when a service is active, when launch is still blocked, and which bundle checks are failing.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag good">Change review</div>
+              <h3>What improved, what regressed, and what remains unverified.</h3>
+              <p class="surface-copy">The point is not activity. The point is to keep validated improvements legible enough to trust.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container split-grid">
+          <article class="card">
+            <div class="card-kicker">Current public-safe summary</div>
+            <h3>Trading runtime</h3>
+            <p class="card-copy"><span data-fill="tracked_capital"></span> tracked, <span data-fill="deployed_capital"></span> deployed, <span data-fill="live_trades"></span> live trades after <span data-fill="runtime_cycles"></span> cycles, and the latest fast-market verdict still says <span data-fill="fast_verdict"></span>.</p>
+          </article>
+          <article class="card">
+            <div class="card-kicker">Current public-safe summary</div>
+            <h3>Worker runtime</h3>
+            <p class="card-copy">JJ-N is still a Phase 0 surface. The public worker board remains definition-first because honest metrics matter more than pretending the revenue loop already exists.</p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container">
+        <div class="footer-panel">
+          <div>
+            <div class="footer-kicker">Manage route</div>
+            <h3>Make operations legible before you make them automatic.</h3>
+            <p class="footer-meta">Runtime snapshot generated <span data-fill="generated_utc"></span>. Current service posture: <span data-fill="service_surface"></span>.</p>
+          </div>
+          <div class="footer-links">
+            <a href="/">Home</a>
+            <a href="/elastic/">Elastic</a>
+            <a href="/develop/">Develop</a>
+            <a href="/diary/">Diary</a>
+            <a href="/roadmap/">Roadmap</a>
+            <a href="/docs/">Docs</a>
+          </div>
+          <div class="footer-meta">
+            <div>Public-safe stub only.</div>
+            <div>&copy; <span data-fill="year"></span> Elastifund.</div>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

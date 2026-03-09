@@ -18,14 +18,118 @@ PHASE0_EVENT_TYPES = {
     "meeting_booked",
     "proposal_sent",
     "outcome_recorded",
+    "cycle_complete",
 }
 
 DEFAULT_EVENTS_PATH = Path(__file__).with_name("events.jsonl")
 UTC = timezone.utc
+DEFAULT_ECS_VERSION = "8.11.0"
+NONTRADING_EVENT_DATASET = "elastifund.nontrading"
+EVENT_METADATA = {
+    "account_researched": {
+        "engine": "account_intelligence",
+        "pipeline_stage": "research",
+        "event_alias": "jjn.account.researched",
+    },
+    "message_sent": {
+        "engine": "outreach",
+        "pipeline_stage": "outreach",
+        "event_alias": "jjn.outreach.sent",
+    },
+    "reply_received": {
+        "engine": "interaction",
+        "pipeline_stage": "interaction",
+        "event_alias": "jjn.interaction.reply_received",
+    },
+    "meeting_booked": {
+        "engine": "interaction",
+        "pipeline_stage": "interaction",
+        "event_alias": "jjn.interaction.meeting_booked",
+    },
+    "proposal_sent": {
+        "engine": "proposal",
+        "pipeline_stage": "proposal",
+        "event_alias": "jjn.proposal.sent",
+    },
+    "outcome_recorded": {
+        "engine": "learning",
+        "pipeline_stage": "learning",
+        "event_alias": "jjn.outcome.recorded",
+    },
+}
 
 
 def utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
+
+
+def _event_metadata(event_type: str, payload: Mapping[str, Any]) -> dict[str, str]:
+    configured = EVENT_METADATA.get(event_type, {})
+    engine = str(payload.get("engine") or configured.get("engine") or "unknown")
+    pipeline_stage = str(payload.get("pipeline_stage") or payload.get("stage") or configured.get("pipeline_stage") or engine)
+    event_alias = str(payload.get("event_alias") or configured.get("event_alias") or event_type)
+    return {
+        "engine": engine,
+        "pipeline_stage": pipeline_stage,
+        "event_alias": event_alias,
+    }
+
+
+def build_ecs_document(
+    *,
+    event_type: str,
+    timestamp: str,
+    status: str,
+    worker_name: str,
+    environment: str,
+    payload: Mapping[str, Any],
+    ecs_version: str = DEFAULT_ECS_VERSION,
+    entity_type: str | None = None,
+    entity_id: str = "",
+) -> dict[str, Any]:
+    entity_id_value = str(entity_id)
+    payload_dict = dict(payload)
+    metadata = _event_metadata(event_type, payload_dict)
+    document: dict[str, Any] = {
+        "@timestamp": timestamp,
+        "ecs": {"version": ecs_version},
+        "event": {
+            "kind": "event",
+            "category": ["agent"],
+            "type": ["info"],
+            "action": event_type,
+            "outcome": status,
+            "dataset": NONTRADING_EVENT_DATASET,
+        },
+        "service": {
+            "name": worker_name,
+            "type": "nontrading",
+        },
+        "labels": {
+            "environment": environment,
+            "engine": metadata["engine"],
+            "pipeline_stage": metadata["pipeline_stage"],
+        },
+        "elastifund": {
+            "worker_family": "nontrading",
+            "worker_name": worker_name,
+            "event_type": event_type,
+            "event_alias": metadata["event_alias"],
+            "engine": metadata["engine"],
+            "pipeline_stage": metadata["pipeline_stage"],
+            "payload": payload_dict,
+        },
+        "payload": payload_dict,
+    }
+    if entity_type:
+        document["entity"] = {"type": entity_type}
+        if entity_id_value:
+            document["entity"]["id"] = entity_id_value
+    elif entity_id_value:
+        document["entity"] = {"id": entity_id_value}
+    if entity_id_value:
+        document["related"] = {"id": [entity_id_value]}
+    return document
 
 
 class NonTradingTelemetry:
@@ -63,24 +167,16 @@ class NonTradingTelemetry:
         )
 
     def build_document(self, event: TelemetryEvent) -> dict[str, Any]:
-        return {
-            "@timestamp": event.created_at,
-            "event": {
-                "action": event.event_type,
-                "category": "nontrading",
-                "status": event.status,
-            },
-            "elastifund": {
-                "worker_family": "nontrading",
-                "worker_name": self.system_name,
-                "environment": event.payload.get("environment", self.environment),
-            },
-            "entity": {
-                "type": event.entity_type,
-                "id": event.entity_id,
-            },
-            "payload": event.payload,
-        }
+        return build_ecs_document(
+            event_type=event.event_type,
+            timestamp=event.created_at or utc_now(),
+            status=event.status,
+            worker_name=str(event.payload.get("system_name", self.system_name)),
+            environment=str(event.payload.get("environment", self.environment)),
+            payload=event.payload,
+            entity_type=event.entity_type,
+            entity_id=event.entity_id,
+        )
 
     def account_researched(self, account: Account, *, source: str, notes: str = "") -> TelemetryEvent:
         return self.emit(
@@ -165,6 +261,20 @@ class NonTradingTelemetry:
             },
         )
 
+    def cycle_completed(
+        self,
+        report: Mapping[str, Any],
+        *,
+        status: str = "recorded",
+    ) -> TelemetryEvent:
+        return self.emit(
+            event_type="cycle_complete",
+            entity_type="pipeline",
+            entity_id=str(report.get("cycle_id", "revenue_pipeline")),
+            payload={"report": dict(report)},
+            status=status,
+        )
+
 
 class TelemetryBridge:
     """Write Elastic-compatible Phase 0 events to a local JSONL sink."""
@@ -175,7 +285,7 @@ class TelemetryBridge:
         *,
         worker_name: str = "jj-n",
         environment: str = "paper",
-        ecs_version: str = "8.11.0",
+        ecs_version: str = DEFAULT_ECS_VERSION,
     ):
         self.output_path = Path(output_path) if output_path is not None else DEFAULT_EVENTS_PATH
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -190,48 +300,42 @@ class TelemetryBridge:
         return document
 
     def format_event(self, event: Mapping[str, Any]) -> dict[str, Any]:
+        if self.is_ecs_compatible(event):
+            return dict(event)
         event_type = str(event.get("event_type", "unknown"))
         timestamp = str(event.get("timestamp") or event.get("@timestamp") or utc_now())
         status = str(event.get("status") or event.get("result") or "recorded")
         entity_id = str(event.get("id") or event.get("interaction_id") or event.get("lead_id") or "")
-
-        document: dict[str, Any] = {
-            "@timestamp": timestamp,
-            "ecs": {"version": self.ecs_version},
-            "event": {
-                "kind": "event",
-                "category": ["agent"],
-                "type": ["info"],
-                "action": event_type,
-                "outcome": status,
-            },
-            "service": {
-                "name": self.worker_name,
-                "type": "nontrading",
-            },
-            "labels": {
-                "environment": self.environment,
-            },
-            "elastifund": {
-                "worker_family": "nontrading",
-                "worker_name": self.worker_name,
-                "payload": dict(event),
-            },
-        }
-        if entity_id:
-            document["related"] = {"id": [entity_id]}
-        return document
+        entity_type = event.get("entity_type")
+        return build_ecs_document(
+            event_type=event_type,
+            timestamp=timestamp,
+            status=status,
+            worker_name=self.worker_name,
+            environment=self.environment,
+            payload=event,
+            ecs_version=self.ecs_version,
+            entity_type=str(entity_type) if entity_type else None,
+            entity_id=entity_id,
+        )
 
     @staticmethod
     def is_ecs_compatible(document: Mapping[str, Any]) -> bool:
         event = document.get("event")
         ecs = document.get("ecs")
+        service = document.get("service")
+        labels = document.get("labels")
         return bool(
             isinstance(document.get("@timestamp"), str)
             and isinstance(event, Mapping)
             and isinstance(ecs, Mapping)
+            and isinstance(service, Mapping)
+            and isinstance(labels, Mapping)
             and "action" in event
+            and "dataset" in event
             and "version" in ecs
+            and "name" in service
+            and "environment" in labels
         )
 
     def read_all(self) -> list[dict[str, Any]]:

@@ -15,6 +15,16 @@ import uuid
 from sqlalchemy.orm import Session
 
 from data_layer import crud
+from flywheel.improvement_exchange import build_knowledge_pack_leaderboard_entry
+from hub.elastic.specs import (
+    build_nontrading_control_plane_spec,
+    DEFAULT_CHECKOUT_WEBHOOK_FAILURE_THRESHOLD,
+    DEFAULT_COMPLAINT_RATE_ALERT_THRESHOLD,
+    DEFAULT_FULFILLMENT_STALL_MINUTES,
+    DEFAULT_MISSING_WORKER_ACTIVITY_MINUTES,
+    DEFAULT_NEGATIVE_ROI_THRESHOLD,
+    DEFAULT_REFUND_RATE_ALERT_THRESHOLD,
+)
 from orchestration.store import AllocatorStore, DEFAULT_DB_PATH as DEFAULT_ALLOCATOR_DB_PATH
 
 try:
@@ -28,6 +38,7 @@ DEFAULT_REVENUE_DB_PATH = Path("data") / "revenue_agent.db"
 DEFAULT_GUARANTEED_DOLLAR_AUDIT_PATH = Path("reports") / "guaranteed_dollar_audit.json"
 DEFAULT_B1_TEMPLATE_AUDIT_PATH = Path("reports") / "b1_template_audit.json"
 DEFAULT_RESEARCH_METRICS_GLOB = "reports/run_*_metrics.json"
+DEFAULT_AUDIT_OPS_PATH = Path("reports") / "revenue_audit_ops.json"
 DEFAULT_PHASE6_OUTPUT_DIR = Path("deploy") / "kibana" / "phase6"
 _UUID_NAMESPACE = uuid.UUID("c11f62ba-fd33-4d8a-b4d2-4d4e45a2cda6")
 
@@ -40,6 +51,7 @@ def build_phase6_dashboard_pack(
     guaranteed_dollar_audit_path: str | Path = DEFAULT_GUARANTEED_DOLLAR_AUDIT_PATH,
     b1_template_audit_path: str | Path = DEFAULT_B1_TEMPLATE_AUDIT_PATH,
     research_metrics_glob: str = DEFAULT_RESEARCH_METRICS_GLOB,
+    audit_ops_path: str | Path = DEFAULT_AUDIT_OPS_PATH,
 ) -> dict[str, Any]:
     """Build the full Phase 6 dashboard pack from repo state."""
 
@@ -62,6 +74,12 @@ def build_phase6_dashboard_pack(
     guaranteed_dollar_summary = _load_guaranteed_dollar_summary(guaranteed_dollar_audit_path)
     b1_template_summary = _load_b1_template_summary(b1_template_audit_path)
     regime_summary = _load_market_regime_summary(research_metrics_glob)
+    audit_ops_summary = _load_audit_ops_summary(
+        audit_ops_path,
+        allocator_summary=allocator_summary,
+        revenue_summary=revenue_summary,
+        peer_bundles=peer_bundles,
+    )
 
     collective_health = _build_collective_health(
         strategy_rows=strategy_rows,
@@ -88,6 +106,8 @@ def build_phase6_dashboard_pack(
         strategy_rows=strategy_rows,
         snapshots=snapshots,
         revenue_summary=revenue_summary,
+        allocator_summary=allocator_summary,
+        audit_ops_summary=audit_ops_summary,
     )
 
     model = {
@@ -98,12 +118,14 @@ def build_phase6_dashboard_pack(
             "guaranteed_dollar_audit_path": str(guaranteed_dollar_audit_path),
             "b1_template_audit_path": str(b1_template_audit_path),
             "research_metrics_glob": research_metrics_glob,
+            "audit_ops_path": str(audit_ops_path),
         },
         "collective_health": collective_health,
         "leaderboard": leaderboard,
         "strategy_diversity": strategy_diversity,
         "market_regime": regime_summary,
         "knowledge_flow": knowledge_flow,
+        "audit_operations": audit_ops_summary,
         "charitable_impact": charitable_impact,
         "alert_rules": alert_rules,
     }
@@ -458,6 +480,7 @@ def _build_knowledge_flow(
     imported_bulletins = sum(1 for row in cycles if str(row.cycle_key).startswith("bulletin-"))
     imported_improvements = sum(1 for row in peer_bundles if row.direction == "imported")
     exported_improvements = sum(1 for row in peer_bundles if row.direction == "exported")
+    knowledge_pack_rows = _build_knowledge_pack_rows(peer_bundles)
 
     return {
         "cycles_total": len(cycles),
@@ -467,6 +490,9 @@ def _build_knowledge_flow(
         "imported_bulletins": imported_bulletins,
         "imported_peer_improvements": imported_improvements,
         "exported_peer_improvements": exported_improvements,
+        "imported_knowledge_packs": sum(1 for row in knowledge_pack_rows if row["direction"] == "imported"),
+        "exported_knowledge_packs": sum(1 for row in knowledge_pack_rows if row["direction"] == "exported"),
+        "knowledge_pack_leaderboard": knowledge_pack_rows,
         "allocator": allocator_summary,
         "revenue_agent": revenue_summary,
         "top_open_tasks": [
@@ -478,6 +504,34 @@ def _build_knowledge_flow(
             for row in sorted(open_tasks, key=lambda item: (item.priority, item.created_at))[:5]
         ],
     }
+
+
+def _build_knowledge_pack_rows(peer_bundles: list[Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in peer_bundles:
+        raw_bundle = row.raw_bundle or {}
+        if raw_bundle.get("bundle_type") != "knowledge_pack":
+            continue
+        entry = raw_bundle.get("leaderboard_entry") or build_knowledge_pack_leaderboard_entry(
+            raw_bundle,
+            verification_status=row.verification_status,
+        )
+        rows.append(
+            {
+                **entry,
+                "bundle_id": row.bundle_id,
+                "direction": row.direction,
+                "status": row.status,
+                "verification_status": row.verification_status,
+            }
+        )
+    rows.sort(
+        key=lambda item: (item["score_after_penalty"], item["expected_net_cash_30d"]),
+        reverse=True,
+    )
+    for rank, row in enumerate(rows, start=1):
+        row["rank"] = rank
+    return rows[:10]
 
 
 def _build_charitable_impact(strategy_rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -512,6 +566,8 @@ def _build_alert_rules(
     strategy_rows: list[dict[str, Any]],
     snapshots: list[Any],
     revenue_summary: dict[str, Any],
+    allocator_summary: dict[str, Any],
+    audit_ops_summary: dict[str, Any],
 ) -> dict[str, Any]:
     by_date: dict[str, float] = defaultdict(float)
     for snapshot in snapshots:
@@ -541,11 +597,43 @@ def _build_alert_rules(
     if revenue_summary.get("configured") and (heartbeat_age is None or heartbeat_age > 60.0):
         offline_affected.append("non_trading:revenue_agent")
 
+    schema_thresholds = audit_ops_summary["schema_contract"]["alert_thresholds"]
+    checkout_webhook_failures = audit_ops_summary["checkout_funnel"].get("webhook_failures")
+    fulfillment_oldest = audit_ops_summary["fulfillment"].get("oldest_inflight_age_minutes")
+    fulfillment_stalled = audit_ops_summary["fulfillment"].get("stalled")
+    refund_rate = audit_ops_summary["refunds_and_churn"].get("refund_rate")
+    complaint_rate = revenue_summary.get("complaint_rate")
+    outbound_enabled = bool(audit_ops_summary.get("outbound_follow_up_enabled"))
+
+    missing_workers = [
+        row["engine_name"]
+        for row in audit_ops_summary.get("engines", [])
+        if row.get("heartbeat_age_minutes") is None
+        or float(row.get("heartbeat_age_minutes") or 0.0) >= DEFAULT_MISSING_WORKER_ACTIVITY_MINUTES
+    ]
+
+    negative_roi_entities = []
+    has_negative_roi_data = False
+    for row in audit_ops_summary.get("engines", []):
+        roi = row.get("net_roi_30d")
+        if roi is not None:
+            has_negative_roi_data = True
+            if float(roi) < DEFAULT_NEGATIVE_ROI_THRESHOLD:
+                negative_roi_entities.append(row["engine_name"])
+    non_trading_stats = (allocator_summary.get("arm_stats") or {}).get("non_trading_agent")
+    if isinstance(non_trading_stats, dict):
+        avg_roi = _float_or_none(non_trading_stats.get("avg_roi"))
+        if avg_roi is not None:
+            has_negative_roi_data = True
+            if avg_roi < DEFAULT_NEGATIVE_ROI_THRESHOLD:
+                negative_roi_entities.append("allocator:non_trading_agent")
+
     return {
         "rules": [
             {
                 "id": "collective-revenue-drop-gt-20pct",
                 "name": "Collective revenue drop >20%",
+                "action": "Review the latest strategy snapshots before widening allocation.",
                 "threshold_pct": -20.0,
                 "status": revenue_status,
                 "current_change_pct": None if revenue_change_pct is None else round(revenue_change_pct, 2),
@@ -556,6 +644,7 @@ def _build_alert_rules(
             {
                 "id": "drawdown-gt-15pct",
                 "name": "Max drawdown >15%",
+                "action": "Freeze promotion and inspect kill-rule coverage for the affected strategy.",
                 "threshold_pct": 15.0,
                 "status": "firing" if drawdown_affected else "ok",
                 "affected_agents": drawdown_affected,
@@ -563,9 +652,89 @@ def _build_alert_rules(
             {
                 "id": "agent-offline-gt-1h",
                 "name": "Agent offline >1 hour",
+                "action": "Check worker health and confirm the lane is intentionally paused.",
                 "threshold_minutes": 60.0,
                 "status": "firing" if offline_affected else "ok",
                 "affected_agents": offline_affected,
+            },
+            {
+                "id": "checkout-webhook-failures",
+                "name": "Checkout webhook failures",
+                "action": "Inspect webhook delivery, then pause new checkout intake until retries succeed.",
+                "threshold_count": DEFAULT_CHECKOUT_WEBHOOK_FAILURE_THRESHOLD,
+                "status": (
+                    "disabled"
+                    if checkout_webhook_failures is None
+                    else "firing"
+                    if checkout_webhook_failures >= DEFAULT_CHECKOUT_WEBHOOK_FAILURE_THRESHOLD
+                    else "ok"
+                ),
+                "current_count": checkout_webhook_failures,
+                "schema_field": schema_thresholds["checkout_webhook_failures"]["field"],
+            },
+            {
+                "id": "fulfillment-stalls",
+                "name": "Fulfillment stalls",
+                "action": "Drain or requeue stuck fulfillment jobs before accepting more paid work.",
+                "threshold_minutes": DEFAULT_FULFILLMENT_STALL_MINUTES,
+                "status": (
+                    "disabled"
+                    if fulfillment_oldest is None and fulfillment_stalled is None
+                    else "firing"
+                    if (fulfillment_stalled or 0) > 0
+                    or (fulfillment_oldest is not None and fulfillment_oldest >= DEFAULT_FULFILLMENT_STALL_MINUTES)
+                    else "ok"
+                ),
+                "current_value": fulfillment_oldest if fulfillment_oldest is not None else fulfillment_stalled,
+                "schema_field": schema_thresholds["fulfillment_stalls"]["field"],
+            },
+            {
+                "id": "refund-spikes",
+                "name": "Refund spikes",
+                "action": "Review qualification and delivery quality before scaling the audit offer.",
+                "threshold_pct": DEFAULT_REFUND_RATE_ALERT_THRESHOLD * 100.0,
+                "status": (
+                    "disabled"
+                    if refund_rate is None
+                    else "firing"
+                    if refund_rate >= DEFAULT_REFUND_RATE_ALERT_THRESHOLD
+                    else "ok"
+                ),
+                "current_change_pct": None if refund_rate is None else round(refund_rate * 100.0, 2),
+                "schema_field": schema_thresholds["refund_spikes"]["field"],
+            },
+            {
+                "id": "complaint-spikes",
+                "name": "Complaint spikes",
+                "action": "Disable outbound follow-up and inspect send provenance before resuming.",
+                "threshold_pct": DEFAULT_COMPLAINT_RATE_ALERT_THRESHOLD * 100.0,
+                "status": (
+                    "disabled"
+                    if not outbound_enabled or complaint_rate is None
+                    else "firing"
+                    if complaint_rate >= DEFAULT_COMPLAINT_RATE_ALERT_THRESHOLD
+                    else "ok"
+                ),
+                "current_change_pct": None if complaint_rate is None else round(complaint_rate * 100.0, 4),
+                "schema_field": schema_thresholds["complaint_spikes"]["field"],
+            },
+            {
+                "id": "missing-worker-activity",
+                "name": "Missing worker activity",
+                "action": "Confirm the engine heartbeat path or set the engine kill switch if it is intentionally offline.",
+                "threshold_minutes": DEFAULT_MISSING_WORKER_ACTIVITY_MINUTES,
+                "status": "disabled" if not audit_ops_summary.get("engines") else "firing" if missing_workers else "ok",
+                "affected_agents": missing_workers,
+                "schema_field": schema_thresholds["missing_worker_activity"]["field"],
+            },
+            {
+                "id": "negative-roi-regime",
+                "name": "Negative ROI regime",
+                "action": "Reduce non-trading allocation until ROI recovers above zero.",
+                "threshold_pct": DEFAULT_NEGATIVE_ROI_THRESHOLD,
+                "status": "disabled" if not has_negative_roi_data else "firing" if negative_roi_entities else "ok",
+                "affected_agents": negative_roi_entities,
+                "schema_field": schema_thresholds["negative_roi_regimes"]["field"],
             },
         ]
     }
@@ -616,6 +785,25 @@ def _load_revenue_summary(path: str | Path) -> dict[str, Any]:
     status_snapshot = store.status_snapshot()
     outbox_messages = store.list_outbox_messages()
     outbox_status = Counter(message.status for message in outbox_messages)
+    sends_today = store.count_total_sends_today()
+    complaint_events = store.count_send_events_today("complaint")
+    bounce_events = store.count_send_events_today("bounce")
+    complaint_rate = None if sends_today <= 0 else complaint_events / sends_today
+    bounce_rate = None if sends_today <= 0 else bounce_events / sends_today
+    engine_states = [
+        {
+            "engine_name": row.engine_name,
+            "engine_family": row.engine_family,
+            "status": row.status,
+            "run_mode": row.run_mode,
+            "kill_switch_active": row.kill_switch_active,
+            "kill_reason": row.kill_reason,
+            "heartbeat_age_minutes": _age_minutes(_parse_optional_iso(row.last_heartbeat_at)),
+            "event_age_minutes": _age_minutes(_parse_optional_iso(row.last_event_at)),
+            "metadata": row.metadata,
+        }
+        for row in store.list_engine_states()
+    ]
     return {
         "configured": True,
         "db_path": str(db_path),
@@ -627,8 +815,109 @@ def _load_revenue_summary(path: str | Path) -> dict[str, Any]:
         "deliverability_status": str(status_snapshot.get("deliverability_status", "unknown")),
         "heartbeat_age_minutes": _age_minutes(_parse_optional_iso(state.last_heartbeat_at)),
         "outbox_status_counts": dict(sorted(outbox_status.items())),
-        "sends_today": store.count_total_sends_today(),
+        "sends_today": sends_today,
         "unsubscribes_today": store.count_send_events_today("unsubscribe"),
+        "complaints_today": complaint_events,
+        "bounces_today": bounce_events,
+        "complaint_rate": complaint_rate,
+        "bounce_rate": bounce_rate,
+        "engine_states": engine_states,
+    }
+
+
+def _load_audit_ops_summary(
+    path: str | Path,
+    *,
+    allocator_summary: dict[str, Any],
+    revenue_summary: dict[str, Any],
+    peer_bundles: list[Any],
+) -> dict[str, Any]:
+    schema_contract = build_nontrading_control_plane_spec()
+    payload = _load_json(Path(path), default={})
+    payload = payload if isinstance(payload, dict) else {}
+    configured = bool(payload)
+    engine_rows = payload.get("engines") if isinstance(payload.get("engines"), list) else []
+    if not engine_rows:
+        engine_rows = revenue_summary.get("engine_states", [])
+    engines = []
+    for row in engine_rows:
+        if not isinstance(row, dict):
+            continue
+        metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+        engines.append(
+            {
+                "engine_name": str(row.get("engine_name", "unknown")),
+                "engine_family": str(row.get("engine_family", "non_trading")),
+                "status": str(row.get("status", "unknown")),
+                "run_mode": str(row.get("run_mode", "unknown")),
+                "kill_switch_active": bool(row.get("kill_switch_active", False)),
+                "kill_reason": str(row.get("kill_reason", "")),
+                "heartbeat_age_minutes": _float_or_none(row.get("heartbeat_age_minutes")),
+                "event_age_minutes": _float_or_none(row.get("event_age_minutes")),
+                "opportunities_discovered": int(metadata.get("opportunities_discovered") or metadata.get("discovered") or 0),
+                "qualified_prospects": int(metadata.get("qualified_prospects") or metadata.get("qualified") or 0),
+                "payments_collected": int(metadata.get("payments_collected") or metadata.get("payments_successful") or 0),
+                "refund_rate": _float_or_none(metadata.get("refund_rate")),
+                "net_roi_30d": _float_or_none(metadata.get("net_roi_30d")),
+                "knowledge_packs_published": int(metadata.get("knowledge_packs_published") or 0),
+            }
+        )
+
+    prospect_pipeline_payload = payload.get("prospect_pipeline") if isinstance(payload.get("prospect_pipeline"), dict) else {}
+    checkout_payload = payload.get("checkout_funnel") if isinstance(payload.get("checkout_funnel"), dict) else {}
+    fulfillment_payload = payload.get("fulfillment") if isinstance(payload.get("fulfillment"), dict) else {}
+    refunds_payload = payload.get("refunds_and_churn") if isinstance(payload.get("refunds_and_churn"), dict) else {}
+    knowledge_payload = payload.get("knowledge_packs") if isinstance(payload.get("knowledge_packs"), dict) else {}
+
+    return {
+        "configured": configured,
+        "report_path": str(path),
+        "schema_contract": schema_contract,
+        "engines": engines,
+        "prospect_pipeline": {
+            "discovered": int(prospect_pipeline_payload.get("discovered") or revenue_summary.get("leads", 0)),
+            "profiled": _float_or_none(prospect_pipeline_payload.get("profiled")),
+            "scored": _float_or_none(prospect_pipeline_payload.get("scored")),
+            "qualified": _float_or_none(prospect_pipeline_payload.get("qualified")),
+            "backlog": _float_or_none(prospect_pipeline_payload.get("backlog")),
+        },
+        "checkout_funnel": {
+            "sessions_created": _float_or_none(checkout_payload.get("sessions_created")),
+            "sessions_completed": _float_or_none(checkout_payload.get("sessions_completed")),
+            "payments_collected": _float_or_none(checkout_payload.get("payments_collected")),
+            "webhook_failures": _float_or_none(checkout_payload.get("webhook_failures")),
+            "avg_order_value_usd": _float_or_none(checkout_payload.get("avg_order_value_usd")),
+        },
+        "fulfillment": {
+            "queued": _float_or_none(fulfillment_payload.get("queued")),
+            "running": _float_or_none(fulfillment_payload.get("running")),
+            "stalled": _float_or_none(fulfillment_payload.get("stalled")),
+            "delivered": _float_or_none(fulfillment_payload.get("delivered")),
+            "oldest_inflight_age_minutes": _float_or_none(fulfillment_payload.get("oldest_inflight_age_minutes")),
+            "avg_latency_minutes": _float_or_none(fulfillment_payload.get("avg_latency_minutes")),
+        },
+        "refunds_and_churn": {
+            "refunds": _float_or_none(refunds_payload.get("refunds")),
+            "refund_rate": _float_or_none(refunds_payload.get("refund_rate")),
+            "chargebacks": _float_or_none(refunds_payload.get("chargebacks")),
+            "active_subscriptions": _float_or_none(refunds_payload.get("active_subscriptions")),
+            "churned_subscriptions": _float_or_none(refunds_payload.get("churned_subscriptions")),
+            "churn_rate": _float_or_none(refunds_payload.get("churn_rate")),
+            "net_roi_30d": _float_or_none(refunds_payload.get("net_roi_30d")),
+        },
+        "knowledge_pack_activity": {
+            "published": int(knowledge_payload.get("published") or 0),
+            "imports": int(knowledge_payload.get("imports") or sum(1 for row in peer_bundles if row.direction == "imported")),
+            "exports": int(knowledge_payload.get("exports") or sum(1 for row in peer_bundles if row.direction == "exported")),
+            "verify_failures": int(knowledge_payload.get("verify_failures") or 0),
+            "leaderboard_updates": int(knowledge_payload.get("leaderboard_updates") or 0),
+        },
+        "allocator": allocator_summary,
+        "outbound_follow_up_enabled": bool(
+            payload.get("outbound_follow_up_enabled")
+            if "outbound_follow_up_enabled" in payload
+            else revenue_summary.get("sends_today", 0) > 0
+        ),
     }
 
 
@@ -751,6 +1040,41 @@ def _build_dashboard_specs(pack: dict[str, Any]) -> list[dict[str, str]]:
             "markdown": _render_knowledge_flow_markdown(pack),
         },
         {
+            "title": "Audit Engine Performance",
+            "description": "Per-engine heartbeat, run mode, kill-switch state, and net ROI posture.",
+            "markdown": _render_engine_performance_markdown(pack),
+        },
+        {
+            "title": "Prospect Pipeline",
+            "description": "Discovery, profiling, scoring, and qualification flow for the audit engine.",
+            "markdown": _render_prospect_pipeline_markdown(pack),
+        },
+        {
+            "title": "Checkout Funnel",
+            "description": "Hosted-checkout creation, completion, payment capture, and webhook integrity.",
+            "markdown": _render_checkout_funnel_markdown(pack),
+        },
+        {
+            "title": "Fulfillment Status",
+            "description": "Queue health, delivery latency, and stalled fulfillment detection.",
+            "markdown": _render_fulfillment_status_markdown(pack),
+        },
+        {
+            "title": "Refunds and Churn",
+            "description": "Refund pressure, subscription churn, and net ROI regime for non-trading.",
+            "markdown": _render_refunds_churn_markdown(pack),
+        },
+        {
+            "title": "Allocator Decisions",
+            "description": "Current allocator mode, lane shares, and observed non-trading ROI.",
+            "markdown": _render_allocator_decisions_markdown(pack),
+        },
+        {
+            "title": "Knowledge-Pack Activity",
+            "description": "Published learnings, imports, exports, and leaderboard refresh cadence.",
+            "markdown": _render_knowledge_pack_activity_markdown(pack),
+        },
+        {
             "title": "Charitable Impact",
             "description": "Donation reserve tracking and milestone progress.",
             "markdown": _render_charitable_impact_markdown(pack),
@@ -777,6 +1101,23 @@ def _build_canvas_workpad(pack: dict[str, Any]) -> dict[str, Any]:
                     {"title": "Strategy Diversity", "markdown": _render_strategy_diversity_markdown(pack)},
                     {"title": "Market Regime", "markdown": _render_market_regime_markdown(pack)},
                     {"title": "Knowledge Flow", "markdown": _render_knowledge_flow_markdown(pack)},
+                ],
+            },
+            {
+                "name": "Audit Operations",
+                "sections": [
+                    {"title": "Audit Engine Performance", "markdown": _render_engine_performance_markdown(pack)},
+                    {"title": "Prospect Pipeline", "markdown": _render_prospect_pipeline_markdown(pack)},
+                    {"title": "Checkout Funnel", "markdown": _render_checkout_funnel_markdown(pack)},
+                ],
+            },
+            {
+                "name": "Customer Delivery",
+                "sections": [
+                    {"title": "Fulfillment Status", "markdown": _render_fulfillment_status_markdown(pack)},
+                    {"title": "Refunds and Churn", "markdown": _render_refunds_churn_markdown(pack)},
+                    {"title": "Allocator Decisions", "markdown": _render_allocator_decisions_markdown(pack)},
+                    {"title": "Knowledge-Pack Activity", "markdown": _render_knowledge_pack_activity_markdown(pack)},
                 ],
             },
             {
@@ -967,6 +1308,7 @@ def _render_knowledge_flow_markdown(pack: dict[str, Any]) -> str:
     allocator = flow["allocator"]
     revenue = flow["revenue_agent"]
     latest_decision = allocator.get("latest_decision") or {}
+    knowledge_rows = flow.get("knowledge_pack_leaderboard") or []
     return "\n".join(
         [
             "## Knowledge Flow",
@@ -980,6 +1322,8 @@ def _render_knowledge_flow_markdown(pack: dict[str, Any]) -> str:
                     ["Imported bulletins", flow["imported_bulletins"]],
                     ["Imported improvements", flow["imported_peer_improvements"]],
                     ["Exported improvements", flow["exported_peer_improvements"]],
+                    ["Imported knowledge packs", flow.get("imported_knowledge_packs", 0)],
+                    ["Exported knowledge packs", flow.get("exported_knowledge_packs", 0)],
                     ["Allocator configured", "yes" if allocator.get("configured") else "no"],
                     ["Allocator mode", latest_decision.get("mode", "n/a")],
                     ["Trading share", _pct_or_dash(latest_decision.get("trading_share"))],
@@ -999,6 +1343,189 @@ def _render_knowledge_flow_markdown(pack: dict[str, Any]) -> str:
                     for row in flow["top_open_tasks"]
                 ]
                 or [["n/a", "none", "No open flywheel tasks"]],
+            ),
+            "",
+            "### Knowledge Pack Leaderboard",
+            "",
+            _markdown_table(
+                [
+                    "Rank",
+                    "Engine",
+                    "Peer",
+                    "Score",
+                    "Net Cash 30d",
+                    "Penalty",
+                    "Verification",
+                ],
+                [
+                    [
+                        row["rank"],
+                        f"{row['engine_key']}:{row['engine_version']}",
+                        row["peer_name"],
+                        f"{row['score_after_penalty']:.2f}",
+                        f"${row['expected_net_cash_30d']:.2f}",
+                        f"{row['penalty_total']:.2f}",
+                        row["verification_status"],
+                    ]
+                    for row in knowledge_rows[:5]
+                ]
+                or [["n/a", "none", "n/a", "0.00", "$0.00", "0.00", "n/a"]],
+            ),
+        ]
+    )
+
+
+def _render_engine_performance_markdown(pack: dict[str, Any]) -> str:
+    audit = pack["audit_operations"]
+    rows = [
+        [
+            row["engine_name"],
+            row["status"],
+            row["run_mode"],
+            "yes" if row["kill_switch_active"] else "no",
+            _minutes_or_dash(row["heartbeat_age_minutes"]),
+            _pct_or_dash(row["refund_rate"]),
+            _float_or_dash(row["net_roi_30d"], digits=3),
+        ]
+        for row in audit["engines"]
+    ]
+    return "\n".join(
+        [
+            "## Audit Engine Performance",
+            "",
+            f"Audit ops snapshot configured: {'yes' if audit['configured'] else 'no'}",
+            "",
+            _markdown_table(
+                ["Engine", "Status", "Mode", "Killed", "Heartbeat Age", "Refund Rate", "Net ROI 30d"],
+                rows or [["n/a", "not_configured", "-", "no", "-", "-", "-"]],
+            ),
+        ]
+    )
+
+
+def _render_prospect_pipeline_markdown(pack: dict[str, Any]) -> str:
+    pipeline = pack["audit_operations"]["prospect_pipeline"]
+    return "\n".join(
+        [
+            "## Prospect Pipeline",
+            "",
+            _markdown_table(
+                ["Metric", "Value"],
+                [
+                    ["Discovered", pipeline["discovered"]],
+                    ["Profiled", _value_or_dash(pipeline["profiled"])],
+                    ["Scored", _value_or_dash(pipeline["scored"])],
+                    ["Qualified", _value_or_dash(pipeline["qualified"])],
+                    ["Backlog", _value_or_dash(pipeline["backlog"])],
+                ],
+            ),
+        ]
+    )
+
+
+def _render_checkout_funnel_markdown(pack: dict[str, Any]) -> str:
+    funnel = pack["audit_operations"]["checkout_funnel"]
+    return "\n".join(
+        [
+            "## Checkout Funnel",
+            "",
+            _markdown_table(
+                ["Metric", "Value"],
+                [
+                    ["Sessions created", _value_or_dash(funnel["sessions_created"])],
+                    ["Sessions completed", _value_or_dash(funnel["sessions_completed"])],
+                    ["Payments collected", _value_or_dash(funnel["payments_collected"])],
+                    ["Webhook failures", _value_or_dash(funnel["webhook_failures"])],
+                    ["Average order value", _usd_or_dash(funnel["avg_order_value_usd"])],
+                ],
+            ),
+        ]
+    )
+
+
+def _render_fulfillment_status_markdown(pack: dict[str, Any]) -> str:
+    fulfillment = pack["audit_operations"]["fulfillment"]
+    return "\n".join(
+        [
+            "## Fulfillment Status",
+            "",
+            _markdown_table(
+                ["Metric", "Value"],
+                [
+                    ["Queued jobs", _value_or_dash(fulfillment["queued"])],
+                    ["Running jobs", _value_or_dash(fulfillment["running"])],
+                    ["Stalled jobs", _value_or_dash(fulfillment["stalled"])],
+                    ["Delivered jobs", _value_or_dash(fulfillment["delivered"])],
+                    ["Oldest inflight age", _minutes_or_dash(fulfillment["oldest_inflight_age_minutes"])],
+                    ["Average latency", _minutes_or_dash(fulfillment["avg_latency_minutes"])],
+                ],
+            ),
+        ]
+    )
+
+
+def _render_refunds_churn_markdown(pack: dict[str, Any]) -> str:
+    refunds = pack["audit_operations"]["refunds_and_churn"]
+    return "\n".join(
+        [
+            "## Refunds and Churn",
+            "",
+            _markdown_table(
+                ["Metric", "Value"],
+                [
+                    ["Refunds", _value_or_dash(refunds["refunds"])],
+                    ["Refund rate", _pct_or_dash(refunds["refund_rate"])],
+                    ["Chargebacks", _value_or_dash(refunds["chargebacks"])],
+                    ["Active subscriptions", _value_or_dash(refunds["active_subscriptions"])],
+                    ["Churned subscriptions", _value_or_dash(refunds["churned_subscriptions"])],
+                    ["Churn rate", _pct_or_dash(refunds["churn_rate"])],
+                    ["Net ROI 30d", _float_or_dash(refunds["net_roi_30d"], digits=3)],
+                ],
+            ),
+        ]
+    )
+
+
+def _render_allocator_decisions_markdown(pack: dict[str, Any]) -> str:
+    allocator = pack["audit_operations"]["allocator"]
+    latest_decision = allocator.get("latest_decision") or {}
+    non_trading_stats = (allocator.get("arm_stats") or {}).get("non_trading_agent", {})
+    return "\n".join(
+        [
+            "## Allocator Decisions",
+            "",
+            _markdown_table(
+                ["Metric", "Value"],
+                [
+                    ["Allocator configured", "yes" if allocator.get("configured") else "no"],
+                    ["Mode", latest_decision.get("mode", "n/a")],
+                    ["Trading share", _pct_or_dash(latest_decision.get("trading_share"))],
+                    ["Non-trading share", _pct_or_dash(latest_decision.get("non_trading_share"))],
+                    ["Non-trading send quota", _value_or_dash(latest_decision.get("non_trading_send_quota"))],
+                    ["Token budget", _value_or_dash(latest_decision.get("non_trading_llm_token_budget"))],
+                    ["Deliverability risk", latest_decision.get("deliverability_risk", "n/a")],
+                    ["Observed non-trading ROI", _float_or_dash(_float_or_none(non_trading_stats.get("avg_roi")), digits=3)],
+                ],
+            ),
+        ]
+    )
+
+
+def _render_knowledge_pack_activity_markdown(pack: dict[str, Any]) -> str:
+    knowledge = pack["audit_operations"]["knowledge_pack_activity"]
+    return "\n".join(
+        [
+            "## Knowledge-Pack Activity",
+            "",
+            _markdown_table(
+                ["Metric", "Value"],
+                [
+                    ["Published packs", knowledge["published"]],
+                    ["Imported packs", knowledge["imports"]],
+                    ["Exported packs", knowledge["exports"]],
+                    ["Verify failures", knowledge["verify_failures"]],
+                    ["Leaderboard updates", knowledge["leaderboard_updates"]],
+                ],
             ),
         ]
     )
@@ -1047,6 +1574,10 @@ def _render_alert_rules_markdown(pack: dict[str, Any]) -> str:
     rows = []
     for row in rules:
         current_value = row.get("current_change_pct")
+        if current_value is None:
+            current_value = row.get("current_count")
+        if current_value is None:
+            current_value = row.get("current_value")
         if current_value is None and "affected_agents" in row:
             current_value = len(row["affected_agents"])
         rows.append(
@@ -1054,10 +1585,20 @@ def _render_alert_rules_markdown(pack: dict[str, Any]) -> str:
                 row["name"],
                 row["status"],
                 _value_or_dash(current_value),
-                row.get("threshold_pct") or row.get("threshold_minutes") or "-",
+                _value_or_dash(
+                    row.get("threshold_pct")
+                    if row.get("threshold_pct") is not None
+                    else row.get("threshold_minutes")
+                    if row.get("threshold_minutes") is not None
+                    else row.get("threshold_count")
+                ),
+                row.get("action", "inspect"),
             ]
         )
-    return _markdown_table(["Rule", "Status", "Current", "Threshold"], rows or [["n/a", "ok", "-", "-"]])
+    return _markdown_table(
+        ["Rule", "Status", "Current", "Threshold", "Action"],
+        rows or [["n/a", "ok", "-", "-", "inspect"]],
+    )
 
 
 def _render_readme(pack: dict[str, Any]) -> str:
@@ -1065,20 +1606,21 @@ def _render_readme(pack: dict[str, Any]) -> str:
         [
             "# Phase 6 Kibana Pack",
             "",
-            "Generated artifacts for the Elastifund.io Phase 6 leaderboard and monitoring layer.",
+            "Generated artifacts for the Elastifund.io Phase 6 leaderboard, audit-operations, and monitoring layer.",
             "",
             "## Contents",
             "",
-            "- `phase6_dashboard_model.json`: normalized source model built from the control-plane DB, allocator DB, revenue-agent DB, structural-arb audits, and the latest research metrics report.",
-            "- `phase6_dashboards.json`: six dashboard specs with rendered markdown content.",
-            "- `phase6_saved_objects.ndjson`: Kibana saved-object import pack for six markdown-first dashboards.",
-            "- `phase6_canvas_workpad.json`: three-page executive workpad spec (health, knowledge, impact).",
-            "- `phase6_alert_rules.json`: repo-side rule definitions plus current evaluations for revenue drop, drawdown, and offline agents.",
+            "- `phase6_dashboard_model.json`: normalized source model built from the control-plane DB, allocator DB, revenue-agent DB, structural-arb audits, the optional non-trading ops snapshot, and the latest research metrics report.",
+            "- `phase6_dashboards.json`: thirteen dashboard specs with rendered markdown content.",
+            "- `phase6_saved_objects.ndjson`: Kibana saved-object import pack for thirteen markdown-first dashboards.",
+            "- `phase6_canvas_workpad.json`: five-page executive workpad spec (health, strategy, audit ops, delivery, impact).",
+            "- `phase6_alert_rules.json`: repo-side rule definitions plus current evaluations for trading health and non-trading operations.",
             "",
             "## Regenerate",
             "",
             "```bash",
             "python -m data_layer flywheel-kibana-pack \\",
+            f"  --audit-ops {DEFAULT_AUDIT_OPS_PATH} \\",
             f"  --output-dir {DEFAULT_PHASE6_OUTPUT_DIR}",
             "```",
             "",
@@ -1093,6 +1635,7 @@ def _render_readme(pack: dict[str, Any]) -> str:
             "- The dashboards are markdown-first because this repo does not yet store Elastic-exported Lens/TSVB schemas.",
             "- The Canvas artifact is a deterministic page spec, not a raw Kibana export.",
             "- The alert file evaluates the rules against repo state; it is not a POST-ready Kibana rule payload.",
+            "- The non-trading audit dashboards become fully populated only when a normalized `reports/revenue_audit_ops.json` snapshot exists.",
             "- Non-trading revenue is operational-state only until a billing ledger lands in the repo.",
             "",
             f"_Generated at {pack['generated_at']}_",
@@ -1205,6 +1748,12 @@ def _pct_or_dash(value: float | None) -> str:
     if value is None:
         return "-"
     return f"{value:.1%}"
+
+
+def _usd_or_dash(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"${value:.2f}"
 
 
 def _float_or_dash(value: float | None, *, digits: int = 2) -> str:

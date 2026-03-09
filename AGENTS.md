@@ -50,8 +50,8 @@ If two agents need the same file, stop parallelizing. Path ownership beats merge
 - Treat `data/`, `logs/`, and `state/` as runtime artifact directories, not source-of-truth docs.
 - For live posture and cycle truth, prefer `jj_state.json`, `reports/remote_cycle_status.json`, `reports/remote_service_status.json`, and `research/edge_backlog_ranked.md` over stale prose.
 - Existing JSON handoff artifacts are the runtime status contract. Do not invent new runtime APIs just to pass state between lanes.
-- Keep new durable docs under `docs/` or `research/`, not the repo root.
-- Keep the repo root narrow: entrypoints, public repo standards, and compatibility files only.
+- Keep new durable docs under `docs/` or `research/`, not the repo root, except for the approved numbered governance set `00_MISSION_AND_PRINCIPLES.md` through `12_MANAGED_SERVICE_BOUNDARY.md`.
+- Keep the repo root narrow: entrypoints, the approved numbered governance set, public repo standards, and compatibility files only.
 - Keep secrets in `.env` only. Runtime state, credentials, exports, and local scratch files should stay ignored.
 - Private investor and legal materials live outside this repo and are out of scope for normal coding sessions.
 
@@ -61,9 +61,10 @@ If two agents need the same file, stop parallelizing. Path ownership beats merge
 - Research pipeline and validation: `src/`, `backtest/`, `simulator/`, `edge-backlog/`
 - APIs, persistence, and orchestration: `hub/`, `data_layer/`, `orchestration/`
 - Non-trading revenue lanes (JJ-N): `nontrading/`, `inventory/`
+- Governance and messaging docs: `00_MISSION_AND_PRINCIPLES.md` through `12_MANAGED_SERVICE_BOUNDARY.md`, `COMMAND_NODE.md`, `PROJECT_INSTRUCTIONS.md`
 - Vision and strategic docs: `research/elastic_vision_document.md`, `research/platform_vision_document.md`
-- Website build guidance: `REPLIT_NEXT_BUILD.md`, `REPLIT_WEBSITE_CURRENT.pdf`
-- Documentation and publishing: `docs/`, `research/`, `README.md`
+- Website build guidance: `REPLIT_NEXT_BUILD.md`, `REPLIT_WEBSITE_CURRENT.pdf`, `develop/`, `elastic/`, `leaderboards/`
+- Documentation and publishing: `docs/`, `research/`, `README.md`, numbered root docs
 
 ## Definition Of Done
 

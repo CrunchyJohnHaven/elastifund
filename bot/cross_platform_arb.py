@@ -24,6 +24,12 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
+from orchestration.venue_router import (
+    RouteDecision,
+    SharedRiskBudget,
+    VenueRouteCandidate,
+    route_opportunity,
+)
 
 # ---------------------------------------------------------------------------
 # Kalshi SDK import
@@ -67,12 +73,72 @@ SCAN_INTERVAL = 60
 MAX_ARB_USD = 10.0
 # Max daily arb exposure
 MAX_DAILY_EXPOSURE = 50.0
+# Shared cross-venue risk caps and routing assumptions
+DEFAULT_CROSS_VENUE_HOURLY_CAP_USD = 50.0
+DEFAULT_POLY_FILL_PROB = 0.93
+DEFAULT_KALSHI_FILL_PROB = 0.90
+DEFAULT_POLY_LATENCY_PENALTY = 0.0010
+DEFAULT_KALSHI_LATENCY_PENALTY = 0.0015
 
 # Words to strip for matching
 STRIP_WORDS = {
     "will", "the", "be", "a", "an", "in", "on", "at", "to", "of",
     "by", "for", "or", "and", "is", "it", "this", "that", "?",
 }
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return float(default)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        logger.warning("Invalid %s=%r, falling back to %.4f", name, raw, default)
+        return float(default)
+
+
+def _build_opportunity_key(arb: "ArbOpportunity") -> str:
+    base = normalize_title(arb.poly_market.title) or normalize_title(arb.kalshi_market.title)
+    direction = "yes" if arb.direction == "poly_yes_kalshi_no" else "no"
+    return f"{base}|{direction}"
+
+
+def _route_arb_opportunity(
+    arb: "ArbOpportunity",
+    *,
+    budget: SharedRiskBudget,
+    notional_usd: float,
+    min_net_edge: float,
+) -> RouteDecision:
+    key = _build_opportunity_key(arb)
+    poly_fee = POLY_MAKER_FEE
+    kalshi_fee = arb.kalshi_fee
+    candidates = [
+        VenueRouteCandidate(
+            venue="polymarket",
+            market_id=arb.poly_market.market_id,
+            opportunity_key=key,
+            gross_edge=arb.net_profit_pct,
+            fee_rate=poly_fee,
+            fill_probability=_env_float("JJ_POLY_FILL_PROB", DEFAULT_POLY_FILL_PROB),
+            latency_penalty=_env_float("JJ_POLY_LATENCY_PENALTY", DEFAULT_POLY_LATENCY_PENALTY),
+            notional_usd=notional_usd,
+            metadata={"direction": "buy_yes" if arb.direction == "poly_yes_kalshi_no" else "buy_no"},
+        ),
+        VenueRouteCandidate(
+            venue="kalshi",
+            market_id=arb.kalshi_market.market_id,
+            opportunity_key=key,
+            gross_edge=arb.net_profit_pct,
+            fee_rate=kalshi_fee,
+            fill_probability=_env_float("JJ_KALSHI_FILL_PROB", DEFAULT_KALSHI_FILL_PROB),
+            latency_penalty=_env_float("JJ_KALSHI_LATENCY_PENALTY", DEFAULT_KALSHI_LATENCY_PENALTY),
+            notional_usd=notional_usd,
+            metadata={"direction": "no" if arb.direction == "poly_yes_kalshi_no" else "yes"},
+        ),
+    ]
+    return route_opportunity(candidates, budget=budget, min_net_edge=min_net_edge)
 
 
 # ---------------------------------------------------------------------------
@@ -616,7 +682,7 @@ def scan_for_arbs(
 # ---------------------------------------------------------------------------
 # Signal output (for jj_live.py integration)
 # ---------------------------------------------------------------------------
-def arb_to_signal(arb: ArbOpportunity) -> dict:
+def arb_to_signal(arb: ArbOpportunity, route_decision: Optional[RouteDecision] = None) -> dict:
     """Convert an arb opportunity to a jj_live.py-compatible signal dict."""
     # Determine the Polymarket side
     if arb.direction == "poly_yes_kalshi_no":
@@ -625,6 +691,21 @@ def arb_to_signal(arb: ArbOpportunity) -> dict:
     else:
         poly_direction = "buy_no"
         poly_price = arb.poly_price
+
+    routing = {
+        "opportunity_key": _build_opportunity_key(arb),
+        "selected_venue": route_decision.selected.venue if route_decision and route_decision.selected else "polymarket",
+        "selected_reason": route_decision.selected_reason if route_decision else "legacy_default_polymarket",
+        "rejections": [
+            {
+                "venue": rejection.venue,
+                "market_id": rejection.market_id,
+                "reason": rejection.reason,
+                "details": rejection.details,
+            }
+            for rejection in (route_decision.rejections if route_decision else ())
+        ],
+    }
 
     return {
         "market_id": arb.poly_market.market_id,
@@ -655,20 +736,28 @@ def arb_to_signal(arb: ArbOpportunity) -> dict:
             "total_cost": arb.total_cost,
             "net_profit": arb.net_profit,
         },
+        "venue_router": routing,
     }
 
 
 def get_signals_for_engine() -> list[dict]:
     """Scan for arb opportunities and return as jj_live.py signals.
 
-    This is the main entry point for jj_live.py integration.
-    Runs synchronously (wraps async internally).
+    This is the synchronous entry point for CLI and report surfaces.
     """
     try:
-        return asyncio.get_event_loop().run_until_complete(_async_get_signals())
+        asyncio.get_running_loop()
     except RuntimeError:
-        # No event loop running, create one
         return asyncio.run(_async_get_signals())
+    raise RuntimeError(
+        "get_signals_for_engine() cannot run inside an active event loop; "
+        "use get_signals_for_engine_async() instead."
+    )
+
+
+async def get_signals_for_engine_async() -> list[dict]:
+    """Async entry point for JJLive's event loop."""
+    return await _async_get_signals()
 
 
 async def _async_get_signals() -> list[dict]:
@@ -693,8 +782,33 @@ async def _async_get_signals() -> list[dict]:
     # Scan for arbs
     arbs = scan_for_arbs(poly_markets, kalshi_markets)
 
-    # Convert to signals
-    signals = [arb_to_signal(arb) for arb in arbs[:10]]  # Top 10 max
+    hourly_cap = _env_float("JJ_CROSS_VENUE_HOURLY_CAP_USD", DEFAULT_CROSS_VENUE_HOURLY_CAP_USD)
+    daily_cap = _env_float("JJ_CROSS_VENUE_DAILY_CAP_USD", MAX_DAILY_EXPOSURE)
+    min_net_edge = _env_float("JJ_CROSS_VENUE_MIN_NET_EDGE", MIN_PROFIT_PCT)
+    notional_per_trade = _env_float("JJ_CROSS_VENUE_NOTIONAL_USD", MAX_ARB_USD)
+    budget = SharedRiskBudget(hourly_cap_usd=hourly_cap, daily_cap_usd=daily_cap)
+
+    signals: list[dict] = []
+    for arb in arbs:
+        route_decision = _route_arb_opportunity(
+            arb,
+            budget=budget,
+            notional_usd=notional_per_trade,
+            min_net_edge=min_net_edge,
+        )
+        if not route_decision.selected:
+            continue
+        if route_decision.selected.venue != "polymarket":
+            logger.info(
+                "Routing skipped for Poly execution: selected_venue=%s key=%s",
+                route_decision.selected.venue,
+                route_decision.opportunity_key,
+            )
+            continue
+        signals.append(arb_to_signal(arb, route_decision=route_decision))
+        if len(signals) >= 10:
+            break
+
     logger.info(f"Generated {len(signals)} cross-platform arb signals")
     return signals
 

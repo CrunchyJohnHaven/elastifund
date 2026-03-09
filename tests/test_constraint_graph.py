@@ -418,6 +418,34 @@ class TestConstraintGraph(unittest.TestCase):
             self.assertIn("A-6 lane definition", report)
             self.assertIn("IN PROGRESS", report)
 
+    def test_upsert_a6_violation_episode_reuses_recent_episode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "constraint.db"
+            db = ConstraintArbDB(db_path)
+
+            first = db.upsert_a6_violation_episode(
+                event_id="evt-1",
+                mode="neg_risk_sum",
+                ts=1_700_000_000,
+                leg_count=4,
+                sum_metric=0.94,
+                threshold=0.95,
+                deviation=0.06,
+                gap_seconds=120,
+            )
+            second = db.upsert_a6_violation_episode(
+                event_id="evt-1",
+                mode="neg_risk_sum",
+                ts=1_700_000_060,
+                leg_count=4,
+                sum_metric=0.93,
+                threshold=0.95,
+                deviation=0.07,
+                gap_seconds=120,
+            )
+
+            self.assertEqual(first, second)
+
 
 if __name__ == "__main__":
     unittest.main()

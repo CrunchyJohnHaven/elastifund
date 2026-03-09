@@ -25,6 +25,35 @@ The Polymarket bot can now publish directly into the resources this bootstrap cr
 
 That makes the bootstrap operationally meaningful today instead of remaining a future-only hub artifact.
 
+## Non-Trading Ops Contract
+
+The non-trading control plane now assumes a shared schema contract for the audit-engine operating surface. The repo-side Kibana pack in [flywheel/kibana_pack.py](../../flywheel/kibana_pack.py) consumes that contract and renders dashboard specs for:
+
+- engine performance
+- prospect pipeline
+- checkout funnel
+- fulfillment status
+- refunds and churn
+- allocator decisions
+- knowledge-pack activity
+
+Alert specs are defined against the same contract for:
+
+- checkout webhook failures
+- fulfillment stalls
+- refund spikes
+- complaint spikes when outbound follow-up is enabled
+- missing worker activity
+- negative ROI regimes
+
+Until the Elastic transforms land, the markdown-first pack can read an optional normalized repo snapshot at `reports/revenue_audit_ops.json`. The contract itself lives in [hub/elastic/specs.py](../../hub/elastic/specs.py) via `build_nontrading_control_plane_spec()`.
+
+Kill-switch alignment:
+
+- global non-trading shutdown remains the agent-level `global_kill_switch`
+- per-engine shutdown now flows through `engine_states.kill_switch_active` in the non-trading store
+- dashboards and alerts must read those fields directly rather than inferring shutdown from missing data
+
 ## Files
 
 - [hub/elastic/bootstrap.py](../../hub/elastic/bootstrap.py)
@@ -62,6 +91,13 @@ For a local dev cluster with a self-signed certificate:
 
 ```bash
 python -m hub.elastic.bootstrap apply --insecure
+```
+
+Generate and validate the Kibana pack that includes the non-trading ops dashboards:
+
+```bash
+python -m data_layer flywheel-kibana-pack --audit-ops reports/revenue_audit_ops.json
+python scripts/validate_nontrading_kibana_pack.py --audit-ops reports/revenue_audit_ops.json
 ```
 
 ## Environment

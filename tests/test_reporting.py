@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import json
 from pathlib import Path
 
 from src.config import AppConfig, SystemConfig
@@ -13,6 +14,45 @@ class TestReporting(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = AppConfig(system=SystemConfig(report_root=str(Path(tmp) / "reports"), analysis_path=str(Path(tmp) / "FAST_TRADE_EDGE_ANALYSIS.md")))
             writer = ReportWriter(cfg)
+            report_root = Path(cfg.system.report_root)
+            report_root.mkdir(parents=True, exist_ok=True)
+            refresh_path = report_root / "pipeline_refresh_20260309T010557Z.json"
+            refresh_path.write_text(
+                json.dumps(
+                    {
+                        "timestamp": "2026-03-09T01:05:57+00:00",
+                        "instance_version": "2.8.0",
+                        "system_status": "stopped",
+                        "markets_pulled": 120,
+                        "markets_under_24h": 22,
+                        "markets_under_48h": 35,
+                        "markets_in_price_window": 19,
+                        "markets_in_allowed_categories": 5,
+                        "threshold_sensitivity": {
+                            "current": {"yes": 0.15, "no": 0.05, "tradeable": 5, "yes_reachable_markets": 3},
+                            "aggressive": {"yes": 0.08, "no": 0.03, "tradeable": 14, "yes_reachable_markets": 8},
+                            "wide_open": {"yes": 0.05, "no": 0.02, "tradeable": 18, "yes_reachable_markets": 11},
+                        },
+                        "category_snapshot": {
+                            "politics": {"count": 5, "avg_yes_price": 0.44, "under_24h": 2},
+                            "weather": {"count": 2, "avg_yes_price": 0.51, "under_24h": 1},
+                            "economic": {"count": 3, "avg_yes_price": 0.47, "under_24h": 1},
+                            "crypto": {"count": 8, "avg_yes_price": 0.50, "under_24h": 4},
+                            "sports": {"count": 6, "avg_yes_price": 0.62, "under_24h": 0},
+                            "other": {"count": 1, "avg_yes_price": 0.38, "under_24h": 0},
+                        },
+                        "a6_scan": {
+                            "status": "blocked",
+                            "allowed_events": 563,
+                            "qualified": 57,
+                            "executable": 0,
+                            "blocked_reasons": ["public_audit_zero_executable_constructions_below_0.95_gate"],
+                        },
+                        "wallet_flow": {"ready": True, "scored_wallets": 80, "status": "ready"},
+                        "reasoning": "Lower thresholds widen the theoretical universe, but no validated edge is promoted.",
+                    }
+                )
+            )
 
             evals = [
                 HypothesisEvaluation(
@@ -77,6 +117,10 @@ class TestReporting(unittest.TestCase):
             self.assertIn("# Fast Trade Edge Analysis", text)
             self.assertIn("## Current Recommendation", text)
             self.assertIn("## MODEL COMPETITION TABLE", text)
+            self.assertIn("## Threshold Sensitivity", text)
+            self.assertIn("## Market Universe Snapshot", text)
+            self.assertIn("## Wallet-Flow Status", text)
+            self.assertIn("**System Status:** stopped", text)
 
 
 if __name__ == "__main__":

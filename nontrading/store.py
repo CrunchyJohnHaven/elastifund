@@ -1663,6 +1663,96 @@ class RevenueStore:
             updated_at=now,
         )
 
+    def get_opportunity_by_name(
+        self,
+        account_id: int,
+        name: str,
+        offer_name: str | None = None,
+    ) -> Opportunity | None:
+        t = self.tables
+        sql = f"""
+            SELECT * FROM {t['opportunities']}
+            WHERE account_id = ?
+              AND LOWER(name) = LOWER(?)
+        """
+        params: list[Any] = [account_id, name.strip()]
+        if offer_name is not None:
+            sql += " AND LOWER(offer_name) = LOWER(?)"
+            params.append(offer_name.strip())
+        sql += " ORDER BY id DESC LIMIT 1"
+        with self._connect() as conn:
+            row = conn.execute(sql, params).fetchone()
+        if row is None:
+            return None
+        return self._opportunity_from_row(row)
+
+    def upsert_opportunity(self, opportunity: Opportunity) -> tuple[Opportunity, bool]:
+        existing = None
+        if opportunity.id is not None:
+            existing = self.get_opportunity(opportunity.id)
+        if existing is None:
+            existing = self.get_opportunity_by_name(
+                opportunity.account_id,
+                opportunity.name,
+                opportunity.offer_name,
+            )
+        if existing is None:
+            return self.create_opportunity(opportunity), True
+
+        now = utc_now()
+        updated = Opportunity(
+            id=existing.id,
+            account_id=opportunity.account_id,
+            name=opportunity.name,
+            offer_name=opportunity.offer_name,
+            stage=opportunity.stage,
+            status=opportunity.status,
+            score=float(opportunity.score),
+            score_breakdown=dict(opportunity.score_breakdown),
+            estimated_value=float(opportunity.estimated_value),
+            currency=opportunity.currency,
+            next_action=opportunity.next_action,
+            metadata=dict(opportunity.metadata),
+            created_at=existing.created_at,
+            updated_at=now,
+        )
+        t = self.tables
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                UPDATE {t['opportunities']}
+                SET account_id = ?,
+                    name = ?,
+                    offer_name = ?,
+                    stage = ?,
+                    status = ?,
+                    score = ?,
+                    score_breakdown_json = ?,
+                    estimated_value = ?,
+                    currency = ?,
+                    next_action = ?,
+                    metadata_json = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    updated.account_id,
+                    updated.name,
+                    updated.offer_name,
+                    updated.stage,
+                    updated.status,
+                    float(updated.score),
+                    json.dumps(updated.score_breakdown, sort_keys=True),
+                    float(updated.estimated_value),
+                    updated.currency,
+                    updated.next_action,
+                    json.dumps(updated.metadata, sort_keys=True),
+                    updated.updated_at,
+                    updated.id,
+                ),
+            )
+        return updated, False
+
     def get_opportunity(self, opportunity_id: int) -> Opportunity | None:
         t = self.tables
         with self._connect() as conn:

@@ -5,6 +5,7 @@ Covers: title normalization, keyword extraction, similarity scoring,
 Kalshi fee calculation, arb detection, signal format, and market parsing.
 """
 
+import asyncio
 import math
 import pytest
 import sys
@@ -13,19 +14,22 @@ from pathlib import Path
 # Ensure bot/ is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import cross_platform_arb as arb_module
 from cross_platform_arb import (
-    normalize_title,
-    extract_keywords,
-    keyword_similarity,
-    title_similarity,
-    kalshi_taker_fee,
-    kalshi_maker_fee,
-    detect_arb,
-    arb_to_signal,
-    MarketListing,
     ArbOpportunity,
-    MIN_PROFIT_PCT,
+    MarketListing,
+    arb_to_signal,
+    detect_arb,
+    extract_keywords,
+    get_signals_for_engine,
+    get_signals_for_engine_async,
+    kalshi_maker_fee,
+    kalshi_taker_fee,
+    keyword_similarity,
+    normalize_title,
+    title_similarity,
 )
+from orchestration.venue_router import RouteDecision, RouteRejection, SharedRiskBudget, VenueRouteCandidate, route_opportunity
 
 
 # ===== Title Normalization =====
@@ -301,3 +305,121 @@ class TestSignalFormat:
         )
         signal = arb_to_signal(arb)
         assert signal["direction"] == "buy_no"
+
+    def test_signal_includes_venue_router_decision_metadata(self):
+        poly = _make_listing("polymarket", "p1", "Test?", 0.05, 0.07, 0.93, 0.95)
+        kalshi = _make_listing("kalshi", "k1", "Test?", 0.15, 0.17, 0.83, 0.85)
+        arb = ArbOpportunity(
+            poly_market=poly,
+            kalshi_market=kalshi,
+            match_score=0.85,
+            direction="poly_yes_kalshi_no",
+            poly_price=0.07,
+            kalshi_price=0.85,
+            total_cost=0.92,
+            gross_profit=0.08,
+            poly_fee=0.0,
+            kalshi_fee=0.009,
+            total_fees=0.009,
+            net_profit=0.071,
+            net_profit_pct=0.077,
+        )
+        route_decision = RouteDecision(
+            opportunity_key="test|yes",
+            selected=VenueRouteCandidate(
+                venue="polymarket",
+                market_id="p1",
+                opportunity_key="test|yes",
+                gross_edge=0.077,
+                fee_rate=0.0,
+                fill_probability=0.95,
+                latency_penalty=0.001,
+                notional_usd=10.0,
+            ),
+            selected_reason="best_net_edge_after_costs",
+            rejections=(
+                RouteRejection(
+                    venue="kalshi",
+                    market_id="k1",
+                    reason="venue_not_best_net_edge",
+                    details={"candidate_net_edge": 0.06},
+                ),
+            ),
+        )
+
+        signal = arb_to_signal(arb, route_decision=route_decision)
+        assert signal["venue_router"]["selected_venue"] == "polymarket"
+        assert signal["venue_router"]["selected_reason"] == "best_net_edge_after_costs"
+        assert signal["venue_router"]["rejections"][0]["reason"] == "venue_not_best_net_edge"
+
+
+class TestVenueRouting:
+    def test_route_opportunity_records_budget_rejection_reason(self):
+        budget = SharedRiskBudget(hourly_cap_usd=5.0, daily_cap_usd=100.0)
+        decision = route_opportunity(
+            [
+                VenueRouteCandidate(
+                    venue="polymarket",
+                    market_id="p1",
+                    opportunity_key="m|yes",
+                    gross_edge=0.08,
+                    fee_rate=0.0,
+                    fill_probability=0.95,
+                    latency_penalty=0.001,
+                    notional_usd=10.0,
+                ),
+                VenueRouteCandidate(
+                    venue="kalshi",
+                    market_id="k1",
+                    opportunity_key="m|yes",
+                    gross_edge=0.07,
+                    fee_rate=0.01,
+                    fill_probability=0.90,
+                    latency_penalty=0.002,
+                    notional_usd=10.0,
+                ),
+            ],
+            budget=budget,
+            min_net_edge=0.01,
+        )
+        assert decision.selected is None
+        assert decision.selected_reason == "shared_budget_exhausted_hourly"
+        assert len(decision.rejections) == 2
+
+
+class TestSignalEntryPoints:
+    def test_sync_entrypoint_runs_async_helper_when_no_loop(self, monkeypatch):
+        expected = [{"market_id": "arb-1", "source": "cross_platform_arb"}]
+
+        async def fake_async_get_signals():
+            return expected
+
+        monkeypatch.setattr(arb_module, "_async_get_signals", fake_async_get_signals)
+
+        assert get_signals_for_engine() == expected
+
+    @pytest.mark.asyncio
+    async def test_sync_entrypoint_rejects_running_loop(self):
+        with pytest.raises(RuntimeError, match="use get_signals_for_engine_async"):
+            get_signals_for_engine()
+
+    @pytest.mark.asyncio
+    async def test_async_entrypoint_runs_inside_active_loop_without_asyncio_run(self, monkeypatch):
+        calls = {"count": 0}
+        expected = [{"market_id": "arb-2", "source": "cross_platform_arb"}]
+
+        async def fake_async_get_signals():
+            calls["count"] += 1
+            await asyncio.sleep(0)
+            return expected
+
+        def fail_asyncio_run(*args, **kwargs):
+            raise AssertionError("asyncio.run should not be used inside an active event loop")
+
+        monkeypatch.setattr(arb_module, "_async_get_signals", fake_async_get_signals)
+        monkeypatch.setattr(arb_module.asyncio, "run", fail_asyncio_run)
+
+        signals = await get_signals_for_engine_async()
+
+        assert calls["count"] == 1
+        assert signals == expected

@@ -16,6 +16,7 @@ LOG_DIR="$HOME/Library/Logs/Elastifund"
 RUNNER_DIR="$HOME/.elastifund"
 RUNNER_PATH="$RUNNER_DIR/bridge.sh"
 RUNNER_KEY_PATH="$RUNNER_DIR/lightsail.pem"
+RUNNER_GITHUB_KEY_PATH="$RUNNER_DIR/github_id_ed25519"
 
 mkdir -p "$LOG_DIR"
 mkdir -p "$RUNNER_DIR"
@@ -40,6 +41,46 @@ if [ -n "$KEY_SOURCE" ]; then
     chmod 600 "$RUNNER_KEY_PATH"
 fi
 
+GITHUB_KEY_SOURCE=""
+for candidate in \
+    "$HOME/.ssh/id_ed25519" \
+    "$HOME/.ssh/id_rsa" \
+    "$HOME/.ssh/github_ed25519" \
+    "$HOME/.ssh/github_rsa"; do
+    if [ -f "$candidate" ]; then
+        GITHUB_KEY_SOURCE="$candidate"
+        break
+    fi
+done
+
+if [ -n "$GITHUB_KEY_SOURCE" ]; then
+    cp "$GITHUB_KEY_SOURCE" "$RUNNER_GITHUB_KEY_PATH"
+    chmod 600 "$RUNNER_GITHUB_KEY_PATH"
+fi
+
+PLIST_EXTRA_ENV=""
+if [ -n "$KEY_SOURCE" ]; then
+    PLIST_EXTRA_ENV="${PLIST_EXTRA_ENV}
+        <key>ELASTIFUND_BRIDGE_KEY</key>
+        <string>${RUNNER_KEY_PATH}</string>"
+fi
+PLIST_EXTRA_GITHUB_ENV="
+        <key>ELASTIFUND_AUTO_PUSH_GITHUB</key>
+        <string>true</string>"
+if [ -n "$GITHUB_KEY_SOURCE" ]; then
+    PLIST_EXTRA_GITHUB_ENV="${PLIST_EXTRA_GITHUB_ENV}
+        <key>ELASTIFUND_GITHUB_SSH_KEY</key>
+        <string>${RUNNER_GITHUB_KEY_PATH}</string>"
+fi
+
+case "$PROJECT_DIR" in
+    "$HOME/Desktop"/*|"$HOME/Documents"/*|"$HOME/Downloads"/*)
+        echo "WARN: $PROJECT_DIR is in a macOS protected folder."
+        echo "      launchd jobs often fail there with 'Operation not permitted'."
+        echo "      For unattended bridge runs, prefer a path like ~/Code/Elastifund."
+        ;;
+esac
+
 echo "Installing Elastifund bridge sync..."
 echo "  Project: $PROJECT_DIR"
 echo "  Sync interval: 30 minutes"
@@ -49,6 +90,11 @@ if [ -n "$KEY_SOURCE" ]; then
     echo "  Key: $RUNNER_KEY_PATH"
 else
     echo "  Key: NOT FOUND (bridge will rely on runtime discovery)"
+fi
+if [ -n "$GITHUB_KEY_SOURCE" ]; then
+    echo "  GitHub key: $RUNNER_GITHUB_KEY_PATH"
+else
+    echo "  GitHub key: NOT FOUND (self-push will rely on ~/.ssh discovery or a token in .env)"
 fi
 
 cat > "$PLIST_PATH" << PLIST
@@ -79,8 +125,8 @@ cat > "$PLIST_PATH" << PLIST
         <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>ELASTIFUND_PROJECT_DIR</key>
         <string>${PROJECT_DIR}</string>
-        <key>ELASTIFUND_BRIDGE_KEY</key>
-        <string>${RUNNER_KEY_PATH}</string>
+${PLIST_EXTRA_ENV}
+${PLIST_EXTRA_GITHUB_ENV}
     </dict>
 </dict>
 </plist>

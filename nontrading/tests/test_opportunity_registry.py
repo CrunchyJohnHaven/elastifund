@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from nontrading.models import Opportunity
+from nontrading.models import Account, Opportunity
 from nontrading.opportunity_registry import (
     CRITERION_WEIGHTS,
     OpportunityRegistry,
     OpportunityScoreInput,
 )
+from nontrading.store import RevenueStore
 
 
 def make_score_input(**overrides: float) -> OpportunityScoreInput:
@@ -22,6 +23,10 @@ def make_score_input(**overrides: float) -> OpportunityScoreInput:
     }
     values.update(overrides)
     return OpportunityScoreInput(**values)
+
+
+def make_store(tmp_path) -> RevenueStore:
+    return RevenueStore(tmp_path / "revenue_agent.db")
 
 
 def test_weights_sum_to_one() -> None:
@@ -77,3 +82,17 @@ def test_apply_writes_score_and_decision_metadata() -> None:
     assert scored.score == 79.0
     assert scored.score_breakdown["gross_margin"] == 16.0
     assert scored.metadata["registry_decision"] == "advance"
+
+
+def test_store_backed_apply_persists_score(tmp_path) -> None:
+    store = make_store(tmp_path)
+    registry = OpportunityRegistry(store=store)
+    account = store.create_account(Account(name="Acme Builders"))
+    opportunity = store.create_opportunity(Opportunity(account_id=account.id or 0, name="Construction outreach"))
+
+    scored = registry.apply(opportunity, make_score_input())
+
+    persisted = store.get_opportunity(scored.id or 0)
+    assert persisted is not None
+    assert persisted.score == 79.0
+    assert persisted.metadata["registry_decision"] == "advance"

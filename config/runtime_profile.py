@@ -68,6 +68,8 @@ class FeatureFlagsConfig:
     enable_wallet_flow: bool = False
     enable_lmsr: bool = False
     enable_cross_platform_arb: bool = False
+    enable_polymarket_venue: bool = True
+    enable_kalshi_venue: bool = True
     fast_flow_only: bool = False
     enable_a6_shadow: bool = False
     enable_a6_live: bool = False
@@ -87,6 +89,31 @@ class RiskLimitsConfig:
     max_open_positions: int = 5
     min_edge: float = 0.05
     initial_bankroll: float = 247.51
+    hourly_notional_budget_usd: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.max_position_usd <= 0:
+            raise RuntimeProfileError("risk_limits.max_position_usd must be > 0")
+        if self.max_daily_loss_usd <= 0:
+            raise RuntimeProfileError("risk_limits.max_daily_loss_usd must be > 0")
+        if not 0 < self.max_exposure_pct <= 1:
+            raise RuntimeProfileError("risk_limits.max_exposure_pct must be in (0, 1]")
+        if not 0 < self.kelly_fraction <= 1:
+            raise RuntimeProfileError("risk_limits.kelly_fraction must be in (0, 1]")
+        if not 0 < self.max_kelly_fraction <= 1:
+            raise RuntimeProfileError("risk_limits.max_kelly_fraction must be in (0, 1]")
+        if self.kelly_fraction > self.max_kelly_fraction:
+            raise RuntimeProfileError("risk_limits.kelly_fraction cannot exceed risk_limits.max_kelly_fraction")
+        if self.scan_interval_seconds <= 0:
+            raise RuntimeProfileError("risk_limits.scan_interval_seconds must be > 0")
+        if self.max_open_positions <= 0:
+            raise RuntimeProfileError("risk_limits.max_open_positions must be > 0")
+        if not 0 <= self.min_edge <= 1:
+            raise RuntimeProfileError("risk_limits.min_edge must be in [0, 1]")
+        if self.initial_bankroll <= 0:
+            raise RuntimeProfileError("risk_limits.initial_bankroll must be > 0")
+        if self.hourly_notional_budget_usd < 0:
+            raise RuntimeProfileError("risk_limits.hourly_notional_budget_usd must be >= 0")
 
 
 @dataclass
@@ -108,6 +135,10 @@ class MarketFiltersConfig:
     )
 
     def __post_init__(self) -> None:
+        if self.max_resolution_hours <= 0:
+            raise RuntimeProfileError("market_filters.max_resolution_hours must be > 0")
+        if self.min_category_priority < 0:
+            raise RuntimeProfileError("market_filters.min_category_priority must be >= 0")
         self.category_priorities = {
             str(key).strip().lower(): int(value)
             for key, value in dict(self.category_priorities).items()
@@ -119,6 +150,14 @@ class SignalThresholdsConfig:
     yes_threshold: float = 0.15
     no_threshold: float = 0.05
     lmsr_entry_threshold: float = 0.05
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.yes_threshold <= 1:
+            raise RuntimeProfileError("signal_thresholds.yes_threshold must be in [0, 1]")
+        if not 0 <= self.no_threshold <= 1:
+            raise RuntimeProfileError("signal_thresholds.no_threshold must be in [0, 1]")
+        if not 0 <= self.lmsr_entry_threshold <= 1:
+            raise RuntimeProfileError("signal_thresholds.lmsr_entry_threshold must be in [0, 1]")
 
 
 @dataclass
@@ -216,6 +255,8 @@ OVERRIDE_SPECS: tuple[OverrideSpec, ...] = (
     OverrideSpec("feature_flags", "enable_wallet_flow", (("ENABLE_WALLET_FLOW", _parse_bool),)),
     OverrideSpec("feature_flags", "enable_lmsr", (("ENABLE_LMSR", _parse_bool),)),
     OverrideSpec("feature_flags", "enable_cross_platform_arb", (("ENABLE_CROSS_PLATFORM_ARB", _parse_bool),)),
+    OverrideSpec("feature_flags", "enable_polymarket_venue", (("JJ_ENABLE_POLYMARKET_VENUE", _parse_bool),)),
+    OverrideSpec("feature_flags", "enable_kalshi_venue", (("JJ_ENABLE_KALSHI_VENUE", _parse_bool),)),
     OverrideSpec("feature_flags", "fast_flow_only", (("JJ_FAST_FLOW_ONLY", _parse_bool),)),
     OverrideSpec("feature_flags", "enable_a6_shadow", (("ENABLE_A6_SHADOW", _parse_bool),)),
     OverrideSpec("feature_flags", "enable_a6_live", (("ENABLE_A6_LIVE", _parse_bool),)),
@@ -235,6 +276,7 @@ OVERRIDE_SPECS: tuple[OverrideSpec, ...] = (
     OverrideSpec("risk_limits", "max_open_positions", (("JJ_MAX_OPEN_POSITIONS", _parse_int),)),
     OverrideSpec("risk_limits", "min_edge", (("JJ_MIN_EDGE", _parse_float),)),
     OverrideSpec("risk_limits", "initial_bankroll", (("JJ_INITIAL_BANKROLL", _parse_float),)),
+    OverrideSpec("risk_limits", "hourly_notional_budget_usd", (("JJ_HOURLY_NOTIONAL_BUDGET_USD", _parse_float),)),
     OverrideSpec("market_filters", "max_resolution_hours", (("JJ_MAX_RESOLUTION_HOURS", _parse_float),)),
     OverrideSpec("market_filters", "min_category_priority", (("JJ_MIN_CATEGORY_PRIORITY", _parse_int),)),
     OverrideSpec("signal_thresholds", "yes_threshold", (("JJ_YES_THRESHOLD", _parse_float),)),

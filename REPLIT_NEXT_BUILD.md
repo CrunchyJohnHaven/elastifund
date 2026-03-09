@@ -4,7 +4,7 @@
 > Companion file: `REPLIT_WEBSITE_CURRENT.pdf` (screenshot of the live site at time of last update).
 > These two files are the only context needed to brief a build session. They are updated automatically.
 
-Last updated: 2026-03-09
+Last updated: 2026-03-09 (auto-audit refresh)
 Site URL: https://elastifund.replit.app
 GitHub: https://github.com/CrunchyJohnHaven/elastifund
 
@@ -12,59 +12,68 @@ GitHub: https://github.com/CrunchyJohnHaven/elastifund
 
 ## Cycle 2 runtime reconciliation shipped
 
-This cycle did not migrate the site to `site/`. The live repo source is still the root `index.html`, and Cycle 2 refreshed that single-file site in place.
+This cycle did not migrate the site to `site/`. The live repo source is now a static root build with route directories: `index.html`, `develop/`, `elastic/`, `leaderboards/trading/`, `leaderboards/worker/`, `manage/`, `diary/`, `roadmap/`, `docs/`, plus shared `site.js` and `site.css`.
 
 Delivered in the March 9, 2026 refresh:
 
-- dual-state system-status card: remote service observed active at `2026-03-09T00:44:19Z`, launch posture still blocked
+- shared client-side hydration now pulls from `reports/public_runtime_snapshot.json`, `reports/runtime_truth_latest.json`, `reports/root_test_status.json`, `improvement_velocity.json`, `inventory/data/systems.json`, `docs/PERFORMANCE.md`, and the linked `reports/edge_scan_*.json` artifact
+- the public website snapshot now pins the approved March 9 headline metrics: `1,397` verified tests, `314` cycles, `131` strategies, `7` signal sources, and `$347.51` tracked capital (NOTE: index.html still shows the stale `1,278` / `311` values — next site deploy must update these)
+- dual-state system-status card: the website now distinguishes service state from launch posture; the latest checked-in runtime snapshot at `2026-03-09T02:23:11Z` reports the service `running`/`active` while launch remains blocked (drift flag: service running while launch blocked — remote mode unconfirmed as paper or shadow)
 - public-safe fast-market verdict note: `REJECT ALL`
-- public-safe edge snapshot counts: `75` fast markets observed (`29` 15m, `39` 5m, `7` 4h), `563` allowed neg-risk events in the repo audit, `57` qualified A-6 live-surface events, `0` executable opportunities, `0` B-1 deterministic pairs in `1,000` allowed markets
+- homepage system status now foregrounds `314` cycles, `0` trades, `REJECT ALL`, and wallet-flow `ready` before the deeper operator context
+- public-safe edge snapshot counts now follow the latest detailed pipeline and edge-scan artifacts for fast-market totals, A-6/B-1 gate counts, categories, and public-safe opportunity summaries
+- verification surface now keeps the public test-count headline pinned to `1,397` while still exposing the current root-suite detail separately (index.html still shows stale `1,278` — needs deploy)
+- scorecard hydration now covers the strategy funnel, dispatch load, commit count, calibrated/legacy win-rate framing, benchmark inventory count, and edge-scan summary instead of relying on site constants
+- homepage now carries the JJ-N five-engine model, explicit risk-rail cards, runtime-host card, and the broader eight-route map
+- route stubs now exist for `/manage`, `/diary`, `/roadmap`, and `/docs`
+- terminology enforcement now runs through `scripts/check_website_copy.py` before publish
 - freshness stamps for metrics, verification baseline, service-state check time, and build date
-- current metrics: `$347.51` tracked capital, `71.2%` calibrated win rate with `68.5%` legacy label, current root verification `failing` (`1 failed, 870 passed`), `131` strategy catalog, `11` dispatch work-orders, `23` benchmarked systems, `6` primary + `1` anomaly signal lane
-- a new March 9 build-diary entry recording the service/launch drift reconciliation and why uptime did not clear trading
-- a strategy-section note clarifying that the published cards are a public subset, not the full canonical ledger
-- homepage runtime/status surfaces now hydrate from `reports/public_runtime_snapshot.json` and the latest pipeline/scan artifacts instead of relying only on handwritten numbers
+
+**Stale index.html values requiring next deploy:**
+- `index.html` line 154 still shows `1,278 verified` (should be `1,397`)
+- `index.html` line 174 still shows `311` cycles (should be `314`)
+- `index.html` lines 411-412 still reference `311 cycles` in the dispatch note
+- Service state in runtime snapshot has drifted to `running/active` but index.html copy assumes `stopped`
+- REPLIT_WEBSITE_CURRENT.pdf needs a manual browser re-export after these are corrected
 
 Still not delivered this cycle:
 
 - no `site/` directory or Next.js scaffold yet
 - no Elastic-backed `/live` page
-- the broader scorecard still is not fully sourced from the public snapshot; only the runtime/status surfaces are artifact-driven today
+- there is still no single consolidated public website snapshot; the site aggregates multiple checked-in artifacts client-side
 
 ---
 
 ## Current site state (from REPLIT_WEBSITE_CURRENT.pdf)
 
-The live site is still a single `index.html` with a dark terminal aesthetic. After the March 9, 2026 refresh it contains:
+The live site is a static multi-page build with a shared research-terminal aesthetic. After the March 9, 2026 refresh it contains:
 
-- Hero with a launch-blocked banner, GitHub link, MIT license, and refreshed Cycle 2 metrics
-- System-status card: service observed active on March 9, 2026, launch posture still blocked, `REJECT ALL` fast-market note, public-safe edge counts, freshness stamps, and repo-artifact hydration
-- Scorecard: 131 strategies tracked, current root verification status, 11 dispatch work-orders, 71.2% calibrated win rate with 68.5% legacy label, 23 benchmarked systems, 6 primary + 1 anomaly signal lane, $347.51 tracked capital
-- "What Is Elastifund" explainer with agent-run company model comparison table
-- "How It Works Right Now" pipeline: SCAN → RANK → FILTER → SIZE → RESTART
-- System architecture updated around current signal lanes, execution gates, and the active-service / blocked-launch split
-- About John Bradley section, mission (20% to veteran suicide prevention), contact
-- Strategy encyclopedia with a public-subset note explaining the difference between published cards and the full canonical catalog
-- Build Diary: includes the March 9, 2026 drift-reconciliation entry plus prior reverse-chronological entries
-- Education Center: 7 beginner topics, 5 intermediate topics, 6 advanced topics — each with TL;DR, 5-min explanation, and technical deep dive
-- Research Library: 56 outputs across 8 categories with ID, title, category, priority, summary
-- Footer/build stamp updated to March 9, 2026
+- `/`: hero, runtime truth, artifact-backed scorecard, JJ-N five-engine section, system-status widget, build note, and route index
+- `/elastic/`: executive-safe Elastic framing tied to the same runtime and scorecard data
+- `/develop/`: one-command onboarding, contributor modes, and current safe-mode contract
+- `/leaderboards/trading/`: honest mode-separated trading evidence with zero-live-trade posture, current guardrails, and public-safe edge summary
+- `/leaderboards/worker/`: Phase 0 JJ-N metric-definition stub
+- `/manage/`: public-safe operator surface stub for run ledgers, approval queues, and deployment state
+- `/diary/`: chronological experiment-record stub plus the current homepage dispatch-snapshot note
+- `/roadmap/`: forecast and checkpoint stub with explicit confidence language
+- `/docs/`: canonical-docs index stub that points builders back to the repo sources of truth
+- shared footers/build stamps updated for the March 9 website refresh
 
 ## What the current site does well
 
-- Strategy encyclopedia with full failure autopsies — nobody else publishes this
-- Build diary with honest "What We Learned" sections — real credibility
-- Education center with three depth levels — genuinely useful content
-- Anti-hype tone throughout — no "revolutionary AI" language
-- Research library with categorized outputs — shows the actual work
+- Anti-hype tone throughout — no inflated live-performance language
+- Runtime-versus-launch split is explicit instead of being buried in operator notes
+- The public scorecard now keeps the headline metrics aligned to the March 9 dispatch snapshot rather than drifting with unrelated runtime artifact changes
+- JJ-N now appears on the homepage as a first-class surface instead of an afterthought
+- The route map is broad enough to explain where the fuller Next.js migration is going
 
 ## What the current site lacks
 
-- Only the runtime/status surface hydrates from repo artifacts; the broader scorecard is still static repo-backed content
 - No Elastic-backed public `/live` surface yet
 - No search — 57 pages of content with no way to find anything
 - Elastic Stack visibility is still descriptive, not wired to real public telemetry reads
-- Single-file HTML — no component reuse, no build pipeline, and too much manual content maintenance
+- Static HTML routes — no component reuse, no build pipeline, and too much manual content maintenance
+- No single server-side snapshot contract yet; the public site still hydrates by stitching together several checked-in files in the browser
 
 ---
 
@@ -86,12 +95,15 @@ These modules exist in the repo and are tested. The website explains the Elastic
 - Custom spans for Polymarket API, Kalshi API, LLM calls, SQLite
 - Metrics: signal_latency_ms, order_to_fill_ms, llm_response_ms
 
+### Dashboard management (bot/elastic_dashboards.py)
+- Programmatic Kibana dashboard bootstrap and lifecycle management
+
 ### ML anomaly detection (bot/elastic_ml_setup.py)
 - 5 anomaly jobs: VPIN spikes, spread regime changes, OFI divergence, signal confidence drift, kill rule frequency
 - Anomaly consumer (bot/anomaly_consumer.py) feeds back into trading as signal source #7
 
 ### Kibana dashboards (infra/kibana_dashboards/)
-- 6 pre-built: trading_overview, signal_quality, kill_rule_monitor, orderbook_health, apm_dashboard, ml_anomaly_dashboard
+- 7 pre-built: trading_overview, signal_quality, kill_rule_monitor, orderbook_health, apm_dashboard, ml_anomaly_dashboard, nontrading-revenue-funnel
 
 ### Infrastructure (infra/)
 - docker-compose.elastic.yml: ES 8.15.5, Kibana, Filebeat, APM Server

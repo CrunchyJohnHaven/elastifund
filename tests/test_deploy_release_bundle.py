@@ -327,6 +327,51 @@ def test_build_release_manifest_collects_checksums_and_runtime_truth(
     assert manifest["release_contract"]["selected_profile"] == "shadow_fast_flow"
 
 
+def test_build_release_manifest_ignores_missing_seed_manifest_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "bot").mkdir()
+    (tmp_path / "reports" / "parallel").mkdir(parents=True)
+    (tmp_path / "bot" / "jj_live.py").write_text("print('ok')\n")
+    _write_release_contract_files(tmp_path)
+    (tmp_path / ".env.example").write_text("JJ_RUNTIME_PROFILE=blocked_safe\n")
+    (tmp_path / "reports" / "root_test_status.json").write_text(
+        json.dumps({"status": "passing", "summary": "22 passed", "checked_at": "2026-03-09T00:06:56Z"})
+    )
+    (tmp_path / "reports" / "remote_cycle_status.json").write_text(
+        json.dumps({"launch": {"live_launch_blocked": False}, "runtime_truth": {"drift_detected": False}})
+    )
+    (tmp_path / "reports" / "parallel" / "release_manifest.json").write_text(
+        json.dumps(
+            {
+                "deploy_files": [
+                    "bot/jj_live.py",
+                    "config/runtime_profiles/blocked_safe.yaml",
+                ]
+            }
+        )
+    )
+
+    monkeypatch.setattr(
+        "scripts.deploy_release_bundle.list_cycle_changed_files",
+        lambda _repo_root: (),
+    )
+    monkeypatch.setattr(
+        "scripts.deploy_release_bundle._get_git_head_sha",
+        lambda _repo_root: "abc123def456",
+    )
+    monkeypatch.setattr(
+        "scripts.deploy_release_bundle._git_show_text",
+        lambda _repo_root, _revision, _path: "",
+    )
+
+    manifest = build_release_manifest(tmp_path)
+
+    assert "bot/jj_live.py" in manifest["deploy_files"]
+    assert "config/runtime_profiles/blocked_safe.yaml" not in manifest["deploy_files"]
+
+
 def test_build_remote_paper_commands_uses_remote_dir() -> None:
     status_command, cycle_command = build_remote_paper_commands("/srv/bot")
 

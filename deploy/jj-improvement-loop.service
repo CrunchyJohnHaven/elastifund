@@ -1,0 +1,12 @@
+[Unit]
+Description=Elastifund Improvement Loop Cycle
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/polymarket-trading-bot
+ExecStart=/bin/bash -lc 'source .venv_ops/bin/activate && python3 scripts/run_flywheel_cycle.py --config config/flywheel_runtime.local.json && python3 scripts/write_remote_cycle_status.py'
+StandardOutput=journal
+StandardError=journal

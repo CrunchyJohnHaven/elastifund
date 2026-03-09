@@ -14,7 +14,7 @@ from nontrading.engines import (
 )
 from nontrading.models import Account, Contact, Meeting, Message, Opportunity, Outcome, Proposal
 from nontrading.store import RevenueStore
-from nontrading.telemetry import NonTradingTelemetry
+from nontrading.telemetry import NonTradingTelemetry, TelemetryBridge
 
 
 def make_runtime(tmp_path: Path) -> dict[str, object]:
@@ -31,11 +31,11 @@ def make_runtime(tmp_path: Path) -> dict[str, object]:
         "telemetry": telemetry,
         "approval": approval,
         "compliance": compliance,
-        "account_engine": AccountIntelligenceEngine(store, telemetry),
+        "account_engine": AccountIntelligenceEngine(store, telemetry, approval),
         "outreach_engine": OutreachEngine(store, approval, compliance, telemetry),
-        "interaction_engine": InteractionEngine(store, telemetry),
-        "proposal_engine": ProposalEngine(store, telemetry),
-        "learning_engine": LearningEngine(store, telemetry),
+        "interaction_engine": InteractionEngine(store, telemetry, approval),
+        "proposal_engine": ProposalEngine(store, telemetry, approval),
+        "learning_engine": LearningEngine(store, telemetry, approval),
     }
 
 
@@ -274,6 +274,8 @@ def test_telemetry_documents_are_elastic_ready(tmp_path: Path) -> None:
     event = store.list_telemetry_events("account_researched")[0]
     document = telemetry.build_document(event)
 
-    assert document["event"]["category"] == "nontrading"
+    assert TelemetryBridge.is_ecs_compatible(document)
+    assert document["event"]["category"] == ["agent"]
+    assert document["event"]["dataset"] == "elastifund.nontrading"
     assert document["elastifund"]["worker_name"] == "jj-n"
     assert document["payload"]["environment"] == "paper"

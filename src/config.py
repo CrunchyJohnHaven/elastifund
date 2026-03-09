@@ -30,6 +30,9 @@ class SourceConfig:
     binance_ws: str = "wss://stream.binance.com:9443/ws/btcusdt@trade"
     binance_ticker_api: str = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
     binance_klines_api: str = "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=2"
+    coinbase_spot_api: str = "https://api.coinbase.com/v2/prices/BTC-USD/spot"
+    coinbase_exchange_api: str = "https://api.exchange.coinbase.com/products/BTC-USD/ticker"
+    coingecko_price_api: str = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
 
 
 @dataclass

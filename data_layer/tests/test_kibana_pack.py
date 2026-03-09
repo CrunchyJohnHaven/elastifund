@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 
 from data_layer import crud
 from data_layer.schema import Base
+from flywheel.improvement_exchange import publish_knowledge_pack
 from flywheel.kibana_pack import build_phase6_dashboard_pack, write_phase6_dashboard_pack
 from nontrading.models import Campaign, Lead
 from nontrading.store import RevenueStore
@@ -91,6 +92,54 @@ def test_build_and_write_phase6_kibana_pack(session, tmp_path):
         hypothesis="More structure yields cleaner entries.",
         bundle_sha256="deadbeef",
         raw_bundle={},
+    )
+    publish_knowledge_pack(
+        session,
+        peer_name="alpha-fork",
+        engine_key="revenue_audit",
+        engine_version="audit-v1",
+        engine_metadata={
+            "lane": "revenue_audit",
+            "environment": "shadow",
+            "summary": "Sanitized website-audit cohort outcomes.",
+            "sample_size": 14,
+        },
+        detector_summaries=[
+            {
+                "detector_key": "mobile_checkout",
+                "summary": "Mobile checkout friction remains a top issue.",
+                "sample_size": 14,
+                "conversion_rate": 0.19,
+            }
+        ],
+        template_variants=[
+            {
+                "template_key": "audit_lp",
+                "variant": "A",
+                "summary": "Evidence-led CTA copy.",
+                "net_revenue_usd": 900.0,
+            }
+        ],
+        aggregated_outcomes={
+            "observed_count": 14,
+            "expected_net_cash_30d": 1300.0,
+            "conversion_rate": 0.19,
+            "refund_rate": 0.03,
+            "gross_margin_pct": 0.66,
+        },
+        penalty_metrics={
+            "refund_penalty": 0.03,
+            "fulfillment_penalty": 0.02,
+            "domain_health_penalty": 0.01,
+        },
+        proof_references=[
+            {
+                "ref_key": "proof-1",
+                "proof_type": "sha256",
+                "sha256": "c" * 64,
+            }
+        ],
+        signing_secret="shared-secret",
     )
     session.commit()
 
@@ -222,6 +271,68 @@ def test_build_and_write_phase6_kibana_pack(session, tmp_path):
         )
     )
 
+    audit_ops_path = reports_dir / "revenue_audit_ops.json"
+    audit_ops_path.write_text(
+        json.dumps(
+            {
+                "engines": [
+                    {
+                        "engine_name": "revenue_audit",
+                        "engine_family": "non_trading",
+                        "status": "running",
+                        "run_mode": "shadow",
+                        "kill_switch_active": False,
+                        "metadata": {
+                            "refund_rate": 0.08,
+                            "net_roi_30d": -0.12,
+                            "knowledge_packs_published": 2,
+                        },
+                        "heartbeat_age_minutes": 85,
+                    }
+                ],
+                "prospect_pipeline": {
+                    "discovered": 120,
+                    "profiled": 90,
+                    "scored": 70,
+                    "qualified": 18,
+                    "backlog": 52,
+                },
+                "checkout_funnel": {
+                    "sessions_created": 15,
+                    "sessions_completed": 4,
+                    "payments_collected": 4,
+                    "webhook_failures": 2,
+                    "avg_order_value_usd": 249.0,
+                },
+                "fulfillment": {
+                    "queued": 3,
+                    "running": 2,
+                    "stalled": 1,
+                    "delivered": 8,
+                    "oldest_inflight_age_minutes": 180,
+                    "avg_latency_minutes": 47,
+                },
+                "refunds_and_churn": {
+                    "refunds": 2,
+                    "refund_rate": 0.08,
+                    "chargebacks": 1,
+                    "active_subscriptions": 11,
+                    "churned_subscriptions": 2,
+                    "churn_rate": 0.15,
+                    "net_roi_30d": -0.12,
+                },
+                "knowledge_packs": {
+                    "published": 3,
+                    "imports": 5,
+                    "exports": 1,
+                    "verify_failures": 1,
+                    "leaderboard_updates": 2,
+                },
+                "outbound_follow_up_enabled": True,
+            }
+        )
+    )
+
     pack = build_phase6_dashboard_pack(
         session,
         allocator_db_path=allocator_db,
@@ -229,17 +340,27 @@ def test_build_and_write_phase6_kibana_pack(session, tmp_path):
         guaranteed_dollar_audit_path=guaranteed_dollar_path,
         b1_template_audit_path=b1_template_path,
         research_metrics_glob=str(reports_dir / "run_*_metrics.json"),
+        audit_ops_path=audit_ops_path,
     )
 
     assert pack["collective_health"]["agent_totals"]["total_agents"] == 3
     assert pack["market_regime"]["current_regime"] == "unstable"
     assert pack["strategy_diversity"]["a6_audit"]["events_scanned"] == 2
     assert pack["knowledge_flow"]["allocator"]["latest_decision"]["mode"] == "thompson_sampling"
-    assert pack["alert_rules"]["rules"][0]["status"] == "firing"
-    assert pack["alert_rules"]["rules"][1]["status"] == "firing"
-    assert pack["alert_rules"]["rules"][2]["status"] == "firing"
-    assert len(pack["dashboards"]) == 6
+    assert pack["knowledge_flow"]["exported_knowledge_packs"] == 1
+    assert pack["knowledge_flow"]["knowledge_pack_leaderboard"][0]["engine_key"] == "revenue_audit"
+    alert_statuses = {row["id"]: row["status"] for row in pack["alert_rules"]["rules"]}
+    assert alert_statuses["collective-revenue-drop-gt-20pct"] == "firing"
+    assert alert_statuses["drawdown-gt-15pct"] == "firing"
+    assert alert_statuses["agent-offline-gt-1h"] == "firing"
+    assert alert_statuses["checkout-webhook-failures"] == "firing"
+    assert alert_statuses["fulfillment-stalls"] == "firing"
+    assert alert_statuses["refund-spikes"] == "firing"
+    assert alert_statuses["missing-worker-activity"] == "firing"
+    assert alert_statuses["negative-roi-regime"] == "firing"
+    assert len(pack["dashboards"]) == 13
     assert pack["charitable_impact"]["reserved_total_usd"] == pytest.approx(1.0)
+    assert pack["audit_operations"]["prospect_pipeline"]["qualified"] == pytest.approx(18.0)
 
     output_dir = tmp_path / "deploy" / "kibana" / "phase6"
     written = write_phase6_dashboard_pack(output_dir, pack)
@@ -248,11 +369,14 @@ def test_build_and_write_phase6_kibana_pack(session, tmp_path):
         assert Path(value).exists()
 
     saved_objects = Path(written["saved_objects_ndjson"]).read_text()
-    assert saved_objects.count('"type": "dashboard"') == 6
+    assert saved_objects.count('"type": "dashboard"') == len(pack["dashboards"])
     assert "Collective Health" in saved_objects
+    assert "Knowledge Pack Leaderboard" in saved_objects
+    assert "Audit Engine Performance" in saved_objects
 
     canvas_spec = json.loads(Path(written["canvas_workpad_json"]).read_text())
     assert canvas_spec["pages"][0]["name"] == "Collective Health"
+    assert canvas_spec["pages"][2]["name"] == "Audit Operations"
 
 
 def _seed_strategy(

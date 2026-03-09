@@ -1,0 +1,13 @@
+Subject: One quick website win for {{company}}
+
+Hi {{first_name}},
+
+One change on {{company}}'s site stands out: {{specific_finding}}.
+
+We package that into a {{offer_name}} so teams can ship the highest-leverage fixes inside {{delivery_days}} business days without committing to a long retainer.
+
+If useful, I can send the short version and leave it there.
+
+{{sender_name}}
+{{postal_address}}
+Unsubscribe: {{unsubscribe_url}}

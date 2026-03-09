@@ -13,6 +13,7 @@ import logging
 import math
 import os
 import re
+import time
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -46,7 +47,9 @@ KALSHI_API_BASE = os.environ.get(
 DATA_DIR = Path("data")
 SIGNALS_LOG = DATA_DIR / "kalshi_weather_signals.jsonl"
 ORDERS_LOG = DATA_DIR / "kalshi_weather_orders.jsonl"
+DECISIONS_LOG = DATA_DIR / "kalshi_weather_decisions.jsonl"
 MAX_FORECAST_HORIZON_DAYS = 7
+DEFAULT_HOURLY_BUDGET_USD = 50.0
 
 CITY_CONFIG = {
     "NYC": {
@@ -123,6 +126,12 @@ class KalshiSession:
     auth_configured: bool = False
 
 
+@dataclass
+class HourlyUsage:
+    order_count: int = 0
+    notional_usd: float = 0.0
+
+
 def _bool_env(name: str, default: bool) -> bool:
     val = os.environ.get(name)
     if val is None:
@@ -164,6 +173,148 @@ def _append_jsonl(path: Path, row: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def _parse_timestamp(raw: str) -> Optional[datetime]:
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _current_hourly_usage(
+    *,
+    now: Optional[datetime] = None,
+    lookback: timedelta = timedelta(hours=1),
+    orders_log: Path = ORDERS_LOG,
+) -> HourlyUsage:
+    if now is None:
+        now = datetime.now(timezone.utc)
+    cutoff = now - lookback
+    usage = HourlyUsage()
+    if not orders_log.exists():
+        return usage
+
+    with orders_log.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            ts = _parse_timestamp(str(row.get("timestamp", "")).strip())
+            if ts is None or ts < cutoff:
+                continue
+
+            execution_result = str(row.get("execution_result", "")).strip().lower()
+            if execution_result not in {"paper", "live"}:
+                continue
+
+            usage.order_count += 1
+            usage.notional_usd += max(0.0, _safe_float(row.get("notional_usd"), 0.0) or 0.0)
+    usage.notional_usd = round(usage.notional_usd, 2)
+    return usage
+
+
+def _resolve_hourly_budget_usd(
+    explicit_budget: Optional[float],
+    *,
+    env: Optional[dict[str, str]] = None,
+) -> float:
+    if explicit_budget is not None:
+        return float(explicit_budget)
+    env_source = env or os.environ
+    for key in (
+        "KALSHI_WEATHER_HOURLY_BUDGET_USD",
+        "JJ_HOURLY_NOTIONAL_BUDGET_USD",
+        "JJ_HOURLY_BUDGET_USD",
+    ):
+        raw = str(env_source.get(key, "")).strip()
+        if not raw:
+            continue
+        try:
+            return float(raw)
+        except ValueError:
+            continue
+    return DEFAULT_HOURLY_BUDGET_USD
+
+
+def _normalize_mode(args: argparse.Namespace) -> None:
+    mode = str(getattr(args, "mode", "paper") or "paper").strip().lower()
+    if mode not in {"paper", "live"}:
+        raise ValueError(f"unsupported mode {mode!r}; expected 'paper' or 'live'")
+    execute_flag = bool(getattr(args, "execute", False))
+    if mode == "paper" and execute_flag:
+        raise ValueError("conflicting mode flags: --mode paper cannot be combined with --execute")
+    args.mode = mode
+    args.execute = mode == "live" or execute_flag
+
+
+def _validate_args(args: argparse.Namespace) -> None:
+    if not (0.0 <= float(args.edge_threshold) <= 1.0):
+        raise ValueError("--edge-threshold must be in [0.0, 1.0]")
+    if not (0.0 <= float(args.max_spread) <= 1.0):
+        raise ValueError("--max-spread must be in [0.0, 1.0]")
+    if float(args.temp_std_f) <= 0.0:
+        raise ValueError("--temp-std-f must be > 0")
+    if int(args.maker_offset_cents) < 0:
+        raise ValueError("--maker-offset-cents must be >= 0")
+    if float(args.bankroll_usd) <= 0.0:
+        raise ValueError("--bankroll-usd must be > 0")
+    if float(args.max_order_usd) <= 0.0:
+        raise ValueError("--max-order-usd must be > 0")
+    if not (0.0 < float(args.kelly_fraction) <= 1.0):
+        raise ValueError("--kelly-fraction must be in (0.0, 1.0]")
+    if int(args.max_pages) < 1:
+        raise ValueError("--max-pages must be >= 1")
+    if int(args.max_signals) < 1:
+        raise ValueError("--max-signals must be >= 1")
+    if int(args.max_orders) < 0:
+        raise ValueError("--max-orders must be >= 0")
+    if int(args.max_orders_per_hour) < 0:
+        raise ValueError("--max-orders-per-hour must be >= 0")
+    if float(args.hourly_budget_usd) <= 0.0:
+        raise ValueError("--hourly-budget-usd must be > 0")
+    if int(args.interval_seconds) < 1:
+        raise ValueError("--interval-seconds must be >= 1")
+
+
+def _record_decision(
+    *,
+    signal: WeatherSignal,
+    size_usd: float,
+    execution_result: str,
+    reason_code: str,
+    execute: bool,
+) -> None:
+    _append_jsonl(
+        DECISIONS_LOG,
+        {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "venue": "kalshi",
+            "source": signal.source,
+            "market_ticker": signal.market_ticker,
+            "market_title": signal.market_title,
+            "city": signal.city,
+            "side": signal.side,
+            "edge": signal.edge,
+            "reason": signal.reason,
+            "confidence": signal.confidence,
+            "spread": signal.spread,
+            "order_probability": signal.order_probability,
+            "notional_usd": round(max(0.0, float(size_usd)), 2),
+            "execution_mode": "live" if execute else "paper",
+            "execution_result": execution_result,
+            "reason_code": reason_code,
+        },
+    )
 
 
 def _norm_cdf(x: float, mean: float, std: float) -> float:
@@ -739,6 +890,9 @@ def run_once(args: argparse.Namespace) -> int:
     kelly_fraction = float(args.kelly_fraction)
 
     orders_placed = 0
+    hourly_usage = _current_hourly_usage()
+    hour_orders_placed = hourly_usage.order_count
+    hour_notional = hourly_usage.notional_usd
     for sig in signals[: args.max_signals]:
         size_usd = _kelly_size_usd(
             side=sig.side,
@@ -749,21 +903,81 @@ def run_once(args: argparse.Namespace) -> int:
             max_order_usd=max_order_usd,
         )
         if size_usd < 1.0:
+            _record_decision(
+                signal=sig,
+                size_usd=size_usd,
+                execution_result="rejected",
+                reason_code="size_too_small",
+                execute=args.execute,
+            )
+            continue
+        remaining_hourly_budget = max(0.0, float(args.hourly_budget_usd) - hour_notional)
+        if hour_orders_placed >= int(args.max_orders_per_hour):
+            _record_decision(
+                signal=sig,
+                size_usd=0.0,
+                execution_result="rejected",
+                reason_code="hourly_order_limit_reached",
+                execute=args.execute,
+            )
+            break
+        if remaining_hourly_budget < 1.0:
+            _record_decision(
+                signal=sig,
+                size_usd=0.0,
+                execution_result="rejected",
+                reason_code="hourly_budget_exhausted",
+                execute=args.execute,
+            )
+            break
+        size_usd = min(size_usd, remaining_hourly_budget, float(args.max_order_usd))
+        size_usd = round(size_usd, 2)
+        if size_usd < 1.0:
+            _record_decision(
+                signal=sig,
+                size_usd=size_usd,
+                execution_result="rejected",
+                reason_code="remaining_budget_too_small",
+                execute=args.execute,
+            )
             continue
 
         row = asdict(sig)
         row["size_usd"] = size_usd
+        row["venue"] = "kalshi"
+        row["execution_mode"] = "live" if args.execute else "paper"
         _append_jsonl(SIGNALS_LOG, row)
 
         order = place_order(session, sig, size_usd, execute=args.execute)
+        execution_result = str(order.get("status", "unknown"))
         order_row = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "venue": "kalshi",
+            "source": sig.source,
+            "market_ticker": sig.market_ticker,
+            "side": sig.side,
+            "edge": sig.edge,
+            "reason": sig.reason,
+            "execution_mode": "live" if args.execute else "paper",
+            "execution_result": execution_result,
+            "reason_code": "order_submitted" if execution_result in {"paper", "live"} else str(order.get("reason", "unknown")),
+            "notional_usd": size_usd,
             "execute": args.execute,
             "signal": row,
             "order": order,
         }
         _append_jsonl(ORDERS_LOG, order_row)
+        _record_decision(
+            signal=sig,
+            size_usd=size_usd,
+            execution_result=execution_result,
+            reason_code=order_row["reason_code"],
+            execute=args.execute,
+        )
         orders_placed += 1
+        if execution_result in {"paper", "live"}:
+            hour_orders_placed += 1
+            hour_notional = round(hour_notional + size_usd, 2)
 
         print(
             f"[{sig.city}] {sig.market_ticker} {sig.side.upper()} "
@@ -776,6 +990,7 @@ def run_once(args: argparse.Namespace) -> int:
     print(
         f"Done. Signals logged to {SIGNALS_LOG}. "
         f"Orders logged to {ORDERS_LOG}. "
+        f"Decisions logged to {DECISIONS_LOG}. "
         f"{'LIVE' if args.execute else 'PAPER'} orders={orders_placed}"
     )
     return 0
@@ -783,7 +998,8 @@ def run_once(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Kalshi weather + NWS arbitrage")
-    p.add_argument("--execute", action="store_true", help="Place live Kalshi orders (default is paper)")
+    p.add_argument("--mode", choices=("paper", "live"), default=os.environ.get("KALSHI_WEATHER_MODE", "paper"), help="Explicit run mode")
+    p.add_argument("--execute", action="store_true", help="Legacy alias for --mode live")
     p.add_argument("--edge-threshold", type=float, default=float(os.environ.get("KALSHI_WEATHER_EDGE_THRESHOLD", "0.10")))
     p.add_argument("--max-spread", type=float, default=float(os.environ.get("KALSHI_WEATHER_MAX_SPREAD", "0.15")))
     p.add_argument("--temp-std-f", type=float, default=float(os.environ.get("KALSHI_WEATHER_TEMP_STD_F", "3.0")))
@@ -791,9 +1007,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--bankroll-usd", type=float, default=float(os.environ.get("KALSHI_WEATHER_BANKROLL_USD", "25")))
     p.add_argument("--max-order-usd", type=float, default=float(os.environ.get("KALSHI_WEATHER_MAX_ORDER_USD", "5")))
     p.add_argument("--kelly-fraction", type=float, default=float(os.environ.get("KALSHI_WEATHER_KELLY_FRACTION", "0.25")))
+    p.add_argument(
+        "--hourly-budget-usd",
+        type=float,
+        default=_resolve_hourly_budget_usd(None),
+        help="Rolling 60-minute notional budget cap",
+    )
     p.add_argument("--max-pages", type=int, default=int(os.environ.get("KALSHI_WEATHER_MAX_PAGES", "3")))
     p.add_argument("--max-signals", type=int, default=int(os.environ.get("KALSHI_WEATHER_MAX_SIGNALS", "20")))
     p.add_argument("--max-orders", type=int, default=int(os.environ.get("KALSHI_WEATHER_MAX_ORDERS", "5")))
+    p.add_argument(
+        "--max-orders-per-hour",
+        type=int,
+        default=int(os.environ.get("KALSHI_WEATHER_MAX_ORDERS_PER_HOUR", os.environ.get("KALSHI_WEATHER_MAX_ORDERS", "5"))),
+        help="Rolling 60-minute order count cap",
+    )
+    p.add_argument("--loop", action="store_true", help="Run continuously")
+    p.add_argument("--interval-seconds", type=int, default=int(os.environ.get("KALSHI_WEATHER_LOOP_INTERVAL_SECONDS", "300")))
     p.add_argument("--log-level", default=os.environ.get("LOG_LEVEL", "INFO"))
     return p
 
@@ -806,11 +1036,37 @@ def main() -> int:
         level=getattr(logging, str(args.log_level).upper(), logging.INFO),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    try:
+        _normalize_mode(args)
+        args.hourly_budget_usd = _resolve_hourly_budget_usd(float(args.hourly_budget_usd))
+        _validate_args(args)
+    except ValueError as exc:
+        logger.error("Invalid config: %s", exc)
+        return 2
+
     if not args.execute and not _bool_env("KALSHI_WEATHER_PAPER_TRADING", True):
         logger.warning("KALSHI_WEATHER_PAPER_TRADING is false but --execute not supplied; using paper mode")
 
     try:
-        return run_once(args)
+        if not args.loop:
+            return run_once(args)
+
+        logger.info(
+            "Starting continuous Kalshi weather lane mode=%s interval=%ss hourly_budget=$%.2f max_orders_hour=%d",
+            args.mode,
+            args.interval_seconds,
+            float(args.hourly_budget_usd),
+            int(args.max_orders_per_hour),
+        )
+        while True:
+            cycle_started = datetime.now(timezone.utc)
+            exit_code = run_once(args)
+            if exit_code != 0:
+                return exit_code
+            elapsed = (datetime.now(timezone.utc) - cycle_started).total_seconds()
+            sleep_for = max(0.0, float(args.interval_seconds) - elapsed)
+            logger.info("Cycle complete in %.2fs; sleeping %.2fs", elapsed, sleep_for)
+            time.sleep(sleep_for)
     except Exception as e:
         logger.error("weather_arb failed: %s", e, exc_info=True)
         return 1

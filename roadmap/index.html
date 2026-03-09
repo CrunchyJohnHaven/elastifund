@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Elastifund / Roadmap | Forecasts and checkpoints</title>
+  <meta name="description" content="Public roadmap stub for Elastifund, showing current checkpoints, blockers, and confidence levels without pretending forecasts are promises.">
+  <link rel="stylesheet" href="/site.css">
+  <script src="/site.js" defer></script>
+</head>
+<body data-page="roadmap">
+  <div class="page-wrap">
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="/">
+          <span class="brand-mark"></span>
+          <span class="brand-text">
+            <span class="brand-name">Elastifund</span>
+            <span class="brand-subtitle">Forecasts and checkpoints</span>
+          </span>
+        </a>
+        <nav class="header-nav" aria-label="Primary">
+          <a class="nav-link" data-page="home" href="/">Home</a>
+          <a class="nav-link" data-page="elastic" href="/elastic/">Elastic</a>
+          <a class="nav-link" data-page="develop" href="/develop/">Develop</a>
+          <a class="nav-link" data-page="trading" href="/leaderboards/trading/">Trading</a>
+          <a class="nav-link" data-page="worker" href="/leaderboards/worker/">Worker</a>
+        </nav>
+        <div class="header-actions">
+          <span class="status-pill" data-role="status-pill">runtime syncing</span>
+          <a class="header-link" href="/docs/">Docs</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="route-hero">
+        <div class="container route-hero-grid">
+          <div>
+            <span class="eyebrow">Roadmap</span>
+            <h1>The roadmap is a forecast surface, not a promise surface.</h1>
+            <p class="route-copy">
+              Elastifund only gets more trustworthy if missed checkpoints are visible and confidence stays explicit. This route is a stub for the public forecast graph and checkpoint log while the broader routed site is still static.
+            </p>
+            <div class="cta-row">
+              <a class="button button-primary" href="/diary/">Read the diary</a>
+              <a class="button button-secondary" href="/leaderboards/trading/">Read the trading evidence</a>
+            </div>
+          </div>
+          <aside class="status-panel">
+            <div class="status-panel-header">
+              <div>
+                <div class="panel-kicker">Current headline checkpoint</div>
+                <h3><span data-fill="next_milestone"></span></h3>
+              </div>
+              <span class="tag warn"><span data-fill="launch_posture"></span></span>
+            </div>
+            <dl class="info-list">
+              <div class="info-row">
+                <dt>Runtime cycles</dt>
+                <dd><span data-fill="runtime_cycles"></span></dd>
+              </div>
+              <div class="info-row">
+                <dt>Current blocker</dt>
+                <dd><span data-fill="deploy_blocker"></span></dd>
+              </div>
+              <div class="info-row">
+                <dt>Fast verdict</dt>
+                <dd><span data-fill="fast_verdict"></span></dd>
+              </div>
+              <div class="info-row">
+                <dt>Operator action</dt>
+                <dd><span data-fill="next_action"></span></dd>
+              </div>
+            </dl>
+          </aside>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">Current checkpoints</div>
+            <h2>The next few public jobs are concrete.</h2>
+          </div>
+          <div class="surface-grid">
+            <article class="surface-card">
+              <div class="tag warn">Low confidence</div>
+              <h3>Record the first closed trades.</h3>
+              <p class="surface-copy">Without closed trades, calibration and live promotion remain structurally constrained even if the service is active.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag warn">Medium confidence</div>
+              <h3>Finish release-manifest reconciliation.</h3>
+              <p class="surface-copy">Deploy validation is still blocked on release-bundle artifact consistency. The site now reflects that rather than burying it in operator notes.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag neutral">Medium confidence</div>
+              <h3>Stand up JJ-N Phase 0 scaffolding.</h3>
+              <p class="surface-copy">CRM schema, approval gates, and the five-engine model need a stable public and internal metrics contract before worker claims begin.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag neutral">Medium confidence</div>
+              <h3>Move the site beyond static stubs.</h3>
+              <p class="surface-copy">The Next.js and live-data surfaces remain planned work. The current job is to keep the static proof surfaces honest in the meantime.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">Confidence log</div>
+            <h2>Each checkpoint needs an explicit reason to believe or doubt it.</h2>
+          </div>
+          <div class="table-wrap">
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Checkpoint</th>
+                    <th>Confidence</th>
+                    <th>Why</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><span class="cell-title">First live trade</span></td>
+                    <td>Low</td>
+                    <td>The runtime still has zero closed trades, zero deployed capital, and the A-6 / B-1 structural gates remain blocked.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="cell-title">JJ-N public worker board</span></td>
+                    <td>Medium</td>
+                    <td>The metric definitions and approval boundary are clear, but the CRM and telemetry scaffolding are still catching up.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="cell-title">Live `/manage` surface</span></td>
+                    <td>Medium</td>
+                    <td>The shape is obvious; the question is when the authenticated data surfaces are ready for publication.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="cell-title">Next.js migration</span></td>
+                    <td>Medium</td>
+                    <td>The route map is defined, but the current repo still ships the site from root static HTML.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container">
+        <div class="footer-panel">
+          <div>
+            <div class="footer-kicker">Roadmap route</div>
+            <h3>Forecasts stay legible when misses are legible too.</h3>
+            <p class="footer-meta">Snapshot generated <span data-fill="generated_utc"></span>. Current launch posture: <span data-fill="launch_posture"></span>.</p>
+          </div>
+          <div class="footer-links">
+            <a href="/">Home</a>
+            <a href="/elastic/">Elastic</a>
+            <a href="/develop/">Develop</a>
+            <a href="/manage/">Manage</a>
+            <a href="/diary/">Diary</a>
+            <a href="/docs/">Docs</a>
+          </div>
+          <div class="footer-meta">
+            <div>Roadmap forecasts are public-safe summaries, not delivery guarantees.</div>
+            <div>&copy; <span data-fill="year"></span> Elastifund.</div>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

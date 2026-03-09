@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import hashlib
 import time
 from typing import TYPE_CHECKING, Mapping, Sequence
@@ -591,3 +591,46 @@ class A6SumScanner:
         stale_keys = [key for key, seen_ts in self._recent_signals.items() if seen_ts < cutoff]
         for key in stale_keys:
             self._recent_signals.pop(key, None)
+
+
+def scan_neg_risk_events() -> dict[str, object]:
+    """Compatibility wrapper for the documented A-6 live-surface scan command."""
+
+    from bot.runtime_profile import load_runtime_profile
+    from bot.sum_violation_scanner import SumViolationScanner
+
+    profile_bundle = load_runtime_profile()
+    scanner = SumViolationScanner(
+        use_websocket=False,
+        max_pages=3,
+        page_size=50,
+        max_events=20,
+        buy_threshold=float(profile_bundle.profile.combinatorial_thresholds.a6_buy_threshold),
+        execute_threshold=0.95,
+        unwind_threshold=float(profile_bundle.profile.combinatorial_thresholds.a6_unwind_threshold),
+        stale_quote_seconds=int(profile_bundle.profile.combinatorial_thresholds.stale_book_max_age_seconds),
+        timeout_seconds=10.0,
+    )
+    try:
+        stats = scanner.scan_once()
+        opportunities = list(getattr(scanner, "_latest_opportunities", []))
+        return {
+            "status": "active" if stats.violations_found else "idle",
+            "stats": asdict(stats),
+            "candidates": int(stats.candidate_markets),
+            "executable": len(opportunities),
+            "opportunities": [
+                {
+                    "event_id": opp.event_id,
+                    "signal_type": opp.signal_type,
+                    "theoretical_edge": float(opp.theoretical_edge),
+                    "sum_yes_ask": (float(opp.sum_yes_ask) if opp.sum_yes_ask is not None else None),
+                    "selected_construction": opp.selected_construction,
+                    "readiness_status": opp.readiness_status,
+                    "legs": len(opp.legs),
+                }
+                for opp in opportunities[:10]
+            ],
+        }
+    finally:
+        scanner.close()

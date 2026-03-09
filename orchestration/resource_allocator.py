@@ -3,22 +3,28 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from datetime import date, timedelta
+import json
 import logging
 import os
 from pathlib import Path
 import random
 import statistics
-from typing import Mapping
+from typing import Any
 
 from .models import (
     AllocationDecision,
     AllocationMode,
     ArmStats,
+    ComplianceStatus,
     DeliverabilityRisk,
+    EngineFamilyInput,
+    EngineFamilyRecommendation,
     NON_TRADING_AGENT,
     PerformanceObservation,
+    REVENUE_AUDIT_ENGINE,
     TRADING_AGENT,
 )
 from .store import AllocatorStore, DEFAULT_DB_PATH
@@ -26,6 +32,7 @@ from .store import AllocatorStore, DEFAULT_DB_PATH
 logger = logging.getLogger("JJ.resource_allocator")
 
 AGENT_NAMES = (TRADING_AGENT, NON_TRADING_AGENT)
+ENGINE_FAMILY_ORDER = (TRADING_AGENT, REVENUE_AUDIT_ENGINE)
 
 
 def _env_bool(name: str, default: bool = False, *, env: Mapping[str, str] | None = None) -> bool:
@@ -260,6 +267,11 @@ class ResourceAllocator:
         decision_date: date | None = None,
         mode: AllocationMode | str | None = None,
         deliverability_risk: DeliverabilityRisk | str = DeliverabilityRisk.GREEN,
+        engine_inputs: (
+            Mapping[str, EngineFamilyInput | Mapping[str, object]]
+            | Sequence[EngineFamilyInput | Mapping[str, object]]
+            | None
+        ) = None,
         seed: int | None = None,
         persist: bool = True,
     ) -> AllocationDecision:
@@ -288,6 +300,11 @@ class ResourceAllocator:
                 deliverability_risk=risk,
                 rationale="Fixed split mode.",
             )
+
+        decision = self._decorate_with_engine_family_overlay(
+            decision,
+            engine_inputs=engine_inputs,
+        )
 
         if persist:
             decision = self.store.record_decision(decision)
@@ -985,6 +1002,395 @@ class ResourceAllocator:
             strategy_documents=strategy_documents,
         )
 
+    def _decorate_with_engine_family_overlay(
+        self,
+        decision: AllocationDecision,
+        *,
+        engine_inputs: (
+            Mapping[str, EngineFamilyInput | Mapping[str, object]]
+            | Sequence[EngineFamilyInput | Mapping[str, object]]
+            | None
+        ),
+    ) -> AllocationDecision:
+        normalized_inputs = self._normalize_engine_inputs(engine_inputs)
+        if not normalized_inputs:
+            return decision
+
+        recommendations = self._build_engine_family_recommendations(
+            decision=decision,
+            engine_inputs=normalized_inputs,
+        )
+        if not recommendations:
+            return decision
+
+        overlay = {
+            "advisory_only": True,
+            "input_families": list(normalized_inputs.keys()),
+            "inputs": {
+                family: engine_input.to_dict()
+                for family, engine_input in normalized_inputs.items()
+            },
+            "blocked_families": [
+                recommendation.engine_family
+                for recommendation in recommendations
+                if recommendation.blocked_reason == "compliance_fail"
+            ],
+            "comparative_scores": {
+                recommendation.engine_family: recommendation.score
+                for recommendation in recommendations
+                if recommendation.score > 0.0
+            },
+            "recommendations": [
+                recommendation.to_dict() for recommendation in recommendations
+            ],
+        }
+        metadata = dict(decision.metadata)
+        metadata["engine_family_overlay"] = overlay
+
+        strategy_documents = tuple(decision.strategy_documents) + self._build_engine_family_strategy_documents(
+            decision=decision,
+            recommendations=recommendations,
+        )
+
+        rationale = decision.rationale
+        block_notes = [
+            recommendation.engine_family.replace("_", " ")
+            for recommendation in recommendations
+            if recommendation.blocked_reason == "compliance_fail"
+        ]
+        if block_notes:
+            rationale = (
+                f"{rationale} Engine-family compliance block active for {', '.join(block_notes)}."
+            )
+
+        return replace(
+            decision,
+            rationale=rationale,
+            metadata=metadata,
+            strategy_documents=strategy_documents,
+        )
+
+    def _normalize_engine_inputs(
+        self,
+        engine_inputs: (
+            Mapping[str, EngineFamilyInput | Mapping[str, object]]
+            | Sequence[EngineFamilyInput | Mapping[str, object]]
+            | None
+        ),
+    ) -> dict[str, EngineFamilyInput]:
+        if not engine_inputs:
+            return {}
+
+        items: list[tuple[str, EngineFamilyInput | Mapping[str, object]]] = []
+        if isinstance(engine_inputs, Mapping):
+            items.extend((str(key), value) for key, value in engine_inputs.items())
+        else:
+            for index, value in enumerate(engine_inputs):
+                if isinstance(value, EngineFamilyInput):
+                    items.append((value.engine_family, value))
+                    continue
+                if isinstance(value, Mapping):
+                    engine_family = value.get("engine_family")
+                    if engine_family is None:
+                        raise ValueError(
+                            f"Engine input at position {index} is missing engine_family"
+                        )
+                    items.append((str(engine_family), value))
+                    continue
+                raise TypeError(f"Unsupported engine input payload: {type(value)!r}")
+
+        normalized: dict[str, EngineFamilyInput] = {}
+        for key, value in items:
+            if isinstance(value, EngineFamilyInput):
+                normalized[value.engine_family] = value
+            elif isinstance(value, Mapping):
+                normalized_input = EngineFamilyInput.from_mapping(key, value)
+                normalized[normalized_input.engine_family] = normalized_input
+            else:
+                raise TypeError(f"Unsupported engine input payload: {type(value)!r}")
+        return {
+            family: normalized[family]
+            for family in ENGINE_FAMILY_ORDER
+            if family in normalized
+        }
+
+    def _build_engine_family_recommendations(
+        self,
+        *,
+        decision: AllocationDecision,
+        engine_inputs: Mapping[str, EngineFamilyInput],
+    ) -> tuple[EngineFamilyRecommendation, ...]:
+        shared_capital_pool_usd = round(
+            self.config.trading_budget_cap_usd * (1.0 - decision.cash_reserve_share),
+            2,
+        )
+        lane_ceilings: dict[str, dict[str, float | int]] = {
+            TRADING_AGENT: {
+                "share": decision.trading_share,
+                "budget_usd": decision.trading_budget_usd,
+                "send_quota": 0,
+                "llm_tokens": 0,
+            },
+            NON_TRADING_AGENT: {
+                "share": decision.non_trading_share,
+                "budget_usd": round(shared_capital_pool_usd * decision.non_trading_share, 2),
+                "send_quota": decision.non_trading_send_quota,
+                "llm_tokens": decision.non_trading_llm_token_budget,
+            },
+        }
+
+        drafts: list[dict[str, Any]] = []
+        comparable_scores: dict[str, float] = {}
+        for family in ENGINE_FAMILY_ORDER:
+            engine_input = engine_inputs.get(family)
+            if engine_input is None:
+                continue
+
+            lane = lane_ceilings[engine_input.agent_name]
+            explanations: list[str] = []
+            penalty_total = min(
+                0.95,
+                engine_input.refund_penalty
+                + engine_input.fulfillment_penalty
+                + engine_input.domain_health_penalty,
+            )
+            penalty_multiplier = round(max(0.0, 1.0 - penalty_total), 6)
+            score = 0.0
+            score_inputs_complete = (
+                engine_input.expected_net_cash_30d is not None
+                and engine_input.confidence is not None
+            )
+            if score_inputs_complete:
+                effective_budget = (
+                    engine_input.required_budget
+                    if engine_input.required_budget is not None
+                    else float(lane["budget_usd"])
+                )
+                divisor = max(float(effective_budget), 1.0)
+                score = max(0.0, float(engine_input.expected_net_cash_30d)) * float(
+                    engine_input.confidence or 0.0
+                )
+                score = round(score * penalty_multiplier / divisor, 6)
+                explanations.append(
+                    "Comparative score uses expected_net_cash_30d * confidence * "
+                    f"penalty_multiplier / required_budget = {score:.6f}."
+                )
+            else:
+                explanations.append(
+                    "Comparative score withheld until expected_net_cash_30d and confidence are both supplied."
+                )
+
+            blocked_reason: str | None = None
+            eligible = True
+            if engine_input.compliance_status is ComplianceStatus.FAIL:
+                eligible = False
+                blocked_reason = "compliance_fail"
+                score = 0.0
+                explanations.append(
+                    "Compliance status is fail, so the engine family is hard-blocked."
+                )
+            elif not score_inputs_complete:
+                eligible = False
+                blocked_reason = "insufficient_inputs"
+            elif float(engine_input.expected_net_cash_30d or 0.0) <= 0.0:
+                eligible = False
+                blocked_reason = "non_positive_expected_net_cash"
+                explanations.append(
+                    "Expected net cash over 30 days is not positive, so active budget stays at zero."
+                )
+            elif float(engine_input.confidence or 0.0) <= 0.0:
+                eligible = False
+                blocked_reason = "zero_confidence"
+                explanations.append("Confidence is zero, so active budget stays at zero.")
+
+            if engine_input.compliance_status is ComplianceStatus.WARNING:
+                explanations.append(
+                    "Compliance status warning keeps the recommendation advisory-only."
+                )
+            elif engine_input.compliance_status is ComplianceStatus.UNKNOWN:
+                explanations.append(
+                    "Compliance status is unknown; recommendation stays advisory-only."
+                )
+
+            drafts.append(
+                {
+                    "input": engine_input,
+                    "lane": lane,
+                    "score_inputs_complete": score_inputs_complete,
+                    "penalty_multiplier": penalty_multiplier,
+                    "score": score,
+                    "eligible": eligible,
+                    "blocked_reason": blocked_reason,
+                    "explanations": explanations,
+                }
+            )
+            if eligible and score > 0.0:
+                comparable_scores[family] = score
+
+        comparable_total = sum(comparable_scores.values())
+        comparable_enabled = comparable_total > 0.0 and len(comparable_scores) >= 2
+
+        recommendations: list[EngineFamilyRecommendation] = []
+        for draft in drafts:
+            engine_input = draft["input"]
+            lane = draft["lane"]
+            explanations = list(draft["explanations"])
+            target_share: float | None = None
+            if comparable_enabled and engine_input.engine_family in comparable_scores:
+                target_share = round(
+                    comparable_scores[engine_input.engine_family] / comparable_total,
+                    6,
+                )
+                explanations.append(
+                    f"Comparative target share across supplied engine families is {target_share:.1%}."
+                )
+            elif comparable_scores:
+                explanations.append(
+                    "A full cross-family comparison needs at least two eligible engine families with positive scores."
+                )
+
+            recommended_budget_usd = 0.0
+            recommended_send_quota = 0
+            recommended_llm_token_budget = 0
+            if draft["eligible"]:
+                budget_candidates = [float(lane["budget_usd"])]
+                if target_share is not None:
+                    budget_candidates.append(round(shared_capital_pool_usd * target_share, 2))
+                if engine_input.required_budget is not None:
+                    budget_candidates.append(engine_input.required_budget)
+                if engine_input.capacity_limits.budget_usd is not None:
+                    budget_candidates.append(engine_input.capacity_limits.budget_usd)
+                recommended_budget_usd = round(max(0.0, min(budget_candidates)), 2)
+
+                send_candidates = [int(lane["send_quota"])]
+                token_candidates = [int(lane["llm_tokens"])]
+                if engine_input.agent_name == NON_TRADING_AGENT and target_share is not None:
+                    lane_share = max(float(lane["share"]), 1e-9)
+                    relative_share = max(0.0, min(1.0, target_share / lane_share))
+                    send_candidates.append(
+                        int(round(int(lane["send_quota"]) * relative_share))
+                    )
+                    token_candidates.append(
+                        int(round(int(lane["llm_tokens"]) * relative_share))
+                    )
+                if engine_input.capacity_limits.send_quota is not None:
+                    send_candidates.append(engine_input.capacity_limits.send_quota)
+                if engine_input.capacity_limits.llm_tokens is not None:
+                    token_candidates.append(engine_input.capacity_limits.llm_tokens)
+                recommended_send_quota = max(0, min(send_candidates))
+                recommended_llm_token_budget = max(0, min(token_candidates))
+
+                explanations.append(
+                    "Recommended active budget is capped by lane ceiling, required budget, and explicit capacity limits."
+                )
+
+            recommendation = EngineFamilyRecommendation(
+                engine_family=engine_input.engine_family,
+                agent_name=engine_input.agent_name,
+                advisory_only=True,
+                eligible=bool(draft["eligible"]),
+                blocked_reason=draft["blocked_reason"],
+                compliance_status=engine_input.compliance_status,
+                expected_net_cash_30d=engine_input.expected_net_cash_30d,
+                confidence=engine_input.confidence,
+                required_budget=engine_input.required_budget,
+                capacity_limits=engine_input.capacity_limits,
+                refund_penalty=engine_input.refund_penalty,
+                fulfillment_penalty=engine_input.fulfillment_penalty,
+                domain_health_penalty=engine_input.domain_health_penalty,
+                penalty_multiplier=draft["penalty_multiplier"],
+                score=draft["score"],
+                target_share=target_share,
+                lane_share=float(lane["share"]),
+                lane_budget_ceiling_usd=float(lane["budget_usd"]),
+                lane_send_quota_ceiling=int(lane["send_quota"]),
+                lane_llm_token_ceiling=int(lane["llm_tokens"]),
+                recommended_budget_usd=recommended_budget_usd,
+                recommended_send_quota=recommended_send_quota,
+                recommended_llm_token_budget=recommended_llm_token_budget,
+                explanation=tuple(explanations),
+                metadata={
+                    "score_inputs_complete": draft["score_inputs_complete"],
+                    "shared_capital_pool_usd": shared_capital_pool_usd,
+                    "comparative_enabled": comparable_enabled,
+                },
+            )
+            recommendations.append(recommendation)
+
+        return tuple(recommendations)
+
+    def _build_engine_family_strategy_documents(
+        self,
+        *,
+        decision: AllocationDecision,
+        recommendations: Sequence[EngineFamilyRecommendation],
+    ) -> tuple[dict[str, object], ...]:
+        documents: list[dict[str, object]] = []
+        for recommendation in recommendations:
+            document = {
+                "index": "elastifund-strategies",
+                "strategy_key": f"capital_allocator_engine:{recommendation.engine_family}",
+                "decision_date": decision.decision_date.isoformat(),
+                "agent_name": recommendation.agent_name,
+                "engine_family": recommendation.engine_family,
+                "strategy_type": "capital_allocator_engine",
+                "allocation_mode": decision.mode.value,
+                "advisory_only": recommendation.advisory_only,
+                "eligible": recommendation.eligible,
+                "blocked_reason": recommendation.blocked_reason,
+                "compliance_status": recommendation.compliance_status.value,
+                "deliverability_risk": decision.deliverability_risk.value,
+                "lane_share": round(recommendation.lane_share, 6),
+                "target_share": recommendation.target_share,
+                "score": round(recommendation.score, 6),
+                "penalty_multiplier": round(recommendation.penalty_multiplier, 6),
+                "expected_net_cash_30d": recommendation.expected_net_cash_30d,
+                "confidence": recommendation.confidence,
+                "required_budget": recommendation.required_budget,
+                "capacity_limits": recommendation.capacity_limits.to_dict(),
+                "refund_penalty": recommendation.refund_penalty,
+                "fulfillment_penalty": recommendation.fulfillment_penalty,
+                "domain_health_penalty": recommendation.domain_health_penalty,
+                "lane_budget_ceiling_usd": round(
+                    recommendation.lane_budget_ceiling_usd,
+                    2,
+                ),
+                "recommended_budget_usd": round(
+                    recommendation.recommended_budget_usd,
+                    2,
+                ),
+                "lane_send_quota_ceiling": recommendation.lane_send_quota_ceiling,
+                "recommended_send_quota": recommendation.recommended_send_quota,
+                "lane_llm_token_ceiling": recommendation.lane_llm_token_ceiling,
+                "recommended_llm_token_budget": recommendation.recommended_llm_token_budget,
+                "explanation": list(recommendation.explanation),
+                "metadata": dict(recommendation.metadata),
+            }
+            documents.append(document)
+        return tuple(documents)
+
+    @staticmethod
+    def decision_to_dict(decision: AllocationDecision) -> dict[str, object]:
+        return {
+            "decision_date": decision.decision_date.isoformat(),
+            "mode": decision.mode.value,
+            "trading_share": decision.trading_share,
+            "non_trading_share": decision.non_trading_share,
+            "trading_budget_usd": decision.trading_budget_usd,
+            "non_trading_send_quota": decision.non_trading_send_quota,
+            "non_trading_llm_token_budget": decision.non_trading_llm_token_budget,
+            "cash_reserve_share": decision.cash_reserve_share,
+            "deliverability_risk": decision.deliverability_risk.value,
+            "rationale": decision.rationale,
+            "risk_override_applied": decision.risk_override_applied,
+            "bandit_sample_trading": decision.bandit_sample_trading,
+            "bandit_sample_non_trading": decision.bandit_sample_non_trading,
+            "metadata": dict(decision.metadata),
+            "strategy_documents": list(decision.strategy_documents),
+            "decision_id": decision.decision_id,
+            "created_at_ts": decision.created_at_ts,
+        }
+
     @staticmethod
     def format_decision(decision: AllocationDecision) -> str:
         kelly = decision.metadata.get("layers", {}).get("kelly", {})
@@ -1005,11 +1411,69 @@ class ResourceAllocator:
                 f" trading_kelly={float(trading_kelly):.3f} "
                 f"non_trading_kelly={float(non_trading_kelly):.3f}"
             )
+        overlay = decision.metadata.get("engine_family_overlay") or {}
+        recommendations = overlay.get("recommendations") or []
+        if recommendations:
+            formatted += f" engine_family_recommendations={len(recommendations)}"
         return formatted
 
 
+def _load_engine_inputs_file(
+    path: str | None,
+) -> dict[str, EngineFamilyInput] | list[EngineFamilyInput] | None:
+    if not path:
+        return None
+
+    payload = json.loads(Path(path).read_text())
+    if isinstance(payload, dict) and isinstance(payload.get("engine_families"), list):
+        return [
+            EngineFamilyInput.from_mapping(
+                str(row.get("engine_family")),
+                row,
+            )
+            for row in payload["engine_families"]
+            if isinstance(row, Mapping)
+        ]
+    if isinstance(payload, dict):
+        return {
+            key: EngineFamilyInput.from_mapping(key, value)
+            for key, value in payload.items()
+            if isinstance(value, Mapping)
+        }
+    if isinstance(payload, list):
+        engine_inputs: list[EngineFamilyInput] = []
+        for index, row in enumerate(payload):
+            if not isinstance(row, Mapping):
+                raise ValueError(
+                    f"Engine input at position {index} must be an object, got {type(row)!r}"
+                )
+            engine_family = row.get("engine_family")
+            if engine_family is None:
+                raise ValueError(
+                    f"Engine input at position {index} is missing engine_family"
+                )
+            engine_inputs.append(EngineFamilyInput.from_mapping(str(engine_family), row))
+        return engine_inputs
+    raise ValueError("Engine input file must contain an object or array")
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Standalone resource allocator")
+    parser = argparse.ArgumentParser(
+        description="Standalone resource allocator",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Dry-run examples:\n"
+            "  python3 -m orchestration.resource_allocator \\\n"
+            "    --decision-date 2026-03-09 \\\n"
+            "    --engine-input-file /tmp/allocator_inputs.json \\\n"
+            "    --json --no-persist\n\n"
+            "  python3 -m orchestration.resource_allocator \\\n"
+            "    --mode thompson_sampling \\\n"
+            "    --decision-date 2026-03-09 \\\n"
+            "    --engine-input-file /tmp/allocator_inputs.json \\\n"
+            "    --seed 7 --json --no-persist"
+        ),
+    )
     parser.add_argument(
         "--mode",
         choices=[mode.value for mode in AllocationMode],
@@ -1039,6 +1503,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Override allocator DB path for this run.",
     )
     parser.add_argument(
+        "--engine-input-file",
+        default=None,
+        help="Optional JSON file containing trading/revenue_audit engine inputs.",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the full decision payload as JSON.",
+    )
+    parser.add_argument(
         "--no-persist",
         action="store_true",
         help="Compute a decision without writing it to SQLite.",
@@ -1052,15 +1526,29 @@ def main(argv: list[str] | None = None) -> int:
         config = replace(config, db_path=Path(args.db_path))
 
     allocator = ResourceAllocator(config=config)
+    engine_inputs = _load_engine_inputs_file(args.engine_input_file)
     decision = allocator.decide(
         decision_date=date.fromisoformat(args.decision_date),
         mode=args.mode,
         deliverability_risk=args.deliverability_risk,
+        engine_inputs=engine_inputs,
         seed=args.seed,
         persist=not args.no_persist,
     )
-    print(ResourceAllocator.format_decision(decision))
-    print(allocator.store.status())
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "decision": ResourceAllocator.decision_to_dict(decision),
+                    "store_status": allocator.store.status(),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    else:
+        print(ResourceAllocator.format_decision(decision))
+        print(allocator.store.status())
     return 0
 
 

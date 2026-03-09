@@ -25,6 +25,20 @@ class TestCombinatorialIntegration(unittest.TestCase):
         self.assertEqual(signal["confirmation_mode"], "bypass")
         self.assertEqual(signal["strategy_type"], "combinatorial")
 
+    def test_attach_signal_source_metadata_preserves_confirmed_source_components(self) -> None:
+        signal = attach_signal_source_metadata(
+            {
+                "source": "wallet_flow",
+                "source_components": ["wallet_flow", "llm"],
+                "source_mix": "confirmed",
+            }
+        )
+        self.assertEqual(signal["source"], "llm+wallet_flow")
+        self.assertEqual(signal["source_primary"], "wallet_flow")
+        self.assertEqual(signal["source_components"], ["llm", "wallet_flow"])
+        self.assertEqual(signal["source_count"], 2)
+        self.assertEqual(signal["source_mix"], "confirmed")
+
     def test_signal_store_maps_a6_and_b1_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "constraint_arb.db"

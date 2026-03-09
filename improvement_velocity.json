@@ -1,6 +1,6 @@
 {
   "generated_at": "2026-03-09T01:31:10Z",
-  "instance_version": "2.8.0",
+  "instance_version": "2.8.3",
   "cycle": {
     "number": 2,
     "name": "Flywheel Cycle 2 \u2014 Structural Alpha & Microstructure Defense"
@@ -54,10 +54,10 @@
     "launch_next_action": "Restart `jj_live` in paper or shadow with conservative caps, keep A-6/B-1 blocked, and collect the first closed trades or structural samples.",
     "run_mode_drift_detected": false,
     "fast_trade_verdict": "REJECT ALL",
-    "latest_pipeline_generated_at": "2026-03-09T01:20:11.169283+00:00",
-    "markets_observed": 74,
-    "trade_records": 2848,
-    "unique_wallets": 1638,
+    "latest_pipeline_generated_at": "2026-03-09T01:25:00.702663+00:00",
+    "markets_observed": 75,
+    "trade_records": 3047,
+    "unique_wallets": 1715,
     "wallet_flow_ready": true,
     "wallet_count": 80,
     "strategies_total": 131,

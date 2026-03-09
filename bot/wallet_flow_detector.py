@@ -86,8 +86,8 @@ TOP_WALLETS_TO_PROFILE = 100   # Profile this many top wallets individually
 POLL_INTERVAL_SECONDS = 15     # How often to check for new trades
 
 # Storage
-DB_FILE = Path("data/wallet_scores.db")
-SCORES_FILE = Path("data/smart_wallets.json")
+DB_FILE = Path(os.environ.get("JJ_WALLET_FLOW_DB_FILE", "data/wallet_scores.db"))
+SCORES_FILE = Path(os.environ.get("JJ_WALLET_FLOW_SCORES_FILE", "data/smart_wallets.json"))
 BOOTSTRAP_MAX_AGE_HOURS = 24
 
 
@@ -140,6 +140,84 @@ class BootstrapStatus:
     scores_exists: bool
     db_exists: bool
     last_updated: Optional[str]
+
+
+def _wallet_signal_sort_key(signal: Dict[str, Any]) -> tuple[float, float, float]:
+    """Rank competing market directions by wallet count, size, then confidence."""
+    return (
+        float(signal.get("smart_wallets_count", 0) or 0),
+        float(signal.get("total_smart_size", 0.0) or 0.0),
+        float(signal.get("confidence", 0.0) or 0.0),
+    )
+
+
+def _resolve_conflicting_market_signals(raw_signals: List[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    """Suppress or resolve opposite-direction wallet consensus on the same market."""
+    by_market: Dict[str, List[Dict[str, Any]]] = {}
+    for signal in raw_signals:
+        market_id = str(signal.get("market_id") or "").strip()
+        if not market_id:
+            continue
+        by_market.setdefault(market_id, []).append(signal)
+
+    resolved: list[Dict[str, Any]] = []
+    for market_id, grouped_signals in by_market.items():
+        if len(grouped_signals) <= 1:
+            resolved.extend(grouped_signals)
+            continue
+
+        ranked = sorted(grouped_signals, key=_wallet_signal_sort_key, reverse=True)
+        top = ranked[0]
+        runner_up = ranked[1]
+
+        top_wallets = int(top.get("smart_wallets_count", 0) or 0)
+        runner_wallets = int(runner_up.get("smart_wallets_count", 0) or 0)
+        top_size = float(top.get("total_smart_size", 0.0) or 0.0)
+        runner_size = float(runner_up.get("total_smart_size", 0.0) or 0.0)
+        top_conf = float(top.get("confidence", 0.0) or 0.0)
+        runner_conf = float(runner_up.get("confidence", 0.0) or 0.0)
+
+        dominant = (
+            top_wallets >= runner_wallets + 2
+            or top_size >= max(1.0, runner_size) * 1.5
+            or top_conf >= runner_conf + 0.15
+        )
+        title = str(top.get("market_title") or market_id)
+        if not dominant:
+            logger.info(
+                "Skipping wallet-flow market %s due to conflicting consensus "
+                "(%s wallets=$%.2f conf=%.2f vs %s wallets=$%.2f conf=%.2f)",
+                title[:60],
+                top_wallets,
+                top_size,
+                top_conf,
+                runner_wallets,
+                runner_size,
+                runner_conf,
+            )
+            continue
+
+        top["conflict_resolution"] = {
+            "suppressed_direction": runner_up.get("direction"),
+            "suppressed_wallets": runner_wallets,
+            "suppressed_size": round(runner_size, 2),
+            "suppressed_confidence": round(runner_conf, 4),
+        }
+        logger.info(
+            "Resolved wallet-flow conflict on %s in favor of %s "
+            "(%s wallets=$%.2f conf=%.2f over %s wallets=$%.2f conf=%.2f)",
+            title[:60],
+            top.get("direction", "?"),
+            top_wallets,
+            top_size,
+            top_conf,
+            runner_wallets,
+            runner_size,
+            runner_conf,
+        )
+        resolved.append(top)
+
+    return resolved
 
 
 def is_crypto_fast_market(title: str) -> bool:
@@ -316,12 +394,23 @@ def _format_bootstrap_status(status: BootstrapStatus) -> str:
 class WalletScorer:
     """Identifies and scores top-performing Polymarket wallets."""
 
-    def __init__(self, db_path: Path = DB_FILE):
+    def __init__(self, db_path: Path = DB_FILE, scores_path: Path = SCORES_FILE):
+        db_path = Path(db_path)
+        scores_path = Path(scores_path)
+        scores_path.parent.mkdir(parents=True, exist_ok=True)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self.db_path = db_path
+        self.scores_path = scores_path
         self.conn = sqlite3.connect(str(db_path))
         self.conn.row_factory = sqlite3.Row
         self._create_tables()
+
+    def close(self) -> None:
+        """Close the SQLite connection cleanly."""
+        try:
+            self.conn.close()
+        except Exception:
+            pass
 
     def _create_tables(self):
         self.conn.executescript("""
@@ -636,15 +725,15 @@ class WalletScorer:
 
     def save_smart_wallets_json(self, scores: list):
         """Save smart wallet list to JSON for quick loading."""
-        SCORES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        self.scores_path.parent.mkdir(parents=True, exist_ok=True)
         data = {
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "count": len(scores),
             "wallets": {s.address: asdict(s) for s in scores},
         }
-        with open(SCORES_FILE, "w") as f:
+        with open(self.scores_path, "w") as f:
             json.dump(data, f, indent=2)
-        logger.info(f"Saved {len(scores)} smart wallets to {SCORES_FILE}")
+        logger.info(f"Saved {len(scores)} smart wallets to {self.scores_path}")
 
     def build_initial_scores(self):
         """Full pipeline: fetch trades → discover wallets → profile → score → save."""
@@ -683,6 +772,40 @@ class WalletScorer:
 
         logger.info(f"=== Done: {len(scores)} smart wallets identified ===")
         return scores
+
+
+def ensure_bootstrap_artifacts(
+    scores_path: Optional[Path] = None,
+    db_path: Optional[Path] = None,
+) -> BootstrapStatus:
+    """
+    Rebuild wallet-flow bootstrap artifacts when they are missing or stale.
+
+    This keeps jj_live startup self-contained on fresh VPS deploys where the
+    wallet-flow data files were not copied over yet.
+    """
+    scores_target = scores_path or SCORES_FILE
+    db_target = db_path or DB_FILE
+    status = get_bootstrap_status(scores_path=scores_target, db_path=db_target)
+    if status.ready:
+        return status
+
+    logger.info(
+        "Wallet-flow bootstrap missing or stale (%s) — rebuilding locally",
+        ", ".join(status.reasons) if status.reasons else "unknown",
+    )
+
+    scorer: Optional[WalletScorer] = None
+    try:
+        scorer = WalletScorer(db_path=db_target, scores_path=scores_target)
+        scorer.build_initial_scores()
+    except Exception as exc:
+        logger.warning(f"Wallet-flow bootstrap rebuild failed: {exc}")
+    finally:
+        if scorer is not None:
+            scorer.close()
+
+    return get_bootstrap_status(scores_path=scores_target, db_path=db_target)
 
 
 # ---------------------------------------------------------------------------
@@ -909,7 +1032,7 @@ def get_signals_for_engine() -> list:
     Returns list of signal dicts with: market_id, question, direction,
     market_price, estimated_prob, edge, confidence, reasoning, source, etc.
     """
-    raw_signals = scan_for_signals()
+    raw_signals = _resolve_conflicting_market_signals(scan_for_signals())
     engine_signals = []
 
     for sig in raw_signals:
@@ -931,6 +1054,21 @@ def get_signals_for_engine() -> list:
         # Higher confidence = more wallets agree = stronger signal
         edge = max(0.01, confidence - 0.35)  # Base 0.35 → ~0% edge, 0.95 → ~60% edge
 
+        reasoning = (
+            f"Wallet flow: {wallet_count} smart wallets agree on "
+            f"{sig.get('outcome_name', '?')}, total ${total_size:.2f}, "
+            f"avg score {avg_score:.0f}, age {sig.get('signal_age_seconds', 0):.0f}s"
+        )
+        conflict_resolution = sig.get("conflict_resolution")
+        if isinstance(conflict_resolution, dict):
+            suppressed_direction = str(conflict_resolution.get("suppressed_direction") or "?")
+            suppressed_wallets = int(conflict_resolution.get("suppressed_wallets", 0) or 0)
+            suppressed_size = float(conflict_resolution.get("suppressed_size", 0.0) or 0.0)
+            reasoning += (
+                f"; suppressed opposite-direction consensus "
+                f"({suppressed_direction}, {suppressed_wallets} wallets, ${suppressed_size:.2f})"
+            )
+
         engine_signals.append({
             "market_id": sig.get("market_id", ""),
             "question": sig.get("market_title", ""),
@@ -939,11 +1077,7 @@ def get_signals_for_engine() -> list:
             "estimated_prob": confidence,
             "edge": round(edge, 4),
             "confidence": round(confidence, 4),
-            "reasoning": (
-                f"Wallet flow: {wallet_count} smart wallets agree on "
-                f"{sig.get('outcome_name', '?')}, total ${total_size:.2f}, "
-                f"avg score {avg_score:.0f}, age {sig.get('signal_age_seconds', 0):.0f}s"
-            ),
+            "reasoning": reasoning,
             "source": "wallet_flow",
             "taker_fee": 0.0,  # Maker orders
             "category": "crypto",

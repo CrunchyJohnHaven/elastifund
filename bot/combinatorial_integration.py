@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 import time
 from typing import Any, Mapping
@@ -132,15 +133,87 @@ def canonical_source_key(source: str | None) -> str:
     return SOURCE_ALIASES.get(normalized, normalized if normalized in SOURCE_REGISTRY else "unknown")
 
 
-def attach_signal_source_metadata(signal: dict[str, Any]) -> dict[str, Any]:
-    key = canonical_source_key(
-        str(signal.get("source_key") or signal.get("source") or signal.get("relation_type") or "unknown")
+_SOURCE_COMPONENT_SPLIT_RE = re.compile(r"[+,|]")
+
+
+def normalize_source_components(raw_sources: Any) -> tuple[str, ...]:
+    """Normalize a mixed source payload into stable canonical source keys."""
+    collected: list[str] = []
+
+    def _collect(value: Any) -> None:
+        if value is None:
+            return
+        if isinstance(value, (list, tuple, set)):
+            for item in value:
+                _collect(item)
+            return
+
+        raw = str(value).strip()
+        if not raw:
+            return
+
+        parts = [part.strip() for part in _SOURCE_COMPONENT_SPLIT_RE.split(raw) if part.strip()]
+        if not parts:
+            parts = [raw]
+
+        for part in parts:
+            key = canonical_source_key(part)
+            if key != "unknown" or part.strip().lower() == "unknown":
+                collected.append(key)
+
+    _collect(raw_sources)
+
+    unique = []
+    seen = set()
+    for key in collected:
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(key)
+
+    unique.sort(
+        key=lambda key: (
+            SOURCE_REGISTRY.get(key, SOURCE_REGISTRY["unknown"]).source_id,
+            key,
+        )
     )
+    return tuple(unique)
+
+
+def attach_signal_source_metadata(signal: dict[str, Any]) -> dict[str, Any]:
+    components = normalize_source_components(
+        signal.get("source_components")
+        or signal.get("source")
+        or signal.get("relation_type")
+        or signal.get("source_key")
+    )
+    key = canonical_source_key(
+        str(
+            signal.get("source_primary")
+            or signal.get("source_key")
+            or signal.get("source")
+            or signal.get("relation_type")
+            or "unknown"
+        )
+    )
+    if key == "unknown" and components:
+        key = components[0]
     meta = SOURCE_REGISTRY.get(key, SOURCE_REGISTRY["unknown"])
-    signal["source"] = meta.key
+    if not components and meta.key != "unknown":
+        components = (meta.key,)
+    signal["source"] = "+".join(components) if len(components) > 1 else meta.key
     signal["source_key"] = meta.key
+    signal["source_primary"] = meta.key
     signal["source_id"] = meta.source_id
     signal["source_tag"] = meta.tag
+    signal["source_primary_tag"] = meta.tag
+    signal["source_components"] = list(components)
+    signal["source_component_tags"] = [
+        SOURCE_REGISTRY.get(component, SOURCE_REGISTRY["unknown"]).tag
+        for component in components
+    ]
+    signal["source_count"] = len(components)
+    signal.setdefault("source_mix", "confirmed" if len(components) > 1 else "single")
     signal["confirmation_mode"] = meta.confirmation_mode
     signal["strategy_type"] = meta.strategy_type
     return signal

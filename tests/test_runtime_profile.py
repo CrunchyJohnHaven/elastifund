@@ -55,3 +55,36 @@ def test_mode_contract_surfaces_launch_gate_and_order_submission() -> None:
     assert shadow.config["mode"]["effective_execution_mode"] == "shadow"
     assert shadow.config["mode"]["launch_gate"] == "wallet_flow_ready"
     assert shadow.effective_env["JJ_ALLOW_ORDER_SUBMISSION"] == "true"
+
+
+def test_runtime_profile_supports_hourly_budget_and_venue_flag_overrides() -> None:
+    bundle = load_runtime_profile(
+        env={
+            "JJ_RUNTIME_PROFILE": "blocked_safe",
+            "JJ_HOURLY_NOTIONAL_BUDGET_USD": "50",
+            "JJ_ENABLE_POLYMARKET_VENUE": "false",
+            "JJ_ENABLE_KALSHI_VENUE": "true",
+        }
+    )
+
+    assert bundle.config["risk_limits"]["hourly_notional_budget_usd"] == 50.0
+    assert bundle.config["feature_flags"]["enable_polymarket_venue"] is False
+    assert bundle.config["feature_flags"]["enable_kalshi_venue"] is True
+    assert bundle.effective_env["JJ_HOURLY_NOTIONAL_BUDGET_USD"] == "50.0"
+    assert bundle.effective_env["JJ_ENABLE_POLYMARKET_VENUE"] == "false"
+    assert bundle.effective_env["JJ_ENABLE_KALSHI_VENUE"] == "true"
+
+
+def test_paper_aggressive_profile_matches_first_trade_collection_posture() -> None:
+    bundle = load_runtime_profile(env={"JJ_RUNTIME_PROFILE": "paper_aggressive"})
+
+    assert bundle.selected_profile == "paper_aggressive"
+    assert bundle.config["mode"]["effective_execution_mode"] == "shadow"
+    assert bundle.config["mode"]["paper_trading"] is True
+    assert bundle.effective_env["JJ_ALLOW_ORDER_SUBMISSION"] == "true"
+    assert bundle.config["signal_thresholds"]["yes_threshold"] == 0.08
+    assert bundle.config["signal_thresholds"]["no_threshold"] == 0.03
+    assert bundle.config["risk_limits"]["scan_interval_seconds"] == 120
+    assert bundle.config["market_filters"]["min_category_priority"] == 0
+    assert bundle.config["market_filters"]["category_priorities"]["crypto"] == 2
+    assert bundle.config["market_filters"]["category_priorities"]["sports"] == 1

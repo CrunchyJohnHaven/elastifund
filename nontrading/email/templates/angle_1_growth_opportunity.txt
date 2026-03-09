@@ -1,0 +1,13 @@
+Subject: I found 3 things on {{company}} that are costing you traffic
+
+Hi {{first_name}},
+
+I spent a few minutes reviewing {{company}} and noticed {{specific_finding}}.
+
+We turn findings like that into a {{offer_name}}: a focused review of search visibility, conversion friction, and the quickest fixes to ship first.
+
+If helpful, I can send the audit outline and a sample scorecard before we talk.
+
+{{sender_name}}
+{{postal_address}}
+Unsubscribe: {{unsubscribe_url}}

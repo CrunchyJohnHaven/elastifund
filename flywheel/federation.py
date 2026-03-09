@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from data_layer import crud
 
+from .improvement_exchange import build_knowledge_pack_leaderboard_entry
 from .intelligence import FindingSpec, TaskSpec, record_finding_with_task
 
 
@@ -20,6 +21,8 @@ def export_bulletin(
     peer_name: str,
     decision_types: tuple[str, ...] = ("promote", "kill"),
     limit: int = 20,
+    include_knowledge_packs: bool = False,
+    knowledge_pack_limit: int | None = None,
 ) -> dict[str, Any]:
     """Export recent high-value findings as a portable bulletin."""
 
@@ -44,12 +47,20 @@ def export_bulletin(
                 }
             )
 
-    return {
+    bulletin = {
         "peer_name": peer_name,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "item_count": len(items),
         "items": items[:limit],
     }
+    if include_knowledge_packs:
+        knowledge_items = _knowledge_pack_bulletin_items(
+            session,
+            limit=knowledge_pack_limit or limit,
+        )
+        bulletin["knowledge_pack_count"] = len(knowledge_items)
+        bulletin["knowledge_packs"] = knowledge_items
+    return bulletin
 
 
 def write_bulletin(bulletin: dict[str, Any], output_path: str | Path) -> str:
@@ -137,3 +148,35 @@ def _cycle_key(peer_name: str, generated_at: str) -> str:
     safe_peer = peer_name.replace(" ", "-").lower()
     safe_ts = generated_at.replace(":", "").replace("+", "").replace(".", "-")
     return f"bulletin-{safe_peer}-{safe_ts}"
+
+
+def _knowledge_pack_bulletin_items(session: Session, *, limit: int) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for row in crud.list_peer_improvement_bundles(
+        session,
+        direction="exported",
+        limit=max(limit * 5, limit),
+    ):
+        raw_bundle = row.raw_bundle or {}
+        if raw_bundle.get("bundle_type") != "knowledge_pack":
+            continue
+        leaderboard_entry = raw_bundle.get("leaderboard_entry") or build_knowledge_pack_leaderboard_entry(
+            raw_bundle,
+            verification_status=row.verification_status,
+        )
+        items.append(
+            {
+                "bundle_id": row.bundle_id,
+                "peer_name": row.peer_name,
+                "engine_key": leaderboard_entry["engine_key"],
+                "engine_version": leaderboard_entry["engine_version"],
+                "lane": leaderboard_entry["lane"],
+                "score_after_penalty": leaderboard_entry["score_after_penalty"],
+                "expected_net_cash_30d": leaderboard_entry["expected_net_cash_30d"],
+                "penalty_total": leaderboard_entry["penalty_total"],
+                "verification_status": row.verification_status,
+            }
+        )
+        if len(items) >= limit:
+            break
+    return items

@@ -3,17 +3,23 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from dataclasses import replace
 from pathlib import Path
 
+from nontrading.config import RevenueAgentSettings
+from nontrading.store import RevenueStore
+
 from .config import DigitalProductResearchSettings
+from .models import DiscoveryResult, GeneratedLead
 from .research import NicheDiscoveryAgent, StaticMarketplaceSource
 from .store import DigitalProductStore
 
 
-def format_result(agent: NicheDiscoveryAgent, ranked: list, top: int) -> str:
+def format_result(agent: NicheDiscoveryAgent, result: DiscoveryResult, top: int) -> str:
+    ranked = list(result.ranked_niches)
     lines = [
-        f"digital-product niche discovery run_count={len(ranked)}",
+        f"digital-product niche discovery run_count={len(ranked)} lead_count={len(result.generated_leads)}",
     ]
     for item in ranked[:top]:
         keywords = ",".join(item.candidate.keywords[:4]) or "-"
@@ -27,6 +33,8 @@ def format_result(agent: NicheDiscoveryAgent, ranked: list, top: int) -> str:
                     f"demand={item.candidate.monthly_demand:.0f}",
                     f"price={item.candidate.average_price:.2f}",
                     f"competition={item.candidate.competition_count}",
+                    f"audit={item.audit_opportunity:.2f}",
+                    f"icp={item.icp_match_score:.2f}",
                     f"saturation={item.saturation_band}",
                     f"keywords={keywords}",
                 ]
@@ -37,7 +45,24 @@ def format_result(agent: NicheDiscoveryAgent, ranked: list, top: int) -> str:
         lines.append(
             f"elastic_index={agent.settings.elastic_index_name} vector_dims={len(top_doc['vector'])}"
         )
+    sync = result.crm_sync_summary
+    if sync.leads_processed or sync.accounts_processed or sync.opportunities_processed:
+        lines.append(
+            "crm_sync "
+            f"leads={sync.leads_processed} "
+            f"accounts={sync.accounts_processed} "
+            f"opportunities={sync.opportunities_processed}"
+        )
     return "\n".join(lines)
+
+
+def write_lead_csv(path: Path, leads: list[GeneratedLead]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(GeneratedLead.csv_headers()))
+        writer.writeheader()
+        for lead in leads:
+            writer.writerow(lead.to_csv_row())
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -51,6 +76,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--emit-elastic-bulk",
         help="Optional path for Elasticsearch bulk NDJSON output.",
+    )
+    parser.add_argument(
+        "--emit-lead-csv",
+        help="Optional path for CSV output consumable by nontrading.importers.csv_import.",
+    )
+    parser.add_argument(
+        "--sync-crm",
+        action="store_true",
+        help="Sync generated lead and opportunity records into the non-trading revenue store.",
+    )
+    parser.add_argument(
+        "--crm-db-path",
+        help="Override JJ_REVENUE_DB_PATH when --sync-crm is enabled.",
     )
     args = parser.parse_args(argv)
 
@@ -70,7 +108,14 @@ def main(argv: list[str] | None = None) -> int:
         args.source_file,
         marketplace=settings.default_marketplace,
     )
-    store = DigitalProductStore(settings.db_path)
+    revenue_store = None
+    if args.sync_crm or args.crm_db_path:
+        revenue_settings = RevenueAgentSettings.from_env()
+        crm_db_path = Path(args.crm_db_path) if args.crm_db_path else revenue_settings.db_path
+        crm_db_path.parent.mkdir(parents=True, exist_ok=True)
+        revenue_store = RevenueStore(crm_db_path)
+
+    store = DigitalProductStore(settings.db_path, revenue_store=revenue_store)
     agent = NicheDiscoveryAgent(store, settings)
     result = agent.run_once(source, limit=args.limit)
 
@@ -78,8 +123,10 @@ def main(argv: list[str] | None = None) -> int:
         bulk_path = Path(args.emit_elastic_bulk)
         bulk_path.parent.mkdir(parents=True, exist_ok=True)
         bulk_path.write_text(agent.build_elastic_bulk(list(result.ranked_niches)))
+    if args.emit_lead_csv:
+        write_lead_csv(Path(args.emit_lead_csv), list(result.generated_leads))
 
-    print(format_result(agent, list(result.ranked_niches), top=max(1, args.top)))
+    print(format_result(agent, result, top=max(1, args.top)))
     return 0
 
 

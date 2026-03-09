@@ -191,6 +191,7 @@ class ReportWriter:
         reasoning: str,
     ) -> None:
         timestamp = datetime.fromtimestamp(run_ts, tz=timezone.utc).isoformat()
+        refresh_snapshot = self._load_latest_pipeline_refresh()
 
         validated: list[HypothesisEvaluation] = []
         candidate: list[HypothesisEvaluation] = []
@@ -211,11 +212,26 @@ class ReportWriter:
         lines: list[str] = []
         lines.append("# Fast Trade Edge Analysis")
         lines.append(f"**Last Updated:** {timestamp}")
-        lines.append("**System Status:** running")
+        lines.append(f"**System Status:** {refresh_snapshot.get('system_status', 'running') if refresh_snapshot else 'running'}")
         lines.append(f"**Data Window:** {data_coverage.get('data_start', 'n/a')} to {data_coverage.get('data_end', 'n/a')}")
+        if refresh_snapshot:
+            lines.append(f"**Fresh Pull:** {refresh_snapshot.get('timestamp', 'n/a')}")
+            lines.append(f"**Instance Version:** {refresh_snapshot.get('instance_version', 'n/a')}")
         lines.append("")
 
         lines.append("## Data Coverage")
+        if refresh_snapshot:
+            lines.append(f"- Active markets pulled: {refresh_snapshot.get('markets_pulled', 0)}")
+            lines.append(f"- Fast BTC markets discovered: {refresh_snapshot.get('fast_markets_pulled', 0)}")
+            threshold_source = str(refresh_snapshot.get("threshold_market_source") or "")
+            if threshold_source:
+                lines.append(f"- Threshold sensitivity source: {threshold_source}")
+                lines.append(f"- Threshold-universe markets pulled: {refresh_snapshot.get('threshold_markets_pulled', 0)}")
+            lines.append(f"- Markets in price window (threshold universe, 0.10-0.90): {refresh_snapshot.get('markets_in_price_window', 0)}")
+            lines.append(f"- Markets <24h in threshold universe: {refresh_snapshot.get('markets_under_24h', 0)}")
+            lines.append(f"- Markets <48h in threshold universe: {refresh_snapshot.get('markets_under_48h', 0)}")
+            lines.append(f"- Basic-filter markets in threshold universe (<48h, 0.10-0.90): {refresh_snapshot.get('basic_filter_markets', 0)}")
+            lines.append(f"- Markets passing current category gate in threshold universe: {refresh_snapshot.get('markets_in_allowed_categories', 0)}")
         lines.append(f"- 15-min markets observed: {data_coverage.get('markets_15m', 0)} ({data_coverage.get('resolved_15m', 0)} resolved)")
         lines.append(f"- 5-min markets observed: {data_coverage.get('markets_5m', 0)}")
         lines.append(f"- 4-hour markets observed: {data_coverage.get('markets_4h', 0)}")
@@ -224,10 +240,38 @@ class ReportWriter:
         lines.append(f"- Unique wallets tracked: {data_coverage.get('unique_wallets', 0)}")
         lines.append("")
 
+        if refresh_snapshot:
+            lines.append("## Threshold Sensitivity")
+            lines.append("| Threshold Profile | YES | NO | Markets Theoretically Tradeable |")
+            lines.append("|---|---|---|---|")
+            for label, key in (
+                ("Current (conservative)", "current"),
+                ("Aggressive", "aggressive"),
+                ("Wide open", "wide_open"),
+            ):
+                summary = (refresh_snapshot.get("threshold_sensitivity") or {}).get(key, {})
+                lines.append(
+                    f"| {label} | {summary.get('yes', 'n/a')} | {summary.get('no', 'n/a')} | {summary.get('tradeable', 0)} |"
+                )
+            lines.append("")
+
         lines.append("## Current Recommendation")
         lines.append(recommendation)
         lines.append("")
         lines.append(f"Reasoning: {reasoning}")
+        if refresh_snapshot:
+            threshold_sensitivity = refresh_snapshot.get("threshold_sensitivity") or {}
+            current_summary = threshold_sensitivity.get("current", {})
+            aggressive_summary = threshold_sensitivity.get("aggressive", {})
+            wide_open_summary = threshold_sensitivity.get("wide_open", {})
+            lines.append(
+                "Threshold note: "
+                f"YES-side reachability moves {current_summary.get('yes_reachable_markets', 0)} -> "
+                f"{aggressive_summary.get('yes_reachable_markets', 0)} -> "
+                f"{wide_open_summary.get('yes_reachable_markets', 0)} across the current/aggressive/wide-open profiles for the selected threshold universe."
+            )
+            if refresh_snapshot.get("reasoning"):
+                lines.append(f"Refresh note: {refresh_snapshot['reasoning']}")
         lines.append("\n---\n")
 
         lines.append("## VALIDATED EDGES (p < 0.01, n > 300)")
@@ -298,6 +342,47 @@ class ReportWriter:
             lines.append("No new feature candidates flagged.")
         lines.append("\n---\n")
 
+        if refresh_snapshot:
+            lines.append("## Market Universe Snapshot")
+            lines.append("| Category | Count | Avg YES Price | <24h Resolution |")
+            lines.append("|---|---|---|---|")
+            for category in ("politics", "weather", "economic", "crypto", "sports", "other"):
+                details = (refresh_snapshot.get("category_snapshot") or {}).get(category, {})
+                avg_yes_price = details.get("avg_yes_price")
+                avg_yes_price_display = f"{avg_yes_price:.4f}" if isinstance(avg_yes_price, (int, float)) else "n/a"
+                lines.append(
+                    f"| {category} | {details.get('count', 0)} | {avg_yes_price_display} | {details.get('under_24h', 0)} |"
+                )
+            lines.append("\n---\n")
+
+            lines.append("## A-6 Structural Scan")
+            a6_scan = refresh_snapshot.get("a6_scan") or {}
+            blocked_reasons = ", ".join(a6_scan.get("blocked_reasons", [])) or "none"
+            lines.append(
+                f"- Status: {a6_scan.get('status', 'unknown')} | allowed events={a6_scan.get('allowed_events', 0)} | "
+                f"qualified={a6_scan.get('qualified', 0)} | executable={a6_scan.get('executable', 0)}"
+            )
+            a6_live_scan = refresh_snapshot.get("a6_live_scan") or {}
+            if a6_live_scan:
+                stats = a6_live_scan.get("stats") or {}
+                lines.append(
+                    f"- Live scanner: status={a6_live_scan.get('status', 'unknown')} | "
+                    f"candidate markets={a6_live_scan.get('candidates', 0)} | "
+                    f"executable={a6_live_scan.get('executable', 0)} | "
+                    f"violations={stats.get('violations_found', 0)}"
+                )
+            lines.append(f"- Blockers: {blocked_reasons}")
+            lines.append("\n---\n")
+
+            lines.append("## Wallet-Flow Status")
+            wallet_flow = refresh_snapshot.get("wallet_flow") or {}
+            lines.append(
+                f"Ready: {wallet_flow.get('ready', False)}, "
+                f"scored wallets={wallet_flow.get('scored_wallets', 0)}, "
+                f"status={wallet_flow.get('status', 'unknown')}"
+            )
+            lines.append("\n---\n")
+
         lines.append("## REALITY CHECK")
         lines.append(f"- Slippage assumption: {reality_check.get('slippage_assumption', 'n/a')}")
         lines.append(f"- Spread assumption: {reality_check.get('spread_assumption', 'n/a')}")
@@ -342,6 +427,7 @@ class ReportWriter:
         pipeline_path = self.report_root / f"pipeline_{pipeline_stamp}.json"
         top_item = evaluations[0] if evaluations else None
         top_result = result_by_key.get(top_item.key) if top_item else None
+        refresh_snapshot = self._load_latest_pipeline_refresh()
 
         fast_market_counts = {
             "total_markets_observed": sum(
@@ -392,6 +478,7 @@ class ReportWriter:
                 "execution_delay_seconds": reality_check.get("execution_delay"),
                 "edge_fake_risks": list(reality_check.get("edge_fake_risks", [])),
             },
+            "market_universe_refresh": refresh_snapshot,
         }
         pipeline_path.write_text(json.dumps(pipeline_payload, indent=2))
         return pipeline_path
@@ -659,3 +746,13 @@ class ReportWriter:
         except json.JSONDecodeError:
             return None
         return loaded if isinstance(loaded, dict) else None
+
+    def _load_latest_pipeline_refresh(self) -> dict[str, Any] | None:
+        candidates = sorted(self.report_root.glob("pipeline_refresh_*.json"))
+        if not candidates:
+            return None
+        payload = self._load_json(candidates[-1])
+        if payload is None:
+            return None
+        payload["artifact_path"] = str(candidates[-1])
+        return payload

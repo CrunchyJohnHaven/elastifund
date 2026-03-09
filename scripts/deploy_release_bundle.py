@@ -410,7 +410,11 @@ def _read_seed_manifest_files(repo_root: Path) -> tuple[str, ...]:
             {
                 str(entry)
                 for entry in raw_entries
-                if isinstance(entry, str) and is_release_bundle_file(str(entry))
+                if (
+                    isinstance(entry, str)
+                    and is_release_bundle_file(str(entry))
+                    and (repo_root / str(entry)).exists()
+                )
             }
         )
     )

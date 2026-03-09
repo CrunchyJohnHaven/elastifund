@@ -13,10 +13,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from bot.jj_live import (  # noqa: E402
     AdaptivePlattCalibrator,
+    JJLive,
+    RollingNotionalBudgetTracker,
     TradeDatabase,
     build_trade_record,
     clob_min_order_size,
+    extract_signal_source_components,
     extract_probability_fields,
+    signal_has_source,
 )
 
 
@@ -86,6 +90,9 @@ def test_build_trade_record_preserves_stream6_metadata():
             "edge": 0.11,
             "confidence": 0.8,
             "source": "llm",
+            "source_components": ["llm", "wallet_flow"],
+            "source_combo": "llm+wallet_flow",
+            "n_sources": 2,
             "n_models": 3,
             "model_spread": 0.08,
             "model_stddev": 0.04,
@@ -110,6 +117,9 @@ def test_build_trade_record_preserves_stream6_metadata():
     assert record["raw_prob"] == 0.72
     assert record["calibrated_prob"] == 0.61
     assert record["source"] == "llm"
+    assert record["source_combo"] == "llm+wallet_flow"
+    assert record["source_components"] == ["llm", "wallet_flow"]
+    assert record["source_count"] == 2
     assert record["n_models"] == 3
     assert record["models_agree"] is True
     assert record["search_context_used"] is True
@@ -117,6 +127,18 @@ def test_build_trade_record_preserves_stream6_metadata():
     assert record["platt_mode"] == "rolling"
     assert record["platt_a"] == 0.55
     assert record["platt_b"] == -0.31
+
+
+def test_signal_source_helpers_preserve_component_sets():
+    payload = {
+        "source": "llm",
+        "source_combo": "llm+wallet_flow",
+        "source_components": ["llm", "wallet_flow", "llm"],
+    }
+
+    assert extract_signal_source_components(payload) == ["llm", "wallet_flow"]
+    assert signal_has_source(payload, "wallet-flow") is True
+    assert signal_has_source(payload, "lead_lag") is False
 
 
 def test_trade_db_logs_stream6_fields_and_calibrator_ignores_untracked_rows(tmp_path):
@@ -128,6 +150,9 @@ def test_trade_db_logs_stream6_fields_and_calibrator_ignores_untracked_rows(tmp_
     }
     for name in {
         "source",
+        "source_combo",
+        "source_components_json",
+        "source_count",
         "n_models",
         "model_spread",
         "model_stddev",
@@ -155,6 +180,9 @@ def test_trade_db_logs_stream6_fields_and_calibrator_ignores_untracked_rows(tmp_
             "edge": 0.12,
             "position_size_usd": 1.00,
             "source": "llm",
+            "source_combo": "llm+wallet_flow",
+            "source_components": ["llm", "wallet_flow"],
+            "source_count": 2,
             "n_models": 3,
             "agreement": 0.84,
             "disagreement_kelly_fraction": 0.20,
@@ -200,8 +228,9 @@ def test_trade_db_logs_stream6_fields_and_calibrator_ignores_untracked_rows(tmp_
 
     row = db.conn.execute(
         """
-        SELECT raw_prob, calibrated_prob, source, n_models, agreement,
-               disagreement_kelly_fraction, platt_mode, platt_a, platt_b
+        SELECT raw_prob, calibrated_prob, source, source_combo, source_components_json,
+               source_count, n_models, agreement, disagreement_kelly_fraction,
+               platt_mode, platt_a, platt_b
         FROM trades
         WHERE id = ?
         """,
@@ -211,6 +240,9 @@ def test_trade_db_logs_stream6_fields_and_calibrator_ignores_untracked_rows(tmp_
     assert row["raw_prob"] == 0.74
     assert row["calibrated_prob"] == 0.62
     assert row["source"] == "llm"
+    assert row["source_combo"] == "llm+wallet_flow"
+    assert row["source_components_json"] == "[\"llm\", \"wallet_flow\"]"
+    assert row["source_count"] == 2
     assert row["n_models"] == 3
     assert row["agreement"] == 0.84
     assert row["disagreement_kelly_fraction"] == 0.20
@@ -218,7 +250,61 @@ def test_trade_db_logs_stream6_fields_and_calibrator_ignores_untracked_rows(tmp_
     assert row["platt_a"] == 0.58
     assert row["platt_b"] == -0.35
 
+    breakdown = db.get_source_breakdown(limit=5)
+    assert breakdown[0]["source_label"] == "llm+wallet_flow"
+    assert breakdown[0]["total_trades"] == 1
+
     calibrator = AdaptivePlattCalibrator(db, enabled=True)
     recent = calibrator._recent_resolved_rows()
 
     assert recent == [(0.74, 1)]
+
+
+def test_pm_campaign_budget_tracker_enforces_rolling_hourly_cap():
+    tracker = RollingNotionalBudgetTracker(cap_usd=50.0, window_seconds=3600)
+
+    ok, reason, remaining = tracker.can_spend(30.0, now_ts=1000.0)
+    assert ok is True
+    assert reason == "pm_campaign_ok"
+    assert remaining == 50.0
+
+    tracker.record_spend(30.0, now_ts=1000.0)
+    assert tracker.snapshot(now_ts=1001.0)["used_usd"] == 30.0
+    assert tracker.snapshot(now_ts=1001.0)["remaining_usd"] == 20.0
+
+    ok, reason, _remaining = tracker.can_spend(25.0, now_ts=1002.0)
+    assert ok is False
+    assert reason == "pm_campaign_budget_exceeded"
+
+    # First spend is out of window after one hour + 1s, so budget resets.
+    ok, reason, _remaining = tracker.can_spend(25.0, now_ts=4601.0)
+    assert ok is True
+    assert reason == "pm_campaign_ok"
+
+
+def test_pm_campaign_gate_rejects_long_or_unknown_resolution():
+    live = JJLive.__new__(JJLive)
+    live.pm_hourly_campaign_enabled = True
+    live.pm_campaign_max_resolution_hours = 24.0
+    live.pm_campaign_budget = RollingNotionalBudgetTracker(cap_usd=50.0, window_seconds=3600)
+
+    allowed, reason = live._check_pm_campaign_gate(
+        signal={"market_id": "m1", "resolution_hours": None},
+        size_usd=10.0,
+    )
+    assert allowed is False
+    assert reason == "pm_campaign_resolution_unknown"
+
+    allowed, reason = live._check_pm_campaign_gate(
+        signal={"market_id": "m2", "resolution_hours": 26.0},
+        size_usd=10.0,
+    )
+    assert allowed is False
+    assert reason == "pm_campaign_resolution_too_long"
+
+    allowed, reason = live._check_pm_campaign_gate(
+        signal={"market_id": "m3", "resolution_hours": 12.0},
+        size_usd=10.0,
+    )
+    assert allowed is True
+    assert reason == "pm_campaign_ok"

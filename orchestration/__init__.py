@@ -6,14 +6,30 @@ __all__ = [
     "AllocatorConfig",
     "AllocatorStore",
     "ArmStats",
+    "ComplianceStatus",
     "DeliverabilityRisk",
+    "EngineCapacityLimits",
+    "EngineFamilyInput",
+    "EngineFamilyRecommendation",
     "PerformanceObservation",
+    "REVENUE_AUDIT_ENGINE",
     "ResourceAllocator",
 ]
 
 
 def __getattr__(name: str):
-    if name in {"AllocationDecision", "AllocationMode", "ArmStats", "DeliverabilityRisk", "PerformanceObservation"}:
+    if name in {
+        "AllocationDecision",
+        "AllocationMode",
+        "ArmStats",
+        "ComplianceStatus",
+        "DeliverabilityRisk",
+        "EngineCapacityLimits",
+        "EngineFamilyInput",
+        "EngineFamilyRecommendation",
+        "PerformanceObservation",
+        "REVENUE_AUDIT_ENGINE",
+    }:
         from . import models
 
         return getattr(models, name)

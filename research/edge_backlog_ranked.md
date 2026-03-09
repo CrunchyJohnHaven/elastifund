@@ -1,6 +1,6 @@
 # Edge Strategy Discovery System — Ranked Backlog
 
-**Version:** 3.4.0
+**Version:** 3.6.4
 **Date:** 2026-03-09
 **Flywheel Cycle:** 2 (Machine Truth Reconciliation)
 **Purpose:** Master list of every strategy evaluated, tested, or queued. Updated every flywheel cycle. Part of the Elastifund research flywheel — see `docs/strategy/flywheel_strategy.md`.
@@ -21,9 +21,11 @@
 
 **Parallel Execution Sprint (2026-03-07):** 7 instances running simultaneously. A-6 and B-1 moved to BUILDING. See `research/dispatches/DISPATCH_082_parallel_sprint.md` and `research/dispatches/DISPATCH_083_structural_alpha_gating_v7.md`. Full failure documentation: `research/what_doesnt_work_diary_v1.md`.
 
-**Cycle 2 gate status (2026-03-09):** No promotion. The latest checked-in fast-trade artifact remains `REJECT ALL` (`FAST_TRADE_EDGE_ANALYSIS.md`, `2026-03-09T00:42:18+00:00`). The March 9 edge scan still found `0` executable A-6 opportunities below `0.95`, and the March 9 B-1 audit still found `0` deterministic template pairs in the first `1,000` allowed markets.
+**Cycle 2 gate status (2026-03-09):** No promotion. The latest checked-in fast-trade artifact remains `REJECT ALL` (`FAST_TRADE_EDGE_ANALYSIS.md`, `2026-03-09T01:23:49+00:00`) across `75` observed markets (`29` 15m, `39` 5m, `7` 4h), `3,047` trade records, and `1,715` tracked wallets. The March 9 edge scan still found `0` executable A-6 opportunities below `0.95`, and the March 9 B-1 audit still found `0` deterministic template pairs in the first `1,000` allowed markets.
 
-**Remote posture note (2026-03-09):** `reports/remote_service_status.json` shows `jj-live.service` `active` at `2026-03-09T00:44:19Z`, and `reports/remote_cycle_status.json` shows wallet-flow `ready`, but launch is still `blocked` because the root regression suite is failing, there are no closed trades, no deployed capital, and the A-6/B-1 gates remain unresolved. Treat the running service as operational drift, not as promotion evidence.
+**Remote posture note (2026-03-09):** `reports/remote_service_status.json` shows `jj-live.service` `inactive` at `2026-03-09T01:28:43Z`, and `reports/remote_cycle_status.json` shows wallet-flow `ready` with `fast_flow_restart_ready=true`. The latest edge scan still returned `stay_paused`, and launch remains `blocked` because the service is stopped, there are no closed trades, no deployed capital, and the A-6/B-1 gates remain unresolved.
+
+**Structural-alpha decision note (2026-03-09):** `reports/structural_alpha_decision.md` now turns the March 9 evidence into an explicit kill watch. Only `30.834` of the planned `168` observation hours are logged so far, so the current call is still "keep both lanes blocked," but the deadline is now concrete: if A-6 still shows `0` relaxed candidates below `0.97` and B-1 still shows `0` deterministic template pairs by `2026-03-14T18:49:58+00:00`, kill both lanes and reallocate the effort.
 
 ---
 
@@ -50,14 +52,14 @@
 | B5 | Confirmation Layer | Wired in jj_live.py | — | 8.5 |
 | B6 | HFT Shadow Validator (Chainlink Barrier + Tie-Band) | Core module built | 13 passing | 7.8 |
 
-**Fast-flow readiness note (2026-03-09):** wallet-flow is now `ready` in `reports/remote_cycle_status.json` with `80` scored wallets, but `fast_flow_restart_ready=false` because the root regression suite is failing and the structural gates are still unresolved.
+**Fast-flow readiness note (2026-03-09):** wallet-flow is still `ready` in `reports/remote_cycle_status.json` with `80` scored wallets and `fast_flow_restart_ready=true`, but the service is stopped and the latest edge scan still says `stay_paused`. Keep the lane paused until a paper/shadow restart is explicitly approved; the latest scan found `0` viable markets even under the wide-open threshold profile.
 
 ## BUILDING — STRUCTURAL ALPHA (Parallel Sprint, 2026-03-07)
 
 | # | Strategy | Modules | Tests | Status |
 |---|----------|---------|-------|--------|
-| SA-1 | A-6 Guaranteed Dollar Scanner | constraint_arb_engine, sum_violation_scanner, a6_sum_scanner, a6_executor, neg_risk_inventory, resolution_normalizer, signals/sum_violation/guaranteed_dollar.py | 223 total | March 8 broad audit found 563 allowed neg-risk events with 0 executable-at-threshold constructions below the initial 0.95 cost gate. The March 9 empirical snapshot then saw 149 active multi-outcome events, 57 qualified A-6 live-surface events, and 0 executable opportunities below the gate. No promotion. |
-| SA-2 | B-1 Templated Dependency Engine | dependency_graph, relation_classifier, b1_executor, b1_monitor, relation_cache, bot/b1_template_engine.py | See above | March 9 live-public-data template audit still found 0 deterministic pairs in the first 1,000 active allowed markets. No promotion. Keep scope narrow; do not widen graph yet. |
+| SA-1 | A-6 Guaranteed Dollar Scanner | constraint_arb_engine, sum_violation_scanner, a6_sum_scanner, a6_executor, neg_risk_inventory, resolution_normalizer, signals/sum_violation/guaranteed_dollar.py | 223 total | March 8 broad audit found 563 allowed neg-risk events with 0 executable-at-threshold constructions below the initial 0.95 cost gate. The March 9 empirical snapshot then saw 149 active multi-outcome events, 57 qualified A-6 live-surface events, and 0 executable opportunities below the gate. `reports/structural_alpha_decision.md` now shows the seven-day kill watch is only `30.834` hours old, with `0` relaxed candidates below `0.97`, `0` underround observations, and a kill-if-unchanged deadline at `2026-03-14T18:49:58+00:00`. No promotion. |
+| SA-2 | B-1 Templated Dependency Engine | dependency_graph, relation_classifier, b1_executor, b1_monitor, relation_cache, bot/b1_template_engine.py | See above | March 9 live-public-data template audit still found 0 deterministic pairs in the first 1,000 active allowed markets. `reports/structural_alpha_decision.md` now fixes the decision clock: only `30.834` observation hours are logged so far, current call is still keep-blocked, and B-1 moves to kill-if-unchanged at `2026-03-14T18:49:58+00:00` if template-pair density stays zero. Keep scope narrow; do not widen graph yet. |
 
 ## RE-EVALUATING (Previously Rejected, New Evidence)
 

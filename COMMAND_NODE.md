@@ -1,6 +1,6 @@
 # COMMAND NODE — Predictive Alpha Fund
 
-**Version:** 2.6.0
+**Version:** 2.9.2
 **Last Updated:** 2026-03-09
 **Owner:** John Bradley (johnhavenbradley@gmail.com)
 **Purpose:** Single source of truth for all AI instances (ChatGPT, Cowork, Claude Code, Grok) to operate with full project context. Paste this document (or relevant sections) into any new session so the AI can write prompts, make decisions, and build on prior work without re-discovery.
@@ -12,6 +12,14 @@
 
 | Version | Date | Change Summary |
 |---------|------|----------------|
+| 2.9.2 | 2026-03-09 | Resynced JJ-N to the newer worktree state: Website Growth Audit offer, templates, dashboard asset, unified approval gate, and `RevenuePipeline` now exist, `make test-nontrading` passes at `53` tests, but the repo-root JJ-N surface still fails one persisted-registry ranking test and `nontrading/main.py` is not wired to the pipeline. |
+| 2.9.1 | 2026-03-09 | Synced JJ-N canonical docs to repo truth: `80` JJ-N tests across two surfaces, Elastic index template present, but the Website Growth Audit offer, JJ-N dashboard, SQLite registry backing, unified approval pipeline, and five-engine `RevenuePipeline` are still not built. |
+| 2.9.0 | 2026-03-09 | Finalized the latest March 9 operator truth: `313` cycles, service `inactive` at `01:28:43Z`, local verification now at `962 + 22` root / `374` polymarket / `39` non-trading, the threshold refresh still found `0` tradeable markets at YES `0.15`, NO `0.05`; YES `0.08`, NO `0.03`; and YES `0.05`, NO `0.02`, deploy dry-run validated after the manifest fix, and JJ-N Phase 0 plus the 13-doc governance scaffold are now in repo. |
+| 2.8.3 | 2026-03-09 | Finalized the command-node sync to the newest runtime artifacts: `313` cycles, service `inactive` at `01:28:43Z`, root verification back to `913 + 22` passing, fast-trade rerun at `01:23:49Z`, and launch blocked primarily by the stopped service plus first-trade/structural gates. |
+| 2.8.2 | 2026-03-09 | Resynced to the newest runtime truth after the post-edit refresh: `311` cycles, service checked `inactive` at `01:26:48Z`, root-status artifact now failing on the `TelemetryBridge` import, fast-trade rerun at `01:23:49Z`, and launch still blocked with restart readiness revoked. |
+| 2.8.1 | 2026-03-09 | Refreshed the command-node snapshot to the latest runtime truth: `308` cycles, service checked at `01:19:58Z`, fast-trade rerun at `01:19:40Z`, root verification `911 + 22` passing, and the latest deploy dry-run blocked on stale release-manifest checksums after snapshot refresh. |
+| 2.8.0 | 2026-03-09 | Synced the latest stable runtime handoff after verification: `305` cycles, service checked at `01:06:09Z`, fast-trade rerun at `01:05:57Z`, full verification green, and the latest dry-run deploy blocked on a stale release-manifest path. |
+| 2.7.0 | 2026-03-09 | Synced the latest stable public/runtime snapshots: `303` cycles, service checked at `00:48:05Z`, wallet-flow `ready`, root verification `passing`, and launch still blocked by first-trade/structural gates. |
 | 2.6.0 | 2026-03-09 | Synced the stable public/runtime snapshot outputs: `301` runtime cycles, service checked at `00:44:19Z`, wallet-flow `ready` but `fast_flow_restart_ready=false`, and root verification currently failing. |
 | 2.5.0 | 2026-03-09 | Synced the canonical March 9 artifact set: `298` runtime cycles, wallet-flow `ready`, refreshed fast-market/structural counts, and new doc/site snapshot wiring guidance. |
 | 2.4.0 | 2026-03-09 | Integrated Elastic Vision Document and Platform Vision Document: added product definition (trading + non-trading workers on shared substrate), six-layer master architecture, non-trading five-engine architecture, numbered-docs governance plan, messaging system, opportunity scoring framework, JJ-N rollout plan, and vision-aligned Replit build priorities. |
@@ -36,7 +44,7 @@ JJ is the principal execution layer of Elastifund: direct, evidence-driven, and 
 
 **Dual mission:** (1) Generate trading returns from validated edges. (2) Build the world's best public resource on agentic trading at johnbradleytrading.com.
 
-**Current status (machine truth reconciled on 2026-03-09):** Polymarket is funded ($247.51 USDC), Kalshi is connected ($100 USD), and the Dublin VPS remains the production host. `reports/public_runtime_snapshot.json` and `reports/runtime_truth_latest.json` are now the stable handoff artifacts. `reports/remote_service_status.json` checked at `2026-03-09T00:44:19Z` shows `jj-live.service` `active`, which supersedes the older March 8 prose that said the service was intentionally stopped. That does not change launch posture: `jj_state.json` now shows `0` live trades after `301` cycles, wallet-flow is `ready` with `80` scored wallets, but `fast_flow_restart_ready=false` because the root regression suite is currently failing (`1 failed, 870 passed in 18.22s`), there are still no closed trades or deployed capital, the latest checked-in fast-trade artifact at `2026-03-09T00:42:18+00:00` still says `REJECT ALL`, and A-6/B-1 remain blocked with `0` executable A-6 opportunities below `0.95` and `0` deterministic B-1 template pairs in the first `1,000` allowed markets. Elastic observability, APM, and anomaly feedback remain part of the target operator stack so we can debug faster without making the bot hard-dependent on Elasticsearch.
+**Current status (machine truth reconciled on 2026-03-09):** Polymarket is funded ($247.51 USDC), Kalshi is connected ($100 USD), and the Dublin VPS remains the production host. `reports/public_runtime_snapshot.json` and `reports/runtime_truth_latest.json` are the stable runtime handoff artifacts. `reports/remote_service_status.json` checked at `2026-03-09T01:28:43Z` now shows `jj-live.service` `inactive`, and `jj_state.json` shows `0` live trades after `313` cycles. Launch remains blocked: wallet-flow is still `ready` with `80` scored wallets and `fast_flow_restart_ready=true`, the latest local `make test` run passed (`962 passed in 18.12s; 22 passed in 3.83s`), the latest checked-in fast-trade artifact at `2026-03-09T01:23:49+00:00` still says `REJECT ALL` across `75` observed markets with `3,047` trade records and `1,715` tracked wallets, the latest edge scan at `2026-03-09T01:26:04+00:00` still returned `stay_paused`, and the broader threshold-sensitivity refresh at `2026-03-09T01:32:09.884663+00:00` still found `0` tradeable markets at the current (YES `0.15`, NO `0.05`), aggressive (YES `0.08`, NO `0.03`), and wide-open (YES `0.05`, NO `0.02`) profiles. A-6/B-1 remain blocked with `0` executable A-6 opportunities below `0.95` and `0` deterministic B-1 template pairs in the first `1,000` allowed markets. On the non-trading side, JJ-N is now in a partial-completion state: the CRM schema, store-backed registry work, unified approval gate, Website Growth Audit offer, template selector, follow-up sequence, dashboard asset, telemetry bridge, Elastic index template, and `RevenuePipeline` exist. Verification is mixed: `make test-nontrading` passes with `53` tests, but the repo-root `tests/nontrading` surface currently fails one persisted-registry ranking test after reload, and `nontrading/main.py` still runs the legacy campaign harness instead of the pipeline. Governance scaffolding also landed: `13` numbered docs under `docs/numbered/` and a passing messaging lint. The deploy handoff pair in `reports/deploy_20260309T012910Z.json` and `reports/deploy_20260309T013155Z.json` validated the release manifest and dry-run path without restarting `jj-live.service`, but remote mode remains unknown because the VPS env only surfaced `PAPER_TRADING=false` with no explicit runtime profile or agent run mode.
 
 | Strategy Status | Count | Source |
 |-----------------|-------|--------|
@@ -51,12 +59,19 @@ JJ is the principal execution layer of Elastifund: direct, evidence-driven, and 
 
 **Cycle 2 verification status (2026-03-09 source set):**
 - `make hygiene` passed.
-- Current root suite status is failing: `1 failed, 870 passed in 18.22s`.
-- The last full green baseline remains `1,256` total tests (`849 + 22` root, `374` polymarket, `11` non-trading).
+- `make test` passed (`962 passed in 18.12s; 22 passed in 3.83s`).
+- `make test-polymarket` passed (`374 passed in 2.97s`).
+- `make test-nontrading` passed (`39 passed in 0.36s`).
+- `python3 -m pytest tests/ -x -q --tb=short` passed during the final sync pass (`421 passed in 14.01s`).
+- The current full multi-surface green baseline is `1,397` total tests (`962 + 22` root, `374` polymarket, `39` non-trading).
 
 **Dispatch inventory:** `11` `DISPATCH_*` work-orders and `95` markdown files in `research/dispatches/`.
 
-**Promotion status:** No promotion this cycle. The March 9 service artifact supersedes the old stopped-state claim, but a running service still counts as drift until the remote mode is reconciled because launch remains blocked by the failing root regression suite, no closed trades, no deployed capital, and the A-6/B-1 evidence gates.
+**Promotion status:** No promotion this cycle. Launch is blocked by the stopped remote service, no closed trades, no deployed capital, and the A-6/B-1 evidence gates.
+
+**Last operator action:** `reports/deploy_20260309T013155Z.json` recorded the manifest fix and passing dry-run after the detailed validation pass in `reports/deploy_20260309T012910Z.json`; `jj-live.service` remained stopped throughout.
+
+**Next operator action:** Confirm the remote mode as paper or shadow. Do not treat deploy readiness as a restart signal: the latest edge scan still says `stay_paused`, and the threshold-sensitivity refresh still found `0` tradeable markets even at YES `0.05`, NO `0.02`. If this merged repo state is the intended release, use the validated no-restart `--apply` path only for paper/shadow evidence collection.
 
 **The Flywheel:** Research -> Implement -> Test -> Record -> Publish -> Repeat in 3-5 day cycles.
 
@@ -92,7 +107,40 @@ Design discipline: every important action creates an event, every event is query
 | 4. Proposal | Turn discovery into scoped offers | Proposal drafts, scope recommendations, pricing bands, follow-up assets |
 | 5. Learning | Evaluate outcomes and revise playbooks | Template changes, score updates, prompt revisions, experiment decisions |
 
-All five engines write into the same Elastic-backed memory. Observability tracks latency, errors, model costs, handoff frequency, reply classification accuracy, proposal turnaround, and policy events.
+All five engines write into the same Elastic-backed memory. Observability tracks latency, errors, model costs, handoff frequency, reply classification accuracy, proposal turnaround, and policy events. Phase 0 repo truth now includes the CRM schema, an in-memory opportunity registry, two approval-gate paths, a telemetry event writer, an Elastic index template, and the five engine stubs under `nontrading/`.
+
+### JJ-N Repo Status (March 9)
+
+- Runnable today: the legacy campaign harness in `nontrading/main.py`, the digital-product discovery lane, and a built but not CLI-wired `RevenuePipeline`
+- Verified today: `53` JJ-N tests pass in `nontrading/tests`
+- Open regression: the repo-root `tests/nontrading` surface currently fails on persisted registry ranking after reload
+- Still missing for launch: verified domain auth, curated leads, explicit approval for real sends, and CLI wiring into the pipeline
+
+### First Wedge
+
+The planned first production wedge remains the Website Growth Audit plus recurring monitor.
+Target customer:
+SMBs with public websites and visible growth or conversion issues.
+Current status:
+implemented in code with a `$500-$2,500` price band, `5` delivery days, and hybrid fulfillment, but not launched as a live product path.
+
+### Planned RevenuePipeline
+
+The intended JJ-N autonomy loop is:
+
+```text
+Account Intelligence -> Outreach -> Interaction -> Proposal -> Learning
+```
+
+Required gates:
+
+- opportunity scoring before advancement
+- compliance checks before queueing outreach
+- approval routing before live sends
+- telemetry at every stage
+
+Current repo truth:
+the pipeline is built in `nontrading/pipeline.py`, but `nontrading/main.py` still runs the legacy campaign harness instead.
 
 ### Non-Trading Opportunity Scoring Framework
 
@@ -119,25 +167,25 @@ Any opportunity scoring below threshold remains in research only.
 
 Success criterion: "prove one revenue loop that can be measured, improved, and explained."
 
-### Numbered Root Documents (Governance Plan)
+### Numbered Documents (Governance Plan)
 
-The repo should migrate toward these canonical numbered documents, updated every time the system materially changes:
+The canonical numbered operating-manual lane now lives under `docs/numbered/`. Update those files in place every time the system materially changes:
 
 | File | Purpose |
 |---|---|
-| `00_MISSION_AND_PRINCIPLES.md` | Why the project exists, what it optimizes, and what it will not do |
-| `01_EXECUTIVE_SUMMARY.md` | Plain-language explanation for non-technical readers and leadership |
-| `02_ARCHITECTURE.md` | System map, data flow, layers, and design constraints |
-| `03_METRICS_AND_LEADERBOARDS.md` | Definitions for all public graphs and scorecards |
-| `04_TRADING_WORKERS.md` | Trading system overview, policies, risk boundaries, paper vs live |
-| `05_NON_TRADING_WORKERS.md` | Revenue-worker strategy, workflows, evaluation, and rollout |
-| `06_EXPERIMENT_DIARY.md` | Chronological change log of experiments, outcomes, and lessons |
-| `07_FORECASTS_AND_CHECKPOINTS.md` | Current forecasts, expected milestones, and confidence changes |
-| `08_PROMPT_LIBRARY.md` | Canonical prompts, prompt variants, and prompt-review process |
-| `09_GOVERNANCE_AND_SAFETY.md` | Autonomy levels, approvals, security, compliance, and incident policy |
-| `10_OPERATIONS_RUNBOOK.md` | How to run the system, recover failures, and update components |
-| `11_PUBLIC_MESSAGING.md` | Approved copy blocks for the site, GitHub, and outreach |
-| `12_MANAGED_SERVICE_BOUNDARY.md` | What stays open source and what is offered as hosted infrastructure |
+| `docs/numbered/00_MISSION_AND_PRINCIPLES.md` | Why the project exists, what it optimizes, and what it will not do |
+| `docs/numbered/01_EXECUTIVE_SUMMARY.md` | Plain-language explanation for non-technical readers and leadership |
+| `docs/numbered/02_ARCHITECTURE.md` | System map, data flow, layers, and design constraints |
+| `docs/numbered/03_METRICS_AND_LEADERBOARDS.md` | Definitions for all public graphs and scorecards |
+| `docs/numbered/04_TRADING_WORKERS.md` | Trading system overview, policies, risk boundaries, paper vs live |
+| `docs/numbered/05_NON_TRADING_WORKERS.md` | Revenue-worker strategy, workflows, evaluation, and rollout |
+| `docs/numbered/06_EXPERIMENT_DIARY.md` | Chronological change log of experiments, outcomes, and lessons |
+| `docs/numbered/07_FORECASTS_AND_CHECKPOINTS.md` | Current forecasts, expected milestones, and confidence changes |
+| `docs/numbered/08_PROMPT_LIBRARY.md` | Canonical prompts, prompt variants, and prompt-review process |
+| `docs/numbered/09_GOVERNANCE_AND_SAFETY.md` | Autonomy levels, approvals, security, compliance, and incident policy |
+| `docs/numbered/10_OPERATIONS_RUNBOOK.md` | How to run the system, recover failures, and update components |
+| `docs/numbered/11_PUBLIC_MESSAGING.md` | Approved copy blocks for the site, GitHub, and outreach |
+| `docs/numbered/12_MANAGED_SERVICE_BOUNDARY.md` | What stays open source and what is offered as hosted infrastructure |
 
 These documents create narrative stability and make it possible for any agent or contributor to know where truth lives.
 
@@ -159,7 +207,7 @@ These documents create narrative stability and make it possible for any agent or
 
 ```
 VPS: 52.208.155.0 (AWS Lightsail Dublin, eu-west-1)
-systemd: jj-live.service (remote artifact: `active` at `2026-03-09T00:44:19Z`; launch posture still blocked)
+systemd: jj-live.service (remote artifact: `inactive` at `2026-03-09T01:28:43Z`; launch posture still blocked)
 Bot file: bot/jj_live.py (local) → /home/ubuntu/polymarket-trading-bot/jj_live.py (VPS)
 
 SIGNAL SOURCE 1: Ensemble Estimator + Agentic RAG (bot/ensemble_estimator.py, every 5 min)
@@ -489,18 +537,20 @@ A systematic playbook for identifying markets where traders misread resolution c
 
 | Metric | Value |
 |--------|-------|
-| Runtime cycles completed | 301 |
+| Runtime cycles completed | 313 |
 | Live trades executed | 0 |
 | Open positions | 0 |
 | Deployed capital | $0.00 |
-| Service state | `reports/remote_service_status.json` shows `jj-live.service` `running` at `2026-03-09T00:44:19Z` |
-| Launch posture | `reports/public_runtime_snapshot.json` still marks launch `blocked`; treat the running service as drift until the remote mode is reconciled |
-| Wallet-flow readiness | `ready` with `80` scored wallets, but `fast_flow_restart_ready=false` because root tests are failing and the structural gates are still blocked |
-| Fast-market pipeline | Latest checked-in artifact is `FAST_TRADE_EDGE_ANALYSIS.md` at `2026-03-09T00:42:18+00:00`, still `REJECT ALL` |
+| Service state | `reports/remote_service_status.json` shows `jj-live.service` `stopped` at `2026-03-09T01:28:43Z` |
+| Launch posture | `reports/public_runtime_snapshot.json` still marks launch `blocked`; blocked checks now include `service_not_running`, no closed trades, no deployed capital, A-6, B-1, and flywheel hold |
+| Wallet-flow readiness | `ready` with `80` scored wallets and `fast_flow_restart_ready=true`, but the latest edge scan still returned `stay_paused` and the service remains stopped |
+| Fast-market pipeline | Latest checked-in artifact is `FAST_TRADE_EDGE_ANALYSIS.md` at `2026-03-09T01:23:49+00:00`, still `REJECT ALL` across `75` observed markets with `3,047` trade records and `1,715` tracked wallets; the broader threshold refresh also found `0` tradeable markets at YES `0.15`, NO `0.05`; YES `0.08`, NO `0.03`; and YES `0.05`, NO `0.02` |
 | A-6 gate | March 9 edge scan found `0` executable opportunities below the `0.95` threshold |
 | B-1 gate | March 9 template audit found `0` deterministic template pairs in the first `1,000` allowed markets |
-| Verification status | Root suite currently failing: `1 failed, 870 passed in 18.22s`; last full green baseline remains `1,256` total verified |
-| Promotion status | No promotion; next operator action is to merge the root regression repair and rerun `make test` before any restart or deploy |
+| Verification status | Latest local verification shows root passing (`962 passed in 18.12s; 22 passed in 3.83s`); current full multi-surface green baseline is `1,397` total verified |
+| Promotion status | No promotion; structural gates remain blocked and launch is still hold-state |
+| Last operator action | `reports/deploy_20260309T013155Z.json` recorded the manifest fix and passing dry-run after the detailed validation pass in `reports/deploy_20260309T012910Z.json` |
+| Next operator action | Confirm remote mode; if `--apply` is approved, keep it paper/shadow only because the latest edge scan still says `stay_paused` and the threshold refresh still found `0` tradeable markets even at YES `0.05`, NO `0.02` |
 
 ---
 
@@ -716,9 +766,9 @@ SOP: After completing this task, UPDATE COMMAND_NODE.md (increment version numbe
 | Strategy statuses | 7 deployed / 6 building / 2 structural alpha / 1 re-evaluating / 10 rejected / 8 pre-rejected / 97 research pipeline | `research/edge_backlog_ranked.md` |
 | Total tracked strategies | 131 | `research/edge_backlog_ranked.md` |
 | Current pipeline verdict | REJECT ALL (no validated edge yet) | `FAST_TRADE_EDGE_ANALYSIS.md` |
-| Data coverage (latest run) | 2,889 trade records, 1,659 wallets tracked | `FAST_TRADE_EDGE_ANALYSIS.md` |
-| Live trading state | Remote artifact shows service running; launch still blocked pending root-tests-not-passing, no closed trades, no deployed capital, and the A-6/B-1 gates | `PROJECT_INSTRUCTIONS.md` |
-| Verification status | Root suite failing (`1 failed, 870 passed in 18.22s`); last full green baseline `1,256` total | `PROJECT_INSTRUCTIONS.md` |
+| Data coverage (latest run) | 3,047 trade records, 1,715 wallets tracked | `FAST_TRADE_EDGE_ANALYSIS.md` |
+| Live trading state | Remote artifact shows service stopped; launch is blocked pending no closed trades, no deployed capital, the A-6/B-1 gates, and flywheel hold | `PROJECT_INSTRUCTIONS.md` |
+| Verification status | Root suite passing (`962 passed in 18.12s; 22 passed in 3.83s`); current full green baseline `1,397` total | `PROJECT_INSTRUCTIONS.md` |
 | Dispatch work-orders | 11 `DISPATCH_*` files | `research/dispatches/` |
 | Dispatch library | 95 markdown files | `research/dispatches/` |
 | Flywheel cycle speed | 3-5 days | `docs/strategy/flywheel_strategy.md` |
@@ -881,7 +931,7 @@ Elastifund/
 
 | Platform | Balance | Wallet/Key | Status |
 |----------|---------|------------|--------|
-| Polymarket | $247.51 USDC | Proxy 0xb2fef31cf185b75d0c9c77bd1f8fe9fd576f69a5 | Live wallet funded; remote service artifact is `running`, but launch posture remains blocked pending root-tests-not-passing, no closed trades, no deployed capital, and the A-6/B-1 gates |
+| Polymarket | $247.51 USDC | Proxy 0xb2fef31cf185b75d0c9c77bd1f8fe9fd576f69a5 | Live wallet funded; remote service artifact is `stopped`, the dry-run deploy path is validated, remote mode is still unknown, and launch posture remains blocked pending service-not-running, no closed trades, no deployed capital, and the A-6/B-1 gates |
 | Kalshi | $100.00 USD | Key ID b20ab9fa-b387-4aac-b160-c22d58705935 | API connected, trading not built |
 
 ### VPS Access

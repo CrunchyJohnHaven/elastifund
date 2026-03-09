@@ -25,9 +25,12 @@ DEFAULT_MARKDOWN_PATH = Path("reports/remote_cycle_status.md")
 DEFAULT_JSON_PATH = Path("reports/remote_cycle_status.json")
 DEFAULT_RUNTIME_TRUTH_LATEST_PATH = Path("reports/runtime_truth_latest.json")
 DEFAULT_PUBLIC_RUNTIME_SNAPSHOT_PATH = Path("reports/public_runtime_snapshot.json")
+DEFAULT_STATE_IMPROVEMENT_LATEST_PATH = Path("reports/state_improvement_latest.json")
+DEFAULT_STATE_IMPROVEMENT_DIGEST_PATH = Path("reports/state_improvement_digest.md")
 DEFAULT_SERVICE_STATUS_PATH = Path("reports/remote_service_status.json")
 DEFAULT_ROOT_TEST_STATUS_PATH = Path("reports/root_test_status.json")
 DEFAULT_ARB_STATUS_PATH = Path("reports/arb_empirical_snapshot.json")
+DEFAULT_RUNTIME_PROFILE_EFFECTIVE_PATH = Path("reports/runtime_profile_effective.json")
 DEFAULT_WALLET_SCORES_PATH = Path("data/smart_wallets.json")
 DEFAULT_WALLET_DB_PATH = Path("data/wallet_scores.db")
 DEFAULT_TRADES_DB_PATH = Path("data/jj_trades.db")
@@ -366,6 +369,8 @@ def write_remote_cycle_status(
     json_path: Path | None = None,
     runtime_truth_latest_path: Path | None = None,
     public_runtime_snapshot_path: Path | None = None,
+    state_improvement_latest_path: Path | None = None,
+    state_improvement_digest_path: Path | None = None,
     config_path: Path | None = None,
     service_status_path: Path | None = None,
     root_test_status_path: Path | None = None,
@@ -407,8 +412,20 @@ def write_remote_cycle_status(
         repo_root,
         public_runtime_snapshot_path or DEFAULT_PUBLIC_RUNTIME_SNAPSHOT_PATH,
     )
+    state_improvement_latest_target = _resolve_path(
+        repo_root,
+        state_improvement_latest_path or DEFAULT_STATE_IMPROVEMENT_LATEST_PATH,
+    )
+    state_improvement_digest_target = _resolve_path(
+        repo_root,
+        state_improvement_digest_path or DEFAULT_STATE_IMPROVEMENT_DIGEST_PATH,
+    )
     timestamp_suffix = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     runtime_truth_timestamped_target = repo_root / "reports" / f"runtime_truth_{timestamp_suffix}.json"
+    state_improvement_timestamped_target = (
+        repo_root / "reports" / f"state_improvement_{timestamp_suffix}.json"
+    )
+    previous_runtime_truth_snapshot = _load_json(runtime_truth_latest_target, default={})
 
     status.setdefault("artifacts", {}).update(
         {
@@ -417,6 +434,9 @@ def write_remote_cycle_status(
             "runtime_truth_latest_json": str(runtime_truth_latest_target),
             "runtime_truth_timestamped_json": str(runtime_truth_timestamped_target),
             "public_runtime_snapshot_json": str(public_runtime_snapshot_target),
+            "state_improvement_latest_json": str(state_improvement_latest_target),
+            "state_improvement_timestamped_json": str(state_improvement_timestamped_target),
+            "state_improvement_digest_markdown": str(state_improvement_digest_target),
         }
     )
 
@@ -438,13 +458,24 @@ def write_remote_cycle_status(
         runtime_truth_latest_path=runtime_truth_latest_target,
         runtime_truth_timestamped_path=runtime_truth_timestamped_target,
         public_runtime_snapshot_path=public_runtime_snapshot_target,
+        previous_runtime_truth_snapshot=(
+            previous_runtime_truth_snapshot
+            if isinstance(previous_runtime_truth_snapshot, dict)
+            else {}
+        ),
     )
     public_runtime_snapshot = build_public_runtime_snapshot(runtime_truth_snapshot)
+    state_improvement = dict(runtime_truth_snapshot.get("state_improvement") or {})
+    state_improvement.setdefault("artifact", "state_improvement_report")
+    state_improvement.setdefault("schema_version", 1)
+    state_improvement.setdefault("generated_at", runtime_truth_snapshot.get("generated_at"))
 
     markdown_target.parent.mkdir(parents=True, exist_ok=True)
     json_target.parent.mkdir(parents=True, exist_ok=True)
     runtime_truth_latest_target.parent.mkdir(parents=True, exist_ok=True)
     public_runtime_snapshot_target.parent.mkdir(parents=True, exist_ok=True)
+    state_improvement_latest_target.parent.mkdir(parents=True, exist_ok=True)
+    state_improvement_digest_target.parent.mkdir(parents=True, exist_ok=True)
 
     markdown_target.write_text(render_remote_cycle_status_markdown(status))
     json_target.write_text(json.dumps(status, indent=2, sort_keys=True))
@@ -453,6 +484,11 @@ def write_remote_cycle_status(
     public_runtime_snapshot_target.write_text(
         json.dumps(public_runtime_snapshot, indent=2, sort_keys=True)
     )
+    state_improvement_timestamped_target.write_text(json.dumps(state_improvement, indent=2, sort_keys=True))
+    state_improvement_latest_target.write_text(json.dumps(state_improvement, indent=2, sort_keys=True))
+    state_improvement_digest_target.write_text(
+        _render_state_improvement_digest_markdown(state_improvement)
+    )
 
     return {
         "markdown": str(markdown_target),
@@ -460,6 +496,9 @@ def write_remote_cycle_status(
         "runtime_truth_latest": str(runtime_truth_latest_target),
         "runtime_truth_timestamped": str(runtime_truth_timestamped_target),
         "public_runtime_snapshot": str(public_runtime_snapshot_target),
+        "state_improvement_latest": str(state_improvement_latest_target),
+        "state_improvement_timestamped": str(state_improvement_timestamped_target),
+        "state_improvement_digest": str(state_improvement_digest_target),
         "status": status,
     }
 
@@ -476,6 +515,7 @@ def build_runtime_truth_snapshot(
     runtime_truth_latest_path: Path,
     runtime_truth_timestamped_path: Path,
     public_runtime_snapshot_path: Path,
+    previous_runtime_truth_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the canonical machine-readable runtime truth snapshot."""
 
@@ -499,6 +539,20 @@ def build_runtime_truth_snapshot(
         None,
     )
     launch_posture = "blocked" if launch["live_launch_blocked"] else "clear"
+    latest_edge_scan = _summarize_edge_scan(repo_root, latest_edge_scan_path)
+    latest_pipeline = _summarize_pipeline(repo_root, latest_pipeline_path)
+    previous_snapshot = (
+        previous_runtime_truth_snapshot if isinstance(previous_runtime_truth_snapshot, dict) else {}
+    )
+    state_improvement = _build_state_improvement_report(
+        root=repo_root,
+        generated_at=datetime.now(timezone.utc),
+        runtime=status["runtime"],
+        launch=launch,
+        latest_edge_scan=latest_edge_scan,
+        latest_pipeline=latest_pipeline,
+        previous_runtime_truth_snapshot=previous_snapshot,
+    )
 
     snapshot = {
         "artifact": "runtime_truth_snapshot",
@@ -612,8 +666,9 @@ def build_runtime_truth_snapshot(
             "checked_at": root_tests.get("checked_at"),
             "command": root_tests.get("command"),
         },
-        "latest_edge_scan": _summarize_edge_scan(repo_root, latest_edge_scan_path),
-        "latest_pipeline": _summarize_pipeline(repo_root, latest_pipeline_path),
+        "latest_edge_scan": latest_edge_scan,
+        "latest_pipeline": latest_pipeline,
+        "state_improvement": state_improvement,
         "drift": {
             "detected": bool(
                 cycle_reconciliation["drift_detected"] or runtime_truth.get("drift_detected")
@@ -640,6 +695,14 @@ def build_runtime_truth_snapshot(
                 repo_root,
                 public_runtime_snapshot_path,
             ),
+            "state_improvement_latest_json": _relative_path_text(
+                repo_root,
+                DEFAULT_STATE_IMPROVEMENT_LATEST_PATH,
+            ),
+            "state_improvement_digest_markdown": _relative_path_text(
+                repo_root,
+                DEFAULT_STATE_IMPROVEMENT_DIGEST_PATH,
+            ),
             "latest_edge_scan_json": _relative_path_text(repo_root, latest_edge_scan_path),
             "latest_pipeline_json": _relative_path_text(repo_root, latest_pipeline_path),
         },
@@ -659,6 +722,7 @@ def build_public_runtime_snapshot(runtime_truth_snapshot: dict[str, Any]) -> dic
     structural_gates = runtime_truth_snapshot["structural_gates"]
     latest_edge_scan = runtime_truth_snapshot["latest_edge_scan"]
     latest_pipeline = runtime_truth_snapshot["latest_pipeline"]
+    state_improvement = runtime_truth_snapshot.get("state_improvement") or {}
     drift = runtime_truth_snapshot["drift"]
 
     public_snapshot = {
@@ -725,6 +789,17 @@ def build_public_runtime_snapshot(runtime_truth_snapshot: dict[str, Any]) -> dic
             "report_generated_at": latest_pipeline.get("report_generated_at"),
             "recommendation": latest_pipeline.get("recommendation"),
             "reasoning": latest_pipeline.get("reasoning"),
+        },
+        "state_improvement": {
+            "operator_digest": state_improvement.get("operator_digest"),
+            "hourly_budget_progress": state_improvement.get("hourly_budget_progress"),
+            "active_thresholds": state_improvement.get("active_thresholds"),
+            "per_venue_candidate_counts": state_improvement.get("per_venue_candidate_counts"),
+            "per_venue_executed_notional_usd": (
+                state_improvement.get("per_venue_executed_notional_usd") or {}
+            ),
+            "reject_reasons": state_improvement.get("reject_reasons") or [],
+            "improvement_velocity": state_improvement.get("improvement_velocity") or {},
         },
         "operator_headlines": _build_public_headlines(
             launch=launch,
@@ -1288,12 +1363,34 @@ def _reconcile_cycle_count(
 
 def _summarize_edge_scan(root: Path, path: Path | None) -> dict[str, Any]:
     payload = _load_json(path, default={}) if path is not None else {}
+    candidate_markets = payload.get("candidate_markets")
+    candidate_count = len(candidate_markets) if isinstance(candidate_markets, list) else 0
+    cross_platform = payload.get("cross_platform_arb") if isinstance(payload, dict) else {}
+    per_venue_candidates = {
+        "polymarket": candidate_count,
+        "kalshi": int(
+            (
+                (cross_platform or {}).get("arb_opportunities")
+                or (cross_platform or {}).get("matches")
+                or 0
+            )
+        ),
+    }
+    per_venue_candidates["total"] = per_venue_candidates["polymarket"] + per_venue_candidates["kalshi"]
     return {
         "path": _relative_path_text(root, path),
         "generated_at": payload.get("generated_at"),
         "recommended_action": payload.get("recommended_action"),
         "action_reason": payload.get("action_reason"),
         "purpose": payload.get("purpose"),
+        "markets_pulled": int(payload.get("markets_pulled") or 0),
+        "markets_under_24h": int(payload.get("markets_under_24h") or 0),
+        "viable_at_current_thresholds": int(payload.get("viable_at_current_thresholds") or 0),
+        "viable_at_aggressive_thresholds": int(payload.get("viable_at_aggressive_thresholds") or 0),
+        "viable_at_wide_open": int(payload.get("viable_at_wide_open") or 0),
+        "per_venue_candidate_counts": per_venue_candidates,
+        "candidate_reject_reason_counts": _count_candidate_reject_reasons(candidate_markets),
+        "threshold_sensitivity": payload.get("threshold_sensitivity") if isinstance(payload, dict) else {},
     }
 
 
@@ -1301,12 +1398,22 @@ def _summarize_pipeline(root: Path, path: Path | None) -> dict[str, Any]:
     payload = _load_json(path, default={}) if path is not None else {}
     verdict = payload.get("pipeline_verdict") or {}
     verification = payload.get("verification") or {}
+    threshold_sensitivity = payload.get("threshold_sensitivity") if isinstance(payload, dict) else {}
+    current_threshold = threshold_sensitivity.get("current") if isinstance(threshold_sensitivity, dict) else {}
+    new_viable = payload.get("new_viable_strategies")
     return {
         "path": _relative_path_text(root, path),
         "report_generated_at": payload.get("report_generated_at"),
         "run_timestamp": payload.get("run_timestamp"),
         "recommendation": verdict.get("recommendation"),
         "reasoning": verdict.get("reasoning"),
+        "markets_pulled": int(payload.get("markets_pulled") or 0),
+        "markets_under_24h": int(payload.get("markets_under_24h") or 0),
+        "markets_in_allowed_categories": int(payload.get("markets_in_allowed_categories") or 0),
+        "pipeline_candidate_count": len(new_viable) if isinstance(new_viable, list) else 0,
+        "current_tradeable": int((current_threshold or {}).get("tradeable") or 0),
+        "current_yes_reachable_markets": int((current_threshold or {}).get("yes_reachable_markets") or 0),
+        "current_no_reachable_markets": int((current_threshold or {}).get("no_reachable_markets") or 0),
         "verification": {
             "integrated_entrypoint_status": verification.get("integrated_entrypoint_status"),
             "make_test_status": verification.get("make_test_status"),
@@ -1314,6 +1421,368 @@ def _summarize_pipeline(root: Path, path: Path | None) -> dict[str, Any]:
             "jj_live_import_boundary_suite": verification.get("jj_live_import_boundary_suite"),
         },
     }
+
+
+def _build_state_improvement_report(
+    *,
+    root: Path,
+    generated_at: datetime,
+    runtime: dict[str, Any],
+    launch: dict[str, Any],
+    latest_edge_scan: dict[str, Any],
+    latest_pipeline: dict[str, Any],
+    previous_runtime_truth_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    profile = _load_json(root / DEFAULT_RUNTIME_PROFILE_EFFECTIVE_PATH, default={})
+    execution_summary = _compute_execution_notional_summary(root=root, now=generated_at)
+    per_venue_candidate_counts = dict(
+        latest_edge_scan.get("per_venue_candidate_counts")
+        or {"polymarket": 0, "kalshi": 0, "total": 0}
+    )
+
+    risk_limits = profile.get("risk_limits") if isinstance(profile, dict) else {}
+    hourly_budget_cap = _first_nonempty(
+        (risk_limits or {}).get("hourly_notional_budget_usd"),
+        (risk_limits or {}).get("max_hourly_notional_usd"),
+        (risk_limits or {}).get("campaign_hourly_notional_usd"),
+        (risk_limits or {}).get("hourly_campaign_notional_usd"),
+    )
+    hourly_budget_cap_value = _float_or_none(hourly_budget_cap)
+    hourly_notional_used = float(execution_summary.get("hourly_notional_usd") or 0.0)
+    hourly_budget_progress_pct = (
+        (hourly_notional_used / hourly_budget_cap_value) * 100.0
+        if hourly_budget_cap_value and hourly_budget_cap_value > 0
+        else None
+    )
+
+    active_thresholds = {
+        "profile_name": profile.get("profile_name"),
+        "yes_threshold": _float_or_none((profile.get("signal_thresholds") or {}).get("yes_threshold")),
+        "no_threshold": _float_or_none((profile.get("signal_thresholds") or {}).get("no_threshold")),
+        "max_resolution_hours": _float_or_none((profile.get("market_filters") or {}).get("max_resolution_hours")),
+        "max_position_usd": _float_or_none((risk_limits or {}).get("max_position_usd")),
+    }
+
+    candidate_total = int(per_venue_candidate_counts.get("total") or 0)
+    trade_total = int(runtime.get("total_trades") or 0)
+    conversion_rate = (trade_total / candidate_total) if candidate_total > 0 else None
+
+    expected_pnl_usd = _estimate_expected_pnl_from_edge_scan(root, latest_edge_scan)
+    realized_pnl_usd = _float_or_none(runtime.get("daily_pnl_usd"))
+    pnl_drift_usd = (
+        (realized_pnl_usd - expected_pnl_usd)
+        if realized_pnl_usd is not None and expected_pnl_usd is not None
+        else None
+    )
+
+    current_tradeable = int(latest_pipeline.get("current_tradeable") or 0)
+    current_reachability = max(
+        int(latest_pipeline.get("current_yes_reachable_markets") or 0),
+        int(latest_pipeline.get("current_no_reachable_markets") or 0),
+        current_tradeable,
+    )
+
+    previous_state_improvement = (
+        previous_runtime_truth_snapshot.get("state_improvement")
+        if isinstance(previous_runtime_truth_snapshot, dict)
+        else {}
+    ) or {}
+    previous_metrics = previous_state_improvement.get("metrics") or {}
+
+    current_metrics = {
+        "edge_reachability": float(current_reachability),
+        "candidate_to_trade_conversion": conversion_rate,
+        "realized_pnl_usd": realized_pnl_usd,
+        "expected_pnl_usd": expected_pnl_usd,
+        "realized_expected_pnl_drift_usd": pnl_drift_usd,
+    }
+
+    deltas = {
+        "edge_reachability_delta": _delta_or_none(
+            current_metrics["edge_reachability"],
+            _float_or_none(previous_metrics.get("edge_reachability")),
+        ),
+        "candidate_to_trade_conversion_delta": _delta_or_none(
+            current_metrics["candidate_to_trade_conversion"],
+            _float_or_none(previous_metrics.get("candidate_to_trade_conversion")),
+        ),
+        "realized_expected_pnl_drift_delta_usd": _delta_or_none(
+            current_metrics["realized_expected_pnl_drift_usd"],
+            _float_or_none(previous_metrics.get("realized_expected_pnl_drift_usd")),
+        ),
+    }
+
+    reject_reasons = _dedupe_preserve_order(
+        [
+            *list(launch.get("blocked_checks") or []),
+            *list(launch.get("blocked_reasons") or []),
+            *list((latest_edge_scan.get("candidate_reject_reason_counts") or {}).keys()),
+            str(latest_edge_scan.get("action_reason") or "").strip(),
+            str(latest_pipeline.get("reasoning") or "").strip(),
+        ]
+    )
+    reject_reasons = [reason for reason in reject_reasons if reason]
+
+    hourly_budget_progress = {
+        "cap_usd": hourly_budget_cap_value,
+        "used_usd": round(hourly_notional_used, 4),
+        "remaining_usd": (
+            round(max(hourly_budget_cap_value - hourly_notional_used, 0.0), 4)
+            if hourly_budget_cap_value is not None
+            else None
+        ),
+        "progress_pct": round(hourly_budget_progress_pct, 4) if hourly_budget_progress_pct is not None else None,
+        "window_minutes": 60,
+    }
+
+    report = {
+        "artifact": "state_improvement_report",
+        "schema_version": 1,
+        "generated_at": generated_at.isoformat(),
+        "hourly_budget_progress": hourly_budget_progress,
+        "active_thresholds": active_thresholds,
+        "per_venue_candidate_counts": per_venue_candidate_counts,
+        "per_venue_executed_notional_usd": dict(execution_summary.get("per_venue_notional_usd") or {}),
+        "reject_reasons": reject_reasons,
+        "improvement_velocity": {
+            "deltas": deltas,
+            "previous_snapshot_generated_at": previous_runtime_truth_snapshot.get("generated_at")
+            if isinstance(previous_runtime_truth_snapshot, dict)
+            else None,
+        },
+        "metrics": current_metrics,
+    }
+    report["operator_digest"] = _build_operator_digest(report, launch=launch)
+    return report
+
+
+def _estimate_expected_pnl_from_edge_scan(root: Path, latest_edge_scan: dict[str, Any]) -> float | None:
+    path_text = latest_edge_scan.get("path")
+    if not path_text:
+        return None
+    path = root / str(path_text)
+    payload = _load_json(path, default={})
+    candidates = payload.get("candidate_markets")
+    if not isinstance(candidates, list):
+        return None
+    expected = 0.0
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        edge = _float_or_none(candidate.get("edge"))
+        size = _float_or_none(candidate.get("recommended_size_usd"))
+        if edge is None or size is None:
+            continue
+        expected += edge * size
+    return round(expected, 6)
+
+
+def _compute_execution_notional_summary(*, root: Path, now: datetime) -> dict[str, Any]:
+    db_path = root / DEFAULT_TRADES_DB_PATH
+    if not db_path.exists():
+        return {
+            "hourly_notional_usd": 0.0,
+            "per_venue_notional_usd": {
+                "polymarket_hourly": 0.0,
+                "kalshi_hourly": 0.0,
+                "polymarket_total": 0.0,
+                "kalshi_total": 0.0,
+                "combined_hourly": 0.0,
+                "combined_total": 0.0,
+            },
+            "source": "missing_data/jj_trades.db",
+        }
+
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(db_path)
+        columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(trades)")
+        }
+        if "position_size_usd" not in columns:
+            return {
+                "hourly_notional_usd": 0.0,
+                "per_venue_notional_usd": {
+                    "polymarket_hourly": 0.0,
+                    "kalshi_hourly": 0.0,
+                    "polymarket_total": 0.0,
+                    "kalshi_total": 0.0,
+                    "combined_hourly": 0.0,
+                    "combined_total": 0.0,
+                },
+                "source": "data/jj_trades.db#trades.position_size_usd_missing",
+            }
+        if "timestamp" not in columns and "source" not in columns:
+            query = "SELECT '' AS timestamp, position_size_usd, '' AS source FROM trades"
+        elif "timestamp" not in columns:
+            query = "SELECT '' AS timestamp, position_size_usd, source FROM trades"
+        elif "source" not in columns:
+            query = "SELECT timestamp, position_size_usd, '' AS source FROM trades"
+        else:
+            query = "SELECT timestamp, position_size_usd, source FROM trades"
+        rows = list(conn.execute(query))
+    except sqlite3.DatabaseError:
+        return {
+            "hourly_notional_usd": 0.0,
+            "per_venue_notional_usd": {
+                "polymarket_hourly": 0.0,
+                "kalshi_hourly": 0.0,
+                "polymarket_total": 0.0,
+                "kalshi_total": 0.0,
+                "combined_hourly": 0.0,
+                "combined_total": 0.0,
+            },
+            "source": "data/jj_trades.db#read_error",
+        }
+    finally:
+        try:
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
+
+    one_hour_ago = now.timestamp() - 3600.0
+    totals = {
+        "polymarket_hourly": 0.0,
+        "kalshi_hourly": 0.0,
+        "polymarket_total": 0.0,
+        "kalshi_total": 0.0,
+    }
+    for row in rows:
+        if len(row) == 2:
+            timestamp_value = None
+            size_value, source_value = row
+        else:
+            timestamp_value, size_value, source_value = row
+        size = abs(_float_or_none(size_value) or 0.0)
+        if size <= 0:
+            continue
+        venue = _infer_venue(source_value)
+        totals[f"{venue}_total"] += size
+
+        parsed_ts = _parse_trade_timestamp(timestamp_value)
+        if parsed_ts is not None and parsed_ts >= one_hour_ago:
+            totals[f"{venue}_hourly"] += size
+
+    combined_hourly = totals["polymarket_hourly"] + totals["kalshi_hourly"]
+    combined_total = totals["polymarket_total"] + totals["kalshi_total"]
+    return {
+        "hourly_notional_usd": round(combined_hourly, 6),
+        "per_venue_notional_usd": {
+            **{k: round(v, 6) for k, v in totals.items()},
+            "combined_hourly": round(combined_hourly, 6),
+            "combined_total": round(combined_total, 6),
+        },
+        "source": "data/jj_trades.db",
+    }
+
+
+def _parse_trade_timestamp(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        parsed = _parse_datetime_like(text)
+        if parsed is None:
+            return None
+        return parsed.timestamp()
+
+
+def _infer_venue(source_value: Any) -> str:
+    text = str(source_value or "").strip().lower()
+    if "kalshi" in text:
+        return "kalshi"
+    return "polymarket"
+
+
+def _count_candidate_reject_reasons(candidate_markets: Any) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    if not isinstance(candidate_markets, list):
+        return counts
+    for candidate in candidate_markets:
+        if not isinstance(candidate, dict):
+            continue
+        failures = candidate.get("kill_rule_failures")
+        if not isinstance(failures, list):
+            continue
+        for reason in failures:
+            key = str(reason).strip()
+            if not key:
+                continue
+            counts[key] = int(counts.get(key, 0)) + 1
+    return counts
+
+
+def _delta_or_none(current: float | None, previous: float | None) -> float | None:
+    if current is None or previous is None:
+        return None
+    return round(current - previous, 6)
+
+
+def _build_operator_digest(report: dict[str, Any], *, launch: dict[str, Any]) -> str:
+    candidate_counts = report.get("per_venue_candidate_counts") or {}
+    notional = report.get("per_venue_executed_notional_usd") or {}
+    thresholds = report.get("active_thresholds") or {}
+    budget = report.get("hourly_budget_progress") or {}
+    deltas = (report.get("improvement_velocity") or {}).get("deltas") or {}
+    status_text = "blocked" if launch.get("live_launch_blocked") else "unblocked"
+    return (
+        "Cycle state: "
+        f"launch is {status_text}; "
+        f"active thresholds YES={thresholds.get('yes_threshold')} NO={thresholds.get('no_threshold')} "
+        f"(max_resolution_hours={thresholds.get('max_resolution_hours')}). "
+        f"Candidates PM={candidate_counts.get('polymarket', 0)}, Kalshi={candidate_counts.get('kalshi', 0)}, "
+        f"total={candidate_counts.get('total', 0)}. "
+        f"Executed notional (last 60m) PM=${float(notional.get('polymarket_hourly') or 0.0):.2f}, "
+        f"Kalshi=${float(notional.get('kalshi_hourly') or 0.0):.2f}, "
+        f"combined=${float(notional.get('combined_hourly') or 0.0):.2f}. "
+        f"Hourly budget used=${float(budget.get('used_usd') or 0.0):.2f}"
+        + (
+            f" of ${float(budget.get('cap_usd')):.2f} ({float(budget.get('progress_pct')):.2f}%). "
+            if budget.get("cap_usd") is not None and budget.get("progress_pct") is not None
+            else ". "
+        )
+        + "Improvement deltas: "
+        f"edge_reachability={_format_signed_number(deltas.get('edge_reachability_delta'))}, "
+        f"candidate_to_trade_conversion={_format_signed_number(deltas.get('candidate_to_trade_conversion_delta'))}, "
+        f"realized_expected_pnl_drift_usd={_format_signed_number(deltas.get('realized_expected_pnl_drift_delta_usd'))}."
+    )
+
+
+def _format_signed_number(value: Any) -> str:
+    if value in (None, ""):
+        return "n/a"
+    number = float(value)
+    if number > 0:
+        return f"+{number:.6f}"
+    return f"{number:.6f}"
+
+
+def _render_state_improvement_digest_markdown(report: dict[str, Any]) -> str:
+    lines = [
+        "# State Improvement Digest",
+        "",
+        f"- Generated: {report.get('generated_at') or 'unknown'}",
+        "",
+        "## Operator Summary",
+        "",
+        str(report.get("operator_digest") or "No operator digest available."),
+        "",
+        "## Structured Fields",
+        "",
+        "```json",
+        json.dumps(report, indent=2, sort_keys=True),
+        "```",
+        "",
+    ]
+    return "\n".join(lines)
 
 
 def _build_public_headlines(

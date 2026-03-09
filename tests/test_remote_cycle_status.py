@@ -254,19 +254,128 @@ def test_write_remote_cycle_status_emits_runtime_truth_and_public_snapshot(tmp_p
 
     assert written["runtime_truth_latest"].endswith("reports/runtime_truth_latest.json")
     assert written["public_runtime_snapshot"].endswith("reports/public_runtime_snapshot.json")
+    assert written["state_improvement_latest"].endswith("reports/state_improvement_latest.json")
+    assert written["state_improvement_digest"].endswith("reports/state_improvement_digest.md")
     assert len(timestamped) == 1
     assert runtime_truth["summary"]["wallet_flow_status"] == "ready"
     assert runtime_truth["service"]["drift_detected"] is True
     assert runtime_truth["verification"]["summary"] == "849 passed in 18.53s; 22 passed in 3.49s"
     assert runtime_truth["latest_edge_scan"]["recommended_action"] == "human_review_required"
     assert runtime_truth["latest_pipeline"]["recommendation"] == "REJECT ALL"
+    assert runtime_truth["state_improvement"]["hourly_budget_progress"]["window_minutes"] == 60
+    assert runtime_truth["state_improvement"]["per_venue_candidate_counts"]["polymarket"] >= 0
+    assert isinstance(runtime_truth["state_improvement"]["reject_reasons"], list)
+    assert runtime_truth["state_improvement"]["operator_digest"]
     assert public_snapshot["snapshot_source"] == "reports/runtime_truth_latest.json"
     assert public_snapshot["service"]["status"] == "running"
     assert "host" not in public_snapshot["service"]
+    assert public_snapshot["state_improvement"]["operator_digest"]
     assert any(
         "jj-live.service is running while launch posture remains blocked" in headline
         for headline in public_snapshot["operator_headlines"]
     )
+    assert (tmp_path / "reports" / "state_improvement_latest.json").exists()
+    assert (tmp_path / "reports" / "state_improvement_digest.md").exists()
+
+
+def test_write_remote_cycle_status_computes_state_improvement_deltas_from_previous_snapshot(
+    tmp_path: Path,
+):
+    _write_base_remote_state(tmp_path)
+    _write_json(
+        tmp_path / "reports" / "runtime_truth_latest.json",
+        {
+            "generated_at": "2026-03-09T00:00:00+00:00",
+            "state_improvement": {
+                "metrics": {
+                    "edge_reachability": 2.0,
+                    "candidate_to_trade_conversion": 0.10,
+                    "realized_expected_pnl_drift_usd": -1.0,
+                }
+            },
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "remote_service_status.json",
+        {
+            "checked_at": "2026-03-09T00:24:22+00:00",
+            "status": "stopped",
+            "systemctl_state": "inactive",
+            "detail": "inactive",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "root_test_status.json",
+        {
+            "checked_at": "2026-03-09T00:26:41+00:00",
+            "command": "make test",
+            "status": "passing",
+            "summary": "22 passed in 3.49s",
+            "output_tail": [
+                "849 passed in 18.53s",
+                "22 passed in 3.49s",
+            ],
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "arb_empirical_snapshot.json",
+        {
+            "gating_metrics": {
+                "all_gates_pass": False,
+                "fill_probability_gate": "insufficient_data",
+                "half_life_gate": "fail",
+                "half_life_seconds": 0.0,
+                "settlement_path_gate": "untested",
+            },
+            "b1": {},
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "edge_scan_20260309T002925Z.json",
+        {
+            "generated_at": "2026-03-09T00:29:25+00:00",
+            "recommended_action": "stay_paused",
+            "action_reason": "No validated edge.",
+            "candidate_markets": [],
+            "cross_platform_arb": {"arb_opportunities": 0, "matches": 0},
+            "threshold_sensitivity": {"current": {"yes": 0.15, "no": 0.05}},
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "pipeline_20260309T002002Z.json",
+        {
+            "report_generated_at": "2026-03-09T00:20:45+00:00",
+            "pipeline_verdict": {
+                "recommendation": "REJECT ALL",
+                "reasoning": "No validated edge.",
+            },
+            "new_viable_strategies": [],
+            "threshold_sensitivity": {
+                "current": {"tradeable": 4, "yes_reachable_markets": 4, "no_reachable_markets": 2}
+            },
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "runtime_profile_effective.json",
+        {
+            "profile_name": "blocked_safe",
+            "signal_thresholds": {"yes_threshold": 0.15, "no_threshold": 0.05},
+            "market_filters": {"max_resolution_hours": 24.0},
+            "risk_limits": {"hourly_notional_budget_usd": 50.0},
+        },
+    )
+
+    write_remote_cycle_status(tmp_path)
+
+    runtime_truth = json.loads((tmp_path / "reports" / "runtime_truth_latest.json").read_text())
+    state_improvement = runtime_truth["state_improvement"]
+    deltas = state_improvement["improvement_velocity"]["deltas"]
+
+    assert deltas["edge_reachability_delta"] == 2.0
+    assert deltas["candidate_to_trade_conversion_delta"] is None
+    assert deltas["realized_expected_pnl_drift_delta_usd"] == 1.0
+    assert state_improvement["hourly_budget_progress"]["cap_usd"] == 50.0
+    assert state_improvement["improvement_velocity"]["previous_snapshot_generated_at"] == "2026-03-09T00:00:00+00:00"
 
 
 def test_write_remote_cycle_status_overwrites_stale_remote_summary_artifact(tmp_path: Path):

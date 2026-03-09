@@ -617,24 +617,72 @@ class DataPipeline:
 
         return rows
 
+    @staticmethod
+    def _extract_coinbase_spot_price(payload: Any) -> float:
+        return float((payload.get("data") or {}).get("amount"))
+
+    @staticmethod
+    def _extract_coinbase_exchange_price(payload: Any) -> float:
+        return float(payload.get("price"))
+
+    @staticmethod
+    def _extract_coingecko_price(payload: Any) -> float:
+        return float((payload.get("bitcoin") or {}).get("usd"))
+
     def collect_binance_spot_once(self) -> int:
-        """Collect one BTC spot point, preferring ticker endpoint."""
+        """Collect one BTC spot point, using public fallbacks if Binance is blocked."""
         ts = utc_ts()
         price: float | None = None
+        source = "unavailable"
 
-        try:
-            payload = self.http.get_json(self.config.sources.binance_ticker_api)
-            price = float(payload.get("price"))
-        except Exception as exc:
-            self.log_quality_event("warning", "binance_ticker_failed", str(exc))
+        collectors: list[tuple[str, str, Any, str, str]] = [
+            (
+                "binance_rest",
+                self.config.sources.binance_ticker_api,
+                lambda payload: float(payload.get("price")),
+                "binance_ticker_failed",
+                "warning",
+            ),
+            (
+                "binance_klines",
+                self.config.sources.binance_klines_api,
+                lambda payload: float(payload[-1][4]) if payload and isinstance(payload, list) else 0.0,
+                "binance_fallback_failed",
+                "error",
+            ),
+            (
+                "coinbase_spot",
+                self.config.sources.coinbase_spot_api,
+                self._extract_coinbase_spot_price,
+                "coinbase_spot_failed",
+                "warning",
+            ),
+            (
+                "coinbase_exchange",
+                self.config.sources.coinbase_exchange_api,
+                self._extract_coinbase_exchange_price,
+                "coinbase_exchange_failed",
+                "warning",
+            ),
+            (
+                "coingecko_rest",
+                self.config.sources.coingecko_price_api,
+                self._extract_coingecko_price,
+                "coingecko_price_failed",
+                "warning",
+            ),
+        ]
 
-        if price is None:
+        for candidate_source, url, extractor, event_type, severity in collectors:
             try:
-                rows = self.http.get_json(self.config.sources.binance_klines_api)
-                if rows and isinstance(rows, list):
-                    price = float(rows[-1][4])
+                payload = self.http.get_json(url)
+                candidate_price = float(extractor(payload))
+                if candidate_price > 0.0:
+                    price = candidate_price
+                    source = candidate_source
+                    break
             except Exception as exc:
-                self.log_quality_event("error", "binance_fallback_failed", str(exc))
+                self.log_quality_event(severity, event_type, str(exc))
 
         if price is None or price <= 0.0:
             return 0
@@ -642,7 +690,7 @@ class DataPipeline:
         with self._connect() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO btc_spot (timestamp_ts, price, source) VALUES (?, ?, ?)",
-                (ts, price, "binance_rest"),
+                (ts, price, source),
             )
         return 1
 

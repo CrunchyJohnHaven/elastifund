@@ -1,11 +1,18 @@
 import os
 import sys
+from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from kalshi.weather_arb import (
     ForecastSnapshot,
+    _current_hourly_usage,
+    _normalize_mode,
+    _resolve_hourly_budget_usd,
+    _validate_args,
     build_weather_signal,
     extract_market_target_date,
     parse_temperature_contract,
@@ -114,3 +121,74 @@ def test_build_signal_skips_mismatched_market_date():
         "no_bid": 42,
     }
     assert build_weather_signal("NYC", snapshot, market, edge_threshold=0.10, max_spread=0.20) is None
+
+
+def test_current_hourly_usage_counts_only_recent_executed_rows(tmp_path: Path):
+    now = datetime(2026, 3, 9, 12, 0, tzinfo=timezone.utc)
+    log = tmp_path / "orders.jsonl"
+    rows = [
+        {
+            "timestamp": (now - timedelta(minutes=20)).isoformat(),
+            "execution_result": "paper",
+            "notional_usd": 12.5,
+        },
+        {
+            "timestamp": (now - timedelta(minutes=40)).isoformat(),
+            "execution_result": "live",
+            "notional_usd": 7.0,
+        },
+        {
+            "timestamp": (now - timedelta(minutes=80)).isoformat(),
+            "execution_result": "live",
+            "notional_usd": 100.0,
+        },
+        {
+            "timestamp": (now - timedelta(minutes=10)).isoformat(),
+            "execution_result": "rejected",
+            "notional_usd": 9.0,
+        },
+    ]
+    log.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    usage = _current_hourly_usage(now=now, orders_log=log)
+    assert usage.order_count == 2
+    assert usage.notional_usd == 19.5
+
+
+def test_resolve_hourly_budget_prefers_explicit_then_runtime_env():
+    env = {
+        "JJ_HOURLY_NOTIONAL_BUDGET_USD": "41.25",
+        "KALSHI_WEATHER_HOURLY_BUDGET_USD": "33.5",
+    }
+    assert _resolve_hourly_budget_usd(20.0, env=env) == 20.0
+    assert _resolve_hourly_budget_usd(None, env=env) == 33.5
+    assert _resolve_hourly_budget_usd(None, env={"JJ_HOURLY_BUDGET_USD": "11"}) == 11.0
+
+
+def test_normalize_mode_sets_execute_for_live():
+    args = SimpleNamespace(mode="live", execute=False)
+    _normalize_mode(args)
+    assert args.execute is True
+    assert args.mode == "live"
+
+
+def test_validate_args_rejects_invalid_hourly_limits():
+    args = SimpleNamespace(
+        edge_threshold=0.1,
+        max_spread=0.2,
+        temp_std_f=3.0,
+        maker_offset_cents=1,
+        bankroll_usd=100.0,
+        max_order_usd=5.0,
+        kelly_fraction=0.25,
+        max_pages=2,
+        max_signals=10,
+        max_orders=1,
+        max_orders_per_hour=-1,
+        hourly_budget_usd=50.0,
+        interval_seconds=60,
+    )
+    try:
+        _validate_args(args)
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "max-orders-per-hour" in str(exc)

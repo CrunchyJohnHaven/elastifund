@@ -1,11 +1,50 @@
 """Telegram notification client for trading alerts."""
+import logging
 import os
 from datetime import datetime
-from src.core.time_utils import utc_now_naive
 from typing import Optional
 
 import httpx
-import structlog
+
+try:
+    from src.core.time_utils import utc_now_naive
+except ImportError:
+    def utc_now_naive() -> datetime:
+        """Fallback for thin runtime bundles that omit src.core."""
+        return datetime.utcnow()
+
+try:
+    import structlog
+except ImportError:
+    class _StructlogShimLogger:
+        def __init__(self, name: str):
+            self._logger = logging.getLogger(name)
+
+        def _log(self, level: int, event: str, **kwargs) -> None:
+            details = ""
+            if kwargs:
+                rendered = " ".join(f"{key}={value}" for key, value in sorted(kwargs.items()))
+                details = f" {rendered}"
+            self._logger.log(level, "%s%s", event, details)
+
+        def debug(self, event: str, **kwargs) -> None:
+            self._log(logging.DEBUG, event, **kwargs)
+
+        def info(self, event: str, **kwargs) -> None:
+            self._log(logging.INFO, event, **kwargs)
+
+        def warning(self, event: str, **kwargs) -> None:
+            self._log(logging.WARNING, event, **kwargs)
+
+        def error(self, event: str, **kwargs) -> None:
+            self._log(logging.ERROR, event, **kwargs)
+
+    class _StructlogShim:
+        @staticmethod
+        def get_logger(name: str) -> _StructlogShimLogger:
+            return _StructlogShimLogger(name)
+
+    structlog = _StructlogShim()  # type: ignore[assignment]
 
 logger = structlog.get_logger(__name__)
 
@@ -28,7 +67,11 @@ class TelegramNotifier:
             chat_id: Telegram chat ID (falls back to TELEGRAM_CHAT_ID env var)
             timeout: HTTP request timeout
         """
-        self.bot_token = bot_token or os.getenv("TELEGRAM_BOT_TOKEN", "")
+        self.bot_token = (
+            bot_token
+            or os.getenv("TELEGRAM_BOT_TOKEN", "")
+            or os.getenv("TELEGRAM_TOKEN", "")
+        )
         self.chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID", "")
         self._timeout = timeout
         self._client: Optional[httpx.AsyncClient] = None
@@ -51,6 +94,10 @@ class TelegramNotifier:
             and self.bot_token != "PASTE_BOT_TOKEN_HERE"
             and self.chat_id != "PASTE_CHAT_ID_HERE"
         )
+
+    @property
+    def enabled(self) -> bool:
+        return self.is_configured
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:

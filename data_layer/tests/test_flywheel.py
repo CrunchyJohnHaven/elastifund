@@ -18,7 +18,11 @@ from flywheel.federation import export_bulletin, import_bulletin
 from flywheel.improvement_exchange import (
     export_improvement_bundle,
     import_improvement_bundle,
+    load_knowledge_pack,
+    publish_knowledge_pack,
+    pull_knowledge_pack,
     load_improvement_bundle,
+    verify_knowledge_pack,
     verify_improvement_bundle,
 )
 from flywheel.policy import evaluate_snapshot
@@ -556,6 +560,65 @@ class TestFlywheelFederation:
         assert second["tasks_created"] == 0
         assert second["already_imported"] is True
 
+    def test_export_bulletin_can_include_knowledge_pack_summaries(self, session, tmp_path):
+        pack = publish_knowledge_pack(
+            session,
+            peer_name="alpha-fork",
+            engine_key="revenue_audit",
+            engine_version="audit-v1",
+            engine_metadata={
+                "lane": "revenue_audit",
+                "environment": "shadow",
+                "summary": "Sanitized website-audit cohort results.",
+            },
+            detector_summaries=[
+                {
+                    "detector_key": "checkout_latency",
+                    "summary": "Slow checkout pages reduce conversion for SMB storefronts.",
+                    "sample_size": 12,
+                    "conversion_rate": 0.18,
+                    "customer_email": "hidden@example.com",
+                }
+            ],
+            template_variants=[
+                {
+                    "template_key": "audit_lp",
+                    "variant": "A",
+                    "summary": "Control variant with direct CTA.",
+                    "net_revenue_usd": 1200.0,
+                }
+            ],
+            aggregated_outcomes={
+                "observed_count": 12,
+                "expected_net_cash_30d": 1800.0,
+                "conversion_rate": 0.18,
+                "refund_rate": 0.02,
+                "gross_margin_pct": 0.7,
+            },
+            penalty_metrics={"refund_penalty": 0.02, "domain_health_penalty": 0.01},
+            proof_references=[
+                {
+                    "ref_key": "proof-1",
+                    "proof_type": "sha256",
+                    "sha256": "a" * 64,
+                }
+            ],
+            output_path=tmp_path / "knowledge_pack.json",
+            signing_secret="shared-secret",
+        )
+
+        bulletin = export_bulletin(
+            session,
+            peer_name="alpha-fork",
+            include_knowledge_packs=True,
+        )
+
+        assert bulletin["knowledge_pack_count"] == 1
+        summary = bulletin["knowledge_packs"][0]
+        assert summary["engine_key"] == "revenue_audit"
+        assert summary["verification_status"] == "signed"
+        assert pack["privacy"]["redaction_counts"]["customer_email"] == 1
+
 
 class TestImprovementExchange:
     def test_export_and_import_improvement_bundle(self, session, tmp_path):
@@ -667,6 +730,123 @@ class TestImprovementExchange:
 
         with pytest.raises(ValueError):
             verify_improvement_bundle(bundle, signing_secret="shared-secret", require_signature=True)
+
+    def test_publish_and_pull_knowledge_pack(self, session, tmp_path):
+        output_path = tmp_path / "knowledge_pack.json"
+        pack = publish_knowledge_pack(
+            session,
+            peer_name="alpha-fork",
+            engine_key="revenue_audit",
+            engine_version="audit-v2",
+            engine_metadata={
+                "lane": "revenue_audit",
+                "environment": "shadow",
+                "summary": "Website audit packs for self-serve storefront fixes.",
+                "sample_size": 18,
+                "customer_name": "Should not survive",
+            },
+            detector_summaries=[
+                {
+                    "detector_key": "broken_checkout",
+                    "summary": "Checkout abandonment spikes when mobile form validation fails. Contact ops@example.com.",
+                    "sample_size": 18,
+                    "conversion_rate": 0.22,
+                    "refund_rate": 0.01,
+                    "customer_email": "ops@example.com",
+                }
+            ],
+            template_variants=[
+                {
+                    "template_key": "audit_lp",
+                    "variant": "B",
+                    "channel": "landing_page",
+                    "summary": "Evidence-first landing page with proof hashes only.",
+                    "net_revenue_usd": 2100.0,
+                    "payment_details": "4111111111111111",
+                }
+            ],
+            aggregated_outcomes={
+                "observed_count": 18,
+                "expected_net_cash_30d": 2400.0,
+                "net_revenue_usd": 2100.0,
+                "conversion_rate": 0.22,
+                "refund_rate": 0.01,
+                "churn_rate": 0.03,
+                "gross_margin_pct": 0.68,
+                "checkout_session_id": "cs_test_secret",
+            },
+            penalty_metrics={
+                "refund_penalty": 0.02,
+                "fulfillment_penalty": 0.03,
+                "domain_health_penalty": 0.01,
+            },
+            proof_references=[
+                {
+                    "ref_key": "proof-1",
+                    "proof_type": "sha256",
+                    "sha256": "b" * 64,
+                    "artifact_uri": "s3://packs/proof-1.json",
+                }
+            ],
+            output_path=output_path,
+            signing_secret="shared-secret",
+        )
+
+        assert output_path.exists()
+        assert pack["bundle_type"] == "knowledge_pack"
+        assert pack["privacy"]["raw_customer_data_included"] is False
+        assert "customer_name" in pack["privacy"]["redaction_counts"]
+        assert pack["detector_summaries"][0]["summary"].count("<redacted-email>") == 1
+        assert "customer_email" not in pack["detector_summaries"][0]
+        assert "payment_details" not in pack["template_variants"][0]
+        assert "checkout_session_id" not in pack["aggregated_outcomes"]
+        assert pack["leaderboard_entry"]["engine_key"] == "revenue_audit"
+        assert pack["integrity"]["signature_hmac_sha256"]
+
+        loaded_pack = load_knowledge_pack(output_path)
+        pulled = pull_knowledge_pack(
+            session,
+            loaded_pack,
+            review_root=tmp_path / "knowledge_reviews",
+            signing_secret="shared-secret",
+            require_signature=True,
+        )
+
+        assert pulled["tasks_created"] == 1
+        assert pulled["verification_status"] == "verified"
+        review_dir = Path(pulled["review_dir"])
+        assert (review_dir / "knowledge_pack.json").exists()
+        assert (review_dir / "review.md").exists()
+        assert (review_dir / "leaderboard.json").exists()
+        assert (review_dir / "leaderboard.md").exists()
+
+        tasks = crud.list_flywheel_tasks(session, status="open")
+        assert any("Review knowledge pack from alpha-fork" in task.title for task in tasks)
+
+        imported_rows = crud.list_peer_improvement_bundles(session, direction="imported")
+        exported_rows = crud.list_peer_improvement_bundles(session, direction="exported")
+        assert len(imported_rows) == 1
+        assert len(exported_rows) == 1
+
+    def test_verify_knowledge_pack_rejects_private_fields(self, session, tmp_path):
+        pack = publish_knowledge_pack(
+            session,
+            peer_name="alpha-fork",
+            engine_key="revenue_audit",
+            engine_version="audit-v3",
+            engine_metadata={"lane": "revenue_audit"},
+            detector_summaries=[],
+            template_variants=[],
+            aggregated_outcomes={"expected_net_cash_30d": 100.0},
+            penalty_metrics={"refund_penalty": 0.01},
+            proof_references=[],
+            output_path=tmp_path / "knowledge_pack.json",
+            signing_secret="shared-secret",
+        )
+        pack["detector_summaries"].append({"customer_email": "hidden@example.com"})
+
+        with pytest.raises(ValueError):
+            verify_knowledge_pack(pack, signing_secret="shared-secret", require_signature=True)
 
 
 def _make_portfolio_bot_db(bot_db: Path) -> Path:

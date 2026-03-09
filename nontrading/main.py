@@ -8,12 +8,15 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
-from nontrading.campaigns.engine import CampaignEngine
+from nontrading.approval import ApprovalGate
+from nontrading.compliance import ComplianceGuard
 from nontrading.config import RevenueAgentSettings
-from nontrading.email.sender import NotConfiguredError, build_sender
+from nontrading.email.sender import DryRunSender, NotConfiguredError, build_sender
 from nontrading.importers.csv_import import import_csv
+from nontrading.pipeline import CycleReport, RevenuePipeline
 from nontrading.risk import RevenueRiskManager
 from nontrading.store import RevenueStore
+from nontrading.telemetry import NonTradingTelemetry
 
 logger = logging.getLogger("nontrading.main")
 
@@ -28,7 +31,9 @@ def configure_logging(level_name: str) -> None:
 def build_runtime(
     settings: RevenueAgentSettings,
     import_csv_path: str | None = None,
-) -> tuple[RevenueStore, CampaignEngine]:
+    *,
+    dry_run: bool = False,
+) -> tuple[RevenueStore, RevenuePipeline]:
     settings.ensure_paths()
     store = RevenueStore(settings.db_path)
     if import_csv_path:
@@ -39,36 +44,83 @@ def build_runtime(
             import_summary.updated,
             import_summary.skipped,
         )
-    store.ensure_default_campaign(settings)
-    sender = build_sender(settings, store)
+    campaign = store.ensure_default_campaign(settings)
+    sender = DryRunSender(settings, store) if dry_run else build_sender(settings, store)
     risk_manager = RevenueRiskManager(store, settings)
-    return store, CampaignEngine(store, risk_manager, sender, settings)
-
-
-def format_status_line(snapshot: dict[str, object], summary: dict[str, int]) -> str:
-    return (
-        "revenue-agent status "
-        f"campaigns={snapshot['campaigns']} "
-        f"leads={snapshot['leads']} "
-        f"deliverability={snapshot['deliverability_status']} "
-        f"kill={snapshot['global_kill_switch']} "
-        f"scanned={summary['scanned']} "
-        f"queued={summary['queued']} "
-        f"sent={summary['sent']} "
-        f"filtered={summary['filtered']} "
-        f"suppressed={summary['suppressed']} "
-        f"deferred={summary['deferred']} "
-        f"failed={summary['failed']}"
+    approval_gate = ApprovalGate(store, paper_mode=sender.provider_name != "dry_run")
+    verified_domain = settings.from_email.partition("@")[2].strip().lower()
+    compliance_guard = ComplianceGuard(
+        store,
+        verified_domains={verified_domain},
+        daily_message_limit=settings.daily_send_quota,
     )
+    telemetry = NonTradingTelemetry(store, environment="paper" if sender.provider_name == "dry_run" else "live")
+    return (
+        store,
+        RevenuePipeline(
+            store,
+            settings,
+            risk_manager,
+            approval_gate,
+            compliance_guard,
+            telemetry,
+            sender,
+            campaign=campaign,
+            simulate_responses=sender.provider_name == "dry_run",
+        ),
+    )
+
+
+def format_status_line(snapshot: dict[str, object], report: CycleReport) -> str:
+    return (
+        "revenue-pipeline status "
+        f"leads={snapshot['leads']} "
+        f"accounts={snapshot['accounts']} "
+        f"opportunities={snapshot['crm_opportunities']} "
+        f"telemetry={snapshot['telemetry_events']} "
+        f"kill={snapshot['global_kill_switch']} "
+        f"status={report.status} "
+        f"scanned={report.scanned_leads} "
+        f"suppressed={report.suppressed_leads} "
+        f"existing={report.skipped_existing} "
+        f"researched={report.accounts_researched} "
+        f"qualified={report.qualified_accounts} "
+        f"outreach={report.outreach_sent} "
+        f"pending={report.approval_pending} "
+        f"replies={report.replies_recorded} "
+        f"meetings={report.meetings_booked} "
+        f"proposals={report.proposals_sent} "
+        f"outcomes={report.outcomes_recorded}"
+    )
+
+
+def run_daemon(
+    store: RevenueStore,
+    pipeline: RevenuePipeline,
+    settings: RevenueAgentSettings,
+    *,
+    sleep_fn=time.sleep,
+    max_cycles: int | None = None,
+) -> None:
+    cycles = 0
+    while max_cycles is None or cycles < max_cycles:
+        report = pipeline.run_cycle()
+        snapshot = store.status_snapshot()
+        logger.info(format_status_line(snapshot, report))
+        cycles += 1
+        if max_cycles is not None and cycles >= max_cycles:
+            return
+        sleep_fn(settings.loop_seconds)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the non-trading revenue agent.")
     mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--run-once", action="store_true", help="Process one campaign cycle and exit.")
-    mode.add_argument("--daemon", action="store_true", help="Run the campaign loop continuously.")
+    mode.add_argument("--run-once", action="store_true", help="Process one JJ-N pipeline cycle and exit.")
+    mode.add_argument("--daemon", action="store_true", help="Run the JJ-N pipeline continuously.")
     parser.add_argument("--db-path", help="Override JJ_REVENUE_DB_PATH for this process.")
     parser.add_argument("--import-csv", help="Optional CSV file to import before running.")
+    parser.add_argument("--dry-run", action="store_true", help="Force the dry-run sender and simulated downstream stages.")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(argv)
 
@@ -78,24 +130,20 @@ def main(argv: list[str] | None = None) -> int:
     configure_logging(args.log_level)
 
     try:
-        store, engine = build_runtime(settings, args.import_csv)
+        store, pipeline = build_runtime(settings, args.import_csv, dry_run=args.dry_run)
     except NotConfiguredError:
         logger.exception("email_provider_not_configured")
         return 2
 
     if args.run_once:
-        summary = engine.run_once()
+        summary = pipeline.run_cycle()
         snapshot = store.status_snapshot()
-        print(format_status_line(snapshot, summary.__dict__))
+        print(format_status_line(snapshot, summary))
         return 0
 
-    while True:
-        summary = engine.run_once()
-        snapshot = store.status_snapshot()
-        logger.info(format_status_line(snapshot, summary.__dict__))
-        time.sleep(settings.loop_seconds)
+    run_daemon(store, pipeline, settings)
+    return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

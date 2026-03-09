@@ -1,6 +1,6 @@
 """JJ-N non-trading worker package."""
 
-from nontrading.approval_gate import ApprovalDecision, ApprovalGate
+from nontrading.approval import ApprovalDecision, ApprovalGate
 from nontrading.crm_schema import (
     ApprovalClass,
     Contact as CRMContact,

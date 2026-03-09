@@ -140,6 +140,31 @@ def test_bootstrap_status_flags_stale_bootstrap(tmp_path: Path) -> None:
     ).isoformat()
 
 
+def test_ensure_bootstrap_artifacts_leaves_ready_bootstrap_untouched(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scores_path = tmp_path / "data" / "smart_wallets.json"
+    db_path = tmp_path / "data" / "wallet_scores.db"
+    _create_db(db_path)
+    _write_scores(
+        scores_path,
+        updated_at=datetime.now(timezone.utc).isoformat(),
+        wallets={"0xabc": {"activity_score": 88.0}},
+    )
+
+    def fail_if_called(self: detector.WalletScorer) -> list[detector.WalletScore]:
+        raise AssertionError("ready bootstrap should not rebuild")
+
+    monkeypatch.setattr(detector.WalletScorer, "build_initial_scores", fail_if_called)
+
+    status = detector.ensure_bootstrap_artifacts(scores_path=scores_path, db_path=db_path)
+
+    assert status.ready is True
+    assert status.reasons == []
+    assert status.wallet_count == 1
+
+
 def test_get_signals_for_engine_converts_wallet_flow_signal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -172,6 +197,81 @@ def test_get_signals_for_engine_converts_wallet_flow_signal(
     assert signal["confidence"] == 0.72
     assert signal["source"] == "wallet_flow"
     assert "4 smart wallets agree on Down" in signal["reasoning"]
+
+
+def test_get_signals_for_engine_suppresses_balanced_conflicts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        detector,
+        "scan_for_signals",
+        lambda: [
+            {
+                "market_id": "cond-1",
+                "market_title": "BTC Up or Down 5m",
+                "direction": "outcome_0",
+                "outcome_name": "Up",
+                "confidence": 0.74,
+                "smart_wallets_count": 4,
+                "total_smart_size": 44.0,
+                "avg_smart_score": 88.0,
+                "signal_age_seconds": 15.0,
+            },
+            {
+                "market_id": "cond-1",
+                "market_title": "BTC Up or Down 5m",
+                "direction": "outcome_1",
+                "outcome_name": "Down",
+                "confidence": 0.72,
+                "smart_wallets_count": 4,
+                "total_smart_size": 41.0,
+                "avg_smart_score": 84.0,
+                "signal_age_seconds": 15.0,
+            },
+        ],
+    )
+
+    assert detector.get_signals_for_engine() == []
+
+
+def test_get_signals_for_engine_keeps_dominant_direction_when_conflict_is_clear(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        detector,
+        "scan_for_signals",
+        lambda: [
+            {
+                "market_id": "cond-1",
+                "market_title": "BTC Up or Down 5m",
+                "direction": "outcome_0",
+                "outcome_name": "Up",
+                "confidence": 0.89,
+                "smart_wallets_count": 6,
+                "total_smart_size": 120.0,
+                "avg_smart_score": 92.0,
+                "signal_age_seconds": 10.0,
+            },
+            {
+                "market_id": "cond-1",
+                "market_title": "BTC Up or Down 5m",
+                "direction": "outcome_1",
+                "outcome_name": "Down",
+                "confidence": 0.68,
+                "smart_wallets_count": 3,
+                "total_smart_size": 28.0,
+                "avg_smart_score": 80.0,
+                "signal_age_seconds": 10.0,
+            },
+        ],
+    )
+
+    signals = detector.get_signals_for_engine()
+
+    assert len(signals) == 1
+    assert signals[0]["market_id"] == "cond-1"
+    assert signals[0]["direction"] == "buy_yes"
+    assert "suppressed opposite-direction consensus" in signals[0]["reasoning"]
 
 
 def test_status_json_cli_outputs_machine_readable_payload(

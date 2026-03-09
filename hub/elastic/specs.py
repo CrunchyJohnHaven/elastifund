@@ -9,6 +9,12 @@ DEFAULT_VECTOR_DIMS = 768
 DEFAULT_SNAPSHOT_REPOSITORY = "elastifund-snapshots"
 DEFAULT_STANDARD_ILM_POLICY = "elastifund-standard-ilm"
 DEFAULT_METRICS_ILM_POLICY = "elastifund-metrics-ilm"
+DEFAULT_CHECKOUT_WEBHOOK_FAILURE_THRESHOLD = 1
+DEFAULT_FULFILLMENT_STALL_MINUTES = 120
+DEFAULT_REFUND_RATE_ALERT_THRESHOLD = 0.05
+DEFAULT_COMPLAINT_RATE_ALERT_THRESHOLD = 0.001
+DEFAULT_MISSING_WORKER_ACTIVITY_MINUTES = 60
+DEFAULT_NEGATIVE_ROI_THRESHOLD = 0.0
 
 
 @dataclass(frozen=True)
@@ -336,3 +342,92 @@ def build_metrics_downsample_schedule(data_stream_name: str) -> list[dict[str, s
             ),
         },
     ]
+
+
+def build_nontrading_control_plane_spec() -> dict[str, Any]:
+    """Shared schema and threshold contract for non-trading control-plane ops."""
+
+    return {
+        "documents": {
+            "engine_scoreboard_latest": {
+                "dimensions": ["engine_name", "engine_family", "run_mode", "status"],
+                "metrics": [
+                    "opportunities_discovered",
+                    "opportunities_scored",
+                    "qualified_prospects",
+                    "checkout_sessions_created",
+                    "payments_collected",
+                    "refund_rate",
+                    "net_roi_30d",
+                    "knowledge_packs_published",
+                    "last_heartbeat_at",
+                    "kill_switch_active",
+                ],
+            },
+            "prospect_profile_latest": {
+                "dimensions": ["prospect_id", "engine_name", "segment", "source"],
+                "metrics": ["site_quality_score", "qualification_score", "qualified", "last_scored_at"],
+            },
+            "campaign_rollup_daily": {
+                "dimensions": ["engine_name", "channel", "status", "follow_up_enabled"],
+                "metrics": ["messages_sent", "complaints", "unsubscribes", "bounce_rate"],
+            },
+        },
+        "dashboards": {
+            "engine_performance": ["engine_scoreboard_latest"],
+            "prospect_pipeline": ["prospect_profile_latest"],
+            "checkout_funnel": ["execution_event", "cashflow_event"],
+            "fulfillment_status": ["execution_event", "outcome_event"],
+            "refunds_and_churn": ["cashflow_event", "outcome_event"],
+            "allocator_decisions": ["allocator_snapshot"],
+            "knowledge_pack_activity": ["knowledge_pack", "leaderboard_daily"],
+        },
+        "alert_thresholds": {
+            "checkout_webhook_failures": {
+                "document": "execution_event",
+                "field": "webhook_failures",
+                "threshold": DEFAULT_CHECKOUT_WEBHOOK_FAILURE_THRESHOLD,
+                "operator": ">=",
+            },
+            "fulfillment_stalls": {
+                "document": "execution_event",
+                "field": "oldest_inflight_age_minutes",
+                "threshold": DEFAULT_FULFILLMENT_STALL_MINUTES,
+                "operator": ">=",
+            },
+            "refund_spikes": {
+                "document": "cashflow_event",
+                "field": "refund_rate",
+                "threshold": DEFAULT_REFUND_RATE_ALERT_THRESHOLD,
+                "operator": ">=",
+            },
+            "complaint_spikes": {
+                "document": "campaign_rollup_daily",
+                "field": "complaint_rate",
+                "threshold": DEFAULT_COMPLAINT_RATE_ALERT_THRESHOLD,
+                "operator": ">=",
+            },
+            "missing_worker_activity": {
+                "document": "engine_scoreboard_latest",
+                "field": "heartbeat_age_minutes",
+                "threshold": DEFAULT_MISSING_WORKER_ACTIVITY_MINUTES,
+                "operator": ">=",
+            },
+            "negative_roi_regimes": {
+                "document": "engine_scoreboard_latest",
+                "field": "net_roi_30d",
+                "threshold": DEFAULT_NEGATIVE_ROI_THRESHOLD,
+                "operator": "<",
+            },
+        },
+        "kill_switches": {
+            "global_non_trading": {
+                "scope": "agent_state",
+                "field": "global_kill_switch",
+            },
+            "per_engine": {
+                "scope": "engine_scoreboard_latest",
+                "field": "kill_switch_active",
+            },
+        },
+    }

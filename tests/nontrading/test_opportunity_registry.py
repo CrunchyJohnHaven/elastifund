@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from nontrading.crm_schema import Lead, LeadStatus, Opportunity
-from nontrading.models import Opportunity as StoredOpportunity
+from nontrading.models import Account, Opportunity as StoredOpportunity
 from nontrading.opportunity_registry import OpportunityRegistry, OpportunityScoreInput
+from nontrading.store import RevenueStore
 
 
 def make_lead() -> Lead:
@@ -29,6 +30,10 @@ def make_opportunity(opportunity_id: str, *, days: int = 7, value: float = 2500.
         capital_required_usd=2.0,
         sales_cycle_days=10,
     )
+
+
+def make_store(tmp_path) -> RevenueStore:
+    return RevenueStore(tmp_path / "revenue_agent.db")
 
 
 def test_add_lead_stores_record() -> None:
@@ -133,3 +138,57 @@ def test_apply_preserves_existing_store_model_shape() -> None:
 
     assert scored.score == 79.0
     assert scored.metadata["registry_decision"] == "advance"
+
+
+def test_registry_round_trip_persists_leads_and_opportunities(tmp_path) -> None:
+    store = make_store(tmp_path)
+    first = OpportunityRegistry(store=store)
+    lead = first.add_lead(make_lead())
+    opportunity = first.add_opportunity(make_opportunity("opp-1"))
+
+    second = OpportunityRegistry(store=store)
+    reloaded_lead = second.get_lead(lead.id)
+    ranked = second.rank_opportunities()
+
+    assert reloaded_lead is not None
+    assert reloaded_lead.company == "Acme Builders"
+    assert ranked[0].id == opportunity.id
+    assert ranked[0].composite_score == opportunity.composite_score
+
+
+def test_registry_ranking_reads_persisted_store_order_after_reload(tmp_path) -> None:
+    store = make_store(tmp_path)
+    registry = OpportunityRegistry(store=store)
+    registry.add_lead(make_lead())
+    registry.add_opportunity(make_opportunity("slow", days=30))
+    registry.add_opportunity(make_opportunity("fast", days=2))
+    registry.add_opportunity(make_opportunity("mid", days=10))
+
+    reloaded = OpportunityRegistry(store=store)
+
+    assert [opportunity.id for opportunity in reloaded.rank_opportunities()] == ["fast", "mid", "slow"]
+
+
+def test_apply_persists_to_store_when_registry_is_store_backed(tmp_path) -> None:
+    store = make_store(tmp_path)
+    registry = OpportunityRegistry(store=store)
+    account = store.create_account(Account(name="Acme Builders"))
+    stored = store.create_opportunity(StoredOpportunity(account_id=account.id or 0, name="Construction outreach"))
+
+    scored = registry.apply(
+        stored,
+        OpportunityScoreInput(
+            time_to_first_dollar=0.9,
+            gross_margin=0.8,
+            automation_fraction=0.7,
+            data_exhaust=0.6,
+            compliance_simplicity=0.95,
+            capital_required=0.85,
+            sales_cycle_length=0.75,
+        ),
+    )
+
+    persisted = store.get_opportunity(scored.id or 0)
+    assert persisted is not None
+    assert persisted.score == 79.0
+    assert persisted.metadata["registry_decision"] == "advance"

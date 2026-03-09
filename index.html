@@ -1,2456 +1,452 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ELASTIFUND — The Agentic Trading Intelligence Platform</title>
-<meta name="description" content="The world's most comprehensive open-source intelligence platform on AI-autonomous trading. Live strategies, full autopsies, real data. No hype.">
-<style>
-/* ═══════════════════════════════════════════════════════════════
-   ELASTIFUND v7 — AGENTIC TRADING INTELLIGENCE PLATFORM
-   Design system: Dark intelligence terminal aesthetic
-   ═══════════════════════════════════════════════════════════════ */
-
-:root {
-  --bg-primary: #0a0e17;
-  --bg-secondary: #0f1520;
-  --bg-tertiary: #141c2b;
-  --bg-card: #111827;
-  --bg-card-hover: #1a2332;
-  --bg-glass: rgba(15, 21, 32, 0.85);
-  --border-primary: #1e293b;
-  --border-accent: #10b981;
-  --border-dim: rgba(30, 41, 59, 0.5);
-  --text-primary: #e2e8f0;
-  --text-secondary: #94a3b8;
-  --text-dim: #64748b;
-  --text-bright: #f8fafc;
-  --accent-green: #10b981;
-  --accent-green-dim: rgba(16, 185, 129, 0.15);
-  --accent-green-glow: rgba(16, 185, 129, 0.3);
-  --accent-red: #ef4444;
-  --accent-red-dim: rgba(239, 68, 68, 0.15);
-  --accent-amber: #f59e0b;
-  --accent-amber-dim: rgba(245, 158, 11, 0.15);
-  --accent-blue: #3b82f6;
-  --accent-blue-dim: rgba(59, 130, 246, 0.15);
-  --accent-purple: #8b5cf6;
-  --accent-purple-dim: rgba(139, 92, 246, 0.15);
-  --accent-cyan: #06b6d4;
-  --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace;
-  --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif;
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 16px;
-  --shadow-card: 0 4px 24px rgba(0,0,0,0.3);
-  --shadow-glow: 0 0 30px rgba(16, 185, 129, 0.08);
-}
-
-* { margin: 0; padding: 0; box-sizing: border-box; }
-html { scroll-behavior: smooth; font-size: 16px; }
-body {
-  font-family: var(--font-sans);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  line-height: 1.65;
-  -webkit-font-smoothing: antialiased;
-  overflow-x: hidden;
-}
-
-/* ── Scrollbar ── */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: var(--bg-primary); }
-::-webkit-scrollbar-thumb { background: var(--border-primary); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--accent-green); }
-
-/* ── Top Bar (Fixed Nav) ── */
-.topbar {
-  position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
-  background: rgba(10, 14, 23, 0.92);
-  backdrop-filter: blur(20px);
-  border-bottom: 1px solid var(--border-dim);
-  height: 56px;
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 clamp(16px, 3vw, 48px);
-  transition: all 0.3s ease;
-}
-.topbar.scrolled { box-shadow: 0 4px 30px rgba(0,0,0,0.4); }
-.topbar-brand {
-  display: flex; align-items: center; gap: 10px;
-  font-family: var(--font-mono); font-weight: 700; font-size: 15px;
-  color: var(--text-bright); letter-spacing: 2px; text-decoration: none;
-}
-.topbar-brand .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-green); animation: pulse-dot 2s infinite; }
-@keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-.topbar-nav { display: flex; gap: 4px; }
-.topbar-nav a {
-  color: var(--text-dim); font-size: 13px; font-weight: 500;
-  padding: 6px 14px; border-radius: var(--radius-sm);
-  text-decoration: none; transition: all 0.2s;
-  letter-spacing: 0.3px;
-}
-.topbar-nav a:hover { color: var(--text-primary); background: var(--bg-tertiary); }
-.topbar-nav a.active { color: var(--accent-green); background: var(--accent-green-dim); }
-.topbar-actions { display: flex; align-items: center; gap: 12px; }
-.topbar-status {
-  display: flex; align-items: center; gap: 6px;
-  font-family: var(--font-mono); font-size: 11px; color: var(--accent-green);
-  padding: 4px 12px; border-radius: 20px;
-  background: var(--accent-green-dim); border: 1px solid rgba(16, 185, 129, 0.2);
-}
-.topbar-status .blink { animation: pulse-dot 1.5s infinite; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-green); }
-.btn-gh {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 12px; font-weight: 600; color: var(--text-secondary);
-  padding: 6px 14px; border-radius: var(--radius-sm);
-  border: 1px solid var(--border-primary); background: transparent;
-  text-decoration: none; transition: all 0.2s;
-}
-.btn-gh:hover { border-color: var(--text-dim); color: var(--text-primary); }
-.btn-gh svg { width: 16px; height: 16px; fill: currentColor; }
-
-/* ── Layout ── */
-.page { padding-top: 56px; }
-.container { max-width: 1280px; margin: 0 auto; padding: 0 clamp(16px, 3vw, 48px); }
-.section { padding: 80px 0; }
-.section-tight { padding: 48px 0; }
-
-/* ── Hero ── */
-.hero {
-  padding: 100px 0 60px;
-  position: relative;
-  overflow: hidden;
-}
-.hero::before {
-  content: '';
-  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-  background: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(16, 185, 129, 0.06), transparent);
-  pointer-events: none;
-}
-.hero-grid {
-  display: grid; grid-template-columns: 1fr 400px; gap: 60px; align-items: center;
-}
-.hero-eyebrow {
-  font-family: var(--font-mono); font-size: 12px; letter-spacing: 3px;
-  color: var(--accent-green); text-transform: uppercase; margin-bottom: 16px;
-  display: flex; align-items: center; gap: 8px;
-}
-.hero-eyebrow::before { content: ''; width: 24px; height: 1px; background: var(--accent-green); }
-.hero h1 {
-  font-size: clamp(40px, 5vw, 64px); font-weight: 800;
-  line-height: 1.05; letter-spacing: -1.5px;
-  color: var(--text-bright); margin-bottom: 20px;
-}
-.hero h1 .gradient {
-  background: linear-gradient(135deg, var(--accent-green), var(--accent-cyan));
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-}
-.hero-sub {
-  font-size: 18px; color: var(--text-secondary); max-width: 540px;
-  line-height: 1.7; margin-bottom: 32px;
-}
-.hero-stats-row { display: flex; gap: 32px; margin-bottom: 32px; }
-.hero-stat { display: flex; flex-direction: column; }
-.hero-stat-val {
-  font-family: var(--font-mono); font-size: 28px; font-weight: 700;
-  color: var(--accent-green); line-height: 1;
-}
-.hero-stat-label { font-size: 12px; color: var(--text-dim); margin-top: 4px; letter-spacing: 0.5px; }
-.hero-badges { display: flex; gap: 10px; flex-wrap: wrap; }
-.badge {
-  font-family: var(--font-mono); font-size: 11px; font-weight: 600;
-  padding: 5px 12px; border-radius: 20px;
-  display: flex; align-items: center; gap: 5px;
-}
-.badge-green { background: var(--accent-green-dim); color: var(--accent-green); border: 1px solid rgba(16,185,129,0.2); }
-.badge-blue { background: var(--accent-blue-dim); color: var(--accent-blue); border: 1px solid rgba(59,130,246,0.2); }
-.badge-purple { background: var(--accent-purple-dim); color: var(--accent-purple); border: 1px solid rgba(139,92,246,0.2); }
-.badge-red { background: var(--accent-red-dim); color: var(--accent-red); border: 1px solid rgba(239,68,68,0.2); }
-
-.hero-stat-note {
-  display: block;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-dim);
-  margin-top: 4px;
-}
-
-.topbar-status.paused {
-  color: var(--accent-amber);
-  background: var(--accent-amber-dim);
-  border-color: rgba(245, 158, 11, 0.25);
-}
-.topbar-status.paused .blink { background: var(--accent-amber); }
-
-.status-board {
-  margin-top: 28px;
-  padding: 28px;
-  border-radius: var(--radius-lg);
-  background: linear-gradient(135deg, rgba(245, 158, 11, 0.08), rgba(59, 130, 246, 0.05));
-  border: 1px solid rgba(245, 158, 11, 0.18);
-  box-shadow: var(--shadow-card);
-}
-.status-board-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 14px;
-}
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 14px;
-  border-radius: 999px;
-  border: 1px solid rgba(245, 158, 11, 0.25);
-  background: var(--accent-amber-dim);
-  color: var(--accent-amber);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-}
-.status-pill::before {
-  content: '';
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: currentColor;
-}
-.status-stamp {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-dim);
-}
-.status-board h3 {
-  font-size: 24px;
-  color: var(--text-bright);
-  margin-bottom: 10px;
-  letter-spacing: -0.3px;
-}
-.status-board > p {
-  font-size: 15px;
-  color: var(--text-secondary);
-  max-width: 860px;
-}
-.status-grid,
-.freshness-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-}
-.status-grid { margin-top: 22px; }
-.freshness-grid { margin-top: 12px; }
-.status-item,
-.freshness-item {
-  background: var(--bg-card);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
-  padding: 18px;
-}
-.status-item-label,
-.freshness-label {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  margin-bottom: 8px;
-}
-.status-item-value,
-.freshness-value {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--text-bright);
-  line-height: 1.45;
-}
-.status-item-sub,
-.freshness-sub {
-  margin-top: 8px;
-  font-size: 12px;
-  color: var(--text-dim);
-  line-height: 1.6;
-}
-
-/* Hero Terminal Card */
-.hero-terminal {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-  box-shadow: var(--shadow-card), var(--shadow-glow);
-}
-.hero-terminal-bar {
-  background: var(--bg-tertiary);
-  padding: 10px 16px;
-  display: flex; align-items: center; gap: 8px;
-  border-bottom: 1px solid var(--border-primary);
-}
-.term-dot { width: 10px; height: 10px; border-radius: 50%; }
-.term-dot-r { background: #ef4444; }
-.term-dot-y { background: #f59e0b; }
-.term-dot-g { background: #10b981; }
-.term-title { margin-left: 8px; font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
-.hero-terminal-body {
-  padding: 20px;
-  font-family: var(--font-mono); font-size: 12px; line-height: 1.9;
-  color: var(--text-secondary);
-}
-.term-line { display: flex; gap: 8px; }
-.term-prompt { color: var(--accent-green); flex-shrink: 0; }
-.term-key { color: var(--text-dim); min-width: 140px; }
-.term-val { color: var(--text-primary); }
-.term-val.green { color: var(--accent-green); }
-.term-val.red { color: var(--accent-red); }
-.term-val.amber { color: var(--accent-amber); }
-.term-sep { border: none; border-top: 1px solid var(--border-dim); margin: 8px 0; }
-
-/* ── Metric Strip ── */
-.metric-strip {
-  background: var(--bg-secondary);
-  border-top: 1px solid var(--border-primary);
-  border-bottom: 1px solid var(--border-primary);
-  padding: 0;
-}
-.metric-strip-inner {
-  display: grid; grid-template-columns: repeat(7, 1fr);
-}
-.metric-cell {
-  padding: 24px 16px;
-  text-align: center;
-  border-right: 1px solid var(--border-dim);
-  transition: background 0.2s;
-}
-.metric-cell:last-child { border-right: none; }
-.metric-cell:hover { background: var(--bg-tertiary); }
-.metric-cell-val {
-  font-family: var(--font-mono); font-size: 26px; font-weight: 700;
-  color: var(--accent-green); line-height: 1; margin-bottom: 6px;
-}
-.metric-cell-val.amber { color: var(--accent-amber); }
-.metric-cell-val.blue { color: var(--accent-blue); }
-.metric-cell-val.purple { color: var(--accent-purple); }
-.metric-cell-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
-.metric-cell-sub { font-size: 10px; color: var(--text-dim); margin-top: 4px; font-family: var(--font-mono); }
-
-/* ── Section Headers ── */
-.sh { margin-bottom: 48px; }
-.sh-eyebrow {
-  font-family: var(--font-mono); font-size: 11px; letter-spacing: 3px;
-  color: var(--accent-green); text-transform: uppercase; margin-bottom: 10px;
-  display: flex; align-items: center; gap: 8px;
-}
-.sh-eyebrow::before { content: ''; width: 16px; height: 1px; background: var(--accent-green); }
-.sh h2 {
-  font-size: clamp(28px, 3vw, 38px); font-weight: 700;
-  color: var(--text-bright); letter-spacing: -0.5px;
-}
-.sh p { font-size: 16px; color: var(--text-secondary); margin-top: 8px; max-width: 680px; }
-.catalog-note {
-  margin-bottom: 28px;
-  padding: 14px 16px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-primary);
-  background: var(--bg-secondary);
-  font-size: 13px;
-  color: var(--text-secondary);
-  line-height: 1.7;
-}
-.catalog-note .mono { color: var(--text-dim); }
-
-/* ── Tabs ── */
-.tabs { display: flex; gap: 4px; margin-bottom: 32px; flex-wrap: wrap; }
-.tab {
-  font-family: var(--font-mono); font-size: 12px; font-weight: 600;
-  padding: 8px 18px; border-radius: var(--radius-sm);
-  background: transparent; border: 1px solid var(--border-primary);
-  color: var(--text-dim); cursor: pointer;
-  transition: all 0.2s; letter-spacing: 0.5px;
-}
-.tab:hover { border-color: var(--text-dim); color: var(--text-secondary); }
-.tab.active { background: var(--accent-green-dim); border-color: var(--accent-green); color: var(--accent-green); }
-.tab-count {
-  font-size: 10px; background: var(--bg-tertiary); padding: 1px 6px;
-  border-radius: 8px; margin-left: 6px;
-}
-.tab-panel { display: none; }
-.tab-panel.active { display: block; }
-
-/* ── Strategy Cards ── */
-.strategy-grid { display: flex; flex-direction: column; gap: 16px; }
-.strat-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-  transition: all 0.3s;
-}
-.strat-card:hover { border-color: rgba(148, 163, 184, 0.2); box-shadow: var(--shadow-card); }
-.strat-card-header {
-  padding: 20px 24px;
-  display: flex; align-items: flex-start; justify-content: space-between;
-  cursor: pointer;
-}
-.strat-card-left { flex: 1; }
-.strat-card-id {
-  font-family: var(--font-mono); font-size: 11px; font-weight: 700;
-  padding: 2px 8px; border-radius: 4px; margin-right: 10px;
-  display: inline-block; vertical-align: middle;
-}
-.strat-id-reject { background: var(--accent-red-dim); color: var(--accent-red); }
-.strat-id-deploy { background: var(--accent-green-dim); color: var(--accent-green); }
-.strat-id-build { background: var(--accent-blue-dim); color: var(--accent-blue); }
-.strat-id-reeval { background: var(--accent-amber-dim); color: var(--accent-amber); }
-.strat-card-title {
-  font-size: 17px; font-weight: 700; color: var(--text-bright);
-  display: inline; vertical-align: middle;
-}
-.strat-card-type {
-  font-size: 12px; color: var(--text-dim); margin-left: 8px;
-  font-weight: 400;
-}
-.strat-card-meta {
-  margin-top: 8px; display: flex; gap: 20px; flex-wrap: wrap;
-  font-family: var(--font-mono); font-size: 11px; color: var(--text-dim);
-}
-.strat-card-meta span { display: flex; align-items: center; gap: 4px; }
-.strat-card-status {
-  font-family: var(--font-mono); font-size: 11px; font-weight: 700;
-  padding: 4px 12px; border-radius: 20px; white-space: nowrap; height: fit-content;
-}
-.status-rejected { background: var(--accent-red-dim); color: var(--accent-red); }
-.status-deployed { background: var(--accent-green-dim); color: var(--accent-green); }
-.status-building { background: var(--accent-blue-dim); color: var(--accent-blue); }
-.status-reeval { background: var(--accent-amber-dim); color: var(--accent-amber); }
-
-.strat-card-body {
-  padding: 0 24px 20px;
-  display: none;
-}
-.strat-card.open .strat-card-body { display: block; }
-.strat-card-body .kill-reason {
-  font-family: var(--font-mono); font-size: 12px; font-weight: 600;
-  color: var(--accent-red); margin-bottom: 12px;
-  padding: 6px 12px; background: var(--accent-red-dim);
-  border-radius: var(--radius-sm); display: inline-block;
-}
-.strat-card-body .new-evidence {
-  font-family: var(--font-mono); font-size: 12px; font-weight: 600;
-  color: var(--accent-amber); margin-bottom: 12px;
-  padding: 6px 12px; background: var(--accent-amber-dim);
-  border-radius: var(--radius-sm); display: inline-block;
-}
-.strat-section { margin-bottom: 14px; }
-.strat-section-label {
-  font-size: 11px; font-weight: 700; color: var(--text-dim);
-  text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px;
-}
-.strat-section p { font-size: 14px; color: var(--text-secondary); line-height: 1.7; }
-.strat-lesson {
-  background: var(--bg-tertiary);
-  border-left: 3px solid var(--accent-green);
-  padding: 14px 18px;
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  margin-top: 12px;
-}
-.strat-lesson p { font-size: 13px; color: var(--text-secondary); line-height: 1.7; font-style: italic; }
-
-/* ── Deployed Strategy Table ── */
-.deploy-table {
-  width: 100%; border-collapse: collapse;
-  font-size: 14px;
-}
-.deploy-table thead th {
-  font-family: var(--font-mono); font-size: 11px; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 1px;
-  color: var(--text-dim); text-align: left;
-  padding: 12px 16px;
-  border-bottom: 2px solid var(--border-primary);
-  background: var(--bg-secondary);
-}
-.deploy-table tbody tr {
-  border-bottom: 1px solid var(--border-dim);
-  transition: background 0.2s;
-}
-.deploy-table tbody tr:hover { background: var(--bg-tertiary); }
-.deploy-table td {
-  padding: 14px 16px;
-  color: var(--text-secondary);
-  vertical-align: top;
-}
-.deploy-table td:first-child { font-family: var(--font-mono); color: var(--accent-green); font-weight: 700; font-size: 12px; }
-.deploy-table .td-name { color: var(--text-bright); font-weight: 600; }
-.deploy-table .td-acc { font-family: var(--font-mono); color: var(--accent-green); font-weight: 600; }
-
-/* ── Pipeline Flow ── */
-.pipeline-flow {
-  display: flex; align-items: center; gap: 0;
-  margin: 40px 0;
-  overflow-x: auto;
-  padding: 10px 0;
-}
-.pipeline-node {
-  background: var(--bg-card);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
-  padding: 20px 24px;
-  min-width: 160px;
-  text-align: center;
-  transition: all 0.3s;
-  flex-shrink: 0;
-}
-.pipeline-node:hover { border-color: var(--accent-green); box-shadow: var(--shadow-glow); transform: translateY(-2px); }
-.pipeline-node-title { font-size: 13px; font-weight: 700; color: var(--text-bright); margin-bottom: 4px; }
-.pipeline-node-sub { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
-.pipeline-arrow {
-  font-size: 20px; color: var(--accent-green); padding: 0 8px;
-  flex-shrink: 0; opacity: 0.5;
-}
-
-/* ── Architecture Diagram ── */
-.arch-grid {
-  display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px;
-  background: var(--border-primary); border-radius: var(--radius-md);
-  overflow: hidden; margin: 32px 0;
-}
-.arch-cell {
-  background: var(--bg-card);
-  padding: 24px 16px;
-  text-align: center;
-  transition: background 0.2s;
-}
-.arch-cell:hover { background: var(--bg-card-hover); }
-.arch-cell-title { font-size: 13px; font-weight: 700; color: var(--text-bright); margin-bottom: 6px; }
-.arch-cell-detail { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); line-height: 1.6; }
-
-/* ── Comparison Table ── */
-.cmp-table {
-  width: 100%; border-collapse: collapse;
-  margin: 32px 0;
-}
-.cmp-table thead th {
-  font-family: var(--font-mono); font-size: 11px; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 1px;
-  color: var(--text-dim); text-align: left;
-  padding: 12px 16px;
-  border-bottom: 2px solid var(--border-primary);
-}
-.cmp-table thead th:last-child { color: var(--accent-green); }
-.cmp-table tbody tr { border-bottom: 1px solid var(--border-dim); }
-.cmp-table tbody tr:hover { background: var(--bg-tertiary); }
-.cmp-table td { padding: 12px 16px; font-size: 13px; color: var(--text-secondary); }
-.cmp-table td:first-child { font-weight: 600; color: var(--text-primary); }
-.cmp-table td:last-child { color: var(--text-bright); font-weight: 600; }
-
-/* ── Build Diary / Timeline ── */
-.timeline { position: relative; padding-left: 28px; }
-.timeline::before {
-  content: ''; position: absolute; left: 8px; top: 0; bottom: 0;
-  width: 2px; background: var(--border-primary);
-}
-.tl-entry { position: relative; margin-bottom: 32px; }
-.tl-entry::before {
-  content: ''; position: absolute; left: -24px; top: 6px;
-  width: 12px; height: 12px; border-radius: 50%;
-  background: var(--bg-primary); border: 2px solid var(--accent-green);
-}
-.tl-entry.latest::before { background: var(--accent-green); box-shadow: 0 0 12px var(--accent-green-glow); }
-.tl-date {
-  font-family: var(--font-mono); font-size: 11px; color: var(--accent-green);
-  margin-bottom: 6px; letter-spacing: 0.5px;
-}
-.tl-title { font-size: 16px; font-weight: 700; color: var(--text-bright); margin-bottom: 8px; }
-.tl-body { font-size: 14px; color: var(--text-secondary); line-height: 1.7; }
-.tl-card {
-  background: var(--bg-card); border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md); padding: 20px; margin-top: 8px;
-}
-.tl-stats {
-  display: flex; gap: 24px; flex-wrap: wrap; margin-top: 12px;
-  font-family: var(--font-mono); font-size: 12px;
-}
-.tl-stat-key { color: var(--text-dim); }
-.tl-stat-val { color: var(--text-primary); font-weight: 600; margin-left: 4px; }
-.tl-insight {
-  background: var(--accent-green-dim);
-  border-left: 3px solid var(--accent-green);
-  padding: 12px 16px; margin-top: 12px;
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-}
-.tl-insight-label { font-family: var(--font-mono); font-size: 11px; color: var(--accent-green); font-weight: 700; margin-bottom: 4px; }
-.tl-insight p { font-size: 13px; color: var(--text-secondary); line-height: 1.7; }
-.tl-sections { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
-.tl-section-label { font-size: 11px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
-.tl-section p { font-size: 13px; color: var(--text-secondary); }
-
-/* ── Education Cards ── */
-.edu-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
-.edu-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
-  padding: 24px;
-  transition: all 0.3s;
-  cursor: default;
-}
-.edu-card:hover { border-color: rgba(148, 163, 184, 0.2); transform: translateY(-2px); box-shadow: var(--shadow-card); }
-.edu-card-difficulty {
-  font-family: var(--font-mono); font-size: 10px; font-weight: 700;
-  padding: 2px 8px; border-radius: 4px; margin-bottom: 12px;
-  display: inline-block; text-transform: uppercase; letter-spacing: 1px;
-}
-.diff-beginner { background: var(--accent-green-dim); color: var(--accent-green); }
-.diff-intermediate { background: var(--accent-amber-dim); color: var(--accent-amber); }
-.diff-advanced { background: var(--accent-red-dim); color: var(--accent-red); }
-.edu-card h3 { font-size: 16px; font-weight: 700; color: var(--text-bright); margin-bottom: 8px; }
-.edu-card-tldr { font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 12px; }
-.edu-card-deep {
-  font-size: 12px; color: var(--text-dim); padding-top: 12px;
-  border-top: 1px solid var(--border-dim); line-height: 1.7;
-}
-
-/* ── About / Mission ── */
-.about-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
-.about-card {
-  background: var(--bg-card); border: 1px solid var(--border-primary);
-  border-radius: var(--radius-lg); padding: 40px;
-}
-.about-card h3 { font-size: 22px; font-weight: 700; color: var(--text-bright); margin-bottom: 16px; }
-.about-card p { font-size: 15px; color: var(--text-secondary); line-height: 1.8; }
-.mission-highlight {
-  background: var(--accent-green-dim);
-  border: 1px solid rgba(16, 185, 129, 0.2);
-  border-radius: var(--radius-md);
-  padding: 24px;
-  margin-top: 20px;
-}
-.mission-highlight .big-num {
-  font-family: var(--font-mono); font-size: 36px; font-weight: 800;
-  color: var(--accent-green); line-height: 1;
-}
-.mission-highlight p { margin-top: 8px; font-size: 14px; color: var(--text-secondary); }
-
-/* ── Footer ── */
-.footer {
-  background: var(--bg-secondary);
-  border-top: 1px solid var(--border-primary);
-  padding: 40px 0;
-  text-align: center;
-}
-.footer-links {
-  display: flex; justify-content: center; gap: 24px; margin-bottom: 16px;
-}
-.footer-links a {
-  font-family: var(--font-mono); font-size: 12px;
-  color: var(--text-dim); text-decoration: none;
-  transition: color 0.2s;
-}
-.footer-links a:hover { color: var(--accent-green); }
-.footer-copy { font-size: 12px; color: var(--text-dim); }
-.footer-copy .mono { font-family: var(--font-mono); }
-
-/* ── Expand / Collapse ── */
-.strat-card-header::after {
-  content: '+'; font-family: var(--font-mono); font-size: 18px;
-  color: var(--text-dim); transition: transform 0.3s;
-  margin-left: 16px; flex-shrink: 0;
-}
-.strat-card.open .strat-card-header::after { content: '\2212'; color: var(--accent-green); }
-
-/* ── Responsive ── */
-@media (max-width: 1024px) {
-  .hero-grid { grid-template-columns: 1fr; }
-  .hero-terminal { max-width: 500px; }
-  .metric-strip-inner { grid-template-columns: repeat(4, 1fr); }
-  .metric-cell:nth-child(n+5) { border-top: 1px solid var(--border-dim); }
-  .about-grid { grid-template-columns: 1fr; }
-  .arch-grid { grid-template-columns: repeat(3, 1fr); }
-  .tl-sections { grid-template-columns: 1fr; }
-  .status-board { padding: 24px; }
-}
-@media (max-width: 768px) {
-  .topbar-nav { display: none; }
-  .metric-strip-inner { grid-template-columns: repeat(2, 1fr); }
-  .pipeline-flow { flex-direction: column; align-items: stretch; }
-  .pipeline-arrow { transform: rotate(90deg); text-align: center; }
-  .hero-stats-row { gap: 20px; flex-wrap: wrap; }
-  .arch-grid { grid-template-columns: 1fr 1fr; }
-  .edu-grid { grid-template-columns: 1fr; }
-  .status-board h3 { font-size: 20px; }
-}
-@media (max-width: 480px) {
-  .metric-strip-inner { grid-template-columns: 1fr; }
-}
-
-/* ── Utility ── */
-.text-green { color: var(--accent-green); }
-.text-red { color: var(--accent-red); }
-.text-amber { color: var(--accent-amber); }
-.text-blue { color: var(--accent-blue); }
-.mono { font-family: var(--font-mono); }
-.divider { height: 1px; background: var(--border-primary); margin: 0; }
-.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
-
-/* ── Vision Section ── */
-.vision-banner {
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.08), rgba(59, 130, 246, 0.06));
-  border: 1px solid rgba(16, 185, 129, 0.15);
-  border-radius: var(--radius-lg);
-  padding: 48px;
-  margin-bottom: 48px;
-  position: relative;
-  overflow: hidden;
-}
-.vision-banner::before {
-  content: '';
-  position: absolute; top: -50%; right: -20%; width: 60%; height: 200%;
-  background: radial-gradient(ellipse, rgba(16, 185, 129, 0.04), transparent 70%);
-  pointer-events: none;
-}
-.vision-banner h3 {
-  font-size: 28px; font-weight: 800; color: var(--text-bright);
-  margin-bottom: 16px; letter-spacing: -0.5px;
-}
-.vision-banner p { font-size: 16px; color: var(--text-secondary); line-height: 1.8; max-width: 800px; }
-.vision-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 32px; }
-.vision-col {
-  background: var(--bg-card); border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md); padding: 28px;
-}
-.vision-col h4 {
-  font-size: 15px; font-weight: 700; color: var(--text-bright);
-  margin-bottom: 8px; display: flex; align-items: center; gap: 8px;
-}
-.vision-col p { font-size: 14px; color: var(--text-secondary); line-height: 1.7; }
-.vision-icon {
-  width: 32px; height: 32px; border-radius: 8px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 16px; flex-shrink: 0;
-}
-.vi-green { background: var(--accent-green-dim); color: var(--accent-green); }
-.vi-blue { background: var(--accent-blue-dim); color: var(--accent-blue); }
-.vi-purple { background: var(--accent-purple-dim); color: var(--accent-purple); }
-.vi-amber { background: var(--accent-amber-dim); color: var(--accent-amber); }
-
-/* ── Elastic Stack Section ── */
-.elastic-grid {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
-  margin: 32px 0;
-}
-.elastic-card {
-  background: var(--bg-card); border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md); padding: 28px;
-  transition: all 0.3s; position: relative;
-  overflow: hidden;
-}
-.elastic-card:hover {
-  border-color: rgba(16, 185, 129, 0.3);
-  box-shadow: var(--shadow-glow); transform: translateY(-2px);
-}
-.elastic-card-icon {
-  font-family: var(--font-mono); font-size: 11px; font-weight: 700;
-  padding: 4px 10px; border-radius: 4px;
-  display: inline-block; margin-bottom: 14px;
-  text-transform: uppercase; letter-spacing: 1px;
-}
-.elastic-card h4 {
-  font-size: 16px; font-weight: 700; color: var(--text-bright);
-  margin-bottom: 8px;
-}
-.elastic-card p { font-size: 13px; color: var(--text-secondary); line-height: 1.7; }
-.elastic-card .use-case {
-  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-dim);
-  font-family: var(--font-mono); font-size: 11px; color: var(--accent-green);
-}
-
-.moat-compare {
-  display: grid; grid-template-columns: 1fr auto 1fr; gap: 24px;
-  align-items: center; margin: 48px 0;
-}
-.moat-box {
-  background: var(--bg-card); border: 1px solid var(--border-primary);
-  border-radius: var(--radius-lg); padding: 32px;
-}
-.moat-box h4 {
-  font-family: var(--font-mono); font-size: 13px; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 2px;
-  margin-bottom: 20px;
-}
-.moat-box.elastic-side { border-color: rgba(16, 185, 129, 0.3); }
-.moat-box.elastic-side h4 { color: var(--accent-green); }
-.moat-box.competitor-side h4 { color: var(--accent-red); }
-.moat-item {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 0; border-bottom: 1px solid var(--border-dim);
-  font-size: 13px; color: var(--text-secondary);
-}
-.moat-item:last-child { border-bottom: none; }
-.moat-check { color: var(--accent-green); font-weight: 700; font-size: 16px; flex-shrink: 0; width: 20px; text-align: center; }
-.moat-x { color: var(--accent-red); font-weight: 700; font-size: 14px; flex-shrink: 0; width: 20px; text-align: center; }
-.moat-vs {
-  font-family: var(--font-mono); font-size: 24px; font-weight: 800;
-  color: var(--text-dim); text-align: center;
-}
-
-/* ── Roadmap Section ── */
-.roadmap-phases {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px;
-  background: var(--border-primary); border-radius: var(--radius-md);
-  overflow: hidden; margin: 32px 0;
-}
-.roadmap-phase {
-  background: var(--bg-card); padding: 28px 20px;
-  transition: background 0.2s; position: relative;
-}
-.roadmap-phase:hover { background: var(--bg-card-hover); }
-.roadmap-phase.current { border-top: 3px solid var(--accent-green); }
-.roadmap-phase.current::after {
-  content: 'CURRENT'; position: absolute; top: 8px; right: 12px;
-  font-family: var(--font-mono); font-size: 9px; font-weight: 700;
-  color: var(--accent-green); letter-spacing: 1px;
-}
-.roadmap-phase-num {
-  font-family: var(--font-mono); font-size: 11px; font-weight: 700;
-  color: var(--text-dim); margin-bottom: 8px; letter-spacing: 1px;
-}
-.roadmap-phase h4 { font-size: 15px; font-weight: 700; color: var(--text-bright); margin-bottom: 8px; }
-.roadmap-phase p { font-size: 12px; color: var(--text-dim); line-height: 1.6; }
-.roadmap-phase ul {
-  list-style: none; margin-top: 12px; padding: 0;
-}
-.roadmap-phase li {
-  font-size: 12px; color: var(--text-secondary); padding: 3px 0;
-  display: flex; align-items: baseline; gap: 6px;
-}
-.roadmap-phase li::before {
-  content: ''; width: 4px; height: 4px; border-radius: 50%;
-  background: var(--accent-green); flex-shrink: 0; margin-top: 5px;
-}
-
-/* ── Pitch Quote ── */
-.pitch-quote {
-  background: var(--bg-secondary);
-  border-left: 4px solid var(--accent-green);
-  border-radius: 0 var(--radius-md) var(--radius-md) 0;
-  padding: 32px 40px; margin: 48px 0;
-  font-size: 16px; color: var(--text-primary);
-  line-height: 1.8; font-style: italic;
-}
-.pitch-quote .attribution {
-  font-style: normal; font-family: var(--font-mono); font-size: 12px;
-  color: var(--text-dim); margin-top: 16px; display: block;
-}
-
-@media (max-width: 1024px) {
-  .elastic-grid { grid-template-columns: repeat(2, 1fr); }
-  .moat-compare { grid-template-columns: 1fr; }
-  .moat-vs { transform: rotate(90deg); padding: 10px 0; }
-  .vision-columns { grid-template-columns: 1fr; }
-  .roadmap-phases { grid-template-columns: repeat(2, 1fr); }
-}
-@media (max-width: 768px) {
-  .elastic-grid { grid-template-columns: 1fr; }
-  .roadmap-phases { grid-template-columns: 1fr; }
-}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Elastifund | A self-improving agentic operating system for real economic work</title>
+  <meta name="description" content="Elastifund turns research, experiments, and execution into searchable evidence so trading and non-trading agents can improve with every run.">
+  <link rel="stylesheet" href="/site.css">
+  <script src="/site.js" defer></script>
 </head>
-<body>
+<body data-page="home">
+  <div class="page-wrap">
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="/">
+          <span class="brand-mark"></span>
+          <span class="brand-text">
+            <span class="brand-name">Elastifund</span>
+            <span class="brand-subtitle">Searchable evidence for trading and non-trading workers</span>
+          </span>
+        </a>
+        <nav class="header-nav" aria-label="Primary">
+          <a class="nav-link" data-page="home" href="/">Home</a>
+          <a class="nav-link" data-page="elastic" href="/elastic/">Elastic</a>
+          <a class="nav-link" data-page="develop" href="/develop/">Develop</a>
+          <a class="nav-link" data-page="trading" href="/leaderboards/trading/">Trading</a>
+          <a class="nav-link" data-page="worker" href="/leaderboards/worker/">Worker</a>
+        </nav>
+        <div class="header-actions">
+          <span class="status-pill" data-role="status-pill">runtime syncing</span>
+          <a class="header-link" href="https://github.com/CrunchyJohnHaven/elastifund" target="_blank" rel="noopener">GitHub</a>
+        </div>
+      </div>
+    </header>
 
-<!-- ═══════════ TOP BAR ═══════════ -->
-<header class="topbar" id="topbar">
-  <a href="#" class="topbar-brand">
-    <span class="dot"></span>
-    ELASTIFUND
-  </a>
-  <nav class="topbar-nav">
-    <a href="#intel" class="active">Intel</a>
-    <a href="#strategies">Strategies</a>
-    <a href="#architecture">Architecture</a>
-    <a href="#diary">Build Diary</a>
-    <a href="#education">Education</a>
-    <a href="#vision">Vision</a>
-    <a href="#elastic">Why Elastic</a>
-    <a href="#about">About</a>
-  </nav>
-  <div class="topbar-actions">
-    <div class="topbar-status paused"><span class="blink"></span> LAUNCH BLOCKED</div>
-    <a href="https://github.com/CrunchyJohnHaven/elastifund" class="btn-gh" target="_blank" rel="noopener">
-      <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-      GitHub
-    </a>
+    <main>
+      <section class="hero">
+        <div class="container hero-grid">
+          <div>
+            <span class="eyebrow"><span data-fill="cycle_label"></span> · Public surface</span>
+            <h1>A self-improving agentic operating system for real economic work.</h1>
+            <p class="hero-copy">
+              Elastifund turns research, experiments, and execution into searchable evidence so trading and non-trading agents can improve with every run. The system ships with policy-governed autonomy, publishes its benchmarks, and runs in paper mode by default until evidence clears the next gate.
+            </p>
+            <p class="hero-note">
+              Two worker families share the platform: trading workers and non-trading workers (JJ-N). Improvement is the product, and every useful run feeds the same evidence layer.
+            </p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="/develop/">Run the stack</a>
+              <a class="button button-secondary" href="https://github.com/CrunchyJohnHaven/elastifund" target="_blank" rel="noopener">Explore the repo</a>
+            </div>
+            <div class="path-grid" style="margin-top: 24px;">
+              <article class="path-card">
+                <div class="path-kicker">Contributor</div>
+                <h3>Fork it, run it, improve it.</h3>
+                <p class="path-copy">Start as an observer, move into paper-mode runs, then submit validated improvements back into the system.</p>
+              </article>
+              <article class="path-card">
+                <div class="path-kicker">Operator</div>
+                <h3>Read the runtime truth before you touch capital.</h3>
+                <p class="path-copy">Every launch claim is grounded in checked-in artifacts: service state, verification state, pipeline verdict, and structural gates.</p>
+              </article>
+              <article class="path-card">
+                <div class="path-kicker">Partner</div>
+                <h3>See how Elastic acts as system memory.</h3>
+                <p class="path-copy">Trading is one worker family. JJ-N and the broader platform exist to demonstrate reliable agentic work on a shared substrate.</p>
+              </article>
+            </div>
+          </div>
+
+          <aside class="status-panel">
+            <div class="status-panel-header">
+              <div>
+                <div class="panel-kicker">Runtime truth</div>
+                <h3><span data-fill="generated_date"></span> public status</h3>
+              </div>
+              <span class="tag warn"><span data-fill="launch_posture"></span></span>
+            </div>
+            <p class="hero-note">
+              The remote service is currently <strong data-fill="service_state"></strong>. That does not clear launch. <span data-fill="service_drift_note"></span> The latest public-safe edge work still says <strong data-fill="fast_verdict"></strong>, with the runtime held behind <span data-fill="launch_reasons"></span>.
+            </p>
+            <dl class="info-list">
+              <div class="info-row">
+                <dt>Tracked capital</dt>
+                <dd><span data-fill="tracked_capital"></span> total / <span data-fill="deployed_capital"></span> deployed</dd>
+              </div>
+              <div class="info-row">
+                <dt>Runtime cycles</dt>
+                <dd><span data-fill="runtime_cycles"></span> cycles / <span data-fill="live_trades"></span> live trades</dd>
+              </div>
+              <div class="info-row">
+                <dt>Fast-market window</dt>
+                <dd><span data-fill="fast_markets"></span> markets / <span data-fill="fast_breakdown"></span></dd>
+              </div>
+              <div class="info-row">
+                <dt>Edge scan</dt>
+                <dd><span data-fill="opportunity_summary"></span> / <span data-fill="opportunity_categories"></span></dd>
+              </div>
+              <div class="info-row">
+                <dt>Resolution mix</dt>
+                <dd><span data-fill="resolution_distribution"></span></dd>
+              </div>
+              <div class="info-row">
+                <dt>Next operator action</dt>
+                <dd><span data-fill="forecast_note"></span></dd>
+              </div>
+            </dl>
+          </aside>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="metric-grid">
+            <article class="metric-card">
+              <div class="metric-label">Performance now</div>
+              <div class="metric-value" data-fill="tracked_capital"></div>
+              <p class="metric-sub"><span data-fill="deployed_capital"></span> deployed, <span data-fill="live_trades"></span> live trades, service <span data-fill="service_state"></span>.</p>
+            </article>
+            <article class="metric-card">
+              <div class="metric-label">Improvement velocity</div>
+              <div class="metric-value" data-fill="avg_tests_per_day"></div>
+              <p class="metric-sub"><span data-fill="avg_dispatches_per_day"></span> across a <span data-fill="velocity_span"></span>.</p>
+            </article>
+            <article class="metric-card">
+              <div class="metric-label">Code commits</div>
+              <div class="metric-value" data-fill="commit_count"></div>
+              <p class="metric-sub"><span data-fill="verification_summary"></span> in the current public verification snapshot.</p>
+            </article>
+            <article class="metric-card">
+              <div class="metric-label">Feature forecast</div>
+              <div class="metric-value" data-fill="forecast_cycle"></div>
+              <p class="metric-sub"><span data-fill="forecast_note"></span></p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">Scorecard</div>
+            <h2>Current public metrics, corrected to the March 9 dispatch snapshot.</h2>
+            <p class="section-copy">These are the public-safe numbers the homepage now keeps explicit: strategy count, verified-test baseline, dispatch archive size, signal coverage, win rate reference, risk rails, and runtime host.</p>
+          </div>
+          <div class="evidence-grid">
+            <article class="evidence-card">
+              <div class="evidence-label">Strategy catalog</div>
+              <div class="evidence-value" data-fill="strategy_total">131</div>
+              <p class="evidence-sub"><span data-fill="strategy_distribution"></span></p>
+            </article>
+            <article class="evidence-card">
+              <div class="evidence-label">Verified tests</div>
+              <div class="evidence-value" data-fill="verification_current">1,278 verified</div>
+              <p class="evidence-sub"><span data-fill="verification_baseline"></span>. <span data-fill="verification_root"></span>.</p>
+            </article>
+            <article class="evidence-card">
+              <div class="evidence-label">Dispatch archive</div>
+              <div class="evidence-value" data-fill="dispatch_archive">95</div>
+              <p class="evidence-sub"><span data-fill="dispatch_work_orders"></span> active work-orders / <span data-fill="research_files"></span> markdown files.</p>
+            </article>
+            <article class="evidence-card">
+              <div class="evidence-label">Signal sources</div>
+              <div class="evidence-value" data-fill="signal_lane_total">7</div>
+              <p class="evidence-sub"><span data-fill="signal_lanes"></span>.</p>
+            </article>
+            <article class="evidence-card">
+              <div class="evidence-label">Calibrated win rate</div>
+              <div class="evidence-value" data-fill="calibrated_win_rate">71.2%</div>
+              <p class="evidence-sub"><span data-fill="no_only_win_rate"></span> NO-only / <span data-fill="legacy_win_rate"></span> legacy label kept for context.</p>
+            </article>
+            <article class="evidence-card">
+              <div class="evidence-label">Runtime cycles</div>
+              <div class="evidence-value"><span data-fill="runtime_cycles">311</span></div>
+              <p class="evidence-sub"><span data-fill="live_trades"></span> live trades / <span data-fill="launch_posture"></span>.</p>
+            </article>
+            <article class="evidence-card">
+              <div class="evidence-label">Position cap</div>
+              <div class="evidence-value" data-fill="risk_position">$5</div>
+              <p class="evidence-sub">Current per-position ceiling under the public-safe risk rails.</p>
+            </article>
+            <article class="evidence-card">
+              <div class="evidence-label">Daily loss cap</div>
+              <div class="evidence-value" data-fill="risk_daily_loss">$5</div>
+              <p class="evidence-sub">Hard daily loss boundary before human escalation is required.</p>
+            </article>
+            <article class="evidence-card">
+              <div class="evidence-label">Runtime host</div>
+              <div class="evidence-value" data-fill="server_location">Dublin VPS</div>
+              <p class="evidence-sub"><span data-fill="server_detail"></span>.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">Product definition</div>
+            <h2>Two worker families. One Elastic-backed substrate.</h2>
+            <p class="section-copy">The project is broader than a trading bot. Trading workers and non-trading workers share the same memory, evaluation, observability, workflow, and publishing layers.</p>
+          </div>
+          <div class="surface-grid">
+            <article class="surface-card">
+              <div class="tag neutral">Trading workers</div>
+              <h3>Research, simulate, rank, and optionally execute under policy.</h3>
+              <p class="surface-copy">The current trading lane tracks <span data-fill="tracked_capital"></span>, uses maker-only execution, and remains blocked until first closed trades and structural evidence clear the gate.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag neutral">Non-trading workers</div>
+              <h3>JJ-N is the first-class front door for agentic labor.</h3>
+              <p class="surface-copy">Phase 0 focuses on a narrow revenue-operations worker with human approval, compliance controls, and honest public metrics.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag neutral">Elastic substrate</div>
+              <h3>System memory, evaluation, observability, and publishing.</h3>
+              <p class="surface-copy">Better agents require better data, better memory, and better evaluation. That is why Elastic is the foundation, not an afterthought.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag neutral">Trust model</div>
+              <h3>Policy-governed autonomy with public evidence.</h3>
+              <p class="surface-copy">The system runs in paper mode by default, keeps humans above the loop for capital transitions, and shows exactly where claims come from.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">JJ-N</div>
+            <h2>The non-trading worker is the first-class front door, and its shape is explicit.</h2>
+            <p class="section-copy">JJ-N is not pitched as an unbounded entrepreneur. Phase 0 is a narrow revenue-operations worker for one high-ticket service loop, with every outbound action held behind approval and every stage measured like an actual operating system.</p>
+          </div>
+          <div class="surface-grid">
+            <article class="surface-card">
+              <div class="tag good">1</div>
+              <h3>Account Intelligence</h3>
+              <p class="surface-copy">Find, enrich, and score accounts so the system learns where real commercial attention belongs.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag good">2</div>
+              <h3>Outreach</h3>
+              <p class="surface-copy">Draft compliant messages, queue them, and keep sends behind human approval while the lane is still proving itself.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag good">3</div>
+              <h3>Interaction</h3>
+              <p class="surface-copy">Classify replies, book time, and hand humans a context-rich brief instead of an empty calendar invite.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag good">4</div>
+              <h3>Proposal</h3>
+              <p class="surface-copy">Turn discovery into scoped offers without pretending pricing, commitments, or legal boundaries can be automated away.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag good">5</div>
+              <h3>Learning</h3>
+              <p class="surface-copy">Compare predicted value to actual outcomes and only promote workflow changes when the evidence is real.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section" id="status">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">System status</div>
+            <h2>The status surface states the simple facts before it gets clever.</h2>
+            <p class="section-copy">The homepage now leads with the current runtime count, live-trade count, fast-market verdict, and wallet-flow readiness, then adds the service, structural, and deploy context underneath.</p>
+          </div>
+          <div class="status-grid">
+            <article class="status-item">
+              <div class="status-label">Runtime snapshot</div>
+              <div class="status-value"><span data-fill="runtime_cycles"></span> cycles / <span data-fill="live_trades"></span> trades</div>
+              <div class="status-sub">Service <span data-fill="service_surface"></span>, checked at <span data-fill="service_checked_at"></span> on <span data-fill="server_location"></span> / <span data-fill="server_detail"></span>. <span data-fill="service_drift_note"></span></div>
+            </article>
+            <article class="status-item">
+              <div class="status-label">Pipeline verdict</div>
+              <div class="status-value"><span data-fill="fast_verdict"></span></div>
+              <div class="status-sub"><span data-fill="fast_markets"></span> fast markets observed across <span data-fill="fast_breakdown"></span>.</div>
+            </article>
+            <article class="status-item">
+              <div class="status-label">Wallet-flow readiness</div>
+              <div class="status-value"><span data-fill="wallet_status"></span></div>
+              <div class="status-sub"><span data-fill="wallet_count"></span> scored wallets / <span data-fill="opportunity_public_count"></span> public-safe observations.</div>
+            </article>
+            <article class="status-item">
+              <div class="status-label">Structural gates</div>
+              <div class="status-value">A-6 / B-1 blocked</div>
+              <div class="status-sub"><span data-fill="a6_summary"></span>. <span data-fill="b1_summary"></span>.</div>
+            </article>
+            <article class="status-item">
+              <div class="status-label">Edge snapshot</div>
+              <div class="status-value"><span data-fill="opportunity_public_count"></span></div>
+              <div class="status-sub"><span data-fill="opportunity_categories"></span>. <span data-fill="resolution_distribution"></span>. Public site exposes counts only, not trade details.</div>
+            </article>
+            <article class="status-item">
+              <div class="status-label">Next milestone</div>
+              <div class="status-value"><span data-fill="next_milestone"></span></div>
+              <div class="status-sub">The runtime remains blocked until closed trades and structural evidence exist.</div>
+            </article>
+            <article class="status-item">
+              <div class="status-label">Deploy blocker</div>
+              <div class="status-value">Release manifest</div>
+              <div class="status-sub"><span data-fill="deploy_blocker"></span>.</div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">Architecture</div>
+            <h2>From market data and work queues to dashboards, approvals, and public artifacts.</h2>
+          </div>
+          <div class="diagram">
+            <article class="diagram-step">
+              <div class="diagram-title">Sources</div>
+              <div class="diagram-copy">Prediction-market APIs, outreach queues, research notes, runtime state, and evaluation inputs.</div>
+            </article>
+            <article class="diagram-step">
+              <div class="diagram-title">Workers</div>
+              <div class="diagram-copy">Trading workers and JJ-N execute bounded tasks under policy-governed autonomy.</div>
+            </article>
+            <article class="diagram-step">
+              <div class="diagram-title">Elastic memory</div>
+              <div class="diagram-copy">Searchable documents, event telemetry, traces, and structured state live in the same substrate.</div>
+            </article>
+            <article class="diagram-step">
+              <div class="diagram-title">Evaluation</div>
+              <div class="diagram-copy">Leaderboards, calibration checks, kill rules, and confidence updates decide what advances.</div>
+            </article>
+            <article class="diagram-step">
+              <div class="diagram-title">Publishing</div>
+              <div class="diagram-copy">Runtime snapshot, website scorecards, README numbers, and research dispatches stay aligned.</div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">Routes</div>
+            <h2>Eight public surfaces for eight distinct jobs.</h2>
+          </div>
+          <div class="surface-grid">
+            <article class="surface-card">
+              <div class="tag good">/elastic</div>
+              <h3>Explain why Elastic is the system memory.</h3>
+              <p class="surface-copy">Executive-safe language, business case, observability mapping, and public-proof positioning.</p>
+              <div class="cta-row"><a class="button button-secondary" href="/elastic/">Open /elastic</a></div>
+            </article>
+            <article class="surface-card">
+              <div class="tag good">/develop</div>
+              <h3>Reduce contributor friction to one clear path.</h3>
+              <p class="surface-copy">One-command setup, observer/runner/builder modes, troubleshooting, and trust-building defaults.</p>
+              <div class="cta-row"><a class="button button-secondary" href="/develop/">Open /develop</a></div>
+            </article>
+            <article class="surface-card">
+              <div class="tag good">/leaderboards/trading</div>
+              <h3>Separate benchmark, paper, and real-money evidence.</h3>
+              <p class="surface-copy">Readiness ranking, current guardrails, honest zero-live-trade status, and no disguised hype.</p>
+              <div class="cta-row"><a class="button button-secondary" href="/leaderboards/trading/">Open trading board</a></div>
+            </article>
+            <article class="surface-card">
+              <div class="tag warn">/leaderboards/worker</div>
+              <h3>Define the JJ-N scoreboard before it launches.</h3>
+              <p class="surface-copy">Phase 0 stub with metric definitions, five-engine model, and human approval requirements.</p>
+              <div class="cta-row"><a class="button button-secondary" href="/leaderboards/worker/">Open worker board</a></div>
+            </article>
+            <article class="surface-card">
+              <div class="tag neutral">/manage</div>
+              <h3>Show what the operator surface is supposed to make legible.</h3>
+              <p class="surface-copy">Public-safe stub for the eventual run ledger, approvals queue, deployment state, and change review surface.</p>
+              <div class="cta-row"><a class="button button-secondary" href="/manage/">Open /manage</a></div>
+            </article>
+            <article class="surface-card">
+              <div class="tag neutral">/diary</div>
+              <h3>Keep the experiment record chronological and inspectable.</h3>
+              <p class="surface-copy">Timeline view of recent diary entries plus the homepage note that captures the March 9 dispatch snapshot and launch blockers.</p>
+              <div class="cta-row"><a class="button button-secondary" href="/diary/">Open /diary</a></div>
+            </article>
+            <article class="surface-card">
+              <div class="tag neutral">/roadmap</div>
+              <h3>Forecast the next checkpoints without pretending they are promises.</h3>
+              <p class="surface-copy">What is next, what is blocked, and where confidence is low enough to say so explicitly.</p>
+              <div class="cta-row"><a class="button button-secondary" href="/roadmap/">Open /roadmap</a></div>
+            </article>
+            <article class="surface-card">
+              <div class="tag neutral">/docs</div>
+              <h3>Point builders to the canonical repo docs and governance scaffold.</h3>
+              <p class="surface-copy">Placeholder index for the numbered-docs plan plus the current README, AGENTS guide, repo map, and project instructions.</p>
+              <div class="cta-row"><a class="button button-secondary" href="/docs/">Open /docs</a></div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">Build diary</div>
+            <h2>The current homepage notes the machine truth, not just the aspirational story.</h2>
+          </div>
+          <div class="split-grid">
+            <article class="card">
+              <div class="card-kicker">March 9, 2026</div>
+              <h3>311 cycles, 0 trades, still blocked.</h3>
+              <p class="card-copy">The homepage now says the quiet part out loud: 311 cycles completed, 0 trades executed, the fast-market pipeline still says REJECT ALL, and wallet-flow is ready with 80 scored wallets.</p>
+            </article>
+            <article class="card">
+              <div class="card-kicker">What changed on the site</div>
+              <h3>Vision messaging, JJ-N structure, and the remaining route map are now visible.</h3>
+              <p class="card-copy">This refresh keeps the hero aligned with the platform vision, makes JJ-N a first-class front door, keeps the route stubs visible, and corrects the public metrics to the March 9 dispatch snapshot.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container">
+        <div class="footer-panel">
+          <div>
+            <div class="footer-kicker">Elastifund</div>
+            <h3>Research, experiments, execution, evidence.</h3>
+            <p class="footer-meta">Tracked capital: <span data-fill="tracked_capital"></span>. Runtime: <span data-fill="service_state"></span>. Verification: <span data-fill="verification_summary"></span>.</p>
+          </div>
+          <div class="footer-links">
+            <a href="/">Home</a>
+            <a href="/elastic/">Elastic</a>
+            <a href="/develop/">Develop</a>
+            <a href="/leaderboards/trading/">Trading leaderboard</a>
+            <a href="/leaderboards/worker/">Worker leaderboard</a>
+            <a href="/diary/">Diary</a>
+            <a href="/roadmap/">Roadmap</a>
+            <a href="/docs/">Docs</a>
+          </div>
+          <div class="footer-meta">
+            <div>Build surface refreshed from the March 9 dispatch snapshot.</div>
+            <div>Snapshot generated: <span data-fill="generated_utc"></span>.</div>
+            <div>&copy; <span data-fill="year"></span> Elastifund.</div>
+          </div>
+        </div>
+      </div>
+    </footer>
   </div>
-</header>
-
-<div class="page">
-
-<!-- ═══════════ HERO ═══════════ -->
-<section class="hero" id="intel">
-  <div class="container">
-    <div class="hero-grid">
-      <div>
-        <div class="hero-eyebrow">Cycle 2 Runtime Reconciliation</div>
-        <h1>The AI decides<br>what is <span class="gradient">tradeable.</span></h1>
-        <p class="hero-sub" id="heroRuntimeSummary">
-          Open-source operator infrastructure for prediction-market research and execution. The March 9, 2026 artifact set shows the runtime drift explicitly: <span class="mono">jj-live.service</span> was observed active on the VPS, wallet-flow is ready, but launch posture remains blocked by a failing root regression suite, zero closed trades, zero deployed capital, REJECT ALL fast-flow evidence, and unresolved A-6 / B-1 gates.
-        </p>
-        <div class="hero-stats-row">
-          <div class="hero-stat">
-            <span class="hero-stat-val" id="trackedCapitalHero">$347.51</span>
-            <span class="hero-stat-label">Tracked Capital</span>
-          </div>
-          <div class="hero-stat">
-            <span class="hero-stat-val">71.2%</span>
-            <span class="hero-stat-label">Calibrated Win Rate<span class="hero-stat-note">68.5% legacy / uncalibrated</span></span>
-          </div>
-          <div class="hero-stat">
-            <span class="hero-stat-val" id="verificationHeroValue">1 fail</span>
-            <span class="hero-stat-label">Root Test Status<span class="hero-stat-note" id="verificationHeroNote">870 passed in latest run</span></span>
-          </div>
-          <div class="hero-stat">
-            <span class="hero-stat-val">131</span>
-            <span class="hero-stat-label">Strategy Catalog</span>
-          </div>
-        </div>
-        <div class="hero-badges">
-          <span class="badge badge-green">MIT License</span>
-          <span class="badge badge-blue">Polymarket + Kalshi</span>
-          <span class="badge badge-purple">6 Primary + 1 Anomaly Lane</span>
-          <span class="badge badge-blue">23 Benchmarked Systems</span>
-          <span class="badge badge-red" id="fastVerdictBadge">Fast-Market Verdict: REJECT ALL</span>
-          <span class="badge" style="background: rgba(6,182,212,0.15); color: #06b6d4; border: 1px solid rgba(6,182,212,0.2);">Elastic Stack</span>
-        </div>
-      </div>
-      <div class="hero-terminal">
-        <div class="hero-terminal-bar">
-          <span class="term-dot term-dot-r"></span>
-          <span class="term-dot term-dot-y"></span>
-          <span class="term-dot term-dot-g"></span>
-          <span class="term-title" id="runtimeTitle">runtime truth &mdash; March 9, 2026</span>
-        </div>
-        <div class="hero-terminal-body">
-          <div class="term-line"><span class="term-prompt">$</span> <span>cat reports/remote_service_status.json</span></div>
-          <div class="term-line"><span class="term-key">Service:</span> <span class="term-val green" id="runtimeServiceStatus">ACTIVE on VPS</span></div>
-          <div class="term-line"><span class="term-key">Checked:</span> <span class="term-val" id="runtimeServiceChecked">2026-03-09 00:44:19 UTC</span></div>
-          <div class="term-line"><span class="term-key">Launch:</span> <span class="term-val amber" id="runtimeLaunchState">BLOCKED / human review required</span></div>
-          <div class="term-line"><span class="term-key">Hold:</span> <span class="term-val" id="runtimeHoldSummary">wallet-flow ready; blocked by root tests + no closed trades + no deployed capital + A-6 / B-1 evidence gap</span></div>
-          <hr class="term-sep">
-          <div class="term-line"><span class="term-key">Capital:</span> <span class="term-val" id="runtimeCapitalSummary">$347.51 tracked ($247.51 + $100)</span></div>
-          <div class="term-line"><span class="term-key">Platforms:</span> <span class="term-val">Polymarket, Kalshi</span></div>
-          <div class="term-line"><span class="term-key">Signals:</span> <span class="term-val">6 primary + 1 anomaly feedback</span></div>
-          <div class="term-line"><span class="term-key">Benchmarks:</span> <span class="term-val">23 systems tracked</span></div>
-          <hr class="term-sep">
-          <div class="term-line"><span class="term-key">Fast lane:</span> <span class="term-val red" id="runtimeFastVerdict">REJECT ALL</span></div>
-          <div class="term-line"><span class="term-key">Live trades:</span> <span class="term-val" id="runtimeTradeSummary">0 after 301 cycles</span></div>
-          <div class="term-line"><span class="term-key">Verification:</span> <span class="term-val amber" id="runtimeVerificationSummary">failing: 1 failed, 870 passed in 18.22s</span></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="status-board">
-      <div class="status-board-top">
-        <span class="status-pill">Launch Posture: Blocked</span>
-        <span class="status-stamp" id="serviceStatusStamp">Service observed active &bull; checked 2026-03-09 00:44:19 UTC</span>
-      </div>
-      <h3 id="launchHeadline">The remote service was active on March 9, 2026, and wallet-flow is ready, but live launch posture remains blocked by verification drift and structural evidence gates.</h3>
-      <p id="launchNarrative">Current uptime does not clear the system for real-capital routing. The authoritative cycle state still says <span class="mono">live_launch_blocked=true</span>, <span class="mono">fast_flow_restart_ready=false</span>, and the next action is: merge the root regression repair and rerun <span class="mono">make test</span> before any restart or deploy.</p>
-      <div class="status-grid">
-        <div class="status-item">
-          <div class="status-item-label">Service</div>
-          <div class="status-item-value" id="serviceStatusValue"><span class="mono">jj-live.service</span> active on VPS</div>
-          <div class="status-item-sub" id="serviceStatusSub">Observed at 2026-03-09 00:44:19 UTC. This supersedes stale March 8 prose that described the service as stopped.</div>
-        </div>
-        <div class="status-item">
-          <div class="status-item-label">Launch Posture</div>
-          <div class="status-item-value" id="launchPostureValue">Blocked: root tests, no closed trades, no deployed capital, A-6, B-1</div>
-          <div class="status-item-sub" id="launchPostureSub">Wallet-flow is ready with 80 scored wallets, but the root suite is failing. No live-money restart is cleared while verification, first-trade evidence, and the structural gates remain unresolved.</div>
-        </div>
-        <div class="status-item">
-          <div class="status-item-label">Fast-Market Pipeline</div>
-          <div class="status-item-value text-red" id="pipelineVerdictValue">REJECT ALL</div>
-          <div class="status-item-sub" id="pipelineVerdictSub">Latest checked-in run observed 75 fast markets across 29 15m, 39 5m, and 7 4h windows.</div>
-        </div>
-        <div class="status-item">
-          <div class="status-item-label">Trade History</div>
-          <div class="status-item-value" id="tradeHistoryValue">0 live trades after 301 cycles</div>
-          <div class="status-item-sub" id="tradeHistorySub">No closed trades are available yet for calibration or promotion decisions.</div>
-        </div>
-        <div class="status-item">
-          <div class="status-item-label">Public Edge Snapshot</div>
-          <div class="status-item-value" id="publicEdgeSnapshotValue">75 fast markets observed</div>
-          <div class="status-item-sub" id="publicEdgeSnapshotSub">Pipeline: 29 15m, 39 5m, 7 4h, 2,889 trades, 1,659 wallets. A-6: 563 allowed neg-risk events in repo audit, 57 qualified live-surface events, 0 executable &lt;0.95. B-1: 0 deterministic pairs in 1,000 allowed markets.</div>
-        </div>
-      </div>
-      <div class="freshness-grid">
-        <div class="freshness-item">
-          <div class="freshness-label">Metrics Snapshot</div>
-          <div class="freshness-value" id="metricsSnapshotFreshness">March 9, 2026</div>
-          <div class="freshness-sub" id="metricsSnapshotSource">Capital, cycle status, service state, and public edge counts reconciled from authoritative repo artifacts.</div>
-        </div>
-        <div class="freshness-item">
-          <div class="freshness-label">Verification Status</div>
-          <div class="freshness-value" id="verificationFreshness">March 9, 2026</div>
-          <div class="freshness-sub" id="verificationStatusSub">Current root suite: <span class="mono">1 failed, 870 passed in 18.22s</span>. Last full green baseline: <span class="mono">1,256</span> total tests.</div>
-        </div>
-        <div class="freshness-item">
-          <div class="freshness-label">Build Stamp</div>
-          <div class="freshness-value">March 9, 2026</div>
-          <div class="freshness-sub">Single-file homepage refreshed after service-state drift reconciliation. No <span class="mono">site/</span> scaffold was added.</div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ═══════════ METRIC STRIP ═══════════ -->
-<div class="metric-strip">
-  <div class="container">
-    <div class="metric-strip-inner">
-      <div class="metric-cell">
-        <div class="metric-cell-val">131</div>
-        <div class="metric-cell-label">Strategy Catalog</div>
-        <div class="metric-cell-sub">7 deployed, 6 building, 2 structural alpha</div>
-      </div>
-      <div class="metric-cell">
-        <div class="metric-cell-val" id="verificationMetricValue">1 fail</div>
-        <div class="metric-cell-label">Root Test Status</div>
-        <div class="metric-cell-sub" id="verificationMetricSub">870 passed in latest run</div>
-      </div>
-      <div class="metric-cell">
-        <div class="metric-cell-val purple">11</div>
-        <div class="metric-cell-label">Dispatch Work-Orders</div>
-        <div class="metric-cell-sub">DISPATCH_* only</div>
-      </div>
-      <div class="metric-cell">
-        <div class="metric-cell-val">71.2%</div>
-        <div class="metric-cell-label">Calibrated Win Rate</div>
-        <div class="metric-cell-sub">68.5% legacy / uncalibrated</div>
-      </div>
-      <div class="metric-cell">
-        <div class="metric-cell-val blue">23</div>
-        <div class="metric-cell-label">Benchmarked Systems</div>
-        <div class="metric-cell-sub">Methodology-first audit</div>
-      </div>
-      <div class="metric-cell">
-        <div class="metric-cell-val amber">6+1</div>
-        <div class="metric-cell-label">Signal Lanes</div>
-        <div class="metric-cell-sub">6 primary + anomaly feedback</div>
-      </div>
-      <div class="metric-cell">
-        <div class="metric-cell-val">$347.51</div>
-        <div class="metric-cell-label">Tracked Capital</div>
-        <div class="metric-cell-sub">launch blocked; no deployed capital</div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ═══════════ HOW IT WORKS ═══════════ -->
-<section class="section" id="architecture">
-  <div class="container">
-    <div class="sh">
-      <div class="sh-eyebrow">System Overview</div>
-      <h2>How the System Works Right Now</h2>
-      <p>Current operator mode is drift-audit plus shadow-first fast-market scanning with hard execution-validity gates. The architecture still targets autonomous execution, but live launch stays blocked until the running mode is reconciled and A-6/B-1 produce evidence that survives real-world fill and toxicity checks.</p>
-    </div>
-
-    <div class="pipeline-flow">
-      <div class="pipeline-node">
-        <div class="pipeline-node-title">1. SCAN</div>
-        <div class="pipeline-node-sub">Gamma + matched venues<br>&lt;24h candidates</div>
-      </div>
-      <div class="pipeline-arrow">&rarr;</div>
-      <div class="pipeline-node">
-        <div class="pipeline-node-title">2. RANK</div>
-        <div class="pipeline-node-sub">Liquidity, spread,<br>and venue overlap</div>
-      </div>
-      <div class="pipeline-arrow">&rarr;</div>
-      <div class="pipeline-node">
-        <div class="pipeline-node-title">3. FILTER</div>
-        <div class="pipeline-node-sub">A-6, B-1, VPIN,<br>maker-path kills</div>
-      </div>
-      <div class="pipeline-arrow">&rarr;</div>
-      <div class="pipeline-node">
-        <div class="pipeline-node-title">4. SIZE</div>
-        <div class="pipeline-node-sub">Quarter-Kelly caps<br>shadow-only sizing</div>
-      </div>
-      <div class="pipeline-arrow">&rarr;</div>
-      <div class="pipeline-node">
-        <div class="pipeline-node-title">5. RESTART</div>
-        <div class="pipeline-node-sub">Human approval<br>before live capital</div>
-      </div>
-    </div>
-
-    <h3 style="font-size:20px; font-weight:700; color:var(--text-bright); margin:48px 0 16px;">System Architecture</h3>
-    <div class="arch-grid">
-      <div class="arch-cell">
-        <div class="arch-cell-title">Data Sources</div>
-        <div class="arch-cell-detail">Gamma API<br>CLOB books<br>Kalshi when credentialed</div>
-      </div>
-      <div class="arch-cell">
-        <div class="arch-cell-title">Signal Lanes</div>
-        <div class="arch-cell-detail">LLM, flow, LMSR<br>cross-venue, A-6, B-1<br>+ anomaly feedback</div>
-      </div>
-      <div class="arch-cell">
-        <div class="arch-cell-title">Execution Gates</div>
-        <div class="arch-cell-detail">A-6 &lt; 0.95<br>B-1 deterministic pairs<br>VPIN + stale-book kills</div>
-      </div>
-      <div class="arch-cell">
-        <div class="arch-cell-title">Risk Posture</div>
-        <div class="arch-cell-detail">Quarter-Kelly cap<br>$5 per-leg / daily cap<br>maker-only path</div>
-      </div>
-      <div class="arch-cell">
-        <div class="arch-cell-title">Runtime State</div>
-        <div class="arch-cell-detail" id="archRuntimeState">Service active on VPS<br>launch blocked<br>0 live trades / 301 cycles</div>
-      </div>
-    </div>
-
-    <h3 style="font-size:20px; font-weight:700; color:var(--text-bright); margin:48px 0 16px;">Agent-Run vs. Traditional</h3>
-    <table class="cmp-table">
-      <thead>
-        <tr><th>Aspect</th><th>Quant Fund</th><th>AI-Assisted</th><th>Agent-Run (Elastifund)</th></tr>
-      </thead>
-      <tbody>
-        <tr><td>Trade decisions</td><td>Human</td><td>Human (with AI input)</td><td>AI agent</td></tr>
-        <tr><td>System design</td><td>Human</td><td>Human</td><td>Human</td></tr>
-        <tr><td>Human role</td><td>Decide + Execute</td><td>Decide + Build tools</td><td>Build + Document</td></tr>
-        <tr><td>AI role</td><td>Data processing</td><td>Recommendations</td><td>Autonomous execution</td></tr>
-        <tr><td>Override policy</td><td>Human overrides AI</td><td>Human overrides AI</td><td>Human improves system, never overrides trades</td></tr>
-      </tbody>
-    </table>
-  </div>
-</section>
-
-<hr class="divider">
-
-<!-- ═══════════ STRATEGY INTEL ═══════════ -->
-<section class="section" id="strategies">
-  <div class="container">
-    <div class="sh">
-      <div class="sh-eyebrow">Strategy Intelligence</div>
-      <h2>Full Strategy Pipeline</h2>
-      <p>131 catalog entries are tracked across deployed, building, structural alpha, re-evaluating, rejected, pre-rejected, and research-pipeline lanes. Every rejection still matters because the failure documentation is more valuable than false confidence.</p>
-    </div>
-    <div class="catalog-note">
-      Cycle 2 taxonomy: <span class="mono">7 deployed / 6 building / 2 structural alpha / 1 re-evaluating / 10 rejected / 8 pre-rejected / 97 research pipeline</span>. The expandable cards below are the currently published subset, not the complete canonical ledger.
-    </div>
-
-    <div class="tabs" id="strat-tabs">
-      <button class="tab active" data-tab="deployed">Published Deployed <span class="tab-count">6</span></button>
-      <button class="tab" data-tab="building">Published Building <span class="tab-count">6</span></button>
-      <button class="tab" data-tab="rejected">Published Rejected <span class="tab-count">10</span></button>
-      <button class="tab" data-tab="reeval">Re-Evaluating <span class="tab-count">1</span></button>
-    </div>
-
-    <!-- DEPLOYED TAB -->
-    <div class="tab-panel active" id="panel-deployed">
-      <table class="deploy-table">
-        <thead>
-          <tr><th>ID</th><th>Strategy</th><th>Accuracy</th><th>Description</th></tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>D1</td>
-            <td class="td-name">LLM Probability (Anti-Anchoring + Platt)</td>
-            <td class="td-acc">71.2%</td>
-            <td>Core estimation engine. AI estimates probability without seeing the market price, then Platt scaling corrects for systematic overconfidence.</td>
-          </tr>
-          <tr>
-            <td>D2</td>
-            <td class="td-name">Asymmetric YES/NO Thresholds</td>
-            <td class="td-acc">76.2%</td>
-            <td>Different edge thresholds for YES vs NO bets. NO-side has structural advantage (favorite-longshot bias), so we use a lower threshold (5%) vs YES (15%).</td>
-          </tr>
-          <tr>
-            <td>D3</td>
-            <td class="td-name">Category Routing</td>
-            <td class="td-acc">71.2%</td>
-            <td>Skip sports, crypto, and Fed rate markets where AI has no edge. Focus on politics, weather, economics where reasoning beats speed.</td>
-          </tr>
-          <tr>
-            <td>D4</td>
-            <td class="td-name">Fee-Aware Edge Gating</td>
-            <td class="td-acc mono" style="color:var(--text-dim)">N/A</td>
-            <td>Maker-only on fee-bearing markets. Never pay the 1&ndash;3.15% taker fee. If we can't get filled as a maker, we don't trade.</td>
-          </tr>
-          <tr>
-            <td>D5</td>
-            <td class="td-name">Quarter-Kelly Sizing</td>
-            <td class="td-acc mono" style="color:var(--text-dim)">N/A</td>
-            <td>Use 1/4 of the Kelly-optimal bet size. Sacrifices some growth for dramatically lower drawdowns (8% max vs 100% with full Kelly).</td>
-          </tr>
-          <tr>
-            <td>D6</td>
-            <td class="td-name">Velocity Scoring</td>
-            <td class="td-acc">71.7%</td>
-            <td>Rank trades by annualized edge / lockup time. Prioritize fast-resolving markets where capital turns over quickly.</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- BUILDING TAB -->
-    <div class="tab-panel" id="panel-building">
-      <div class="strategy-grid">
-        <div class="strat-card">
-          <div class="strat-card-header" onclick="toggleCard(this)">
-            <div class="strat-card-left">
-              <span class="strat-card-id strat-id-build">B1</span>
-              <span class="strat-card-title">Smart Wallet Flow Detector</span>
-              <div class="strat-card-meta">
-                <span>File: <span class="mono">bot/wallet_flow_detector.py</span></span>
-                <span>Tests: 0</span>
-              </div>
-            </div>
-            <span class="strat-card-status status-building">BUILDING</span>
-          </div>
-          <div class="strat-card-body">
-            <div class="strat-section"><p>Track whale wallets and smart money flow patterns to detect informed trading before price moves.</p></div>
-          </div>
-        </div>
-        <div class="strat-card">
-          <div class="strat-card-header" onclick="toggleCard(this)">
-            <div class="strat-card-left">
-              <span class="strat-card-id strat-id-build">B2</span>
-              <span class="strat-card-title">LLM Multi-Model Ensemble</span>
-              <div class="strat-card-meta">
-                <span>File: <span class="mono">bot/llm_ensemble.py</span></span>
-                <span>Tests: 34</span>
-              </div>
-            </div>
-            <span class="strat-card-status status-building">BUILDING</span>
-          </div>
-          <div class="strat-card-body">
-            <div class="strat-section"><p>Run Claude, GPT, and Groq in parallel. Aggregate via trimmed mean with consensus gating.</p></div>
-          </div>
-        </div>
-        <div class="strat-card">
-          <div class="strat-card-header" onclick="toggleCard(this)">
-            <div class="strat-card-left">
-              <span class="strat-card-id strat-id-build">B3</span>
-              <span class="strat-card-title">LMSR Bayesian Engine</span>
-              <div class="strat-card-meta">
-                <span>File: <span class="mono">bot/lmsr_engine.py</span></span>
-                <span>Tests: 45</span>
-              </div>
-            </div>
-            <span class="strat-card-status status-building">BUILDING</span>
-          </div>
-          <div class="strat-card-body">
-            <div class="strat-section"><p>Sequential Bayesian updating using LMSR pricing in log-space. 828ms target cycle time.</p></div>
-          </div>
-        </div>
-        <div class="strat-card">
-          <div class="strat-card-header" onclick="toggleCard(this)">
-            <div class="strat-card-left">
-              <span class="strat-card-id strat-id-build">B4</span>
-              <span class="strat-card-title">Cross-Platform Arb Scanner</span>
-              <div class="strat-card-meta">
-                <span>File: <span class="mono">bot/cross_platform_arb.py</span></span>
-                <span>Tests: 0</span>
-              </div>
-            </div>
-            <span class="strat-card-status status-building">BUILDING</span>
-          </div>
-          <div class="strat-card-body">
-            <div class="strat-section"><p>Scan identical markets across Polymarket and Kalshi. Detect fee-aware arbitrage opportunities.</p></div>
-          </div>
-        </div>
-        <div class="strat-card">
-          <div class="strat-card-header" onclick="toggleCard(this)">
-            <div class="strat-card-left">
-              <span class="strat-card-id strat-id-build">B5</span>
-              <span class="strat-card-title">Confirmation Layer</span>
-              <div class="strat-card-meta">
-                <span>File: <span class="mono">jj_live.py</span></span>
-                <span>Tests: 0</span>
-              </div>
-            </div>
-            <span class="strat-card-status status-building">BUILDING</span>
-          </div>
-          <div class="strat-card-body">
-            <div class="strat-section"><p>When 2+ signal sources agree, boost position sizing. Wired into the main execution loop.</p></div>
-          </div>
-        </div>
-        <div class="strat-card">
-          <div class="strat-card-header" onclick="toggleCard(this)">
-            <div class="strat-card-left">
-              <span class="strat-card-id strat-id-build">B6</span>
-              <span class="strat-card-title">RTDS Fast-Market Maker Engine</span>
-              <div class="strat-card-meta">
-                <span>File: <span class="mono">research/RTDS_MAKER_EDGE_IMPLEMENTATION.md</span></span>
-                <span>Tests: 0</span>
-              </div>
-            </div>
-            <span class="strat-card-status status-building">BUILDING</span>
-          </div>
-          <div class="strat-card-body">
-            <div class="strat-section"><p>3 simultaneous WebSocket feeds (Polymarket RTDS, CLOB, Binance). Maker-only post-only execution with signal generation in the final 60 seconds of each candle.</p></div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- REJECTED TAB -->
-    <div class="tab-panel" id="panel-rejected">
-      <div class="strategy-grid">
-
-        <div class="strat-card">
-          <div class="strat-card-header" onclick="toggleCard(this)">
-            <div class="strat-card-left">
-              <span class="strat-card-id strat-id-reject">R1</span>
-              <span class="strat-card-title">Residual Horizon Fair Value</span>
-              <span class="strat-card-type">(Statistical)</span>
-              <div class="strat-card-meta">
-                <span>Signals: 8</span><span>Win Rate: 50.00%</span><span>Tested: Mar 4, 2026</span>
-              </div>
-            </div>
-            <span class="strat-card-status status-rejected">REJECTED</span>
-          </div>
-          <div class="strat-card-body">
-            <div class="kill-reason">Kill: Insufficient signal count, negative OOS EV</div>
-            <div class="strat-section">
-              <div class="strat-section-label">Hypothesis</div>
-              <p>Markets misprice the residual time value of contracts approaching expiration. By modeling fair value based on remaining time and current probability, we can identify systematic over/under-pricing.</p>
-            </div>
-            <div class="strat-section">
-              <div class="strat-section-label">What Happened</div>
-              <p>Only 8 signals generated in the entire backtest period. Win rate was exactly 50% &mdash; indistinguishable from random. The edge, if it exists, is too rare to be tradeable.</p>
-            </div>
-            <div class="strat-lesson">
-              <p>Residual time value mispricing may exist but is corrected too quickly by market makers. The signal is too sparse for systematic trading.</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="strat-card">
-          <div class="strat-card-header" onclick="toggleCard(this)">
-            <div class="strat-card-left">
-              <span class="strat-card-id strat-id-reject">R2</span>
-              <span class="strat-card-title">Volatility Regime Mismatch</span>
-              <span class="strat-card-type">(Statistical)</span>
-              <div class="strat-card-meta">
-                <span>Signals: 34</span><span>Win Rate: 32.35%</span><span>Tested: Mar 6, 2026</span>
-              </div>
-            </div>
-            <span class="strat-card-status status-rejected">REJECTED</span>
-          </div>
-          <div class="strat-card-body">
-            <div class="kill-reason">Kill: Negative EV, decay over time</div>
-            <div class="strat-section">
-              <div class="strat-section-label">Hypothesis</div>
-              <p>When implied volatility diverges significantly from realized volatility, the market is mispricing uncertainty.</p>
-            </div>
-            <div class="strat-section">
-              <div class="strat-section-label">What Happened</div>
-              <p>34 signals generated. Win rate was 32.35% &mdash; significantly worse than random. The strategy showed decay over time, suggesting any initial signal was spurious.</p>
-            </div>
-            <div class="strat-lesson">
-              <p>Volatility regime shifts in prediction markets are priced in faster than our signal can react. Unlike traditional options markets, prediction market spreads don't cleanly map to implied volatility.</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="strat-card">
-          <div class="strat-card-header" onclick="toggleCard(this)">
-            <div class="strat-card-left">
-              <span class="strat-card-id strat-id-reject">R3</span>
-              <span class="strat-card-title">Cross-Timeframe Constraint</span>
-              <span class="strat-card-type">(Structural)</span>
-              <div class="strat-card-meta">
-                <span>Signals: 21</span><span>Win Rate: 0.00%</span><span>Tested: Mar 5, 2026</span>
-              </div>
-            </div>
-            <span class="strat-card-status status-rejected">REJECTED</span>
-          </div>
-          <div class="strat-card-body">
-            <div class="kill-reason">Kill: Negative EV, cost stress failure</div>
-            <div class="strat-section">
-              <div class="strat-section-label">Hypothesis</div>
-              <p>Related markets with different timeframes create arbitrage opportunities when their implied probabilities are mathematically inconsistent.</p>
-            </div>
-            <div class="strat-section">
-              <div class="strat-section-label">What Happened</div>
-              <p>21 signals found. Zero wins. Transaction costs consumed any theoretical edge. The mathematical inconsistencies exist but are smaller than the cost of trading.</p>
-            </div>
-            <div class="strat-lesson">
-              <p>Cross-timeframe constraints are monitored by sophisticated participants. Any detectable inconsistency is too small to survive transaction costs.</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="strat-card">
-          <div class="strat-card-header" onclick="toggleCard(this)">
-            <div class="strat-card-left">
-              <span class="strat-card-id strat-id-reject">R4</span>
-              <span class="strat-card-title">Chainlink vs Binance Basis Lag</span>
-              <span class="strat-card-type">(Crypto Oracle)</span>
-              <div class="strat-card-meta">
-                <span>Signals: N/A</span><span>Win Rate: N/A</span><span>Tested: Mar 5, 2026</span>
-              </div>
-            </div>
-            <span class="strat-card-status status-rejected">REJECTED</span>
-          </div>
-          <div class="strat-card-body">
-            <div class="kill-reason">Kill: 1.56% taker fee exceeds spread</div>
-            <div class="strat-section">
-              <div class="strat-section-label">Hypothesis</div>
-              <p>Price differences between Chainlink oracle feeds and Binance spot prices create a tradeable lag in crypto prediction markets.</p>
-            </div>
-            <div class="strat-section">
-              <div class="strat-section-label">What Happened</div>
-              <p>The typical Chainlink-Binance basis is 0.3-0.8%. Polymarket's taker fee is 1.56%. The spread never exceeds the cost.</p>
-            </div>
-            <div class="strat-lesson">
-              <p>Crypto oracle arbitrage is a well-known edge in DeFi. Prediction market fees make it unviable. This is a solved problem.</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="strat-card">
-          <div class="strat-card-header" onclick="toggleCard(this)">
-            <div class="strat-card-left">
-              <span class="strat-card-id strat-id-reject">R5</span>
-              <span class="strat-card-title">Mean Reversion After Extreme</span>
-              <span class="strat-card-type">(Statistical)</span>
-              <div class="strat-card-meta">
-                <span>Signals: 0</span><span>Win Rate: N/A</span><span>Tested: Mar 4, 2026</span>
-              </div>
-            </div>
-            <span class="strat-card-status status-rejected">REJECTED</span>
-          </div>
-          <div class="strat-card-body">
-            <div class="kill-reason">Kill: Insufficient signal count</div>
-            <div class="strat-section">
-              <div class="strat-section-label">Hypothesis</div>
-              <p>After extreme price movements (&gt;20% in &lt;1 hour), prediction markets systematically overshoot and then revert.</p>
-            </div>
-            <div class="strat-section">
-              <div class="strat-section-label">What Happened</div>
-              <p>Extreme moves are extremely rare in prediction markets. Not enough signals generated to test the hypothesis.</p>
-            </div>
-            <div class="strat-lesson">
-              <p>Prediction markets move slowly compared to financial markets. The 'extreme move' threshold that would generate genuine mispricing is too low to represent genuine mispricing.</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="strat-card">
-          <div class="strat-card-header" onclick="toggleCard(this)">
-            <div class="strat-card-left">
-              <span class="strat-card-id strat-id-reject">R6</span>
-              <span class="strat-card-title">Time-of-Day Session Effects</span>
-              <span class="strat-card-type">(Temporal)</span>
-              <div class="strat-card-meta">
-                <span>Signals: 0</span><span>Win Rate: N/A</span><span>Tested: Mar 4, 2026</span>
-              </div>
-            </div>
-            <span class="strat-card-status status-rejected">REJECTED</span>
-          </div>
-          <div class="strat-card-body">
-            <div class="kill-reason">Kill: No significant pattern</div>
-            <div class="strat-section">
-              <div class="strat-section-label">Hypothesis</div>
-              <p>Prediction markets have systematic time-of-day effects (e.g., more volatile during US market hours, calmer overnight).</p>
-            </div>
-            <div class="strat-section">
-              <div class="strat-section-label">What Happened</div>
-              <p>No statistically significant time-of-day patterns found across 532 markets.</p>
-            </div>
-            <div class="strat-lesson">
-              <p>Unlike equity markets, prediction markets don't have clear session boundaries. Crypto-native 24/7 trading smooths out temporal effects.</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="strat-card">
-          <div class="strat-card-header" onclick="toggleCard(this)">
-            <div class="strat-card-left">
-              <span class="strat-card-id strat-id-reject">R7</span>
-              <span class="strat-card-title">Order Book Imbalance</span>
-              <span class="strat-card-type">(Microstructure)</span>
-              <div class="strat-card-meta">
-                <span>Signals: 5</span><span>Win Rate: 0.00%</span><span>Tested: Mar 6, 2026</span>
-              </div>
-            </div>
-            <span class="strat-card-status status-rejected">REJECTED</span>
-          </div>
-          <div class="strat-card-body">
-            <div class="kill-reason">Kill: Partial data (CLOB 404s), negative EV</div>
-            <div class="strat-section">
-              <div class="strat-section-label">Hypothesis</div>
-              <p>When the order book is heavily skewed (e.g., 5x more bids than asks), the price will move in the direction of the imbalance.</p>
-            </div>
-            <div class="strat-section">
-              <div class="strat-section-label">What Happened</div>
-              <p>Only 5 signals generated due to CLOB API returning 404 for many markets. All 5 lost money.</p>
-            </div>
-            <div class="strat-lesson">
-              <p>Polymarket's CLOB API has limited availability. Order book imbalance in prediction markets behaves differently than in equity markets &mdash; informed traders may deliberately lean one direction.</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="strat-card">
-          <div class="strat-card-header" onclick="toggleCard(this)">
-            <div class="strat-card-left">
-              <span class="strat-card-id strat-id-reject">R8</span>
-              <span class="strat-card-title">ML Feature Discovery</span>
-              <span class="strat-card-type">(Machine Learning)</span>
-              <div class="strat-card-meta">
-                <span>Signals: N/A</span><span>Win Rate: N/A</span><span>Tested: Mar 5, 2026</span>
-              </div>
-            </div>
-            <span class="strat-card-status status-rejected">REJECTED</span>
-          </div>
-          <div class="strat-card-body">
-            <div class="kill-reason">Kill: No features survived walk-forward</div>
-            <div class="strat-section">
-              <div class="strat-section-label">Hypothesis</div>
-              <p>An ML model trained on 83 features can discover non-linear patterns that simple rules miss.</p>
-            </div>
-            <div class="strat-section">
-              <div class="strat-section-label">What Happened</div>
-              <p>Every feature combination that showed in-sample significance failed out-of-sample. The signal-to-noise ratio is too low for ML to extract reliable patterns from 532 markets.</p>
-            </div>
-            <div class="strat-lesson">
-              <p>532 markets is insufficient data for ML feature discovery. The curse of dimensionality with 83 features requires orders of magnitude more data. Simple, theory-driven strategies outperform brute-force ML at this scale.</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="strat-card">
-          <div class="strat-card-header" onclick="toggleCard(this)">
-            <div class="strat-card-left">
-              <span class="strat-card-id strat-id-reject">R9</span>
-              <span class="strat-card-title">Latency Arb (Crypto Candles)</span>
-              <span class="strat-card-type">(Speed)</span>
-              <div class="strat-card-meta">
-                <span>Signals: 0</span><span>Win Rate: N/A</span><span>Tested: Mar 5, 2026</span>
-              </div>
-            </div>
-            <span class="strat-card-status status-rejected">REJECTED</span>
-          </div>
-          <div class="strat-card-body">
-            <div class="kill-reason">Kill: 1.56% taker fee kills any speed edge</div>
-            <div class="strat-section">
-              <div class="strat-section-label">Hypothesis</div>
-              <p>By monitoring crypto price candles faster than the market, we can trade prediction markets before they adjust.</p>
-            </div>
-            <div class="strat-section">
-              <div class="strat-section-label">What Happened</div>
-              <p>Any speed edge is consumed by the 1.56% taker fee. To profit, you'd need to capture &gt;1.56% per trade, but crypto prediction markets adjust within seconds.</p>
-            </div>
-            <div class="strat-lesson">
-              <p>Speed-based arbitrage on Polymarket is only viable with maker orders (0% fee). But maker orders don't guarantee fills, defeating the purpose of latency arbitrage.</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="strat-card">
-          <div class="strat-card-header" onclick="toggleCard(this)">
-            <div class="strat-card-left">
-              <span class="strat-card-id strat-id-reject">R10</span>
-              <span class="strat-card-title">NOAA Weather Bracket Arb</span>
-              <span class="strat-card-type">(Domain-Specific)</span>
-              <div class="strat-card-meta">
-                <span>Signals: 0</span><span>Win Rate: 27-35%</span><span>Tested: Mar 6, 2026</span>
-              </div>
-            </div>
-            <span class="strat-card-status status-rejected">REJECTED</span>
-          </div>
-          <div class="strat-card-body">
-            <div class="kill-reason">Kill: NWS rounding makes model accuracy insufficient</div>
-            <div class="strat-section">
-              <div class="strat-section-label">Hypothesis</div>
-              <p>National Weather Service forecast data can predict weather bracket outcomes more accurately than the market.</p>
-            </div>
-            <div class="strat-section">
-              <div class="strat-section-label">What Happened</div>
-              <p>NWS forecasts are rounded to whole degrees. Weather brackets on Polymarket are 2-5&deg;F wide. The rounding error in NWS data is comparable to the bracket width, making model accuracy insufficient.</p>
-            </div>
-            <div class="strat-lesson">
-              <p>Weather prediction markets require sub-degree accuracy. Public weather APIs don't provide it. Raw ensemble model output (GFS, ECMWF) might work but requires specialized meteorological infrastructure.</p>
-            </div>
-          </div>
-        </div>
-
-      </div>
-    </div>
-
-    <!-- RE-EVALUATING TAB -->
-    <div class="tab-panel" id="panel-reeval">
-      <div class="strategy-grid">
-        <div class="strat-card open">
-          <div class="strat-card-header" onclick="toggleCard(this)">
-            <div class="strat-card-left">
-              <span class="strat-card-id strat-id-reeval">RE1</span>
-              <span class="strat-card-title">Chainlink vs Binance Basis Lag (MAKER-ONLY)</span>
-              <div class="strat-card-meta">
-                <span>Originally: R4</span><span>New evidence from Dispatch #77</span>
-              </div>
-            </div>
-            <span class="strat-card-status status-reeval">RE-EVALUATING</span>
-          </div>
-          <div class="strat-card-body">
-            <div class="new-evidence">New Evidence: Maker-only execution eliminates the fee problem</div>
-            <div class="strat-section">
-              <div class="strat-section-label">Original Kill</div>
-              <p style="text-decoration: line-through; color: var(--accent-red);">1.56% taker fee exceeds the 0.3-0.8% spread</p>
-            </div>
-            <div class="strat-section">
-              <div class="strat-section-label">New Evidence</div>
-              <p>Gemini Dispatch #77 confirms maker-only execution revives this edge. Maker orders = 0% fee + 20% daily rebate pool. Includes: tie-band convexity from &gt;= resolution rule, polynomial fee model, and Shadow Validator architecture for 72-hour empirical testing.</p>
-            </div>
-            <div class="strat-lesson">
-              <p>A strategy we rejected, publicly documented the rejection, then revived with new evidence. The honest process is the content.</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-  </div>
-</section>
-
-<hr class="divider">
-
-<!-- ═══════════ BUILD DIARY ═══════════ -->
-<section class="section" id="diary">
-  <div class="container">
-    <div class="sh">
-      <div class="sh-eyebrow">Build Diary</div>
-      <h2>The Complete Record</h2>
-      <p>A reverse-chronological log of everything the system does and learns. Every decision documented. Every failure recorded.</p>
-    </div>
-
-    <div class="timeline">
-
-      <div class="tl-entry latest">
-        <div class="tl-date">March 9, 2026 &mdash; Service/Launch Drift Reconciled</div>
-        <div class="tl-card">
-          <div class="tl-title">Remote service was active. Launch posture stayed blocked.</div>
-          <div class="tl-body" id="latestTimelineBody">Confirmed $347.51 tracked capital, a current root verification status of 1 failed / 870 passed, a fast-market pipeline verdict of REJECT ALL, wallet-flow ready with 80 scored wallets, and 0 live trades after 301 cycles. The homepage now hydrates its runtime card from repo artifacts instead of relying only on handwritten numbers.</div>
-          <div class="tl-sections">
-            <div><div class="tl-section-label">System</div><p id="latestTimelineSystem"><span class="mono">jj-live.service</span> was observed active at 2026-03-09 00:44:19 UTC, but runtime truth still blocks live launch because root tests are failing, there are no closed trades, no deployed capital, and A-6 / B-1 have not cleared.</p></div>
-            <div><div class="tl-section-label">Website</div><p>Homepage metrics, service-state copy, public edge counts, freshness stamps, and footer metadata were rewritten so the public site shows both uptime and blocked launch posture without claiming a live restart.</p></div>
-          </div>
-          <div class="tl-stats">
-            <span><span class="tl-stat-key">Capital:</span><span class="tl-stat-val">$347.51</span></span>
-            <span><span class="tl-stat-key">Tests:</span><span class="tl-stat-val" id="latestTimelineTests">1 fail / 870 pass</span></span>
-            <span><span class="tl-stat-key">Cycles:</span><span class="tl-stat-val" id="latestTimelineCycles">301</span></span>
-            <span><span class="tl-stat-key">Service:</span><span class="tl-stat-val">active</span></span>
-          </div>
-          <div class="tl-insight">
-            <div class="tl-insight-label">What We Learned</div>
-            <p>An active systemd unit is not the same thing as permission to trade. Launch posture has to follow evidence gates, not uptime.</p>
-          </div>
-        </div>
-      </div>
-
-      <div class="tl-entry">
-        <div class="tl-date">March 7, 2026 &mdash; Cycle 0 Complete</div>
-        <div class="tl-card">
-          <div class="tl-title">Flywheel Cycle 0 Complete. 100 New Strategies Queued.</div>
-          <div class="tl-body">Launched DEEP_RESEARCH_PROMPT_v3: 100 new strategy hypotheses under investigation. V6 website specification written. Gemini Dispatch #77 revives R4.</div>
-          <div class="tl-sections">
-            <div><div class="tl-section-label">Agent</div><p>Generated Dispatch #77: 8,000-word analysis of structural edge in 15-minute BTC markets. Led to RE1 reclassification.</p></div>
-            <div><div class="tl-section-label">John</div><p>Wrote DEEP_RESEARCH_PROMPT_v3: systematic 100-strategy research prompt. Updated COMMAND_NODE to v1.1.0.</p></div>
-          </div>
-          <div class="tl-stats">
-            <span><span class="tl-stat-key">Strategies:</span><span class="tl-stat-val">52</span></span>
-            <span><span class="tl-stat-key">Hypotheses:</span><span class="tl-stat-val">100</span></span>
-            <span><span class="tl-stat-key">Dispatches:</span><span class="tl-stat-val">77</span></span>
-            <span><span class="tl-stat-key">Tests:</span><span class="tl-stat-val">345</span></span>
-          </div>
-          <div class="tl-insight">
-            <div class="tl-insight-label">What We Learned</div>
-            <p>The scientific method works even in trading: reject a hypothesis, document the rejection, then revive it when new evidence changes the premises.</p>
-          </div>
-        </div>
-      </div>
-
-      <div class="tl-entry">
-        <div class="tl-date">March 6, 2026 &mdash; Flywheel Formalized</div>
-        <div class="tl-card">
-          <div class="tl-title">Flywheel Strategy Written. 30 Strategies in Pipeline.</div>
-          <div class="tl-body">The 6-phase cycle (Research &rarr; Implement &rarr; Test &rarr; Record &rarr; Publish &rarr; Repeat) is now the operating model.</div>
-          <div class="tl-stats">
-            <span><span class="tl-stat-key">Pipeline:</span><span class="tl-stat-val">30</span></span>
-            <span><span class="tl-stat-key">Hypotheses:</span><span class="tl-stat-val">100</span></span>
-            <span><span class="tl-stat-key">Tested:</span><span class="tl-stat-val">20</span></span>
-            <span><span class="tl-stat-key">Rejected:</span><span class="tl-stat-val">10</span></span>
-          </div>
-          <div class="tl-insight">
-            <div class="tl-insight-label">What We Learned</div>
-            <p>The most valuable output isn't trading returns &mdash; it's the systematic documentation of what works and what doesn't in agentic trading. The website is the credential. The research is the product.</p>
-          </div>
-        </div>
-      </div>
-
-      <div class="tl-entry">
-        <div class="tl-date">March 5, 2026 &mdash; Infrastructure Deep Dive</div>
-        <div class="tl-card">
-          <div class="tl-title">Dublin VPS Latency Confirmed Competitive. WebSocket is the Real Upgrade.</div>
-          <div class="tl-body">Investigated the full latency hierarchy: REST polling (seconds) &gt;&gt; API calls (100ms) &gt;&gt; network (5-10ms) &gt;&gt; compute (1ms). The real bottleneck is stale REST polling.</div>
-          <div class="tl-stats">
-            <span><span class="tl-stat-key">Dublin &rarr; CLOB:</span><span class="tl-stat-val">5-10ms</span></span>
-            <span><span class="tl-stat-key">Poll interval:</span><span class="tl-stat-val">5 min</span></span>
-            <span><span class="tl-stat-key">WS target:</span><span class="tl-stat-val">&lt;100ms</span></span>
-            <span><span class="tl-stat-key">Tests:</span><span class="tl-stat-val">340</span></span>
-          </div>
-          <div class="tl-insight">
-            <div class="tl-insight-label">What We Learned</div>
-            <p>Geography matters less than architecture. Moving closer would save 30-50ms of latency &mdash; irrelevant when our poll interval is 5 minutes. The real improvement is WebSocket streaming.</p>
-          </div>
-        </div>
-      </div>
-
-      <div class="tl-entry">
-        <div class="tl-date">March 4, 2026 &mdash; Fee Structure Discovery</div>
-        <div class="tl-card">
-          <div class="tl-title">Polynomial Fee Model Documented. Maker-Only Eliminates the Problem.</div>
-          <div class="tl-body">Documented the complete polynomial fee model for Polymarket. feeRate=0.25, exponent=2. Three of our ten rejected strategies were killed primarily by fees.</div>
-          <div class="tl-stats">
-            <span><span class="tl-stat-key">Max taker fee:</span><span class="tl-stat-val">1.56%</span></span>
-            <span><span class="tl-stat-key">Maker fee:</span><span class="tl-stat-val">0%</span></span>
-            <span><span class="tl-stat-key">Maker rebate:</span><span class="tl-stat-val">20% daily pool</span></span>
-          </div>
-          <div class="tl-insight">
-            <div class="tl-insight-label">What We Learned</div>
-            <p>The fee structure is the single most important factor in strategy viability on Polymarket. Three strategies (R4, R9, R3) were killed primarily by fees. Understanding the exact fee formula &mdash; and that maker orders avoid it entirely &mdash; opens up strategies we previously dismissed.</p>
-          </div>
-        </div>
-      </div>
-
-      <div class="tl-entry">
-        <div class="tl-date">March 3, 2026 &mdash; Maker/Taker Analysis</div>
-        <div class="tl-card">
-          <div class="tl-title">72.1M Trades Analyzed. Makers Earn +1.12% Excess.</div>
-          <div class="tl-body">Deep research into real-time data streaming and maker-only execution. The maker/taker spread is a 2.24% round-trip difference.</div>
-          <div class="tl-stats">
-            <span><span class="tl-stat-key">Trades analyzed:</span><span class="tl-stat-val">72.1M</span></span>
-            <span><span class="tl-stat-key">Maker excess:</span><span class="tl-stat-val">+1.12%</span></span>
-            <span><span class="tl-stat-key">Taker deficit:</span><span class="tl-stat-val">-1.12%</span></span>
-          </div>
-        </div>
-      </div>
-
-      <div class="tl-entry">
-        <div class="tl-date">March 2, 2026 &mdash; Strategy Testing Complete</div>
-        <div class="tl-card">
-          <div class="tl-title">9 of 10 Initial Hypotheses Rejected. Category Routing + Asymmetric Thresholds Survive.</div>
-          <div class="tl-body">Systematic testing rejects 9 out of 10 initial hypotheses. Win rate improved from 64.9% to 71.2% with the two additions.</div>
-          <div class="tl-stats">
-            <span><span class="tl-stat-key">Tested:</span><span class="tl-stat-val">10</span></span>
-            <span><span class="tl-stat-key">Rejected:</span><span class="tl-stat-val">9</span></span>
-            <span><span class="tl-stat-key">Win rate:</span><span class="tl-stat-val">64.9% &rarr; 71.2%</span></span>
-          </div>
-          <div class="tl-insight">
-            <div class="tl-insight-label">What We Learned</div>
-            <p>Most trading strategies don't work. This is the normal outcome &mdash; and it's valuable information. Statistical patterns (mean reversion, volatility regime, time-of-day) and speed-based approaches don't work for AI prediction market trading. What works: better estimation, better filtering, and better sizing.</p>
-          </div>
-        </div>
-      </div>
-
-      <div class="tl-entry">
-        <div class="tl-date">March 1, 2026 &mdash; Edge Discovery Pipeline</div>
-        <div class="tl-card">
-          <div class="tl-title">Automated Testing Framework Built. 6 Kill Rules Defined.</div>
-          <div class="tl-body">Automated hypothesis testing with kill rules: minimum signal count, positive OOS EV, win rate &gt; break-even, cost stress survival, temporal stability, drawdown limit. Walk-forward methodology: 70/30 temporal split.</div>
-          <div class="tl-stats">
-            <span><span class="tl-stat-key">Kill rules:</span><span class="tl-stat-val">6</span></span>
-            <span><span class="tl-stat-key">Queued:</span><span class="tl-stat-val">3</span></span>
-            <span><span class="tl-stat-key">Walk-forward:</span><span class="tl-stat-val">70/30</span></span>
-          </div>
-          <div class="tl-insight">
-            <div class="tl-insight-label">What We Learned</div>
-            <p>The kill rules are the most important part of the system. Without them, it's easy to convince yourself any strategy works. Kill rules must be defined BEFORE testing, not after seeing results. Pre-registration prevents data mining.</p>
-          </div>
-        </div>
-      </div>
-
-      <div class="tl-entry">
-        <div class="tl-date">February 28, 2026 &mdash; Signal Infrastructure</div>
-        <div class="tl-card">
-          <div class="tl-title">Four Independent Signal Sources Online. 142 Tests Passing.</div>
-          <div class="tl-body">LLM Ensemble, Wallet Flow, LMSR Bayesian, and Cross-Platform Arb modules all passing tests. Confirmation layer designed.</div>
-          <div class="tl-stats">
-            <span><span class="tl-stat-key">Signals:</span><span class="tl-stat-val">4</span></span>
-            <span><span class="tl-stat-key">Tests:</span><span class="tl-stat-val">142</span></span>
-            <span><span class="tl-stat-key">LLM tests:</span><span class="tl-stat-val">34</span></span>
-            <span><span class="tl-stat-key">LMSR tests:</span><span class="tl-stat-val">45</span></span>
-          </div>
-        </div>
-      </div>
-
-      <div class="tl-entry">
-        <div class="tl-date">February 27, 2026 &mdash; Position Sizing</div>
-        <div class="tl-card">
-          <div class="tl-title">Quarter-Kelly Selected. 0% Ruin Probability, 8% Max Drawdown.</div>
-          <div class="tl-body">Implemented Kelly criterion position sizing. Full Kelly produces insane theoretical growth but 36.9% ruin probability. Quarter-Kelly is the standard professional choice.</div>
-          <div class="tl-stats">
-            <span><span class="tl-stat-key">Fraction:</span><span class="tl-stat-val">0.25x</span></span>
-            <span><span class="tl-stat-key">Ruin:</span><span class="tl-stat-val">0.0%</span></span>
-            <span><span class="tl-stat-key">Max DD:</span><span class="tl-stat-val">8%</span></span>
-            <span><span class="tl-stat-key">Tests:</span><span class="tl-stat-val">89</span></span>
-          </div>
-        </div>
-      </div>
-
-      <div class="tl-entry">
-        <div class="tl-date">February 26, 2026 &mdash; First Backtest</div>
-        <div class="tl-card">
-          <div class="tl-title">Baseline Established: 64.9% Win Rate, 0.2391 Brier Score.</div>
-          <div class="tl-body">First full backtest across 532 resolved markets. The AI has a real but thin edge. 64.9% win rate with a Brier of 0.2391 &mdash; barely better than a coin flip in calibration terms. But "barely better" compounds.</div>
-          <div class="tl-stats">
-            <span><span class="tl-stat-key">Markets:</span><span class="tl-stat-val">532</span></span>
-            <span><span class="tl-stat-key">Win rate:</span><span class="tl-stat-val">64.5%</span></span>
-            <span><span class="tl-stat-key">Brier:</span><span class="tl-stat-val">0.2391</span></span>
-            <span><span class="tl-stat-key">P&L:</span><span class="tl-stat-val">$275.30</span></span>
-          </div>
-        </div>
-      </div>
-
-      <div class="tl-entry">
-        <div class="tl-date">February 2026 &mdash; Day 1</div>
-        <div class="tl-card">
-          <div class="tl-title">Connected to Polymarket. 847 Active Markets Discovered.</div>
-          <div class="tl-body">Set up the repository. Connected to the Polymarket Gamma API. Pulled market data for the first time. Wrote the initial market scanner. Started with $0 and an API key.</div>
-          <div class="tl-stats">
-            <span><span class="tl-stat-key">Markets:</span><span class="tl-stat-val">847</span></span>
-            <span><span class="tl-stat-key">APIs tested:</span><span class="tl-stat-val">4</span></span>
-            <span><span class="tl-stat-key">Capital:</span><span class="tl-stat-val">$0</span></span>
-          </div>
-        </div>
-      </div>
-
-    </div>
-  </div>
-</section>
-
-<hr class="divider">
-
-<!-- ═══════════ EDUCATION CENTER ═══════════ -->
-<section class="section" id="education">
-  <div class="container">
-    <div class="sh">
-      <div class="sh-eyebrow">Education Center</div>
-      <h2>Lessons from the Lab</h2>
-      <p>Organized by difficulty. Each has a 30-second TL;DR and a technical deep dive. Derived from real testing, not theory.</p>
-    </div>
-
-    <div class="edu-grid">
-      <div class="edu-card">
-        <span class="edu-card-difficulty diff-beginner">Beginner</span>
-        <h3>What Are Prediction Markets?</h3>
-        <div class="edu-card-tldr">Markets where you bet on whether real-world events will happen. Prices reflect the crowd's probability estimate. If you're more accurate than the crowd, you profit.</div>
-        <div class="edu-card-deep">Unlike sports betting, prediction markets have no house edge on maker orders. The market itself is the counterparty. This changes the entire cost structure of systematic trading.</div>
-      </div>
-      <div class="edu-card">
-        <span class="edu-card-difficulty diff-beginner">Beginner</span>
-        <h3>Anti-Anchoring: Why the AI Can't See the Price</h3>
-        <div class="edu-card-tldr">If the AI sees the current market price before estimating probability, it unconsciously anchors to that price. We blind the AI to prevent the most common forecasting bias.</div>
-        <div class="edu-card-deep">Anchoring bias is well-documented in psychology and quantitative finance. Our backtests confirmed it: AI estimates made with price visibility had 8-12% higher correlation with current prices than blind estimates. The blind estimate is worse at predicting the current price but better at predicting the outcome.</div>
-      </div>
-      <div class="edu-card">
-        <span class="edu-card-difficulty diff-intermediate">Intermediate</span>
-        <h3>The Maker/Taker Fee Asymmetry</h3>
-        <div class="edu-card-tldr">On Polymarket, takers pay up to 1.56% per trade. Makers pay 0%. This single fact killed 3 of our 10 initial strategies and revived one we'd rejected.</div>
-        <div class="edu-card-deep">The fee formula is polynomial: Fee = C &times; p &times; 0.25 &times; (p(1-p))^2. Maximum at p=0.50. Analysis of 72.1M trades shows makers earn +1.12% excess vs takers at -1.12%. A 2.24% round-trip difference. Every strategy must be evaluated under maker-only assumptions.</div>
-      </div>
-      <div class="edu-card">
-        <span class="edu-card-difficulty diff-intermediate">Intermediate</span>
-        <h3>Kelly Criterion: Why We Use Quarter-Kelly</h3>
-        <div class="edu-card-tldr">Full Kelly maximizes long-term growth but with 36.9% ruin probability when your edge estimates are uncertain. Quarter-Kelly sacrifices some growth for 0% ruin and 8% max drawdown.</div>
-        <div class="edu-card-deep">Kelly is optimal only when you know your exact edge. We don't. Our edge estimates have uncertainty, and full Kelly amplifies that uncertainty into catastrophic drawdowns. Quarter-Kelly is the standard choice in professional quant trading for exactly this reason.</div>
-      </div>
-      <div class="edu-card">
-        <span class="edu-card-difficulty diff-intermediate">Intermediate</span>
-        <h3>Kill Rules: Pre-Registered Hypothesis Testing</h3>
-        <div class="edu-card-tldr">Define your rejection criteria BEFORE testing. This prevents data mining and self-deception. Our 6 kill rules are published before every experiment runs.</div>
-        <div class="edu-card-deep">Kill rules: minimum signal count, positive OOS expected value, win rate above break-even, cost stress survival, temporal stability, and maximum drawdown limit. Walk-forward validation with 70/30 temporal split ensures no lookahead bias. If a strategy fails any kill rule, it's rejected regardless of how promising the in-sample results look.</div>
-      </div>
-      <div class="edu-card">
-        <span class="edu-card-difficulty diff-advanced">Advanced</span>
-        <h3>Favorite-Longshot Bias in Prediction Markets</h3>
-        <div class="edu-card-tldr">The market systematically overprices longshots (YES at low probability) and underprices favorites (NO at high probability). We exploit this with asymmetric thresholds: 5% for NO, 15% for YES.</div>
-        <div class="edu-card-deep">This bias is well-documented in horse racing, sports betting, and now prediction markets. The mechanism: retail participants are drawn to cheap YES contracts (low price, high potential payout). This inflates YES prices and depresses NO prices. Our asymmetric thresholds improved win rate from 64.9% to 76.2% on NO-side bets.</div>
-      </div>
-      <div class="edu-card">
-        <span class="edu-card-difficulty diff-advanced">Advanced</span>
-        <h3>LMSR Bayesian Pricing</h3>
-        <div class="edu-card-tldr">Logarithmic Market Scoring Rule provides a theoretically grounded way to update probability estimates as new evidence arrives. We use it as a signal source alongside the LLM ensemble.</div>
-        <div class="edu-card-deep">LMSR, invented by Robin Hanson, is the pricing mechanism behind many prediction markets. We reverse-engineer it as a signal: by tracking how the market's LMSR-implied probability changes in response to order flow, we can distinguish informed trading from noise. 828ms target cycle time for real-time Bayesian updating in log-space.</div>
-      </div>
-      <div class="edu-card">
-        <span class="edu-card-difficulty diff-advanced">Advanced</span>
-        <h3>Why Most Quant Strategies Fail on Prediction Markets</h3>
-        <div class="edu-card-tldr">We tested 10 families of traditional quant strategies. 9 failed. Statistical patterns, speed-based approaches, and brute-force ML all break down because prediction markets aren't financial markets.</div>
-        <div class="edu-card-deep">Prediction markets have fundamentally different microstructure: no continuous price discovery, binary outcomes, event-driven resolution, and crypto-native 24/7 trading. Strategies designed for equity markets (mean reversion, momentum, volatility trading) assume properties that don't exist here. What works: domain-specific reasoning, probabilistic calibration, and structural edges in fee mechanics.</div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<hr class="divider">
-
-<!-- ═══════════ PLATFORM VISION ═══════════ -->
-<section class="section" id="vision">
-  <div class="container">
-    <div class="sh">
-      <div class="sh-eyebrow">Platform Vision</div>
-      <h2>Elastifund.io: Where This Is Going</h2>
-      <p>From single trading agent to federated intelligence platform. The architecture scales from one agent to thousands &mdash; and that changes everything.</p>
-    </div>
-
-    <div class="vision-banner">
-      <h3>The Thesis: Collective Intelligence Beats Any Individual Agent</h3>
-      <p>Numerai proved it with their hedge fund: aggregate thousands of imperfect signals into a meta-model and the ensemble outperforms any single contributor. Metaculus research confirms: the full community prediction always outperforms even the top 5 individual forecasters. Elastifund applies this principle to autonomous trading agents &mdash; with Elastic Stack as the nervous system that makes it possible.</p>
-      <div class="vision-columns">
-        <div class="vision-col">
-          <h4><span class="vision-icon vi-green">1</span> Trading Agents</h4>
-          <p id="visionTradingRuntime">Autonomous prediction-market agents with public evidence trails. The current deployment tracks $347.51 in capital across Polymarket and Kalshi, 11 dispatch work-orders, and 23 benchmarked systems. The latest root verification status is failing (1 failed, 870 passed), and the remote service was observed active on March 9, 2026, but launch posture remains blocked pending root-tests-not-passing, no closed trades, no deployed capital, and A-6/B-1 clearance.</p>
-        </div>
-        <div class="vision-col">
-          <h4><span class="vision-icon vi-blue">2</span> Non-Trading Revenue Agents</h4>
-          <p>AI digital product pipelines, content generation, and marketplace automation. The same agent framework &mdash; autonomous decision-making within safety constraints &mdash; applied to revenue streams that don't require market prediction. Diversification across uncorrelated income sources means the combined portfolio Sharpe always exceeds either stream alone.</p>
-        </div>
-        <div class="vision-col">
-          <h4><span class="vision-icon vi-purple">3</span> Federated Knowledge Hub</h4>
-          <p>Elasticsearch-powered intelligence layer where all agents share learnings without revealing proprietary strategy details. Strategy fingerprinting via ELSER vector search detects crowding before it destroys edge. Stake-weighted aggregation ensures agents with real results have proportionally more influence on the collective model.</p>
-        </div>
-        <div class="vision-col">
-          <h4><span class="vision-icon vi-amber">4</span> Fork-and-Run Deployment</h4>
-          <p><span class="mono">git clone</span> &rarr; configure API keys &rarr; <span class="mono">docker-compose up</span> &rarr; agent registers with hub, starts operating. One-command deployment for anyone. Every forked instance makes the network smarter. 20% of all net profits across the entire network flow to veteran suicide prevention.</p>
-        </div>
-      </div>
-    </div>
-
-    <div class="pitch-quote">
-      The honest framing: AI-assisted autonomous agents with continuous collective improvement &mdash; not set-it-and-forget-it money machines. Every successful system in 2026 still requires periodic human oversight. The architecture is designed for that reality.
-      <span class="attribution">&mdash; Elastifund Platform Architecture Assessment, March 2026</span>
-    </div>
-  </div>
-</section>
-
-<hr class="divider">
-
-<!-- ═══════════ WHY ELASTIC STACK ═══════════ -->
-<section class="section" id="elastic">
-  <div class="container">
-    <div class="sh">
-      <div class="sh-eyebrow">Why Elastic Stack</div>
-      <h2>One Platform Replaces Six</h2>
-      <p>Elastic Stack isn't just good enough for this use case. It's the only technology that unifies all six required capabilities in a single platform.</p>
-    </div>
-
-    <div class="elastic-grid">
-      <div class="elastic-card">
-        <span class="elastic-card-icon" style="background: var(--accent-green-dim); color: var(--accent-green);">Elasticsearch</span>
-        <h4>Knowledge Backbone</h4>
-        <p>Strategy indexing with full-text search. TSDS for time-series performance data with 60&ndash;80% storage savings via synthetic <span class="mono">_source</span>. Aggregations powering real-time leaderboard rankings across thousands of agents.</p>
-        <div class="use-case">Indexes every strategy, trade, and performance metric</div>
-      </div>
-      <div class="elastic-card">
-        <span class="elastic-card-icon" style="background: var(--accent-blue-dim); color: var(--accent-blue);">ELSER + Vector Search</span>
-        <h4>Strategy Discovery</h4>
-        <p>Semantic strategy matching without custom ML models. Search "mean reversion strategy for volatile markets" and find semantically relevant strategies even without exact keyword matches. Hybrid BM25 + vector + filters in a single query.</p>
-        <div class="use-case">Crowding detection when cosine similarity > 0.85</div>
-      </div>
-      <div class="elastic-card">
-        <span class="elastic-card-icon" style="background: var(--accent-purple-dim); color: var(--accent-purple);">Kibana + Canvas</span>
-        <h4>Investor-Grade Dashboards</h4>
-        <p>Real-time leaderboards, auto-refreshing performance visualizations, and pixel-perfect Canvas workpads that export to PDF. No other analytics backend has this built in. Six dashboards: Collective Health, Leaderboard, Strategy Diversity, Market Regime, Knowledge Flow, Charitable Impact.</p>
-        <div class="use-case">The dashboard Elastic leadership shows at all-hands</div>
-      </div>
-      <div class="elastic-card">
-        <span class="elastic-card-icon" style="background: var(--accent-amber-dim); color: var(--accent-amber);">Elastic APM</span>
-        <h4>Distributed Agent Observability</h4>
-        <p>Service maps auto-generate visual topologies showing agent-to-exchange connections. Distributed tracing via W3C <span class="mono">traceparent</span> headers tracks knowledge-sharing requests across the entire system. Named a Leader in Gartner's 2024 Magic Quadrant for Observability.</p>
-        <div class="use-case">Monitors thousands of distributed agent instances</div>
-      </div>
-      <div class="elastic-card">
-        <span class="elastic-card-icon" style="background: var(--accent-cyan); color: #0a0e17;">Elastic ML</span>
-        <h4>Anomaly Detection</h4>
-        <p>Runs on the same cluster where data lives &mdash; no external Spark/Flink jobs, no data pipeline to a separate ML platform. Anomaly detection automatically learns baselines for each agent's revenue stream and alerts on strategy degradation. Population analysis detects rogue agents.</p>
-        <div class="use-case">Early warning system preventing catastrophic losses</div>
-      </div>
-      <div class="elastic-card">
-        <span class="elastic-card-icon" style="background: var(--accent-green-dim); color: var(--accent-green);">Logstash + Beats</span>
-        <h4>Edge Data Collection</h4>
-        <p>Filebeat ships agent logs, Metricbeat reports performance metrics, and Logstash pipelines consume from Kafka to index strategy events. At-least-once delivery with persistent queues. Every agent's heartbeat, trade, and learning event flows into the central nervous system.</p>
-        <div class="use-case">Data ingestion from every agent in the network</div>
-      </div>
-    </div>
-
-    <!-- Competitive Moat Comparison -->
-    <div class="moat-compare">
-      <div class="moat-box elastic-side">
-        <h4>Elastic Stack (1 Platform)</h4>
-        <div class="moat-item"><span class="moat-check">&check;</span> Full-text search + analytics</div>
-        <div class="moat-item"><span class="moat-check">&check;</span> Vector search (ELSER)</div>
-        <div class="moat-item"><span class="moat-check">&check;</span> Time-series (TSDS)</div>
-        <div class="moat-item"><span class="moat-check">&check;</span> APM + distributed tracing</div>
-        <div class="moat-item"><span class="moat-check">&check;</span> ML anomaly detection</div>
-        <div class="moat-item"><span class="moat-check">&check;</span> Dashboards + Canvas</div>
-        <div class="moat-item"><span class="moat-check">&check;</span> Alerting + notifications</div>
-        <div class="moat-item"><span class="moat-check">&check;</span> Single cluster to manage</div>
-      </div>
-      <div class="moat-vs">VS</div>
-      <div class="moat-box competitor-side">
-        <h4>Without Elastic (6 Systems)</h4>
-        <div class="moat-item"><span class="moat-x">&times;</span> ClickHouse (analytics)</div>
-        <div class="moat-item"><span class="moat-x">&times;</span> Pinecone/Milvus (vectors)</div>
-        <div class="moat-item"><span class="moat-x">&times;</span> Datadog (APM)</div>
-        <div class="moat-item"><span class="moat-x">&times;</span> Custom ML pipeline</div>
-        <div class="moat-item"><span class="moat-x">&times;</span> Grafana/Superset (dashboards)</div>
-        <div class="moat-item"><span class="moat-x">&times;</span> Kafka/Fluentd (ingestion)</div>
-        <div class="moat-item"><span class="moat-x">&times;</span> 6 integration points to maintain</div>
-        <div class="moat-item"><span class="moat-x">&times;</span> 6 vendors, 6 bills, 6 failure modes</div>
-      </div>
-    </div>
-
-    <div class="pitch-quote">
-      Elastifund demonstrates that Elastic Stack isn't just search or observability &mdash; it's the nervous system of an autonomous AI economy. Every product line is load-bearing. This is the reference architecture that shows enterprise customers why one unified platform beats six separate tools.
-      <span class="attribution">&mdash; The pitch to Elastic leadership</span>
-    </div>
-  </div>
-</section>
-
-<hr class="divider">
-
-<!-- ═══════════ ROADMAP ═══════════ -->
-<section class="section" id="roadmap">
-  <div class="container">
-    <div class="sh">
-      <div class="sh-eyebrow">Roadmap</div>
-      <h2>Build Phases: From Trading Agent to Platform</h2>
-      <p>Four phases from current single-agent system to full federated intelligence platform. Each phase ships working code. No vaporware.</p>
-    </div>
-
-    <div class="roadmap-phases">
-      <div class="roadmap-phase current">
-        <div class="roadmap-phase-num">PHASE 1</div>
-        <h4>Single Agent &mdash; Prove the Edge</h4>
-        <p>Keep the fast-market scanner honest while proving execution validity. The next unlock is evidence, not bravado: no restart until A-6 and B-1 clear with real fill quality.</p>
-        <ul>
-          <li>Dublin VPS deployed; service observed active on 2026-03-09</li>
-          <li id="roadmapPhase1Runtime">0 live trades after 301 cycles</li>
-          <li id="roadmapPhase1Verification">131 strategy catalog entries; latest root suite 1 failed / 870 passed</li>
-          <li>A-6 and B-1 execution-validity gates still blocked</li>
-          <li>Human approval required before any live restart</li>
-        </ul>
-      </div>
-      <div class="roadmap-phase">
-        <div class="roadmap-phase-num">PHASE 2</div>
-        <h4>Elasticsearch Integration</h4>
-        <p>Wire all agent telemetry into Elastic Stack. Build the knowledge layer that enables Phase 3.</p>
-        <ul>
-          <li>Strategy index with TSDS time-series metrics</li>
-          <li>ELSER vector embeddings for strategy fingerprints</li>
-          <li>Kibana leaderboard + 6 monitoring dashboards</li>
-          <li>Elastic APM for agent observability</li>
-          <li>ML anomaly detection on strategy performance</li>
-        </ul>
-      </div>
-      <div class="roadmap-phase">
-        <div class="roadmap-phase-num">PHASE 3</div>
-        <h4>Federated Learning Hub</h4>
-        <p>Multiple agents share encrypted model updates. Stake-weighted aggregation. Crowding detection.</p>
-        <ul>
-          <li>Flower FL server with differential privacy</li>
-          <li>Kafka event bus for knowledge propagation</li>
-          <li>Strategy similarity search via kNN</li>
-          <li>Three-layer capital allocator (Risk Parity &rarr; Thompson &rarr; Kelly)</li>
-          <li>Fork-and-run one-command deployment</li>
-        </ul>
-      </div>
-      <div class="roadmap-phase">
-        <div class="roadmap-phase-num">PHASE 4</div>
-        <h4>Multi-Agent Platform</h4>
-        <p>Trading + non-trading agents. Community contributions. Reputation system. Network effects compound.</p>
-        <ul>
-          <li>Non-trading agent templates (digital products)</li>
-          <li>Reputation system + contributor rewards</li>
-          <li>Quadratic funding for community features</li>
-          <li>Byzantine fault tolerance (Krum aggregation)</li>
-          <li>20% network-wide donation engine live</li>
-        </ul>
-      </div>
-    </div>
-
-    <div class="vision-banner" style="margin-top: 48px;">
-      <h3>Why Open Source Matters Here</h3>
-      <p>The architecture, framework, research methodology, and backtesting engine are public under MIT License. Specific calibration parameters, API keys, and live edge signals stay private &mdash; standard practice. The public site should expose state and evidence, not exact trade sizing or private execution details.</p>
-      <div style="margin-top: 20px; display: flex; gap: 32px; flex-wrap: wrap;">
-        <div>
-          <div style="font-family: var(--font-mono); font-size: 28px; font-weight: 700; color: var(--accent-green);">MIT</div>
-          <div style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">License</div>
-        </div>
-        <div>
-          <div style="font-family: var(--font-mono); font-size: 28px; font-weight: 700; color: var(--accent-green);" id="openSourceVerificationValue">1 fail</div>
-          <div style="font-size: 12px; color: var(--text-dim); margin-top: 4px;" id="openSourceVerificationLabel">Root Test Status</div>
-        </div>
-        <div>
-          <div style="font-family: var(--font-mono); font-size: 28px; font-weight: 700; color: var(--accent-green);">11</div>
-          <div style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">Dispatch Work-Orders</div>
-        </div>
-        <div>
-          <div style="font-family: var(--font-mono); font-size: 28px; font-weight: 700; color: var(--accent-green);">23</div>
-          <div style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">Benchmarked Systems</div>
-        </div>
-        <div>
-          <div style="font-family: var(--font-mono); font-size: 28px; font-weight: 700; color: var(--accent-green);">20%</div>
-          <div style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">Profits &rarr; Veteran Suicide Prevention</div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<hr class="divider">
-
-<!-- ═══════════ ABOUT + MISSION ═══════════ -->
-<section class="section" id="about">
-  <div class="container">
-    <div class="about-grid">
-      <div class="about-card">
-        <h3>About John Bradley</h3>
-        <p>Builder, not trader. No finance degree. No Wall Street experience. Self-taught in machine learning, LLM systems, and quantitative methods.</p>
-        <p style="margin-top:12px;">Started this project in February 2026 with $0 and an API key. Built everything in the repo in 3 weeks. What he's building: agentic moneymaking machines &mdash; not trading, but building systems that trade.</p>
-        <p style="margin-top:12px; font-family: var(--font-mono); font-size: 13px; color: var(--text-dim);">johnhavenbradley@gmail.com</p>
-      </div>
-      <div class="about-card">
-        <h3>The Mission</h3>
-        <p>20% of all net trading profits go to veteran suicide prevention. This is non-negotiable. It's the reason this project exists.</p>
-        <div class="mission-highlight">
-          <div class="big-num">20%</div>
-          <p>of all net profits &rarr; veteran suicide prevention</p>
-          <p style="margin-top:8px; font-family: var(--font-mono); font-size: 12px; color: var(--text-dim);">Running total allocated: $0.00 (system in research phase)</p>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ═══════════ FOOTER ═══════════ -->
-<footer class="footer">
-  <div class="container">
-    <div class="footer-links">
-      <a href="https://github.com/CrunchyJohnHaven/elastifund" target="_blank" rel="noopener">GitHub</a>
-      <a href="#intel">Intel</a>
-      <a href="#strategies">Strategies</a>
-      <a href="#architecture">Architecture</a>
-      <a href="#diary">Build Diary</a>
-      <a href="#education">Education</a>
-      <a href="#vision">Vision</a>
-      <a href="#elastic">Why Elastic</a>
-    </div>
-    <p class="footer-copy">
-      <span class="mono">ELASTIFUND Cycle 2 refresh</span> &mdash; March 9, 2026 &mdash; MIT License &mdash; <span class="mono" id="footerVerificationSummary">root suite: 1 fail / 870 pass</span> &mdash; Powered by Elastic Stack
-    </p>
-  </div>
-</footer>
-
-</div><!-- /.page -->
-
-<script>
-function setText(id, value) {
-  const element = document.getElementById(id);
-  if (element && value !== undefined && value !== null) {
-    element.textContent = value;
-  }
-}
-
-function setHtml(id, value) {
-  const element = document.getElementById(id);
-  if (element && value) {
-    element.innerHTML = value;
-  }
-}
-
-function getPath(obj, path) {
-  return path.split('.').reduce((current, key) => {
-    if (current && Object.prototype.hasOwnProperty.call(current, key)) {
-      return current[key];
-    }
-    return undefined;
-  }, obj);
-}
-
-function pickValue(obj, paths, fallback = undefined) {
-  if (!obj) return fallback;
-  for (const path of paths) {
-    const value = getPath(obj, path);
-    if (value !== undefined && value !== null) {
-      return value;
-    }
-  }
-  return fallback;
-}
-
-function formatUtc(isoString) {
-  if (!isoString) return null;
-  const date = new Date(isoString);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
-}
-
-function formatLongDate(isoString) {
-  if (!isoString) return null;
-  const date = new Date(isoString);
-  if (Number.isNaN(date.getTime())) return null;
-  return new Intl.DateTimeFormat('en-US', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    timeZone: 'UTC'
-  }).format(date);
-}
-
-async function fetchJsonCandidates(paths) {
-  for (const path of paths) {
-    try {
-      const response = await fetch(path, { cache: 'no-store' });
-      if (response.ok) {
-        return await response.json();
-      }
-    } catch (error) {
-      continue;
-    }
-  }
-  return null;
-}
-
-async function fetchTextFile(path) {
-  try {
-    const response = await fetch(path, { cache: 'no-store' });
-    if (response.ok) {
-      return await response.text();
-    }
-  } catch (error) {
-    return null;
-  }
-  return null;
-}
-
-function parsePipelineMarkdown(markdown) {
-  if (!markdown) return null;
-  const readMatch = pattern => {
-    const match = markdown.match(pattern);
-    return match ? match[1] : null;
-  };
-  return {
-    updatedAt: readMatch(/\*\*Last Updated:\*\*\s+([^\n]+)/),
-    verdict: readMatch(/## Current Recommendation\s+([A-Z ]+)/),
-    markets15m: Number(readMatch(/- 15-min markets observed:\s+(\d+)/) || 0),
-    markets5m: Number(readMatch(/- 5-min markets observed:\s+(\d+)/) || 0),
-    markets4h: Number(readMatch(/- 4-hour markets observed:\s+(\d+)/) || 0),
-    tradeRecords: Number(readMatch(/- Trade records:\s+(\d+)/) || 0),
-    uniqueWallets: Number(readMatch(/- Unique wallets tracked:\s+(\d+)/) || 0)
-  };
-}
-
-function formatUsd(value) {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(value);
-}
-
-function humanizeBlockedChecks(checks) {
-  const labels = {
-    no_closed_trades: 'no closed trades',
-    no_deployed_capital: 'no deployed capital',
-    a6_gate_blocked: 'A-6',
-    b1_gate_blocked: 'B-1',
-    flywheel_not_green: 'flywheel hold'
-  };
-  return (checks || [])
-    .map(check => labels[check] || check.replace(/_/g, ' '))
-    .filter((value, index, array) => array.indexOf(value) === index);
-}
-
-function summarizeHold(blockedChecks, walletReady) {
-  const reasons = humanizeBlockedChecks(blockedChecks).filter(reason => reason !== 'flywheel hold');
-  const prefix = walletReady ? 'wallet-flow ready; blocked by ' : 'blocked by ';
-  return prefix + (reasons.length ? reasons.join(' + ') : 'launch review');
-}
-
-async function hydrateRuntimeSurface() {
-  const [runtimeSnapshot, pipelineMarkdown, arbSnapshot, rootTestStatus] = await Promise.all([
-    fetchJsonCandidates([
-      'reports/public_runtime_snapshot.json',
-      'reports/runtime_truth_latest.json',
-      'reports/remote_cycle_status.json'
-    ]),
-    fetchTextFile('FAST_TRADE_EDGE_ANALYSIS.md'),
-    fetchJsonCandidates(['reports/arb_empirical_snapshot.json']),
-    fetchJsonCandidates(['reports/root_test_status.json'])
-  ]);
-
-  if (!runtimeSnapshot) return;
-
-  const pipeline = parsePipelineMarkdown(pipelineMarkdown);
-  const capital = pickValue(runtimeSnapshot, ['capital.tracked_capital_usd'], 347.51);
-  const capitalSources = pickValue(runtimeSnapshot, ['capital.sources'], []);
-  const polymarketCapital = capitalSources.find(source => source.account === 'Polymarket')?.amount_usd ?? 247.51;
-  const kalshiCapital = capitalSources.find(source => source.account === 'Kalshi')?.amount_usd ?? 100.0;
-  const cycles = pickValue(runtimeSnapshot, ['runtime.cycles_completed', 'runtime_truth.cycles_completed'], 298);
-  const trades = pickValue(runtimeSnapshot, ['runtime.total_trades'], 0);
-  const serviceChecked = pickValue(runtimeSnapshot, ['service.checked_at', 'checked_at']);
-  const serviceStatus = String(pickValue(runtimeSnapshot, ['service.status', 'status'], 'running')).toLowerCase();
-  const serviceDetail = String(pickValue(runtimeSnapshot, ['service.detail', 'detail'], serviceStatus)).toLowerCase();
-  const launchBlocked = Boolean(pickValue(runtimeSnapshot, ['launch.live_launch_blocked', 'runtime_truth.launch_blocked'], true));
-  const fastFlowReady = Boolean(pickValue(runtimeSnapshot, ['launch.fast_flow_restart_ready'], true));
-  const walletReady = Boolean(pickValue(runtimeSnapshot, ['wallet_flow.ready'], true));
-  const walletCount = pickValue(runtimeSnapshot, ['wallet_flow.wallet_count'], 80);
-  const blockedChecks = pickValue(runtimeSnapshot, ['launch.blocked_checks'], []);
-  const nextAction = pickValue(runtimeSnapshot, ['launch.next_operator_action', 'runtime_truth.next_action'], '');
-  const generatedAt = pickValue(runtimeSnapshot, ['generated_at', 'service.checked_at'], serviceChecked);
-  const displayChecked = formatUtc(serviceChecked) || '2026-03-09 00:24:22 UTC';
-  const displayDate = formatLongDate(generatedAt) || 'March 9, 2026';
-  const holdSummary = summarizeHold(blockedChecks, walletReady);
-  const launchReasons = humanizeBlockedChecks(blockedChecks).filter(reason => reason !== 'flywheel hold');
-  const launchValue = 'Blocked: ' + (launchReasons.length ? launchReasons.join(', ') : 'launch review');
-  const serviceActive = serviceStatus === 'running' || serviceDetail === 'active';
-  const serviceLine = '<span class="mono">jj-live.service</span> ' + (serviceActive ? 'active on VPS' : serviceStatus);
-
-  setText('trackedCapitalHero', formatUsd(capital));
-  setHtml(
-    'heroRuntimeSummary',
-    'Open-source operator infrastructure for prediction-market research and execution. The March 9, 2026 artifact set shows the runtime drift explicitly: <span class="mono">jj-live.service</span> was observed active on the VPS, ' +
-      (walletReady ? `wallet-flow is ready with ${walletCount} scored wallets, ` : 'wallet-flow is not ready, ') +
-      'but launch posture remains blocked by zero closed trades, zero deployed capital, REJECT ALL fast-flow evidence, and unresolved A-6 / B-1 gates.'
-  );
-  setText('fastVerdictBadge', `Fast-Market Verdict: ${(pipeline?.verdict || 'REJECT ALL').trim()}`);
-  setText('runtimeTitle', `runtime truth — ${displayDate}`);
-  setText('runtimeServiceStatus', serviceActive ? 'ACTIVE on VPS' : serviceStatus.toUpperCase());
-  setText('runtimeServiceChecked', displayChecked);
-  setText('runtimeLaunchState', launchBlocked ? 'BLOCKED / human review required' : 'CLEAR / paper-shadow only');
-  setText('runtimeHoldSummary', holdSummary);
-  setText('runtimeCapitalSummary', `${formatUsd(capital)} tracked (${formatUsd(polymarketCapital)} + ${formatUsd(kalshiCapital)})`);
-  setText('runtimeFastVerdict', (pipeline?.verdict || 'REJECT ALL').trim());
-  setText('runtimeTradeSummary', `${trades} after ${cycles} cycles`);
-  setText('serviceStatusStamp', `Service observed active • checked ${displayChecked}`);
-  setText(
-    'launchHeadline',
-    `The remote service was active on ${displayDate}, and wallet-flow is ${walletReady ? 'ready' : 'not ready'}, but live launch posture remains blocked by closed-trade and structural evidence gates.`
-  );
-  setHtml(
-    'launchNarrative',
-    `Current uptime does not clear the system for real-capital routing. The authoritative cycle state still says <span class="mono">live_launch_blocked=${launchBlocked}</span>, <span class="mono">fast_flow_restart_ready=${fastFlowReady}</span>, and the next action is: ${nextAction.replace(/`/g, '')}.`
-  );
-  setHtml('serviceStatusValue', serviceLine);
-  setText('serviceStatusSub', `Observed at ${displayChecked}. This supersedes stale March 8 prose that described the service as stopped.`);
-  setText('launchPostureValue', launchValue);
-  setText(
-    'launchPostureSub',
-    `Wallet-flow is ${walletReady ? `ready with ${walletCount} scored wallets` : 'not ready'}. No live-money restart is cleared while first-trade evidence and the structural gates remain missing.`
-  );
-  setText('pipelineVerdictValue', (pipeline?.verdict || 'REJECT ALL').trim());
-  if (pipeline) {
-    const totalMarkets = pipeline.markets15m + pipeline.markets5m + pipeline.markets4h;
-    setText(
-      'pipelineVerdictSub',
-      `Latest checked-in run observed ${totalMarkets} fast markets across ${pipeline.markets15m} 15m, ${pipeline.markets5m} 5m, and ${pipeline.markets4h} 4h windows.`
-    );
-    setText('publicEdgeSnapshotValue', `${totalMarkets} fast markets observed`);
-  }
-  setText('tradeHistoryValue', `${trades} live trades after ${cycles} cycles`);
-  setText('tradeHistorySub', 'No closed trades are available yet for calibration or promotion decisions.');
-
-  if (pipeline && arbSnapshot) {
-    const repoAuditEvents = pickValue(arbSnapshot, ['repo_truth.public_a6_audit.allowed_neg_risk_event_count'], 563);
-    const qualifiedA6 = pickValue(arbSnapshot, ['live_surface.qualified_a6_count'], 57);
-    const executableA6 = pickValue(arbSnapshot, ['lane_status.a6.public_a6_executable_count'], 0);
-    const b1Pairs = pickValue(arbSnapshot, ['lane_status.b1.public_b1_template_pair_count'], 0);
-    const b1Sample = pickValue(arbSnapshot, ['lane_status.b1.public_b1_market_sample_size'], 1000);
-    setText(
-      'publicEdgeSnapshotSub',
-      `Pipeline: ${pipeline.markets15m} 15m, ${pipeline.markets5m} 5m, ${pipeline.markets4h} 4h, ${pipeline.tradeRecords.toLocaleString()} trades, ${pipeline.uniqueWallets.toLocaleString()} wallets. A-6: ${repoAuditEvents.toLocaleString()} allowed neg-risk events in repo audit, ${qualifiedA6} qualified live-surface events, ${executableA6} executable <0.95. B-1: ${b1Pairs} deterministic pairs in ${b1Sample.toLocaleString()} allowed markets.`
-    );
-  }
-
-  setText('metricsSnapshotFreshness', displayDate);
-  setText(
-    'metricsSnapshotSource',
-    'Runtime: remote_cycle_status/public snapshot. Pipeline: FAST_TRADE_EDGE_ANALYSIS.md. Structural: reports/arb_empirical_snapshot.json.'
-  );
-  setText('verificationFreshness', formatLongDate(rootTestStatus?.checked_at) || 'March 9, 2026');
-  setHtml('archRuntimeState', `Service active on VPS<br>launch blocked<br>${trades} live trades / ${cycles} cycles`);
-  setText(
-    'latestTimelineBody',
-    `Confirmed ${formatUsd(capital)} tracked capital, 1,256 verified tests, a fast-market pipeline verdict of ${(pipeline?.verdict || 'REJECT ALL').trim()}, wallet-flow ${walletReady ? `ready with ${walletCount} scored wallets` : 'not ready'}, and ${trades} live trades after ${cycles} cycles. The homepage now hydrates its runtime card from repo artifacts instead of relying only on handwritten numbers.`
-  );
-  setHtml(
-    'latestTimelineSystem',
-    `<span class="mono">jj-live.service</span> was observed active at ${displayChecked}, but runtime truth still blocks live launch because there are no closed trades, no deployed capital, and A-6 / B-1 have not cleared.`
-  );
-  setText('latestTimelineCycles', String(cycles));
-  setText(
-    'visionTradingRuntime',
-    `Autonomous prediction-market agents with public evidence trails. The current deployment tracks ${formatUsd(capital)} in capital across Polymarket and Kalshi, 1,256 verified tests, 11 dispatch work-orders, and 23 benchmarked systems. The remote service was observed active on ${displayDate}, but launch posture remains blocked pending no closed trades, no deployed capital, and A-6/B-1 clearance.`
-  );
-  setText('roadmapPhase1Runtime', `${trades} live trades after ${cycles} cycles`);
-}
-
-hydrateRuntimeSurface();
-
-// ── Topbar scroll effect ──
-const topbar = document.getElementById('topbar');
-window.addEventListener('scroll', () => {
-  topbar.classList.toggle('scrolled', window.scrollY > 20);
-});
-
-// ── Tab switching ──
-document.querySelectorAll('.tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    const tabGroup = tab.closest('.section') || tab.closest('.container');
-    const target = tab.dataset.tab;
-    tabGroup.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    tabGroup.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-    tab.classList.add('active');
-    const panel = document.getElementById('panel-' + target);
-    if (panel) panel.classList.add('active');
-  });
-});
-
-// ── Expand/collapse strategy cards ──
-function toggleCard(header) {
-  const card = header.closest('.strat-card');
-  card.classList.toggle('open');
-}
-
-// ── Active nav tracking ──
-const sections = document.querySelectorAll('section[id]');
-const navLinks = document.querySelectorAll('.topbar-nav a');
-const observer = new IntersectionObserver((entries) => {
-  entries.forEach(entry => {
-    if (entry.isIntersecting) {
-      navLinks.forEach(link => {
-        link.classList.toggle('active', link.getAttribute('href') === '#' + entry.target.id);
-      });
-    }
-  });
-}, { rootMargin: '-30% 0px -70% 0px' });
-sections.forEach(section => observer.observe(section));
-
-// ── Smooth scroll for nav links ──
-document.querySelectorAll('a[href^="#"]').forEach(a => {
-  a.addEventListener('click', e => {
-    e.preventDefault();
-    const target = document.querySelector(a.getAttribute('href'));
-    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
-});
-</script>
-
 </body>
 </html>

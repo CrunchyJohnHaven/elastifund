@@ -1,0 +1,13 @@
+Subject: Your top competitor does something {{company}} does not
+
+Hi {{first_name}},
+
+While reviewing {{company}}, I noticed {{specific_finding}}. {{competitor_name}} appears to be ahead on that exact surface.
+
+Our {{offer_name}} packages the gap analysis, the highest-leverage fixes, and a simple 5-day delivery plan.
+
+Worth sending over the outline?
+
+{{sender_name}}
+{{postal_address}}
+Unsubscribe: {{unsubscribe_url}}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from nontrading.approval import ApprovalGate
 from nontrading.crm_schema import ApprovalClass, Lead, Opportunity
 from nontrading.engines import (
     AccountIntelligenceEngine,
@@ -10,6 +11,7 @@ from nontrading.engines import (
     OutreachEngine,
     ProposalEngine,
 )
+from nontrading.store import RevenueStore
 
 
 def make_lead() -> Lead:
@@ -36,6 +38,10 @@ def make_opportunity() -> Opportunity:
         capital_required_usd=2.0,
         sales_cycle_days=10,
     )
+
+
+def make_store(tmp_path) -> RevenueStore:
+    return RevenueStore(tmp_path / "revenue_agent.db")
 
 
 @pytest.mark.parametrize(
@@ -76,3 +82,27 @@ def test_engine_to_event_returns_valid_interaction_event(
 
     assert event["event_type"] == "interaction"
     assert event["approval_class"] == approval_class.value
+
+
+@pytest.mark.parametrize(
+    ("engine_factory", "payload_factory", "expected_status"),
+    [
+        (lambda gate: AccountIntelligenceEngine(approval_gate=gate), make_lead, "paper_logged"),
+        (lambda gate: OutreachEngine(approval_gate=gate), make_lead, "queued_review"),
+        (lambda gate: InteractionEngine(approval_gate=gate), make_lead, "queued_review"),
+        (lambda gate: ProposalEngine(approval_gate=gate), make_opportunity, "blocked_escalation"),
+        (lambda gate: LearningEngine(approval_gate=gate), make_opportunity, "paper_logged"),
+    ],
+)
+def test_engine_route_uses_unified_approval_gate(
+    tmp_path,
+    engine_factory,
+    payload_factory,
+    expected_status: str,
+) -> None:
+    gate = ApprovalGate(make_store(tmp_path), paper_mode=True)
+    engine = engine_factory(gate)
+
+    decision = engine.route(payload_factory())
+
+    assert decision.status == expected_status

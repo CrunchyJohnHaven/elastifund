@@ -75,14 +75,14 @@ The non-Docker path was verified directly. Docker still requires Docker Desktop 
 |---|---|
 | Runtime truth | prefer `reports/public_runtime_snapshot.json` and `reports/runtime_truth_latest.json`; use `reports/remote_cycle_status.json`, `reports/remote_service_status.json`, `FAST_TRADE_EDGE_ANALYSIS.md`, and `reports/arb_empirical_snapshot.json` for the underlying detail |
 | Capital tracked in docs | `$347.51` total (`$247.51` Polymarket + `$100` Kalshi) |
-| Runtime state | `0` trades after `301` cycles; `reports/remote_service_status.json` shows `jj-live.service` `running` at `2026-03-09T00:44:19Z`, while launch posture remains blocked |
-| Fast-flow launch posture | wallet-flow is `ready` with `80` scored wallets, but `fast_flow_restart_ready=false`; the current blockers are a failing root regression suite, no closed trades, no deployed capital, and the A-6/B-1 gates; the latest checked-in fast-trade report still says `REJECT ALL` |
+| Runtime state | `0` trades after `313` cycles; `reports/remote_service_status.json` shows `jj-live.service` `stopped` at `2026-03-09T01:28:43Z`, while launch posture remains blocked |
+| Fast-flow launch posture | wallet-flow is `ready` with `80` scored wallets and `fast_flow_restart_ready=true`, but the latest edge scan still says `stay_paused`, the service is stopped, and the threshold-sensitivity refresh still found `0` tradeable markets at YES `0.15`, NO `0.05`; YES `0.08`, NO `0.03`; and YES `0.05`, NO `0.02` |
 | Trading strategy catalog | `131` tracked (`7` deployed, `6` building, `2` structural alpha, `1` re-evaluating, `10` rejected, `8` pre-rejected, `97` pipeline) |
-| Non-trading lane | compliance-first revenue harness plus digital-product niche discovery are in repo; first revenue product is not yet launched |
-| Verification status | current root suite is failing (`1 failed, 870 passed in 18.22s`); the last full green baseline remains `1,256` total tests (`849 + 22` root, `374` polymarket, `11` non-trading) |
+| Non-trading lane | compliance-first revenue harness, digital-product niche discovery, and JJ-N Phase 0 foundations (CRM, opportunity registry, approval/compliance, telemetry, engine stubs) are in repo; first revenue product is not yet launched |
+| Verification status | latest local verification shows root passing (`962 passed in 18.12s; 22 passed in 3.83s`); the current full multi-surface green baseline is `1,397` total tests (`962 + 22` root, `374` polymarket, `39` non-trading), and the repo-root `tests/` sync pass is `421` green |
 | Live validated P&L | still effectively pre-revenue; no inflated claims here |
 
-The March 9 runtime snapshot supersedes older prose that said the service was stopped and wallet-flow was not ready, but it does not clear launch. The stable public snapshot now shows wallet-flow ready, service running, and launch still blocked because the root regression suite is failing, there are no closed trades, no deployed capital, and A-6/B-1 remain unresolved. Treat a running `jj-live.service` as operational drift until the remote mode is reconciled and `make test` is green again.
+The March 9 runtime snapshot supersedes older prose that said the service was stopped and wallet-flow was not ready, but it still does not clear launch. The stable public snapshot now shows wallet-flow ready, service stopped, and launch blocked because there are no closed trades, no deployed capital, and A-6/B-1 remain unresolved. The latest deploy dry-run is now validated and kept the service stopped, but the remote mode is still unknown and the latest edge scan still says `stay_paused`, so any actual bundle upload or restart remains a deliberate paper/shadow evidence-collection decision rather than a green light from the signal stack.
 
 ## Velocity Charts
 
@@ -162,17 +162,17 @@ What is already real:
 
 - a compliance-first revenue-agent harness in [nontrading/main.py](nontrading/main.py)
 - a digital-product niche discovery pipeline in [nontrading/digital_products/main.py](nontrading/digital_products/main.py)
-- lead import and policy gating
-- suppression and unsubscribe handling
-- dry-run sending and provider adapter scaffolding
+- a Phase 0 CRM schema in [nontrading/models.py](nontrading/models.py) and [nontrading/store.py](nontrading/store.py)
+- an opportunity registry in [nontrading/opportunity_registry.py](nontrading/opportunity_registry.py)
+- paper-mode approval and compliance gates in [nontrading/approval.py](nontrading/approval.py) and [nontrading/compliance.py](nontrading/compliance.py)
+- Elastic-ready telemetry plus five engine stubs under [nontrading/telemetry.py](nontrading/telemetry.py) and [nontrading/engines/__init__.py](nontrading/engines/__init__.py)
 - niche ranking and Elastic-ready bulk export
 - passing targeted tests and deterministic smoke coverage
 
 What is not built yet:
 
-- the five-engine architecture from the vision document: account intelligence, outreach, interaction, proposal, and learning engines
-- CRM schema, opportunity registry, and telemetry dashboards for the non-trading worker
-- the recommended phase-1 production wedge: a revenue-ops worker for one high-ticket service offer
+- the recommended phase-1 production wedge from the design doc: a self-serve website growth audit plus recurring monitor
+- a production KPI dashboard and live reply / meeting workflow
 - checkout, billing webhooks, provisioning, and fulfillment reporting
 
 For the current implementation state and next steps, use [docs/NON_TRADING_STATUS.md](docs/NON_TRADING_STATUS.md).
@@ -186,7 +186,7 @@ For the current implementation state and next steps, use [docs/NON_TRADING_STATU
 | `strategies/` + `signals/` | strategy-specific logic and shared signal helpers |
 | `src/`, `backtest/`, `simulator/` | edge-discovery and validation pipeline |
 | `hub/`, `data_layer/`, `orchestration/` | APIs, persistence, flywheel/control-plane plumbing |
-| `nontrading/` | non-trading revenue automation, compliance harnesses, and digital-product discovery |
+| `nontrading/` | non-trading revenue automation, Phase 0 CRM/approval/telemetry foundations, and digital-product discovery |
 | `polymarket-bot/` | self-contained trading bot subproject with dashboard and tests |
 | `inventory/` | benchmark lane for comparing external systems cleanly |
 | `docs/` + `research/` | durable docs, ADRs, prompts, dispatches, and findings |

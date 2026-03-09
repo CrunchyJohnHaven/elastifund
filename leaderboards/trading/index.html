@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Elastifund / Trading Leaderboard | Evidence separated by mode</title>
+  <meta name="description" content="Read the public trading evidence with benchmark, paper, and real-money surfaces separated clearly. No hidden live claims, no blended scoreboards.">
+  <link rel="stylesheet" href="/site.css">
+  <script src="/site.js" defer></script>
+</head>
+<body data-page="trading">
+  <div class="page-wrap">
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="/">
+          <span class="brand-mark"></span>
+          <span class="brand-text">
+            <span class="brand-name">Elastifund</span>
+            <span class="brand-subtitle">Trading evidence, separated by mode</span>
+          </span>
+        </a>
+        <nav class="header-nav" aria-label="Primary">
+          <a class="nav-link" data-page="home" href="/">Home</a>
+          <a class="nav-link" data-page="elastic" href="/elastic/">Elastic</a>
+          <a class="nav-link" data-page="develop" href="/develop/">Develop</a>
+          <a class="nav-link" data-page="trading" href="/leaderboards/trading/">Trading</a>
+          <a class="nav-link" data-page="worker" href="/leaderboards/worker/">Worker</a>
+        </nav>
+        <div class="header-actions">
+          <span class="status-pill" data-role="status-pill">runtime syncing</span>
+          <a class="header-link" href="https://github.com/CrunchyJohnHaven/elastifund" target="_blank" rel="noopener">GitHub</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="route-hero">
+        <div class="container route-hero-grid">
+          <div>
+            <span class="eyebrow">Trading leaderboard</span>
+            <h1>Public rankings stay honest by separating benchmark, paper, and real-money evidence.</h1>
+            <p class="route-copy">
+              This page does not blend research signals, paper watchlists, and live campaigns into one misleading number. Real-money campaigns remain empty until closed trades exist and the launch gates clear. Until then, the ranking is readiness plus evidence quality, not a fake performance chart.
+            </p>
+            <div class="cta-row">
+              <a class="button button-primary" href="/develop/">Run the repo in safe mode</a>
+              <a class="button button-secondary" href="https://github.com/CrunchyJohnHaven/elastifund/blob/main/FAST_TRADE_EDGE_ANALYSIS.md" target="_blank" rel="noopener">Read the latest pipeline write-up</a>
+            </div>
+          </div>
+          <aside class="status-panel">
+            <div class="status-panel-header">
+              <div>
+                <div class="panel-kicker">Live posture</div>
+                <h3>Current launch state</h3>
+              </div>
+              <span class="tag warn"><span data-fill="launch_posture"></span></span>
+            </div>
+            <dl class="info-list">
+              <div class="info-row">
+                <dt>Tracked capital</dt>
+                <dd><span data-fill="tracked_capital"></span></dd>
+              </div>
+              <div class="info-row">
+                <dt>Live trades</dt>
+                <dd><span data-fill="live_trades"></span> after <span data-fill="runtime_cycles"></span> cycles</dd>
+              </div>
+              <div class="info-row">
+                <dt>Fast-market verdict</dt>
+                <dd><span data-fill="fast_verdict"></span></dd>
+              </div>
+              <div class="info-row">
+                <dt>Edge scan</dt>
+                <dd><span data-fill="opportunity_summary"></span> / <span data-fill="opportunity_categories"></span></dd>
+              </div>
+              <div class="info-row">
+                <dt>Why blocked</dt>
+                <dd><span data-fill="launch_reasons"></span></dd>
+              </div>
+            </dl>
+          </aside>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="evidence-grid">
+            <article class="evidence-card">
+              <div class="evidence-label">Catalog</div>
+              <div class="evidence-value" data-fill="strategy_total"></div>
+              <p class="evidence-sub"><span data-fill="strategy_distribution"></span></p>
+            </article>
+            <article class="evidence-card">
+              <div class="evidence-label">Verification</div>
+              <div class="evidence-value" data-fill="verification_current"></div>
+              <p class="evidence-sub"><span data-fill="verification_baseline"></span>. <span data-fill="verification_root"></span>.</p>
+            </article>
+            <article class="evidence-card">
+              <div class="evidence-label">Signal lanes</div>
+              <div class="evidence-value" data-fill="signal_lanes"></div>
+              <p class="evidence-sub"><span data-fill="calibrated_win_rate"></span> calibrated / <span data-fill="legacy_win_rate"></span> legacy label.</p>
+            </article>
+            <article class="evidence-card">
+              <div class="evidence-label">Public edge window</div>
+              <div class="evidence-value"><span data-fill="fast_markets"></span> markets</div>
+              <p class="evidence-sub"><span data-fill="trade_records"></span> trades / <span data-fill="unique_wallets"></span> wallets.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">Campaign surfaces</div>
+            <h2>Mode separation is mandatory.</h2>
+            <p class="section-copy">The system publishes three campaign classes. Only the last one can ever be called live performance, and it is currently empty.</p>
+          </div>
+          <div class="table-wrap">
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Surface</th>
+                    <th>Current public count</th>
+                    <th>What it measures</th>
+                    <th>Confidence</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>
+                      <div class="cell-title">Deterministic benchmark episodes</div>
+                      <div class="cell-meta">Methodology-first simulations and replayable checks.</div>
+                    </td>
+                    <td><span data-fill="benchmarked_systems"></span> benchmarked systems</td>
+                    <td>Improvement under controlled assumptions, not real fills.</td>
+                    <td>Highest current public confidence.</td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <div class="cell-title">Paper and shadow campaigns</div>
+                      <div class="cell-meta">Research lanes that still need resolved outcomes.</div>
+                    </td>
+                    <td>2 watchlist variants / <span data-fill="opportunity_summary"></span></td>
+                    <td>Readiness, signal density, and promotion evidence.</td>
+                    <td>Useful, but not a claim of realized return.</td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <div class="cell-title">Real-money campaigns</div>
+                      <div class="cell-meta">Hard-gated and labeled separately.</div>
+                    </td>
+                    <td><span data-fill="live_trades"></span> trades / <span data-fill="deployed_capital"></span> deployed</td>
+                    <td>Actual fills, realized P&amp;L, and risk-adjusted live performance.</td>
+                    <td>Currently empty because launch is still blocked.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">Readiness ranking</div>
+            <h2>Current trading lanes ranked by operational readiness, not by imaginary P&amp;L.</h2>
+          </div>
+          <div class="table-wrap">
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Rank</th>
+                    <th>Lane</th>
+                    <th>Status</th>
+                    <th>Current public evidence</th>
+                    <th>Risk frame</th>
+                    <th>Next gate</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>1</td>
+                    <td>
+                      <div class="cell-title">Smart Wallet Flow Detector</div>
+                      <div class="cell-meta">Priority fast-market lane.</div>
+                    </td>
+                    <td>Ready / paper-shadow only</td>
+                    <td><span data-fill="wallet_count"></span> scored wallets, <span data-fill="opportunity_summary"></span>, <span data-fill="resolution_distribution"></span>.</td>
+                    <td>1/16 Kelly behavior in the design, still capped by <span data-fill="risk_position"></span> per position.</td>
+                    <td>Resolved outcomes plus remote-mode confirmation.</td>
+                  </tr>
+                  <tr>
+                    <td>2</td>
+                    <td>
+                      <div class="cell-title">LLM Analyzer</div>
+                      <div class="cell-meta">Slower, higher-context prediction lane.</div>
+                    </td>
+                    <td>Deployed module / launch blocked</td>
+                    <td><span data-fill="calibrated_win_rate"></span> calibrated label with <span data-fill="legacy_win_rate"></span> legacy context, maker-only execution, 24h resolution cap.</td>
+                    <td>Quarter-Kelly, <span data-fill="risk_position"></span> max position, <span data-fill="risk_daily_loss"></span> daily stop.</td>
+                    <td>First closed trades plus blocked checks clearing.</td>
+                  </tr>
+                  <tr>
+                    <td>3</td>
+                    <td>
+                      <div class="cell-title">Cross-Platform Arbitrage</div>
+                      <div class="cell-meta">Polymarket versus Kalshi matching.</div>
+                    </td>
+                    <td>Complete / idle</td>
+                    <td>Latest edge pass scanned 351 Kalshi and 100 Polymarket markets with 0 spread matches worth routing.</td>
+                    <td>Quarter-Kelly in design; execution remains opportunity-dependent.</td>
+                    <td>Market matching plus operational activation.</td>
+                  </tr>
+                  <tr>
+                    <td>4</td>
+                    <td>
+                      <div class="cell-title">LMSR Mispricing Engine</div>
+                      <div class="cell-meta">Math-first inefficiency detector.</div>
+                    </td>
+                    <td>Complete / not wired</td>
+                    <td>Recent edge scan shows 15 markets checked and 0 signals worth escalating.</td>
+                    <td>Research-only until orchestration wiring is complete.</td>
+                    <td>Wiring into the main orchestration surface.</td>
+                  </tr>
+                  <tr>
+                    <td>5</td>
+                    <td>
+                      <div class="cell-title">Guaranteed Dollar Scanner (A-6)</div>
+                      <div class="cell-meta">Neg-risk structural alpha.</div>
+                    </td>
+                    <td>Shadow mode / blocked</td>
+                    <td><span data-fill="a6_summary"></span>.</td>
+                    <td>Execution-risk adjusted, capped at <span data-fill="risk_position"></span> per leg.</td>
+                    <td>Maker-fill proxy and settlement evidence.</td>
+                  </tr>
+                  <tr>
+                    <td>6</td>
+                    <td>
+                      <div class="cell-title">Templated Dependency Engine (B-1)</div>
+                      <div class="cell-meta">Deterministic template family checks.</div>
+                    </td>
+                    <td>Gated</td>
+                    <td><span data-fill="b1_summary"></span>.</td>
+                    <td>Execution-risk adjusted, capped at <span data-fill="risk_position"></span> per leg.</td>
+                    <td>Density, accuracy, and false-positive evidence.</td>
+                  </tr>
+                  <tr>
+                    <td>7</td>
+                    <td>
+                      <div class="cell-title">Anomaly lane</div>
+                      <div class="cell-meta">Observability-driven guardrail surface.</div>
+                    </td>
+                    <td>Monitor only</td>
+                    <td>The anomaly lane is there to suppress toxic regimes, not to claim alpha. It remains a safety surface.</td>
+                    <td>No sizing. Guardrail signal only.</td>
+                    <td>Continue instrumenting the runtime and public-safe telemetry.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <p class="table-note" style="margin-top: 14px;">Public label rule: live return tables stay empty until closed trades exist. Readiness ranking is a stronger and more honest public surface than pretending the system already has validated live P&amp;L.</p>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container split-grid">
+          <article class="card">
+            <div class="card-kicker">Risk boundaries</div>
+            <h3>These guardrails stay fixed without a human escalation.</h3>
+            <div class="status-grid" style="margin-top: 18px;">
+              <div class="status-item">
+                <div class="status-label">Position cap</div>
+                <div class="status-value"><span data-fill="risk_position"></span></div>
+              </div>
+              <div class="status-item">
+                <div class="status-label">Daily loss cap</div>
+                <div class="status-value"><span data-fill="risk_daily_loss"></span></div>
+              </div>
+              <div class="status-item">
+                <div class="status-label">Kelly fraction</div>
+                <div class="status-value"><span data-fill="risk_kelly"></span></div>
+              </div>
+              <div class="status-item">
+                <div class="status-label">Open positions</div>
+                <div class="status-value"><span data-fill="risk_open_positions"></span></div>
+              </div>
+            </div>
+          </article>
+          <article class="card">
+            <div class="card-kicker">Current status card</div>
+            <h3>Runtime posture and launch gating.</h3>
+            <p class="card-copy">Service was observed <strong data-fill="service_state"></strong> at <span data-fill="service_checked_at"></span>. <span data-fill="service_drift_note"></span> The public snapshot still blocks launch because there are no closed trades, no deployed capital, and the A-6 / B-1 gates remain unresolved.</p>
+            <p class="card-copy">Verification headline: <strong data-fill="verification_summary"></strong>. Current root detail: <strong data-fill="verification_root"></strong>. Public edge summary: <strong data-fill="opportunity_categories"></strong> across <strong data-fill="resolution_distribution"></strong>.</p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container">
+        <div class="footer-panel">
+          <div>
+            <div class="footer-kicker">Trading route</div>
+            <h3>Keep benchmark, paper, and live data separate.</h3>
+            <p class="footer-meta">Current runtime snapshot: <span data-fill="generated_utc"></span>. Verification snapshot: <span data-fill="verification_summary"></span>.</p>
+          </div>
+          <div class="footer-links">
+            <a href="/">Home</a>
+            <a href="/elastic/">Elastic</a>
+            <a href="/develop/">Develop</a>
+            <a href="/leaderboards/worker/">Worker leaderboard</a>
+          </div>
+          <div class="footer-meta">
+            <div>Launch posture: <span data-fill="launch_posture"></span>.</div>
+            <div>&copy; <span data-fill="year"></span> Elastifund.</div>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

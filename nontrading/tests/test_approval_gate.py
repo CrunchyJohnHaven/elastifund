@@ -3,11 +3,22 @@ from __future__ import annotations
 from pathlib import Path
 
 from nontrading.approval import ApprovalGate
+from nontrading.crm_schema import ApprovalClass, Interaction
 from nontrading.store import RevenueStore
 
 
 def make_store(tmp_path: Path) -> RevenueStore:
     return RevenueStore(tmp_path / "revenue_agent.db")
+
+
+def make_interaction(interaction_id: str, approval_class: ApprovalClass) -> Interaction:
+    return Interaction(
+        id=interaction_id,
+        lead_id="lead-1",
+        engine="outreach",
+        action="draft_outreach",
+        approval_class=approval_class,
+    )
 
 
 def test_paper_mode_creates_pending_request(tmp_path: Path) -> None:
@@ -143,3 +154,43 @@ def test_list_approval_requests_can_filter_by_status(tmp_path: Path) -> None:
     assert approved[0].entity_id == "123"
     assert len(pending) == 1
     assert pending[0].entity_id == "124"
+
+
+def test_route_review_creates_pending_request_in_sqlite(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    gate = ApprovalGate(store, paper_mode=True)
+
+    decision = gate.route(make_interaction("review-1", ApprovalClass.REVIEW))
+
+    pending = store.list_approval_requests(status="pending")
+    assert not decision.allowed
+    assert decision.queued
+    assert decision.status == "queued_review"
+    assert len(pending) == 1
+    assert pending[0].entity_id == "review-1"
+
+
+def test_route_escalate_marks_request_payload_for_escalation(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    gate = ApprovalGate(store, paper_mode=True)
+
+    decision = gate.route(make_interaction("escalate-1", ApprovalClass.ESCALATE))
+
+    pending = store.list_approval_requests(status="pending")
+    assert not decision.allowed
+    assert decision.blocked
+    assert decision.status == "blocked_escalation"
+    assert len(pending) == 1
+    assert pending[0].entity_id == "escalate-1"
+    assert pending[0].payload["escalation_required"] is True
+
+
+def test_route_auto_does_not_create_request(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    gate = ApprovalGate(store, paper_mode=True)
+
+    decision = gate.route(make_interaction("auto-1", ApprovalClass.AUTO))
+
+    assert decision.allowed
+    assert decision.status == "paper_logged"
+    assert store.list_approval_requests() == []

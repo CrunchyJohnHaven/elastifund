@@ -54,10 +54,12 @@ import logging
 import argparse
 import sqlite3
 import uuid
+from collections import Counter
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
+import httpx
 import numpy as np
 
 # Auto-load .env
@@ -88,6 +90,11 @@ except ImportError:
     from runtime_profile import RuntimeProfileBundle, activate_runtime_profile_env  # type: ignore
 
 _ACTIVE_RUNTIME_PROFILE = activate_runtime_profile_env()
+try:
+    from bot.health_monitor import HeartbeatWriter
+except ImportError:
+    from health_monitor import HeartbeatWriter  # type: ignore
+
 try:
     from bot.apm_setup import apm_transaction, capture_span, get_apm_runtime, initialize_apm
     from bot.log_config import configure_logging, ecs_extra
@@ -194,20 +201,36 @@ except ImportError:
         LMSREngine = None
 
 try:
-    from bot.wallet_flow_detector import get_signals_for_engine as wallet_flow_get_signals
+    from bot import wallet_flow_detector as wallet_flow_detector_module
 except ImportError:
     try:
-        from wallet_flow_detector import get_signals_for_engine as wallet_flow_get_signals
+        import wallet_flow_detector as wallet_flow_detector_module  # type: ignore
     except ImportError:
-        wallet_flow_get_signals = None
+        wallet_flow_detector_module = None
+
+if wallet_flow_detector_module is not None:
+    wallet_flow_get_signals = getattr(wallet_flow_detector_module, "get_signals_for_engine", None)
+    wallet_flow_ensure_bootstrap = getattr(wallet_flow_detector_module, "ensure_bootstrap_artifacts", None)
+    wallet_flow_get_bootstrap_status = getattr(wallet_flow_detector_module, "get_bootstrap_status", None)
+else:
+    wallet_flow_get_signals = None
+    wallet_flow_ensure_bootstrap = None
+    wallet_flow_get_bootstrap_status = None
 
 try:
-    from bot.cross_platform_arb import get_signals_for_engine as arb_get_signals
+    from bot.cross_platform_arb import (
+        get_signals_for_engine as arb_get_signals,
+        get_signals_for_engine_async as arb_get_signals_async,
+    )
 except ImportError:
     try:
-        from cross_platform_arb import get_signals_for_engine as arb_get_signals
+        from cross_platform_arb import (  # type: ignore
+            get_signals_for_engine as arb_get_signals,
+            get_signals_for_engine_async as arb_get_signals_async,
+        )
     except ImportError:
         arb_get_signals = None
+        arb_get_signals_async = None
 
 # Market quarantine for CLOB 404 handling
 try:
@@ -250,8 +273,10 @@ try:
         CombinatorialConfig,
         CombinatorialSignalStore,
         attach_signal_source_metadata,
+        canonical_source_key,
         evaluate_combinatorial_risk,
         is_combinatorial_signal,
+        normalize_source_components,
     )
 except ImportError:
     try:
@@ -259,8 +284,10 @@ except ImportError:
             CombinatorialConfig,
             CombinatorialSignalStore,
             attach_signal_source_metadata,
+            canonical_source_key,
             evaluate_combinatorial_risk,
             is_combinatorial_signal,
+            normalize_source_components,
         )
     except ImportError:
         CombinatorialConfig = None
@@ -271,6 +298,19 @@ except ImportError:
 
         def is_combinatorial_signal(signal: dict) -> bool:  # type: ignore[no-redef]
             return False
+
+        def canonical_source_key(source: str | None) -> str:  # type: ignore[no-redef]
+            return str(source or "unknown")
+
+        def normalize_source_components(raw_sources: Any) -> tuple[str, ...]:  # type: ignore[no-redef]
+            if raw_sources is None:
+                return ()
+            if isinstance(raw_sources, (list, tuple, set)):
+                return tuple(str(item) for item in raw_sources if str(item).strip())
+            raw = str(raw_sources).strip()
+            if not raw:
+                return ()
+            return tuple(part.strip() for part in raw.split("+") if part.strip())
 
         def evaluate_combinatorial_risk(*args, **kwargs):  # type: ignore[no-redef]
             return None
@@ -412,6 +452,13 @@ DISAGREEMENT_REDUCE_SIZE_STD = 0.15
 DISAGREEMENT_WIDE_STD = 0.20
 ENSEMBLE_DAILY_COST_CAP_USD = 2.0
 ENSEMBLE_ENABLE_SECOND_CLAUDE = False
+FAST_FLOW_RECENT_TRADES_LIMIT = 1000
+FAST_FLOW_HYDRATION_MAX_MARKETS = 60
+PM_HOURLY_CAMPAIGN_ENABLED = False
+PM_HOURLY_NOTIONAL_CAP_USD = 50.0
+PM_CAMPAIGN_MAX_RESOLUTION_HOURS = 24.0
+PM_CAMPAIGN_WINDOW_SECONDS = 3600
+PM_CAMPAIGN_DECISION_LOG_PATH = Path("reports/pm_campaign_decisions.jsonl")
 
 
 def _float_env(name: str, default: str) -> float:
@@ -429,6 +476,15 @@ def _bool_env(name: str, default: bool = False) -> bool:
     if raw in (None, ""):
         return bool(default)
     return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _sum_violation_lane_enabled(profile_name: str) -> bool:
+    if not _bool_env("ENABLE_SUM_VIOLATION", True):
+        return False
+
+    # The multi-outcome scanner performs a large synchronous REST sweep that
+    # stalls the aggressive paper loop before it can log paper-order evidence.
+    return profile_name != "paper_aggressive"
 
 
 def _category_priority_from_env() -> dict[str, int]:
@@ -489,6 +545,11 @@ def _reload_runtime_settings(*, persist: bool = False) -> RuntimeProfileBundle:
     global DISAGREEMENT_WIDE_STD
     global ENSEMBLE_DAILY_COST_CAP_USD
     global ENSEMBLE_ENABLE_SECOND_CLAUDE
+    global PM_HOURLY_CAMPAIGN_ENABLED
+    global PM_HOURLY_NOTIONAL_CAP_USD
+    global PM_CAMPAIGN_MAX_RESOLUTION_HOURS
+    global PM_CAMPAIGN_WINDOW_SECONDS
+    global PM_CAMPAIGN_DECISION_LOG_PATH
 
     bundle = activate_runtime_profile_env(persist=persist)
     RUNTIME_PROFILE = bundle
@@ -536,6 +597,16 @@ def _reload_runtime_settings(*, persist: bool = False) -> RuntimeProfileBundle:
     DISAGREEMENT_WIDE_STD = float(os.environ.get("JJ_DISAGREEMENT_WIDE_STD", "0.20"))
     ENSEMBLE_DAILY_COST_CAP_USD = float(os.environ.get("JJ_ENSEMBLE_DAILY_COST_CAP_USD", "2.0"))
     ENSEMBLE_ENABLE_SECOND_CLAUDE = _bool_env("JJ_ENSEMBLE_ENABLE_SECOND_CLAUDE", False)
+    PM_HOURLY_CAMPAIGN_ENABLED = _bool_env("JJ_PM_HOURLY_CAMPAIGN_ENABLED", False)
+    PM_HOURLY_NOTIONAL_CAP_USD = max(0.0, float(os.environ.get("JJ_PM_HOURLY_NOTIONAL_CAP_USD", "50.0")))
+    PM_CAMPAIGN_MAX_RESOLUTION_HOURS = max(
+        0.0,
+        float(os.environ.get("JJ_PM_CAMPAIGN_MAX_RESOLUTION_HOURS", "24.0")),
+    )
+    PM_CAMPAIGN_WINDOW_SECONDS = max(60, int(float(os.environ.get("JJ_PM_CAMPAIGN_WINDOW_SECONDS", "3600"))))
+    PM_CAMPAIGN_DECISION_LOG_PATH = Path(
+        os.environ.get("JJ_PM_CAMPAIGN_DECISION_LOG_PATH", "reports/pm_campaign_decisions.jsonl")
+    )
 
     return bundle
 
@@ -548,7 +619,21 @@ def _round_up(value: float, decimals: int = 2) -> float:
     return math.ceil(max(0.0, float(value)) * scale - 1e-12) / scale
 
 
+def clob_order_size_for_usd(size_usd: float, price: float) -> float:
+    """Convert a capped USD order into rounded CLOB shares at the quoted price."""
+    size_usd = max(0.0, float(size_usd))
+    price = float(price)
+    if size_usd <= 0.0 or price <= 0.0 or price >= 1.0:
+        return 0.0
+    return _round_up(size_usd / price, decimals=2)
+
+
 def clob_min_order_size(price: float, *, min_shares: float = _CLOB_HARD_MIN_SHARES) -> float:
+    """Return the live CLOB minimum size at a quoted price.
+
+    Polymarket enforces both a share floor and a $5 notional floor, so low-price
+    tokens can require far more than 5 shares to clear the live minimum.
+    """
     price = max(0.0, float(price))
     required = max(float(min_shares), (_CLOB_HARD_MIN_NOTIONAL_USD / price) if price > 0.0 else float(min_shares))
     return _round_up(required, decimals=2)
@@ -672,6 +757,62 @@ class SignalDedupCache:
     @property
     def size(self) -> int:
         return len(self._cache)
+
+
+class RollingNotionalBudgetTracker:
+    """Tracks notional consumption over a rolling time window."""
+
+    def __init__(self, *, cap_usd: float, window_seconds: int = 3600):
+        self.cap_usd = max(0.0, float(cap_usd))
+        self.window_seconds = max(60, int(window_seconds))
+        self._events: list[tuple[float, float]] = []
+
+    def _prune(self, now_ts: float | None = None) -> None:
+        now = float(now_ts if now_ts is not None else time.time())
+        cutoff = now - float(self.window_seconds)
+        self._events = [(ts, amt) for ts, amt in self._events if ts >= cutoff]
+
+    def used_usd(self, *, now_ts: float | None = None) -> float:
+        self._prune(now_ts=now_ts)
+        return round(sum(amt for _, amt in self._events), 4)
+
+    def remaining_usd(self, *, now_ts: float | None = None) -> float:
+        used = self.used_usd(now_ts=now_ts)
+        return round(max(0.0, self.cap_usd - used), 4)
+
+    def can_spend(
+        self,
+        amount_usd: float,
+        *,
+        now_ts: float | None = None,
+    ) -> tuple[bool, str, float]:
+        amount = max(0.0, float(amount_usd))
+        if amount <= 0.0:
+            return False, "pm_campaign_non_positive_notional", self.remaining_usd(now_ts=now_ts)
+        if self.cap_usd <= 0.0:
+            return False, "pm_campaign_budget_zero", 0.0
+        remaining = self.remaining_usd(now_ts=now_ts)
+        if amount > remaining + 1e-9:
+            return False, "pm_campaign_budget_exceeded", remaining
+        return True, "pm_campaign_ok", remaining
+
+    def record_spend(self, amount_usd: float, *, now_ts: float | None = None) -> None:
+        amount = max(0.0, float(amount_usd))
+        if amount <= 0.0:
+            return
+        ts = float(now_ts if now_ts is not None else time.time())
+        self._events.append((ts, amount))
+        self._prune(now_ts=ts)
+
+    def snapshot(self, *, now_ts: float | None = None) -> dict[str, float]:
+        used = self.used_usd(now_ts=now_ts)
+        remaining = max(0.0, self.cap_usd - used)
+        return {
+            "cap_usd": round(self.cap_usd, 2),
+            "used_usd": round(used, 2),
+            "remaining_usd": round(remaining, 2),
+            "window_seconds": int(self.window_seconds),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -903,6 +1044,27 @@ def estimate_resolution_hours(market: dict) -> float | None:
                 pass
 
     return None
+
+
+def _parse_iso8601_utc(value: str | None) -> datetime | None:
+    """Parse a runtime timestamp into an aware UTC datetime."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def looks_like_fast_flow_market(question: str) -> bool:
+    """Identify the short-duration crypto markets tracked by wallet flow."""
+    lowered = (question or "").lower()
+    if "up or down" not in lowered:
+        return False
+    return any(token in lowered for token in ("5m", "15m", "5-minute", "15-minute", "5 minute", "15 minute"))
 
 
 def velocity_score(edge: float, resolution_hours: float) -> float:
@@ -1202,6 +1364,23 @@ def build_trade_record(
             return value.lower() in ("true", "yes", "1")
         return bool(value)
 
+    source_components = extract_signal_source_components(signal)
+    signal_sources = extract_signal_sources(signal) or list(source_components)
+    primary_source = str(signal.get("source", "") or "").strip() or "llm"
+    if primary_source not in source_components:
+        source_components = [primary_source, *source_components]
+    source_combo = (
+        str(signal.get("source_combo", "") or "").strip()
+        or "+".join(source_components)
+        or primary_source
+    )
+    source_count = max(
+        len(source_components),
+        int(_safe_float(signal.get("n_sources", 0), 0)),
+        1,
+    )
+    signal_metadata = extract_signal_metadata(signal)
+
     return {
         "market_id": market_id,
         "question": signal.get("question", ""),
@@ -1218,7 +1397,12 @@ def build_trade_record(
         "reasoning": signal.get("reasoning", ""),
         "token_id": token_id,
         "order_id": order_id,
-        "source": signal.get("source", "llm"),
+        "source": primary_source,
+        "source_combo": source_combo,
+        "source_components": source_components,
+        "source_count": source_count,
+        "signal_sources": signal_sources,
+        "signal_metadata": signal_metadata,
         "n_models": int(_safe_float(signal.get("n_models", 0), 0)),
         "model_spread": _safe_float(signal.get("model_spread"), None),
         "model_stddev": _safe_float(signal.get("model_stddev"), None),
@@ -1236,6 +1420,116 @@ def build_trade_record(
         "platt_a": _safe_float(signal.get("platt_a"), None),
         "platt_b": _safe_float(signal.get("platt_b"), None),
     }
+
+
+def extract_signal_source_components(payload: Mapping[str, Any] | None) -> list[str]:
+    """Return a stable, de-duplicated ordered source list for a signal payload."""
+    if not isinstance(payload, Mapping):
+        return []
+
+    raw_components = payload.get("source_components")
+    if raw_components in (None, "", [], (), set()):
+        raw_components = payload.get("signal_sources")
+    if raw_components in (None, "", [], (), set()):
+        raw_components = payload.get("source_combo") or payload.get("source") or ""
+    raw_iterable = normalize_source_components(raw_components)
+
+    components: list[str] = []
+    seen: set[str] = set()
+    for item in raw_iterable:
+        normalized = canonical_source_key(str(item or "").strip())
+        if not normalized or normalized == "unknown":
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        components.append(normalized)
+    return components
+
+
+def extract_signal_sources(payload: Mapping[str, Any] | None) -> list[str]:
+    """Return canonical source aliases for persisted trade state."""
+    return extract_signal_source_components(payload)
+
+
+def extract_signal_metadata(payload: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Collect additive attribution metadata from a signal or trade payload."""
+    if not isinstance(payload, Mapping):
+        return {}
+
+    metadata: dict[str, Any] = {}
+    existing = payload.get("signal_metadata")
+    if isinstance(existing, Mapping):
+        for key, value in existing.items():
+            if value is None:
+                continue
+            if isinstance(value, float) and math.isnan(value):
+                continue
+            if isinstance(value, str):
+                value = value.strip()
+                if not value:
+                    continue
+            metadata[str(key)] = value
+
+    sources = set(extract_signal_sources(payload))
+    estimated_prob = _safe_float(payload.get("estimated_prob"), None)
+    calibrated_prob = _safe_float(payload.get("calibrated_prob"), estimated_prob)
+    raw_prob = _safe_float(payload.get("raw_prob"), None)
+    confidence = _safe_float(payload.get("confidence"), None)
+    edge = _safe_float(payload.get("edge"), None)
+
+    if "llm" in sources:
+        if calibrated_prob is not None:
+            metadata.setdefault("llm_prob", round(calibrated_prob, 6))
+        if raw_prob is not None:
+            metadata.setdefault("llm_raw_prob", round(raw_prob, 6))
+
+    if "wallet_flow" in sources and confidence is not None:
+        metadata.setdefault("wallet_consensus", round(confidence, 6))
+
+    if "lmsr" in sources and estimated_prob is not None:
+        metadata.setdefault("lmsr_prob", round(estimated_prob, 6))
+
+    if "lead_lag" in sources and confidence is not None:
+        metadata.setdefault("lead_lag_confidence", round(confidence, 6))
+
+    if "cross_platform_arb" in sources:
+        if confidence is not None:
+            metadata.setdefault("arb_match_score", round(confidence, 6))
+        if edge is not None:
+            metadata.setdefault("arb_net_profit_pct", round(edge, 6))
+        arb_details = payload.get("arb_details")
+        if isinstance(arb_details, Mapping):
+            total_cost = _safe_float(arb_details.get("total_cost"), None)
+            net_profit = _safe_float(arb_details.get("net_profit"), None)
+            if total_cost is not None:
+                metadata.setdefault("arb_total_cost", round(total_cost, 6))
+            if net_profit is not None:
+                metadata.setdefault("arb_net_profit", round(net_profit, 6))
+            kalshi_ticker = str(arb_details.get("kalshi_ticker", "") or "").strip()
+            if kalshi_ticker:
+                metadata.setdefault("kalshi_ticker", kalshi_ticker)
+            kalshi_side = str(arb_details.get("kalshi_side", "") or "").strip()
+            if kalshi_side:
+                metadata.setdefault("kalshi_side", kalshi_side)
+
+    return metadata
+
+
+def merge_signal_metadata(payloads: list[Mapping[str, Any] | None]) -> dict[str, Any]:
+    """Merge per-source metadata across all confirming signal payloads."""
+    merged: dict[str, Any] = {}
+    for payload in payloads:
+        merged.update(extract_signal_metadata(payload))
+    return merged
+
+
+def signal_has_source(payload: Mapping[str, Any] | None, source: str) -> bool:
+    """Check whether a signal payload contains a given source in its attribution set."""
+    target = canonical_source_key(source)
+    if not target:
+        return False
+    return target in set(extract_signal_source_components(payload))
 
 
 class _DummyNotifier:
@@ -1289,6 +1583,9 @@ class TradeDatabase:
                 resolved_at TEXT,
                 bankroll_level INTEGER DEFAULT 1000,
                 source TEXT,
+                source_combo TEXT,
+                source_components_json TEXT,
+                source_count INTEGER DEFAULT 1,
                 n_models INTEGER,
                 model_spread REAL,
                 model_stddev REAL,
@@ -1402,6 +1699,9 @@ class TradeDatabase:
             "trades",
             {
                 "source": "TEXT",
+                "source_combo": "TEXT",
+                "source_components_json": "TEXT",
+                "source_count": "INTEGER DEFAULT 1",
                 "n_models": "INTEGER",
                 "model_spread": "REAL",
                 "model_stddev": "REAL",
@@ -1434,17 +1734,29 @@ class TradeDatabase:
     def log_trade(self, trade: dict, bankroll_level: int = 1000) -> str:
         """Log a trade to the database. Returns trade_id."""
         trade_id = str(uuid.uuid4())[:12]
+        source_components = extract_signal_source_components(trade)
+        source_combo = (
+            str(trade.get("source_combo", "") or "").strip()
+            or "+".join(source_components)
+            or str(trade.get("source", "llm") or "llm")
+        )
+        source_count = max(
+            int(_safe_float(trade.get("source_count", 0), 0)),
+            len(source_components),
+            1,
+        )
         c = self.conn.cursor()
         c.execute("""
             INSERT INTO trades (id, timestamp, market_id, question, direction,
                 entry_price, raw_prob, calibrated_prob, edge, taker_fee,
                 position_size_usd, kelly_fraction, category, confidence,
                 reasoning, token_id, order_id, paper, bankroll_level, source,
+                source_combo, source_components_json, source_count,
                 n_models, model_spread, model_stddev, agreement,
                 kelly_multiplier, disagreement_kelly_fraction, models_agree,
                 search_context_used, counter_shift, counter_fragile, platt_mode,
                 platt_a, platt_b)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             trade_id,
             datetime.now(timezone.utc).isoformat(),
@@ -1466,6 +1778,9 @@ class TradeDatabase:
             1 if PAPER_TRADING else 0,
             bankroll_level,
             trade.get("source", "llm"),
+            source_combo,
+            json.dumps(source_components, sort_keys=True),
+            source_count,
             trade.get("n_models"),
             trade.get("model_spread"),
             trade.get("model_stddev"),
@@ -1482,6 +1797,39 @@ class TradeDatabase:
         ))
         self.conn.commit()
         return trade_id
+
+    def get_source_breakdown(
+        self,
+        *,
+        date_prefix: str | None = None,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Summarize trade volume and outcomes by recorded source attribution."""
+        limit = max(1, int(limit))
+        where_clause = ""
+        params: list[Any] = []
+        if date_prefix:
+            where_clause = "WHERE timestamp LIKE ?"
+            params.append(f"{date_prefix}%")
+        params.append(limit)
+        rows = self.conn.execute(
+            f"""
+            SELECT
+                COALESCE(NULLIF(source_combo, ''), NULLIF(source, ''), 'unknown') AS source_label,
+                COUNT(*) AS total_trades,
+                SUM(CASE WHEN outcome = 'won' THEN 1 ELSE 0 END) AS wins,
+                SUM(CASE WHEN outcome = 'lost' THEN 1 ELSE 0 END) AS losses,
+                SUM(CASE WHEN outcome IS NULL THEN 1 ELSE 0 END) AS unresolved,
+                COALESCE(SUM(pnl), 0.0) AS pnl
+            FROM trades
+            {where_clause}
+            GROUP BY source_label
+            ORDER BY total_trades DESC, source_label ASC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def log_multi_bankroll(self, trade_id: str, bankroll_level: int,
                             position_size: float, running_bankroll: float,
@@ -2159,6 +2507,59 @@ class JJState:
                         merged["trade_log"] = []
                     if not isinstance(merged.get("linked_legs"), dict):
                         merged["linked_legs"] = {}
+                    normalized_open_positions: dict[str, dict[str, Any]] = {}
+                    for market_id, payload in merged["open_positions"].items():
+                        if not isinstance(payload, dict):
+                            continue
+                        normalized = dict(payload)
+                        normalized_components = extract_signal_source_components(normalized)
+                        normalized_source = (
+                            str(normalized.get("source", "") or "").strip()
+                            or (normalized_components[0] if normalized_components else "")
+                        )
+                        normalized["source"] = normalized_source
+                        normalized["source_combo"] = (
+                            str(normalized.get("source_combo", "") or "").strip()
+                            or "+".join(normalized_components)
+                            or normalized_source
+                        )
+                        normalized["source_components"] = normalized_components
+                        normalized["source_count"] = max(
+                            int(_safe_float(normalized.get("source_count"), 0)),
+                            len(normalized_components),
+                            1 if normalized_source else 0,
+                        )
+                        normalized["signal_sources"] = extract_signal_sources(normalized) or list(normalized_components)
+                        normalized["signal_metadata"] = extract_signal_metadata(normalized)
+                        normalized_open_positions[str(market_id)] = normalized
+                    merged["open_positions"] = normalized_open_positions
+
+                    normalized_trade_log: list[dict[str, Any]] = []
+                    for payload in merged["trade_log"]:
+                        if not isinstance(payload, dict):
+                            continue
+                        normalized = dict(payload)
+                        normalized_components = extract_signal_source_components(normalized)
+                        normalized_source = (
+                            str(normalized.get("source", "") or "").strip()
+                            or (normalized_components[0] if normalized_components else "")
+                        )
+                        normalized["source"] = normalized_source
+                        normalized["source_combo"] = (
+                            str(normalized.get("source_combo", "") or "").strip()
+                            or "+".join(normalized_components)
+                            or normalized_source
+                        )
+                        normalized["source_components"] = normalized_components
+                        normalized["source_count"] = max(
+                            int(_safe_float(normalized.get("source_count"), 0)),
+                            len(normalized_components),
+                            1 if normalized_source else 0,
+                        )
+                        normalized["signal_sources"] = extract_signal_sources(normalized) or list(normalized_components)
+                        normalized["signal_metadata"] = extract_signal_metadata(normalized)
+                        normalized_trade_log.append(normalized)
+                    merged["trade_log"] = normalized_trade_log[-100:]
                     return merged
             except Exception:
                 pass
@@ -2227,11 +2628,53 @@ class JJState:
             total += _safe_float(payload.get("reserved_budget_usd"), 0.0)
         return round(total, 2)
 
-    def record_trade(self, market_id: str, question: str, direction: str,
-                     price: float, size_usd: float, edge: float,
-                     confidence: float, order_id: str = ""):
+    def record_trade(
+        self,
+        market_id: str,
+        question: str,
+        direction: str,
+        price: float,
+        size_usd: float,
+        edge: float,
+        confidence: float,
+        order_id: str = "",
+        *,
+        source: str = "",
+        source_combo: str = "",
+        source_components: list[str] | None = None,
+        source_count: int | None = None,
+        signal_sources: list[str] | None = None,
+        signal_metadata: Mapping[str, Any] | None = None,
+    ):
         """Record a new filled trade, aggregating repeated fills on the same side."""
         now_iso = datetime.now(timezone.utc).isoformat()
+        incoming_components = extract_signal_source_components(
+            {
+                "source": source,
+                "source_combo": source_combo,
+                "source_components": source_components or [],
+                "signal_sources": signal_sources or [],
+            }
+        )
+        incoming_signal_sources = extract_signal_sources(
+            {
+                "source": source,
+                "source_combo": source_combo,
+                "source_components": incoming_components,
+                "signal_sources": signal_sources or [],
+            }
+        ) or list(incoming_components)
+        incoming_signal_metadata = extract_signal_metadata(
+            {
+                "source": source,
+                "source_combo": source_combo,
+                "source_components": incoming_components,
+                "signal_sources": incoming_signal_sources,
+                "signal_metadata": dict(signal_metadata or {}),
+                "confidence": confidence,
+                "edge": edge,
+            }
+        )
         existing = self.state["open_positions"].get(market_id)
         if existing and existing.get("direction") == direction:
             prev_price = _safe_float(existing.get("entry_price"), price) or price
@@ -2252,6 +2695,27 @@ class JJState:
             ]
             if order_id and order_id not in order_ids:
                 order_ids.append(order_id)
+            merged_components = extract_signal_source_components(existing)
+            for component in incoming_components:
+                if component not in merged_components:
+                    merged_components.append(component)
+            merged_signal_metadata = extract_signal_metadata(existing)
+            merged_signal_metadata.update(incoming_signal_metadata)
+            primary_source = str(existing.get("source", "") or source or "").strip()
+            if not primary_source and merged_components:
+                primary_source = merged_components[0]
+            resolved_source_combo = (
+                "+".join(merged_components)
+                or str(existing.get("source_combo", "") or "").strip()
+                or str(source_combo or "").strip()
+                or primary_source
+            )
+            resolved_source_count = max(
+                int(_safe_float(existing.get("source_count"), 0)),
+                int(source_count or 0),
+                len(merged_components),
+                1 if primary_source else 0,
+            )
             self.state["open_positions"][market_id] = {
                 "question": question or existing.get("question", ""),
                 "direction": direction,
@@ -2266,10 +2730,27 @@ class JJState:
                 ) / max(total_size_usd, 1e-9),
                 "order_id": order_id or existing.get("order_id", ""),
                 "order_ids": order_ids,
+                "source": primary_source,
+                "source_combo": resolved_source_combo,
+                "source_components": merged_components,
+                "source_count": resolved_source_count,
+                "signal_sources": list(merged_components),
+                "signal_metadata": merged_signal_metadata,
                 "timestamp": existing.get("timestamp", now_iso),
                 "updated_at": now_iso,
             }
         else:
+            primary_source = str(source or "").strip() or (incoming_components[0] if incoming_components else "")
+            resolved_source_combo = (
+                str(source_combo or "").strip()
+                or "+".join(incoming_components)
+                or primary_source
+            )
+            resolved_source_count = max(
+                int(source_count or 0),
+                len(incoming_components),
+                1 if primary_source else 0,
+            )
             self.state["open_positions"][market_id] = {
                 "question": question,
                 "direction": direction,
@@ -2280,6 +2761,12 @@ class JJState:
                 "confidence": confidence,
                 "order_id": order_id,
                 "order_ids": [order_id] if order_id else [],
+                "source": primary_source,
+                "source_combo": resolved_source_combo,
+                "source_components": incoming_components,
+                "source_count": resolved_source_count,
+                "signal_sources": list(incoming_signal_sources),
+                "signal_metadata": incoming_signal_metadata,
                 "timestamp": now_iso,
                 "updated_at": now_iso,
             }
@@ -2296,6 +2783,12 @@ class JJState:
             "size_usd": size_usd,
             "edge": edge,
             "order_id": order_id,
+            "source": primary_source,
+            "source_combo": resolved_source_combo,
+            "source_components": incoming_components,
+            "source_count": resolved_source_count,
+            "signal_sources": list(incoming_signal_sources),
+            "signal_metadata": incoming_signal_metadata,
             "timestamp": now_iso,
         })
         self.state["trade_log"] = self.state["trade_log"][-100:]
@@ -2436,7 +2929,7 @@ class JJLive:
         self.enable_wallet_flow = _bool_env("ENABLE_WALLET_FLOW", True)
         self.enable_lmsr = _bool_env("ENABLE_LMSR", True)
         self.enable_cross_platform_arb = _bool_env("ENABLE_CROSS_PLATFORM_ARB", True)
-        self.enable_sum_violation = _bool_env("ENABLE_SUM_VIOLATION", True)
+        self.enable_sum_violation = _sum_violation_lane_enabled(self.profile_name)
         self.fast_flow_only = _bool_env("JJ_FAST_FLOW_ONLY", False)
         self.wallet_flow_scores_file = Path(
             os.environ.get("JJ_WALLET_FLOW_SCORES_FILE", "data/smart_wallets.json")
@@ -2444,12 +2937,23 @@ class JJLive:
         self.wallet_flow_db_file = Path(
             os.environ.get("JJ_WALLET_FLOW_DB_FILE", "data/wallet_scores.db")
         )
+        self._configure_wallet_flow_paths()
         self._startup_lane_health: dict[str, dict[str, Any]] = {}
         self._last_lane_health: dict[str, dict[str, Any]] = {}
         self._elastic_orderbook_task = None
         self._elastic_market_lookup: dict[str, dict[str, Any]] = {}
         self._elastic_token_market_index: dict[str, str] = {}
+        self.pm_hourly_campaign_enabled = PM_HOURLY_CAMPAIGN_ENABLED
+        self.pm_campaign_max_resolution_hours = PM_CAMPAIGN_MAX_RESOLUTION_HOURS
+        self.pm_campaign_budget = RollingNotionalBudgetTracker(
+            cap_usd=PM_HOURLY_NOTIONAL_CAP_USD,
+            window_seconds=PM_CAMPAIGN_WINDOW_SECONDS,
+        )
+        self.pm_campaign_decision_log_path = PM_CAMPAIGN_DECISION_LOG_PATH
+        self.pm_campaign_decision_log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._pm_campaign_recent_decisions: list[dict[str, Any]] = []
         self.state = JJState()
+        self.heartbeat_writer = HeartbeatWriter()
         self.scanner = MarketScanner()
 
         # Market quarantine: gracefully handle CLOB 404s with exponential backoff
@@ -2573,6 +3077,7 @@ class JJLive:
         self.wallet_flow_available = self.enable_wallet_flow and self.wallet_flow_module_available
         if self.wallet_flow_available:
             logger.info("Smart Wallet Flow Detector available")
+            self._maybe_initialize_wallet_flow_bootstrap()
         else:
             if not self.enable_wallet_flow:
                 logger.info("Wallet flow lane disabled by config")
@@ -2798,6 +3303,14 @@ class JJLive:
             self.paper_mode,
         )
         logger.info(
+            "  PM campaign: enabled=%s cap=$%.2f/%.0fmin max_res=%.1fh log=%s",
+            self.pm_hourly_campaign_enabled,
+            self.pm_campaign_budget.cap_usd,
+            self.pm_campaign_budget.window_seconds / 60.0,
+            self.pm_campaign_max_resolution_hours,
+            self.pm_campaign_decision_log_path,
+        )
+        logger.info(
             "  Lane toggles: llm=%s wallet=%s lmsr=%s cross_platform=%s sum_violation=%s fast_flow_only=%s",
             self.enable_llm_signals,
             self.enable_wallet_flow,
@@ -2893,6 +3406,17 @@ class JJLive:
     def _wallet_flow_bootstrap_status(self) -> tuple[bool, str | None]:
         scores_path = Path(getattr(self, "wallet_flow_scores_file", Path("data/smart_wallets.json")))
         db_path = Path(getattr(self, "wallet_flow_db_file", Path("data/wallet_scores.db")))
+        if wallet_flow_get_bootstrap_status is not None:
+            try:
+                status = wallet_flow_get_bootstrap_status(scores_path=scores_path, db_path=db_path)
+            except Exception:
+                status = None
+            else:
+                if status.ready:
+                    return True, None
+                if status.reasons:
+                    return False, ",".join(str(reason) for reason in status.reasons)
+                return False, "not_bootstrapped"
         if not scores_path.exists() or not db_path.exists():
             return False, "not_bootstrapped"
         try:
@@ -2904,6 +3428,165 @@ class JJLive:
         except Exception:
             return False, "not_bootstrapped"
         return True, None
+
+    def _configure_wallet_flow_paths(self) -> None:
+        if wallet_flow_detector_module is None:
+            return
+        wallet_flow_detector_module.SCORES_FILE = Path(self.wallet_flow_scores_file)
+        wallet_flow_detector_module.DB_FILE = Path(self.wallet_flow_db_file)
+
+    def _maybe_initialize_wallet_flow_bootstrap(self) -> None:
+        if not self.enable_wallet_flow or not getattr(self, "wallet_flow_module_available", False):
+            return
+        if wallet_flow_ensure_bootstrap is None:
+            return
+
+        wallet_ready, wallet_reason = self._wallet_flow_bootstrap_status()
+        if wallet_ready:
+            return
+
+        logger.info(
+            "Wallet flow bootstrap missing (%s) — attempting automatic rebuild",
+            wallet_reason or "unknown",
+        )
+        try:
+            status = wallet_flow_ensure_bootstrap(
+                scores_path=self.wallet_flow_scores_file,
+                db_path=self.wallet_flow_db_file,
+            )
+        except Exception as exc:
+            logger.warning(f"Wallet flow bootstrap initialization failed (non-fatal): {exc}")
+            return
+
+        if status.ready:
+            logger.info(
+                "Wallet flow bootstrap ready with %d smart wallets",
+                status.wallet_count,
+            )
+        else:
+            logger.warning(
+                "Wallet flow bootstrap still not ready: %s",
+                ", ".join(status.reasons) if status.reasons else "unknown",
+            )
+
+    @staticmethod
+    def _market_identifier(payload: dict[str, Any]) -> str:
+        return str(
+            payload.get("id")
+            or payload.get("conditionId")
+            or payload.get("condition_id")
+            or payload.get("market_id")
+            or ""
+        ).strip()
+
+    def _should_hydrate_recent_fast_markets(self, markets: list[dict[str, Any]]) -> bool:
+        if not (self.fast_flow_only or self.enable_wallet_flow or self.enable_lmsr):
+            return False
+
+        max_hours = max(24.0, float(MAX_RESOLUTION_HOURS))
+        for market in markets:
+            question = str(market.get("question") or "")
+            if not looks_like_fast_flow_market(question):
+                continue
+            end_dt = _parse_iso8601_utc(str(market.get("endDate") or market.get("end_date_iso") or ""))
+            if end_dt is None:
+                return False
+            hours = (end_dt - datetime.now(timezone.utc)).total_seconds() / 3600.0
+            if 0.0 < hours <= max_hours:
+                return False
+        return True
+
+    async def _fetch_recent_trade_hydrated_markets(self) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        now = datetime.now(timezone.utc)
+        timeout = httpx.Timeout(15.0, connect=15.0)
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.get(
+                    "https://data-api.polymarket.com/trades",
+                    params={"limit": FAST_FLOW_RECENT_TRADES_LIMIT},
+                )
+                response.raise_for_status()
+                payload = response.json()
+                recent_trades = payload if isinstance(payload, list) else []
+
+                recent_condition_ids: list[str] = []
+                fast_market_titles: set[str] = set()
+                for trade in recent_trades:
+                    title = str(trade.get("title") or "")
+                    if not looks_like_fast_flow_market(title):
+                        continue
+                    fast_market_titles.add(title)
+                    condition_id = str(trade.get("conditionId") or "").strip()
+                    if condition_id and condition_id not in recent_condition_ids:
+                        recent_condition_ids.append(condition_id)
+                    if len(recent_condition_ids) >= FAST_FLOW_HYDRATION_MAX_MARKETS:
+                        break
+
+                hydrated_payloads = await asyncio.gather(
+                    *[
+                        client.get(
+                            "https://gamma-api.polymarket.com/markets",
+                            params={"condition_ids": condition_id},
+                        )
+                        for condition_id in recent_condition_ids
+                    ],
+                    return_exceptions=True,
+                )
+        except Exception as exc:
+            logger.warning("Recent fast-market hydration failed: %s", exc)
+            return [], {
+                "recent_trades_fetched": 0,
+                "recent_market_hydrations": 0,
+                "recent_fast_markets_seen": 0,
+            }
+
+        hydrated_markets: list[dict[str, Any]] = []
+        max_hours = max(24.0, float(MAX_RESOLUTION_HOURS))
+        for item in hydrated_payloads:
+            if isinstance(item, Exception):
+                continue
+            try:
+                item.raise_for_status()
+            except Exception:
+                continue
+            market_payload = item.json()
+            if not isinstance(market_payload, list) or not market_payload:
+                continue
+            market = market_payload[0]
+            if not isinstance(market, dict):
+                continue
+            if bool(market.get("closed")):
+                continue
+            if not bool(market.get("acceptingOrders", True)):
+                continue
+            end_dt = _parse_iso8601_utc(str(market.get("endDate") or market.get("end_date_iso") or ""))
+            if end_dt is None:
+                continue
+            hours = (end_dt - now).total_seconds() / 3600.0
+            if hours <= 0.0 or hours > max_hours:
+                continue
+            hydrated_markets.append(market)
+
+        return hydrated_markets, {
+            "recent_trades_fetched": len(recent_trades),
+            "recent_market_hydrations": len(hydrated_payloads),
+            "recent_fast_markets_seen": len(fast_market_titles),
+        }
+
+    def _merge_markets(
+        self,
+        primary_markets: list[dict[str, Any]],
+        supplemental_markets: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        merged: list[dict[str, Any]] = []
+        seen_market_ids: set[str] = set()
+        for market in list(primary_markets) + list(supplemental_markets):
+            market_id = self._market_identifier(market)
+            if not market_id or market_id in seen_market_ids:
+                continue
+            seen_market_ids.add(market_id)
+            merged.append(market)
+        return merged
 
     def _cross_platform_key_paths(self) -> list[Path]:
         configured = os.environ.get("KALSHI_RSA_KEY_PATH", "")
@@ -3131,14 +3814,60 @@ class JJLive:
                 _safe_float(signal.get("resolution_hours"), 1.0),
             )
 
+    async def _collect_cross_platform_arb_signals(
+        self,
+        market_lookup: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Collect cross-platform arb signals without nesting event loops."""
+        if not self.arb_available:
+            return []
+        if not self._has_cross_platform_credentials():
+            logger.info("Cross-platform arb skipped — no_credentials")
+            return []
+
+        try:
+            if arb_get_signals_async is not None:
+                arb_signals = await arb_get_signals_async()
+            elif arb_get_signals is not None:
+                arb_signals = await asyncio.to_thread(arb_get_signals)
+            else:
+                return []
+
+            if arb_signals:
+                logger.info("Cross-platform arb: %d signals", len(arb_signals))
+            for signal in arb_signals:
+                signal["source"] = "cross_platform_arb"
+                self._hydrate_signal_market_context(signal, market_lookup)
+                attach_signal_source_metadata(signal)
+                signal["signal_sources"] = extract_signal_sources(signal)
+                signal["signal_metadata"] = extract_signal_metadata(signal)
+            return arb_signals
+        except Exception as e:
+            logger.warning(f"Cross-platform arb scan failed (non-fatal): {e}")
+            return []
+
     def _init_telegram(self):
         """Initialize Telegram notifier (handles both class versions)."""
+        token = os.environ.get("TELEGRAM_BOT_TOKEN", "") or os.environ.get("TELEGRAM_TOKEN", "")
+        chat_id = os.environ.get("TELEGRAM_CHAT_ID", "") or os.environ.get("TELEGRAM_CHAT", "")
+
         if TelegramNotifier is None:
-            logger.warning("Telegram module not available — notifications disabled")
+            logger.warning(
+                "Telegram module not available — notifications disabled "
+                "(token_configured=%s chat_configured=%s)",
+                bool(token),
+                bool(chat_id),
+            )
             return _DummyNotifier()
 
-        token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-        chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+        if not token or not chat_id:
+            logger.info(
+                "Telegram not configured — notifications disabled "
+                "(token_configured=%s chat_configured=%s)",
+                bool(token),
+                bool(chat_id),
+            )
+            return _DummyNotifier()
 
         try:
             # Try keyword args (local codebase style)
@@ -3152,8 +3881,64 @@ class JJLive:
                     # Try no-arg constructor (reads from env)
                     return TelegramNotifier()
                 except Exception:
-                    logger.warning("Could not init Telegram — notifications disabled")
+                    logger.warning("Could not init Telegram — notifications disabled", exc_info=True)
                     return _DummyNotifier()
+
+    def _write_startup_heartbeat(self) -> None:
+        try:
+            self.heartbeat_writer.mark_startup(
+                profile_name=self.profile_name,
+                runtime_mode=self.runtime_mode,
+                paper_mode=self.paper_mode,
+                scan_interval_seconds=SCAN_INTERVAL,
+            )
+        except Exception as exc:
+            logger.warning("Heartbeat startup write failed: %s", exc)
+
+    def _write_cycle_started_heartbeat(self, cycle_num: int) -> None:
+        try:
+            self.heartbeat_writer.mark_cycle_started(
+                cycle_num,
+                profile_name=self.profile_name,
+                runtime_mode=self.runtime_mode,
+                paper_mode=self.paper_mode,
+                scan_interval_seconds=SCAN_INTERVAL,
+            )
+        except Exception as exc:
+            logger.warning("Heartbeat cycle-start write failed: %s", exc)
+
+    def _write_cycle_completed_heartbeat(self, summary: dict[str, Any]) -> None:
+        try:
+            heartbeat_summary = dict(summary)
+            heartbeat_summary.setdefault(
+                "lane_health",
+                self._last_lane_health or self._startup_lane_health or self._build_startup_lane_health(),
+            )
+            self.heartbeat_writer.mark_cycle_completed(
+                heartbeat_summary,
+                profile_name=self.profile_name,
+                runtime_mode=self.runtime_mode,
+                paper_mode=self.paper_mode,
+                scan_interval_seconds=SCAN_INTERVAL,
+                total_trades=int(self.state.state.get("total_trades", 0)),
+                trades_today=int(self.state.state.get("trades_today", 0)),
+                open_positions=len(self.state.state.get("open_positions", {})),
+            )
+        except Exception as exc:
+            logger.warning("Heartbeat cycle-complete write failed: %s", exc)
+
+    def _write_cycle_error_heartbeat(self, message: str, *, cycle_num: int | None = None) -> None:
+        try:
+            self.heartbeat_writer.mark_cycle_error(
+                message,
+                cycle_number=cycle_num,
+                profile_name=self.profile_name,
+                runtime_mode=self.runtime_mode,
+                paper_mode=self.paper_mode,
+                scan_interval_seconds=SCAN_INTERVAL,
+            )
+        except Exception as exc:
+            logger.warning("Heartbeat error write failed: %s", exc)
 
     def _safe_elastic_call(self, method_name: str, payload: dict[str, Any]) -> None:
         try:
@@ -3352,6 +4137,98 @@ class JJLive:
         )
         return adjusted
 
+    def _record_pm_campaign_decision(
+        self,
+        *,
+        cycle_num: int,
+        signal: Mapping[str, Any],
+        decision: str,
+        reason_code: str,
+        requested_usd: float | None,
+        approved_usd: float | None,
+        order_submitted: bool = False,
+    ) -> dict[str, Any]:
+        now = datetime.now(timezone.utc).isoformat()
+        market_id = str(signal.get("market_id", "") or "")
+        resolution_hours = _safe_float(signal.get("resolution_hours"), None)
+        budget_snapshot = self.pm_campaign_budget.snapshot()
+        payload = {
+            "timestamp": now,
+            "cycle": int(cycle_num),
+            "market_id": market_id,
+            "question": str(signal.get("question", "") or "")[:200],
+            "direction": str(signal.get("direction", "") or ""),
+            "decision": str(decision),
+            "reason_code": str(reason_code),
+            "requested_usd": _safe_float(requested_usd, 0.0),
+            "approved_usd": _safe_float(approved_usd, 0.0),
+            "order_submitted": bool(order_submitted),
+            "resolution_hours": resolution_hours,
+            "campaign_max_resolution_hours": float(self.pm_campaign_max_resolution_hours),
+            "campaign_enabled": bool(self.pm_hourly_campaign_enabled),
+            "budget_cap_usd": budget_snapshot["cap_usd"],
+            "budget_used_usd": budget_snapshot["used_usd"],
+            "budget_remaining_usd": budget_snapshot["remaining_usd"],
+            "paper_mode": bool(self.paper_mode),
+            "runtime_mode": str(self.runtime_mode),
+            "allow_order_submission": bool(self.allow_order_submission),
+        }
+        self._pm_campaign_recent_decisions.append(payload)
+        self._pm_campaign_recent_decisions = self._pm_campaign_recent_decisions[-200:]
+        try:
+            with self.pm_campaign_decision_log_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, sort_keys=True))
+                handle.write("\n")
+        except OSError as e:
+            logger.warning("PM campaign decision log write failed: %s", e)
+        return payload
+
+    def _check_pm_campaign_gate(
+        self,
+        *,
+        signal: Mapping[str, Any],
+        size_usd: float,
+    ) -> tuple[bool, str]:
+        if not self.pm_hourly_campaign_enabled:
+            return True, "pm_campaign_disabled"
+        if size_usd <= 0.0:
+            return False, "pm_campaign_non_positive_notional"
+        resolution_hours = _safe_float(signal.get("resolution_hours"), None)
+        if resolution_hours is None:
+            return False, "pm_campaign_resolution_unknown"
+        if resolution_hours <= 0.0:
+            return False, "pm_campaign_resolution_invalid"
+        if (
+            self.pm_campaign_max_resolution_hours > 0.0
+            and resolution_hours > self.pm_campaign_max_resolution_hours
+        ):
+            return False, "pm_campaign_resolution_too_long"
+        allowed, reason, _remaining = self.pm_campaign_budget.can_spend(size_usd)
+        if not allowed:
+            return False, reason
+        return True, "pm_campaign_ok"
+
+    def _pm_campaign_cycle_summary(self) -> dict[str, Any]:
+        counter = Counter(
+            str(item.get("reason_code", "unknown"))
+            for item in self._pm_campaign_recent_decisions
+        )
+        accepted = sum(
+            1 for item in self._pm_campaign_recent_decisions if str(item.get("decision")) == "accepted"
+        )
+        rejected = sum(
+            1 for item in self._pm_campaign_recent_decisions if str(item.get("decision")) == "rejected"
+        )
+        return {
+            "enabled": bool(self.pm_hourly_campaign_enabled),
+            "max_resolution_hours": float(self.pm_campaign_max_resolution_hours),
+            "budget": self.pm_campaign_budget.snapshot(),
+            "accepted": accepted,
+            "rejected": rejected,
+            "reason_counts": dict(counter),
+            "decision_log_path": str(self.pm_campaign_decision_log_path),
+        }
+
     def _cancel_live_order(self, order_id: str) -> bool:
         """Cancel a live CLOB order, tolerating response shape differences."""
         if not order_id or self.clob is None:
@@ -3458,6 +4335,12 @@ class JJLive:
                     edge=signal["edge"],
                     confidence=signal["confidence"],
                     order_id=paper_order_id,
+                    source=trade_record.get("source", ""),
+                    source_combo=trade_record.get("source_combo", ""),
+                    source_components=trade_record.get("source_components", []),
+                    source_count=int(_safe_float(trade_record.get("source_count", 0), 0)),
+                    signal_sources=list(trade_record.get("signal_sources") or []),
+                    signal_metadata=dict(trade_record.get("signal_metadata") or {}),
                 )
 
                 logger.info(
@@ -3480,7 +4363,7 @@ class JJLive:
                             f"{signal['direction'].upper()} ${size_usd:.2f}\n"
                             f"{signal['question'][:60]}\n"
                             f"Edge: {signal['edge']:.1%} | Price: {price:.3f}\n"
-                            f"Source: {strategy} | Cat: {category}\n"
+                            f"Source: {trade_record.get('source_combo', strategy)} | Cat: {category}\n"
                             f"ID: {paper_order_id}"
                         )
                     else:
@@ -3682,6 +4565,12 @@ class JJLive:
             edge=_safe_float(trade_record.get("edge"), 0.0),
             confidence=_safe_float(trade_record.get("confidence"), 0.5),
             order_id=fill_event.order_id,
+            source=str(trade_record.get("source", "") or ""),
+            source_combo=str(trade_record.get("source_combo", "") or ""),
+            source_components=list(trade_record.get("source_components") or []),
+            source_count=int(_safe_float(trade_record.get("source_count", 0), 0)),
+            signal_sources=list(trade_record.get("signal_sources") or []),
+            signal_metadata=dict(trade_record.get("signal_metadata") or {}),
         )
         logger.info(
             "FILL DETECTED: order=%s market=%s size=%.4f price=%.3f latency=%.1fs",
@@ -3923,7 +4812,7 @@ class JJLive:
                 size_usd = min(per_leg_usd, _safe_float(leg.get("position_size_usd"), per_leg_usd))
                 if size_usd <= 0.0:
                     continue
-                shares = _round_up(size_usd / order_price, 2)
+                shares = clob_order_size_for_usd(size_usd, order_price)
                 min_order_size = clob_min_order_size(order_price, min_shares=POLY_MIN_ORDER_SHARES)
                 if shares < min_order_size:
                     bumped_usd = round(min_order_size * order_price, 2)
@@ -3986,6 +4875,12 @@ class JJLive:
                         edge=leg_signal["edge"],
                         confidence=leg_signal["confidence"],
                         order_id=order_id,
+                        source=trade_record.get("source", ""),
+                        source_combo=trade_record.get("source_combo", ""),
+                        source_components=trade_record.get("source_components", []),
+                        source_count=int(_safe_float(trade_record.get("source_count", 0), 0)),
+                        signal_sources=list(trade_record.get("signal_sources") or []),
+                        signal_metadata=dict(trade_record.get("signal_metadata") or {}),
                     )
                     basket_successes += 1
                     orders_placed += 1
@@ -4050,6 +4945,12 @@ class JJLive:
                         edge=leg_signal["edge"],
                         confidence=leg_signal["confidence"],
                         order_id=order_id,
+                        source=trade_record.get("source", ""),
+                        source_combo=trade_record.get("source_combo", ""),
+                        source_components=trade_record.get("source_components", []),
+                        source_count=int(_safe_float(trade_record.get("source_count", 0), 0)),
+                        signal_sources=list(trade_record.get("signal_sources") or []),
+                        signal_metadata=dict(trade_record.get("signal_metadata") or {}),
                     )
                     basket_successes += 1
                     orders_placed += 1
@@ -4628,6 +5529,7 @@ class JJLive:
             cycle_num,
             extra=ecs_extra(strategy="jj_live", cycle=cycle_num, paper_mode=self.paper_mode),
         )
+        self._write_cycle_started_heartbeat(cycle_num)
 
         # Sync resolved positions: remove closed trades from state to free
         # position slots.  Without this, open_positions grows forever and
@@ -4665,7 +5567,19 @@ class JJLive:
                 f"⛔ JJ DAILY LOSS LIMIT — P&L: ${self.state.state['daily_pnl']:.2f}\n"
                 f"Pausing until tomorrow."
             )
-            return {"status": "paused", "reason": "daily_loss_limit"}
+            paused_summary = {
+                "status": "paused",
+                "reason": "daily_loss_limit",
+                "cycle": cycle_num,
+                "bankroll": self.state.state["bankroll"],
+                "daily_pnl": self.state.state["daily_pnl"],
+                "open_positions": len(self.state.state["open_positions"]),
+                "signals": 0,
+                "trades_placed": 0,
+                "elapsed_seconds": round(time.time() - cycle_start, 1),
+            }
+            self._write_cycle_completed_heartbeat(paused_summary)
+            return paused_summary
 
         # Refresh adaptive calibration window from latest resolved trades.
         try:
@@ -4780,8 +5694,24 @@ class JJLive:
             else:
                 markets = result
             logger.info(f"Scanned {len(markets)} active markets")
+
+            if self._should_hydrate_recent_fast_markets(markets):
+                hydrated_markets, hydration_stats = await self._fetch_recent_trade_hydrated_markets()
+                if hydrated_markets:
+                    original_count = len(markets)
+                    markets = self._merge_markets(markets, hydrated_markets)
+                    logger.info(
+                        "Fast-flow hydration added %d recent markets (scanner=%d merged=%d trades=%d hydrated=%d fast_titles=%d)",
+                        max(0, len(markets) - original_count),
+                        original_count,
+                        len(markets),
+                        int(hydration_stats.get("recent_trades_fetched", 0)),
+                        int(hydration_stats.get("recent_market_hydrations", 0)),
+                        int(hydration_stats.get("recent_fast_markets_seen", 0)),
+                    )
         except Exception as e:
             logger.error(f"Scanner failed: {e}")
+            self._write_cycle_error_heartbeat(f"scanner: {e}", cycle_num=cycle_num)
             return {"status": "error", "reason": f"scanner: {e}"}
 
         # Build a broad execution universe for all lanes, then derive the
@@ -5369,8 +6299,10 @@ class JJLive:
         # --- SIGNAL SOURCE #3: LMSR Bayesian Engine ---
         lmsr_signals = []
         if self.lmsr_engine is not None and actionable:
+            logger.info("Signal stage: starting LMSR scan (%d actionable markets)", len(actionable))
             try:
                 lmsr_signals = self.lmsr_engine.get_signals(actionable)
+                logger.info("Signal stage: LMSR scan complete (%d signals)", len(lmsr_signals))
                 if lmsr_signals:
                     logger.info(f"LMSR engine: {len(lmsr_signals)} signals")
                 for ls in lmsr_signals:
@@ -5380,25 +6312,12 @@ class JJLive:
                 logger.warning(f"LMSR scan failed (non-fatal): {e}")
 
         # --- SIGNAL SOURCE #4: Cross-Platform Arbitrage ---
-        arb_signals = []
-        if self.arb_available:
-            if not self._has_cross_platform_credentials():
-                logger.info("Cross-platform arb skipped — no_credentials")
-            else:
-                try:
-                    arb_signals = arb_get_signals()
-                    if arb_signals:
-                        logger.info(f"Cross-platform arb: {len(arb_signals)} signals")
-                    for asig in arb_signals:
-                        asig["source"] = "cross_platform_arb"
-                        self._hydrate_signal_market_context(asig, market_lookup)
-                        attach_signal_source_metadata(asig)
-                except Exception as e:
-                    logger.warning(f"Cross-platform arb scan failed (non-fatal): {e}")
+        arb_signals = await self._collect_cross_platform_arb_signals(market_lookup)
 
         # --- SIGNAL SOURCE #5: Lead-Lag Arbitrage Engine ---
         lead_lag_signals = []
         if self.lead_lag is not None and actionable:
+            logger.info("Signal stage: starting lead-lag scan (%d actionable markets)", len(actionable))
             try:
                 # Feed current prices to the lead-lag engine
                 now = time.time()
@@ -5412,6 +6331,7 @@ class JJLive:
 
                 # Check for actionable signals from validated pairs
                 ll_sigs = self.lead_lag.get_signals()
+                logger.info("Signal stage: lead-lag scan complete (%d candidate signals)", len(ll_sigs))
                 for ll in ll_sigs:
                     follower_data = market_lookup.get(ll.follower_id, {})
                     if not follower_data:
@@ -5475,8 +6395,10 @@ class JJLive:
         # --- SIGNAL SOURCE #8: Multi-Outcome Sum Violations ---
         sum_violation_signals = []
         if self.sum_violation_strategy is not None:
+            logger.info("Signal stage: starting sum-violation scan")
             try:
                 generated = self.sum_violation_strategy.generate_signals()
+                logger.info("Signal stage: sum-violation scan complete (%d signals)", len(generated))
                 sum_violation_signals = [signal.to_signal_dict() for signal in generated]
                 if self.sum_violation_strategy.last_evaluations:
                     ready = sum(
@@ -5503,6 +6425,7 @@ class JJLive:
                 logger.warning(f"Sum-violation scan failed (non-fatal): {e}")
 
         # --- VPIN GATE: filter signals where flow is toxic ---
+        logger.info("Signal stage: entering VPIN gate (%d llm signals)", len(signals))
         if self.trade_stream:
             pre_vpin = len(signals)
             filtered_signals = []
@@ -5547,6 +6470,16 @@ class JJLive:
             signals = filtered_signals
 
         # --- CONFIRMATION LAYER: blend all signal sources ---
+        logger.info(
+            "Signal stage: entering confirmation layer (llm=%d wallet=%d lmsr=%d arb=%d lead_lag=%d combinatorial=%d sumv=%d)",
+            len(signals),
+            len(wallet_signals),
+            len(lmsr_signals),
+            len(arb_signals),
+            len(lead_lag_signals),
+            len(combinatorial_signals),
+            len(sum_violation_signals),
+        )
         # Group all signals by market_id + direction
         from collections import defaultdict as _defaultdict
         signal_groups = _defaultdict(list)
@@ -5562,6 +6495,8 @@ class JJLive:
         )
         for s in all_signals:
             attach_signal_source_metadata(s)
+            s["signal_sources"] = extract_signal_sources(s)
+            s["signal_metadata"] = extract_signal_metadata(s)
             if is_combinatorial_signal(s):
                 s["_confirmation"] = False
                 s["_kelly_override"] = 0.0
@@ -5578,8 +6513,11 @@ class JJLive:
 
             # Pick the signal with the highest edge as the primary
             primary = max(group, key=lambda s: s.get("edge", 0))
-            primary["source"] = "+".join(sorted(sources))
+            primary["source_components"] = list(normalize_source_components(sources)) or sorted(sources)
+            primary["source_combo"] = "+".join(primary["source_components"])
             primary["n_sources"] = n_sources
+            primary["signal_sources"] = list(primary["source_components"])
+            primary["signal_metadata"] = merge_signal_metadata(group)
 
             # Confirmation boost: 2+ sources agree → higher confidence sizing
             res_hours = primary.get("resolution_hours")
@@ -5588,7 +6526,7 @@ class JJLive:
                 primary["_kelly_override"] = MAX_KELLY_FRACTION
                 primary["_confirmation"] = True
                 logger.info(
-                    f"  CONFIRMED ({n_sources} sources: {primary['source']}): "
+                    f"  CONFIRMED ({n_sources} sources: {primary['source_combo']}): "
                     f"{primary['question'][:50]} → {direction} edge={primary['edge']:.3f}"
                 )
             elif "llm" in sources and res_hours and res_hours > 12:
@@ -5625,7 +6563,7 @@ class JJLive:
         signals.sort(key=lambda s: s.get("velocity_score", 0), reverse=True)
         for s in signals[:5]:
             res_str = f"{s['resolution_hours']:.1f}h" if s.get('resolution_hours') else "?"
-            src = s.get("source", "?")
+            src = s.get("source_combo", s.get("source", "?"))
             conf = " [CONFIRMED]" if s.get("_confirmation") else ""
             logger.info(
                 f"  SIGNAL: {s['question'][:50]} | edge={s['edge']:.3f} "
@@ -5643,16 +6581,16 @@ class JJLive:
             )
         logger.info(
             f"Found {len(signals)} predictive signals + {len(combinatorial_bypass_signals)} combinatorial bypass signals "
-            f"(LLM:{len([s for s in signals if 'llm' in s.get('source', '')])} "
+            f"(LLM:{len([s for s in signals if signal_has_source(s, 'llm')])} "
             f"wallet:{len(wallet_signals)} lmsr:{len(lmsr_signals)} "
             f"A6:{combinatorial_cycle['a6_detected']} B1:{combinatorial_cycle['b1_detected']} "
             f"sumv:{len(sum_violation_signals)})"
         )
-        llm_cycle_signals = [s for s in signals if "llm" in str(s.get("source", "")).split("+")]
-        wallet_cycle_signals = [s for s in signals if "wallet_flow" in str(s.get("source", "")).split("+")]
-        lmsr_cycle_signals = [s for s in signals if "lmsr" in str(s.get("source", "")).split("+")]
+        llm_cycle_signals = [s for s in signals if signal_has_source(s, "llm")]
+        wallet_cycle_signals = [s for s in signals if signal_has_source(s, "wallet_flow")]
+        lmsr_cycle_signals = [s for s in signals if signal_has_source(s, "lmsr")]
         arb_cycle_signals = [
-            s for s in signals if "cross_platform_arb" in str(s.get("source", "")).split("+")
+            s for s in signals if signal_has_source(s, "cross_platform_arb")
         ]
         lane_health = self._build_cycle_lane_health(
             llm_signals=llm_cycle_signals,
@@ -5666,7 +6604,13 @@ class JJLive:
         self._log_lane_health_summary("cycle", lane_health, cycle_num=cycle_num)
 
         # 3. EXECUTE TRADES
+        logger.info(
+            "Signal stage: entering execution (%d predictive, %d combinatorial)",
+            len(signals),
+            len(combinatorial_bypass_signals),
+        )
         trades_placed = 0
+        self._pm_campaign_recent_decisions = []
 
         for signal in signals:
             pending_order_count = self.fill_tracker.pending_order_count() if self.fill_tracker is not None else 0
@@ -5700,7 +6644,7 @@ class JJLive:
                 )
                 continue
 
-            if "llm" in str(signal.get("source", "")).split("+"):
+            if signal_has_source(signal, "llm"):
                 allowed, filter_reason, category, normalized_resolution = apply_llm_market_filters(
                     signal.get("question", ""),
                     resolution_hours=signal.get("resolution_hours"),
@@ -5778,8 +6722,7 @@ class JJLive:
             order_price = round(price, 2)
             if order_price <= 0 or order_price >= 1:
                 continue
-            shares = size_usd / order_price
-            order_size = _round_up(shares, 2)
+            order_size = clob_order_size_for_usd(size_usd, order_price)
             if order_size <= 0:
                 continue
 
@@ -5819,6 +6762,42 @@ class JJLive:
                 f"cat={category} | {signal['question'][:50]}..."
             )
 
+            campaign_allowed, campaign_reason = self._check_pm_campaign_gate(
+                signal=signal,
+                size_usd=size_usd,
+            )
+            if not campaign_allowed:
+                self._record_pm_campaign_decision(
+                    cycle_num=cycle_num,
+                    signal=signal,
+                    decision="rejected",
+                    reason_code=campaign_reason,
+                    requested_usd=size_usd,
+                    approved_usd=0.0,
+                )
+                logger.info(
+                    "  SKIP (campaign gate %s): %s",
+                    campaign_reason,
+                    signal.get("question", "")[:60],
+                )
+                continue
+
+            if not self.allow_order_submission:
+                self._record_pm_campaign_decision(
+                    cycle_num=cycle_num,
+                    signal=signal,
+                    decision="rejected",
+                    reason_code="runtime_submission_blocked",
+                    requested_usd=size_usd,
+                    approved_usd=0.0,
+                )
+                logger.info(
+                    "  SKIP order submission blocked by runtime mode (%s): %s",
+                    self.runtime_mode,
+                    signal.get("question", "")[:50],
+                )
+                continue
+
             trade_record = build_trade_record(
                 signal,
                 market_id=market_id,
@@ -5837,7 +6816,7 @@ class JJLive:
                 },
             }
 
-            if await self.place_order(
+            order_ok = await self.place_order(
                 signal=signal,
                 market_id=market_id,
                 token_id=token_id,
@@ -5849,8 +6828,29 @@ class JJLive:
                 category=category,
                 trade_record=trade_record,
                 order_metadata=order_metadata,
-            ):
+            )
+            if order_ok:
                 trades_placed += 1
+                if self.pm_hourly_campaign_enabled:
+                    self.pm_campaign_budget.record_spend(size_usd)
+                self._record_pm_campaign_decision(
+                    cycle_num=cycle_num,
+                    signal=signal,
+                    decision="accepted",
+                    reason_code="pm_campaign_order_submitted",
+                    requested_usd=size_usd,
+                    approved_usd=size_usd,
+                    order_submitted=True,
+                )
+            else:
+                self._record_pm_campaign_decision(
+                    cycle_num=cycle_num,
+                    signal=signal,
+                    decision="rejected",
+                    reason_code="order_submission_failed",
+                    requested_usd=size_usd,
+                    approved_usd=0.0,
+                )
 
             # Small delay between orders
             await asyncio.sleep(0.5)
@@ -5926,6 +6926,7 @@ class JJLive:
                 if isinstance(fill_summary_24h, dict)
                 else 0.0
             ),
+            "pm_campaign": self._pm_campaign_cycle_summary(),
             "merge_candidates": (
                 merge_result.get("candidates_found", 0)
                 if isinstance(merge_result, dict)
@@ -5966,6 +6967,7 @@ class JJLive:
             f"platt={self.adaptive_platt.active_mode}) ==="
         )
 
+        self._write_cycle_completed_heartbeat(summary)
         return summary
 
     def _write_intel_snapshot(
@@ -6026,6 +7028,7 @@ class JJLive:
                         "market_id": sig.get("market_id", ""),
                         "question": (sig.get("question", ""))[:80],
                         "direction": sig.get("direction", ""),
+                        "source": sig.get("source_combo", sig.get("source", "")),
                         "edge": sig.get("edge", 0),
                         "calibrated_prob": sig.get("calibrated_prob", 0),
                         "category": sig.get("category", "unknown"),
@@ -6093,6 +7096,10 @@ class JJLive:
                     "runtime_mode": self.runtime_mode,
                     "launch_gate_reason": self.launch_gate_reason or None,
                     "paper_mode": self.paper_mode,
+                    "pm_campaign_enabled": self.pm_hourly_campaign_enabled,
+                    "pm_campaign_max_resolution_hours": self.pm_campaign_max_resolution_hours,
+                    "pm_campaign_budget_cap_usd": self.pm_campaign_budget.cap_usd,
+                    "pm_campaign_window_seconds": self.pm_campaign_budget.window_seconds,
                 },
                 "combinatorial_params": {
                     "enabled": bool(self.combinatorial_cfg and self.combinatorial_cfg.any_enabled()),
@@ -6120,6 +7127,7 @@ class JJLive:
         """Run JJ continuously (daemon mode)."""
         mode_tag = self._mode_tag()
         logger.info(f"JJ {mode_tag} — Starting continuous mode")
+        self._write_startup_heartbeat()
         try:
             try:
                 startup_lane_health = self._startup_lane_health or self._build_startup_lane_health()
@@ -6194,6 +7202,10 @@ class JJLive:
                     break
                 except Exception as e:
                     logger.error(f"Cycle error: {e}", exc_info=True)
+                    self._write_cycle_error_heartbeat(
+                        str(e),
+                        cycle_num=int(self.state.state.get("cycles_completed", 0)) + 1,
+                    )
                     try:
                         await self.notifier.send_error(str(e), context="cycle_error")
                     except Exception:
@@ -6522,6 +7534,7 @@ async def generate_daily_report():
         if fill_tracker is not None
         else None
     )
+    source_breakdown = db.get_source_breakdown(date_prefix=today, limit=5)
 
     # Build report
     report_lines = [
@@ -6564,6 +7577,20 @@ async def generate_daily_report():
             f"  ${level:>7,}: bankroll=${data['bankroll']:,.2f} "
             f"pnl=${data['pnl']:,.2f} trades={data['trades']}"
         )
+
+    if source_breakdown:
+        report_lines.append(f"\nSource Mix Today:")
+        for row in source_breakdown:
+            resolved_count = int(row["wins"]) + int(row["losses"])
+            win_rate = (
+                f" win={int(row['wins']) / resolved_count:.0%}"
+                if resolved_count > 0
+                else ""
+            )
+            report_lines.append(
+                f"  {row['source_label']}: {int(row['total_trades'])} placed, "
+                f"{int(row['unresolved'])} open{win_rate}"
+            )
 
     report_lines.append(f"\nCombinatorial Summary (14d):")
     report_lines.append(

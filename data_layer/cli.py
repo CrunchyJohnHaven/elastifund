@@ -8,6 +8,7 @@ Usage:
 
 import argparse
 import json
+from pathlib import Path
 import sys
 
 from . import database
@@ -27,8 +28,12 @@ from flywheel.improvement_exchange import (
     export_improvement_bundle,
     import_improvement_bundle,
     load_improvement_bundle,
+    load_knowledge_pack,
+    publish_knowledge_pack,
+    pull_knowledge_pack,
 )
 from flywheel.kibana_pack import (
+    DEFAULT_AUDIT_OPS_PATH,
     DEFAULT_B1_TEMPLATE_AUDIT_PATH,
     DEFAULT_GUARANTEED_DOLLAR_AUDIT_PATH,
     DEFAULT_PHASE6_OUTPUT_DIR,
@@ -191,6 +196,59 @@ def cmd_flywheel_import_improvement(args):
     try:
         bundle = load_improvement_bundle(args.input)
         result = import_improvement_bundle(
+            session,
+            bundle,
+            review_root=args.review_dir,
+            signing_secret=args.signing_secret,
+            require_signature=args.require_signature,
+        )
+    finally:
+        _close_session(session)
+    print(json.dumps(result, indent=2, sort_keys=True))
+
+
+def cmd_flywheel_publish_knowledge_pack(args):
+    spec = json.loads(Path(args.input).read_text())
+    engine_metadata = dict(spec.get("engine_metadata") or spec.get("engine") or {})
+    engine_key = args.engine_key or engine_metadata.get("engine_key") or spec.get("engine_key")
+    engine_version = (
+        args.engine_version
+        or engine_metadata.get("engine_version")
+        or spec.get("engine_version")
+    )
+    if not engine_key or not engine_version:
+        raise SystemExit("knowledge-pack publish requires engine_key and engine_version")
+
+    session = _open_session(args.db_url)
+    try:
+        bundle = publish_knowledge_pack(
+            session,
+            peer_name=args.peer_name,
+            engine_key=engine_key,
+            engine_version=engine_version,
+            engine_metadata=engine_metadata,
+            detector_summaries=spec.get("detector_summaries") or [],
+            template_variants=spec.get("template_variants") or [],
+            aggregated_outcomes=spec.get("aggregated_outcomes") or {},
+            penalty_metrics=spec.get("penalty_metrics") or {},
+            proof_references=spec.get("proof_references") or [],
+            output_path=args.output,
+            signing_secret=args.signing_secret,
+        )
+    finally:
+        _close_session(session)
+
+    if args.output:
+        print(args.output)
+        return
+    print(json.dumps(bundle, indent=2, sort_keys=True))
+
+
+def cmd_flywheel_pull_knowledge_pack(args):
+    session = _open_session(args.db_url)
+    try:
+        bundle = load_knowledge_pack(args.input)
+        result = pull_knowledge_pack(
             session,
             bundle,
             review_root=args.review_dir,
@@ -445,6 +503,7 @@ def cmd_flywheel_kibana_pack(args):
             guaranteed_dollar_audit_path=args.guaranteed_dollar_audit,
             b1_template_audit_path=args.b1_template_audit,
             research_metrics_glob=args.research_metrics_glob,
+            audit_ops_path=args.audit_ops,
         )
     finally:
         _close_session(session)
@@ -603,6 +662,36 @@ def main(argv=None):
         "--require-signature",
         action="store_true",
         help="Reject unsigned bundles during import",
+    )
+
+    p_publish_knowledge = sub.add_parser(
+        "flywheel-publish-knowledge-pack",
+        help="Publish a sanitized, signed knowledge pack for the revenue-audit lane",
+    )
+    p_publish_knowledge.add_argument("--db-url", help="Optional control DB URL")
+    p_publish_knowledge.add_argument("--peer-name", required=True, help="Name of this fork / autonomous company")
+    p_publish_knowledge.add_argument("--input", required=True, help="Path to a JSON knowledge-pack source spec")
+    p_publish_knowledge.add_argument("--engine-key", help="Override engine identifier")
+    p_publish_knowledge.add_argument("--engine-version", help="Override engine version label")
+    p_publish_knowledge.add_argument("--signing-secret", help="Optional HMAC secret used to sign the pack")
+    p_publish_knowledge.add_argument("--output", help="Optional output path for the generated pack JSON")
+
+    p_pull_knowledge = sub.add_parser(
+        "flywheel-pull-knowledge-pack",
+        help="Pull a peer knowledge pack and materialize a local review packet",
+    )
+    p_pull_knowledge.add_argument("--db-url", help="Optional control DB URL")
+    p_pull_knowledge.add_argument("--input", required=True, help="Path to knowledge pack JSON")
+    p_pull_knowledge.add_argument(
+        "--review-dir",
+        default="reports/flywheel/knowledge_packs",
+        help="Directory where local review packets should be written",
+    )
+    p_pull_knowledge.add_argument("--signing-secret", help="Optional HMAC secret used to verify the pack")
+    p_pull_knowledge.add_argument(
+        "--require-signature",
+        action="store_true",
+        help="Reject unsigned knowledge packs during pull",
     )
 
     p_rep_award = sub.add_parser(
@@ -805,6 +894,11 @@ def main(argv=None):
         help="Glob for research metrics JSON files used in the market-regime dashboard",
     )
     p_kibana_pack.add_argument(
+        "--audit-ops",
+        default=str(DEFAULT_AUDIT_OPS_PATH),
+        help="Optional non-trading audit-operations snapshot JSON",
+    )
+    p_kibana_pack.add_argument(
         "--output-dir",
         default=str(DEFAULT_PHASE6_OUTPUT_DIR),
         help="Directory where the Phase 6 pack should be written",
@@ -827,6 +921,8 @@ def main(argv=None):
         "flywheel-import-bulletin": cmd_flywheel_import_bulletin,
         "flywheel-export-improvement": cmd_flywheel_export_improvement,
         "flywheel-import-improvement": cmd_flywheel_import_improvement,
+        "flywheel-publish-knowledge-pack": cmd_flywheel_publish_knowledge_pack,
+        "flywheel-pull-knowledge-pack": cmd_flywheel_pull_knowledge_pack,
         "flywheel-reputation-award": cmd_flywheel_reputation_award,
         "flywheel-reputation-award-github": cmd_flywheel_reputation_award_github,
         "flywheel-reputation-award-performance": cmd_flywheel_reputation_award_performance,
