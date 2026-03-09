@@ -20,6 +20,7 @@ DEFAULT_OVERRIDE_ENV = Path("state/btc5_autoresearch.env")
 DEFAULT_CYCLE_REPORT_DIR = Path("reports/btc5_autoresearch")
 DEFAULT_LOOP_REPORT_DIR = Path("reports/btc5_autoresearch_loop")
 DEFAULT_HYPOTHESIS_REPORT_DIR = Path("reports/btc5_hypothesis_lab")
+DEFAULT_REGIME_POLICY_REPORT_DIR = Path("reports/btc5_regime_policy_lab")
 DEFAULT_ARR_TSV = Path("research/btc5_arr_progress.tsv")
 DEFAULT_ARR_SVG = Path("research/btc5_arr_progress.svg")
 DEFAULT_ARR_SUMMARY_MD = Path("research/btc5_arr_summary.md")
@@ -76,6 +77,8 @@ def _build_cycle_command(args: argparse.Namespace) -> list[str]:
         str(args.max_loss_hit_prob_increase),
         "--min-fill-lift",
         str(args.min_fill_lift),
+        "--min-fill-retention-ratio",
+        str(args.min_fill_retention_ratio),
     ]
     if args.service_name:
         cmd.extend(["--service-name", str(args.service_name)])
@@ -186,6 +189,61 @@ def _run_hypothesis_lab(args: argparse.Namespace) -> dict[str, Any]:
         "stderr_tail": (result.stderr or "").strip()[-500:],
         "best_hypothesis": (best_hypothesis.get("hypothesis") or {}),
         "best_summary": (best_hypothesis.get("summary") or {}),
+        "recommended_session_policy": (latest_summary or {}).get("recommended_session_policy") or [],
+    }
+
+
+def _run_regime_policy_lab(args: argparse.Namespace) -> dict[str, Any]:
+    command = [
+        sys.executable,
+        str(ROOT / "scripts" / "btc5_regime_policy_lab.py"),
+        "--db-path",
+        str(args.db_path),
+        "--strategy-env",
+        str(args.strategy_env),
+        "--override-env",
+        str(args.override_env),
+        "--output-dir",
+        str(args.regime_policy_report_dir),
+        "--paths",
+        str(args.paths),
+        "--block-size",
+        str(args.block_size),
+        "--loss-limit-usd",
+        str(args.loss_limit_usd),
+        "--seed",
+        str(args.seed),
+        "--min-replay-fills",
+        str(args.min_replay_fills),
+    ]
+    if args.include_archive_csvs:
+        command.append("--include-archive-csvs")
+    if args.refresh_remote:
+        command.append("--refresh-remote")
+    command.extend(["--archive-glob", str(args.archive_glob)])
+    command.extend(["--remote-cache-json", str(args.remote_cache_json)])
+    result = subprocess.run(
+        command,
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=240,
+    )
+    latest_summary = _load_json(args.regime_policy_report_dir / "summary.json")
+    best_policy = (latest_summary or {}).get("best_policy") or {}
+    return {
+        "command": command,
+        "returncode": result.returncode,
+        "stdout_tail": (result.stdout or "").strip()[-500:],
+        "stderr_tail": (result.stderr or "").strip()[-500:],
+        "best_policy": (best_policy.get("policy") or {}),
+        "best_summary": {
+            "continuation": (best_policy.get("continuation") or {}),
+            "historical": (best_policy.get("historical") or {}),
+            "monte_carlo": (best_policy.get("monte_carlo") or {}),
+        },
+        "recommended_session_policy": (latest_summary or {}).get("recommended_session_policy") or [],
     }
 
 
@@ -250,7 +308,11 @@ def _build_entry(
             "active_p05_arr_pct": arr.get("current_p05_arr_pct"),
             "best_p05_arr_pct": arr.get("best_p05_arr_pct"),
             "historical_arr_delta_pct": arr.get("historical_arr_delta_pct"),
+            "replay_pnl_delta_usd": decision.get("replay_pnl_delta_usd"),
+            "profit_probability_delta": decision.get("profit_probability_delta"),
+            "fill_lift": decision.get("fill_lift"),
         },
+        "recommended_session_policy": (cycle_payload or {}).get("recommended_session_policy") or [],
         "artifacts": (cycle_payload or {}).get("artifacts") or {},
         "hook": hook_result,
         "stdout_tail": (cycle_result.stdout or "").strip()[-1000:],
@@ -295,6 +357,12 @@ def _write_loop_reports(loop_report_dir: Path, entry: dict[str, Any]) -> dict[st
                 f"- Last best profile: `{entry.get('best_profile', {}).get('name', 'none')}`",
                 f"- Last active profile: `{entry.get('active_profile', {}).get('name', 'none')}`",
                 f"- Last best hypothesis: `{((entry.get('hypothesis_lab') or {}).get('best_hypothesis') or {}).get('name', 'none')}`",
+                f"- Last best regime policy: `{((entry.get('regime_policy_lab') or {}).get('best_policy') or {}).get('name', 'none')}`",
+                f"- Last best session policy records: `{len(entry.get('recommended_session_policy') or [])}`",
+                f"- Last median ARR delta: `{(entry.get('arr') or {}).get('median_arr_delta_pct', 0.0)}`",
+                f"- Last replay PnL delta (USD): `{(entry.get('arr') or {}).get('replay_pnl_delta_usd', 0.0)}`",
+                f"- Last profit-probability delta: `{(entry.get('arr') or {}).get('profit_probability_delta', 0.0)}`",
+                f"- Last fill lift: `{(entry.get('arr') or {}).get('fill_lift', 0)}`",
                 f"- Last finished at: `{entry['finished_at']}`",
             ]
         )
@@ -311,6 +379,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cycle-report-dir", type=Path, default=DEFAULT_CYCLE_REPORT_DIR)
     parser.add_argument("--loop-report-dir", type=Path, default=DEFAULT_LOOP_REPORT_DIR)
     parser.add_argument("--hypothesis-report-dir", type=Path, default=DEFAULT_HYPOTHESIS_REPORT_DIR)
+    parser.add_argument("--regime-policy-report-dir", type=Path, default=DEFAULT_REGIME_POLICY_REPORT_DIR)
     parser.add_argument("--service-name", default="")
     parser.add_argument("--paths", type=int, default=2000)
     parser.add_argument("--block-size", type=int, default=4)
@@ -332,6 +401,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-p95-drawdown-increase-usd", type=float, default=3.0)
     parser.add_argument("--max-loss-hit-prob-increase", type=float, default=0.03)
     parser.add_argument("--min-fill-lift", type=int, default=0)
+    parser.add_argument("--min-fill-retention-ratio", type=float, default=0.85)
     parser.add_argument("--restart-on-promote", action="store_true")
     parser.add_argument("--interval-seconds", type=int, default=300)
     parser.add_argument("--max-cycles", type=int, default=0)
@@ -354,6 +424,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--skip-arr-render", action="store_true")
     parser.add_argument("--skip-hypothesis-lab", action="store_true")
+    parser.add_argument("--skip-regime-policy-lab", action="store_true")
     parser.add_argument("--skip-hypothesis-frontier-render", action="store_true")
     return parser.parse_args()
 
@@ -391,6 +462,8 @@ def main() -> int:
         )
         if not args.skip_hypothesis_lab:
             entry["hypothesis_lab"] = _run_hypothesis_lab(args)
+        if not args.skip_regime_policy_lab:
+            entry["regime_policy_lab"] = _run_regime_policy_lab(args)
         loop_payload = _write_loop_reports(args.loop_report_dir, entry)
         if not args.skip_arr_render:
             loop_payload["arr_render"] = _render_arr_progress(args)

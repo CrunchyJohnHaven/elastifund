@@ -27,11 +27,12 @@ import os
 import sqlite3
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_FLOOR
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 
 import aiohttp
 
@@ -60,6 +61,7 @@ CLOB_HARD_MIN_SHARES = 5.0
 CLOB_HARD_MIN_NOTIONAL_USD = 5.0
 PROBE_DEFAULT_UP_MAX_BUY_PRICE = 0.49
 PROBE_DEFAULT_DOWN_MAX_BUY_PRICE = 0.51
+ET_ZONE = ZoneInfo("America/New_York")
 
 
 def _safe_float(value: Any, default: float | None = None) -> float | None:
@@ -108,9 +110,134 @@ def parse_json_list(value: Any) -> list[Any]:
     return []
 
 
+def _normalized_env_optional_float(value: Any) -> float | None:
+    parsed = _safe_float(value, None)
+    if parsed is None or parsed <= 0:
+        return None
+    return float(parsed)
+
+
 def current_window_start(ts: float | None = None) -> int:
     now = int(ts if ts is not None else time.time())
     return now - (now % WINDOW_SECONDS)
+
+
+@dataclass(frozen=True)
+class SessionGuardrailOverride:
+    name: str
+    et_hours: tuple[int, ...]
+    min_delta: float | None = None
+    max_abs_delta: float | None = None
+    up_max_buy_price: float | None = None
+    down_max_buy_price: float | None = None
+    maker_improve_ticks: int | None = None
+
+    @property
+    def session_name(self) -> str:
+        return self.name
+
+
+def _load_json_array_file(path_value: str) -> list[Any]:
+    path_text = str(path_value or "").strip()
+    if not path_text:
+        return []
+    path = Path(path_text)
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    return parse_json_list(raw)
+
+
+def parse_session_guardrail_overrides(value: Any) -> tuple[SessionGuardrailOverride, ...]:
+    parsed = parse_json_list(value)
+    overrides: list[SessionGuardrailOverride] = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("session_name") or "").strip()
+        if not name:
+            continue
+        raw_hours = item.get("et_hours")
+        hours: list[int] = []
+        if isinstance(raw_hours, list):
+            for raw_hour in raw_hours:
+                try:
+                    hour = int(raw_hour)
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= hour <= 23 and hour not in hours:
+                    hours.append(hour)
+        if not hours:
+            continue
+        profile = item.get("profile") if isinstance(item.get("profile"), dict) else item
+        maker_improve_ticks = _safe_float(profile.get("maker_improve_ticks"), None)
+        parsed_ticks = int(maker_improve_ticks) if maker_improve_ticks is not None and maker_improve_ticks >= 0 else None
+        overrides.append(
+            SessionGuardrailOverride(
+                name=name,
+                et_hours=tuple(hours),
+                min_delta=_normalized_env_optional_float(profile.get("min_delta")),
+                max_abs_delta=_normalized_env_optional_float(profile.get("max_abs_delta")),
+                up_max_buy_price=_normalized_env_optional_float(profile.get("up_max_buy_price")),
+                down_max_buy_price=_normalized_env_optional_float(profile.get("down_max_buy_price")),
+                maker_improve_ticks=parsed_ticks,
+            )
+        )
+    return tuple(overrides)
+
+
+def load_session_guardrail_overrides(
+    *,
+    inline_json: str,
+    path_value: str,
+    legacy_json: str,
+) -> tuple[SessionGuardrailOverride, ...]:
+    inline = str(inline_json or "").strip()
+    if inline:
+        return parse_session_guardrail_overrides(inline)
+    from_path = _load_json_array_file(path_value)
+    if from_path:
+        return parse_session_guardrail_overrides(from_path)
+    return parse_session_guardrail_overrides(legacy_json)
+
+
+def _window_dt_et(window_start_ts: int) -> datetime | None:
+    if int(window_start_ts or 0) <= 0:
+        return None
+    return datetime.fromtimestamp(int(window_start_ts), tz=timezone.utc).astimezone(ET_ZONE)
+
+
+def active_session_guardrail_override(
+    cfg: "MakerConfig",
+    *,
+    window_start_ts: int,
+) -> SessionGuardrailOverride | None:
+    dt_et = _window_dt_et(window_start_ts)
+    if dt_et is None:
+        return None
+    for override in cfg.session_guardrail_overrides:
+        if dt_et.hour in override.et_hours:
+            return override
+    return None
+
+
+def session_guardrail_reason(
+    override: SessionGuardrailOverride | None,
+    *,
+    window_start_ts: int,
+) -> str | None:
+    if override is None:
+        return None
+    dt_et = _window_dt_et(window_start_ts)
+    hour = dt_et.hour if dt_et is not None else "na"
+    return (
+        f"session_policy name={override.session_name} hour_et={hour} "
+        f"min_delta={override.min_delta} "
+        f"max_abs_delta={override.max_abs_delta} "
+        f"up_max={override.up_max_buy_price} down_max={override.down_max_buy_price} "
+        f"maker_ticks={override.maker_improve_ticks}"
+    )
 
 
 def _round_down_to_tick(price: float, tick_size: float) -> float:
@@ -196,13 +323,27 @@ def choose_maker_buy_price(
     return price
 
 
-def effective_max_buy_price(cfg: "MakerConfig", direction: str) -> float:
+def effective_max_buy_price(
+    cfg: "MakerConfig",
+    direction: str,
+    *,
+    session_override: SessionGuardrailOverride | None = None,
+) -> float:
     normalized = str(direction or "").strip().upper()
-    if normalized == "UP" and cfg.up_max_buy_price is not None:
-        return float(cfg.up_max_buy_price)
-    if normalized == "DOWN" and cfg.down_max_buy_price is not None:
-        return float(cfg.down_max_buy_price)
-    return float(cfg.max_buy_price)
+    base = float(cfg.max_buy_price)
+    if normalized == "UP":
+        if cfg.up_max_buy_price is not None:
+            base = float(cfg.up_max_buy_price)
+        if session_override and session_override.up_max_buy_price is not None:
+            return min(base, float(session_override.up_max_buy_price))
+        return base
+    if normalized == "DOWN":
+        if cfg.down_max_buy_price is not None:
+            base = float(cfg.down_max_buy_price)
+        if session_override and session_override.down_max_buy_price is not None:
+            return min(base, float(session_override.down_max_buy_price))
+        return base
+    return base
 
 
 def summarize_recent_direction_regime(
@@ -295,16 +436,19 @@ def effective_quote_ticks(
     cfg: "MakerConfig",
     direction: str,
     *,
+    session_override: SessionGuardrailOverride | None = None,
     recent_regime: dict[str, Any] | None = None,
 ) -> int:
     normalized = str(direction or "").strip().upper()
     base_ticks = max(0, int(cfg.maker_improve_ticks))
+    if session_override and session_override.maker_improve_ticks is not None:
+        base_ticks = min(base_ticks, max(0, int(session_override.maker_improve_ticks)))
     if not recent_regime or not recent_regime.get("triggered"):
         return base_ticks
     override = (recent_regime.get("direction_quote_ticks") or {}).get(normalized)
     if override is None:
         return base_ticks
-    return max(0, int(override))
+    return min(base_ticks, max(0, int(override)))
 
 
 def calc_trade_size_usd(bankroll_usd: float, risk_fraction: float, max_trade_usd: float) -> float:
@@ -376,6 +520,9 @@ class MakerConfig:
     max_buy_price: float = float(os.environ.get("BTC5_MAX_BUY_PRICE", "0.95"))
     up_max_buy_price: float | None = _optional_env_float("BTC5_UP_MAX_BUY_PRICE")
     down_max_buy_price: float | None = _optional_env_float("BTC5_DOWN_MAX_BUY_PRICE")
+    session_policy_json: str = os.environ.get("BTC5_SESSION_POLICY_JSON", "")
+    session_policy_path: str = os.environ.get("BTC5_SESSION_POLICY_PATH", "")
+    session_overrides_json: str = os.environ.get("BTC5_SESSION_OVERRIDES_JSON", "")
     enable_recent_regime_skew: bool = os.environ.get("BTC5_ENABLE_RECENT_REGIME_SKEW", "false").lower() in {
         "1",
         "true",
@@ -425,6 +572,14 @@ class MakerConfig:
         "https://clob.polymarket.com/book",
     )
     db_path: Path = Path(os.environ.get("BTC5_DB_PATH", str(DEFAULT_DB_PATH)))
+    session_guardrail_overrides: tuple[SessionGuardrailOverride, ...] = field(init=False, default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        self.session_guardrail_overrides = load_session_guardrail_overrides(
+            inline_json=self.session_policy_json,
+            path_value=self.session_policy_path,
+            legacy_json=self.session_overrides_json,
+        )
 
 
 @dataclass(frozen=True)
@@ -1297,9 +1452,19 @@ class BTC5MinMakerBot:
     async def _process_window(self, *, window_start_ts: int, http: MarketHttpClient) -> dict[str, Any]:
         window_end_ts = window_start_ts + WINDOW_SECONDS
         slug = market_slug_for_window(window_start_ts)
+        session_override = active_session_guardrail_override(self.cfg, window_start_ts=window_start_ts)
+        session_policy_name = session_override.session_name if session_override is not None else None
+        session_reason = session_guardrail_reason(session_override, window_start_ts=window_start_ts)
+
+        def _result(payload: dict[str, Any]) -> dict[str, Any]:
+            if "session_override_triggered" not in payload:
+                payload["session_override_triggered"] = session_override is not None
+            if "session_policy_name" not in payload:
+                payload["session_policy_name"] = session_policy_name
+            return payload
 
         if self.db.window_exists(window_start_ts):
-            return {"window_start_ts": window_start_ts, "status": "skip_already_processed"}
+            return _result({"window_start_ts": window_start_ts, "status": "skip_already_processed"})
 
         # Resolve prior windows first so daily PnL gate uses latest info.
         await self._resolve_unsettled(http, through_window_start=window_start_ts - WINDOW_SECONDS)
@@ -1313,16 +1478,31 @@ class BTC5MinMakerBot:
                 "window_end_ts": window_end_ts,
                 "slug": slug,
                 "order_status": "skip_daily_loss_limit",
-                "reason": f"today_pnl={today_pnl:.4f} limit={self.cfg.daily_loss_limit_usd:.2f}",
+                "reason": _join_reasons(
+                    session_reason,
+                    f"today_pnl={today_pnl:.4f} limit={self.cfg.daily_loss_limit_usd:.2f}",
+                ),
             }
             self.db.upsert_window(row)
-            return {"window_start_ts": window_start_ts, "status": row["order_status"], "today_pnl": today_pnl}
+            return _result({"window_start_ts": window_start_ts, "status": row["order_status"], "today_pnl": today_pnl})
         effective_min_delta = float(probe_mode["min_delta"]) if probe_mode else float(self.cfg.min_delta)
+        if session_override and session_override.min_delta is not None:
+            effective_min_delta = max(effective_min_delta, float(session_override.min_delta))
         effective_max_abs_delta = (
-            _safe_float(probe_mode.get("max_abs_delta"), None)
-            if probe_mode
+            float(session_override.max_abs_delta)
+            if session_override and session_override.max_abs_delta is not None
             else self.cfg.max_abs_delta
         )
+        if self.cfg.max_abs_delta is not None and effective_max_abs_delta is not None:
+            effective_max_abs_delta = min(float(self.cfg.max_abs_delta), float(effective_max_abs_delta))
+        if probe_mode:
+            probe_max_abs_delta = _safe_float(probe_mode.get("max_abs_delta"), None)
+            if probe_max_abs_delta is not None:
+                effective_max_abs_delta = (
+                    min(float(effective_max_abs_delta), float(probe_max_abs_delta))
+                    if effective_max_abs_delta is not None
+                    else float(probe_max_abs_delta)
+                )
         probe_reason = probe_mode.get("reason") if probe_mode else None
 
         open_price, current_price = await self._get_open_and_current_price(window_start_ts=window_start_ts, http=http)
@@ -1334,9 +1514,10 @@ class BTC5MinMakerBot:
                 "open_price": open_price,
                 "current_price": current_price,
                 "order_status": "skip_missing_price",
+                "reason": session_reason,
             }
             self.db.upsert_window(row)
-            return {"window_start_ts": window_start_ts, "status": row["order_status"]}
+            return _result({"window_start_ts": window_start_ts, "status": row["order_status"]})
 
         direction, delta = direction_from_prices(open_price, current_price, effective_min_delta)
         if direction is None:
@@ -1350,16 +1531,17 @@ class BTC5MinMakerBot:
                 "order_status": "skip_delta_too_small",
                 "reason": _join_reasons(
                     probe_reason,
+                    session_reason,
                     f"abs(delta)={abs(delta):.6f} < {effective_min_delta:.6f}",
                 ),
             }
             self.db.upsert_window(row)
-            return {
+            return _result({
                 "window_start_ts": window_start_ts,
                 "status": row["order_status"],
                 "delta": delta,
                 "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
-            }
+            })
 
         if effective_max_abs_delta is not None and abs(delta) > effective_max_abs_delta:
             row = {
@@ -1373,16 +1555,17 @@ class BTC5MinMakerBot:
                 "order_status": "skip_delta_too_large",
                 "reason": _join_reasons(
                     probe_reason,
+                    session_reason,
                     f"abs(delta)={abs(delta):.6f} > {effective_max_abs_delta:.6f}",
                 ),
             }
             self.db.upsert_window(row)
-            return {
+            return _result({
                 "window_start_ts": window_start_ts,
                 "status": row["order_status"],
                 "delta": delta,
                 "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
-            }
+            })
 
         market = await http.fetch_market_by_slug(slug)
         if not market:
@@ -1395,9 +1578,10 @@ class BTC5MinMakerBot:
                 "current_price": current_price,
                 "delta": delta,
                 "order_status": "skip_market_not_found",
+                "reason": session_reason,
             }
             self.db.upsert_window(row)
-            return {"window_start_ts": window_start_ts, "status": row["order_status"]}
+            return _result({"window_start_ts": window_start_ts, "status": row["order_status"]})
 
         token_id = choose_token_id_for_direction(market, direction)
         if not token_id:
@@ -1410,9 +1594,10 @@ class BTC5MinMakerBot:
                 "current_price": current_price,
                 "delta": delta,
                 "order_status": "skip_token_not_found",
+                "reason": session_reason,
             }
             self.db.upsert_window(row)
-            return {"window_start_ts": window_start_ts, "status": row["order_status"]}
+            return _result({"window_start_ts": window_start_ts, "status": row["order_status"]})
 
         book = await http.fetch_book(token_id)
         if not book:
@@ -1426,12 +1611,18 @@ class BTC5MinMakerBot:
                 "delta": delta,
                 "token_id": token_id,
                 "order_status": "skip_no_book",
+                "reason": session_reason,
             }
             self.db.upsert_window(row)
-            return {"window_start_ts": window_start_ts, "status": row["order_status"]}
+            return _result({"window_start_ts": window_start_ts, "status": row["order_status"]})
 
         recent_regime = self._recent_direction_regime()
-        quote_ticks = effective_quote_ticks(self.cfg, direction, recent_regime=recent_regime)
+        quote_ticks = effective_quote_ticks(
+            self.cfg,
+            direction,
+            session_override=session_override,
+            recent_regime=recent_regime,
+        )
         if probe_mode:
             quote_ticks = min(int(quote_ticks), int(probe_mode["quote_ticks"]))
         regime_reason = None
@@ -1442,13 +1633,11 @@ class BTC5MinMakerBot:
                 f"recent_regime favored={favored} weaker={weaker} "
                 f"{direction}_quote_ticks={quote_ticks}"
             )
-        mode_max_buy_price = (
-            float(probe_mode["up_max_buy_price"])
-            if probe_mode and direction == "UP"
-            else float(probe_mode["down_max_buy_price"])
-            if probe_mode and direction == "DOWN"
-            else effective_max_buy_price(self.cfg, direction)
-        )
+        mode_max_buy_price = effective_max_buy_price(self.cfg, direction, session_override=session_override)
+        if probe_mode and direction == "UP":
+            mode_max_buy_price = min(mode_max_buy_price, float(probe_mode["up_max_buy_price"]))
+        elif probe_mode and direction == "DOWN":
+            mode_max_buy_price = min(mode_max_buy_price, float(probe_mode["down_max_buy_price"]))
 
         best_bid, best_ask = http.top_of_book(book)
         order_price = choose_maker_buy_price(
@@ -1472,16 +1661,16 @@ class BTC5MinMakerBot:
                 "best_bid": best_bid,
                 "best_ask": best_ask,
                 "order_status": "skip_price_outside_guardrails",
-                "reason": _join_reasons(probe_reason, regime_reason),
+                "reason": _join_reasons(probe_reason, session_reason, regime_reason),
             }
             self.db.upsert_window(row)
-            return {
+            return _result({
                 "window_start_ts": window_start_ts,
                 "status": row["order_status"],
                 "quote_ticks": quote_ticks,
                 "regime_triggered": bool(recent_regime and recent_regime.get("triggered")),
                 "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
-            }
+            })
 
         size_usd = calc_trade_size_usd(self.cfg.bankroll_usd, self.cfg.risk_fraction, self.cfg.max_trade_usd)
         if size_usd < self.cfg.min_trade_usd:
@@ -1499,9 +1688,10 @@ class BTC5MinMakerBot:
                 "order_price": order_price,
                 "trade_size_usd": size_usd,
                 "order_status": "skip_size_too_small",
+                "reason": session_reason,
             }
             self.db.upsert_window(row)
-            return {"window_start_ts": window_start_ts, "status": row["order_status"]}
+            return _result({"window_start_ts": window_start_ts, "status": row["order_status"]})
 
         shares = _round_up(size_usd / max(order_price, 1e-6), 2)
         _btc5_min_shares = max(CLOB_HARD_MIN_SHARES, float(os.environ.get("JJ_POLY_MIN_ORDER_SHARES", "5.0")))
@@ -1531,16 +1721,16 @@ class BTC5MinMakerBot:
                     "order_price": order_price,
                     "trade_size_usd": size_usd,
                     "order_status": "skip_below_min_shares",
+                    "reason": session_reason,
                 }
                 self.db.upsert_window(row)
-                return {"window_start_ts": window_start_ts, "status": row["order_status"]}
+                return _result({"window_start_ts": window_start_ts, "status": row["order_status"]})
             shares = required_shares
             size_usd = bumped_usd
         order_id = None
         filled: int | None = None
         order_status = "order_error"
-        reason: str | None = regime_reason
-        reason = _join_reasons(probe_reason, reason)
+        reason: str | None = _join_reasons(probe_reason, session_reason, regime_reason)
         executed_shares = shares
 
         if self.cfg.paper_trading:
@@ -1638,7 +1828,7 @@ class BTC5MinMakerBot:
             "reason": reason,
         }
         self.db.upsert_window(row)
-        return {
+        return _result({
             "window_start_ts": window_start_ts,
             "status": order_status,
             "direction": direction,
@@ -1651,7 +1841,7 @@ class BTC5MinMakerBot:
             "quote_ticks": quote_ticks,
             "regime_triggered": bool(recent_regime and recent_regime.get("triggered")),
             "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
-        }
+        })
 
     async def run_windows(self, *, count: int, continuous: bool) -> None:
         stop_event = asyncio.Event()
@@ -1756,7 +1946,7 @@ async def _run(args: argparse.Namespace) -> None:
         raise SystemExit("--windows must be >= 1")
 
     logger.info(
-        "Starting BTC5 maker | mode=%s | bankroll=%.2f | risk_fraction=%.4f | max_trade=%.2f | max_abs_delta=%s | up_max=%.2f | down_max=%.2f | improve_ticks=%d | regime_skew=%s | probe_daily_loss=%s | probe_recent=%s | retry_post_only_cross=%s safety_ticks=%d",
+        "Starting BTC5 maker | mode=%s | bankroll=%.2f | risk_fraction=%.4f | max_trade=%.2f | max_abs_delta=%s | up_max=%.2f | down_max=%.2f | improve_ticks=%d | session_overrides=%d | regime_skew=%s | probe_daily_loss=%s | probe_recent=%s | retry_post_only_cross=%s safety_ticks=%d",
         "paper" if cfg.paper_trading else "live",
         cfg.bankroll_usd,
         cfg.risk_fraction,
@@ -1765,6 +1955,7 @@ async def _run(args: argparse.Namespace) -> None:
         effective_max_buy_price(cfg, "UP"),
         effective_max_buy_price(cfg, "DOWN"),
         max(0, int(cfg.maker_improve_ticks)),
+        len(cfg.session_guardrail_overrides),
         "enabled" if cfg.enable_recent_regime_skew else "disabled",
         "enabled" if cfg.enable_probe_after_daily_loss else "disabled",
         "enabled" if cfg.enable_probe_after_recent_loss else "disabled",

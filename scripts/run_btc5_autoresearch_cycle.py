@@ -20,8 +20,9 @@ from scripts.btc5_monte_carlo import (  # noqa: E402
     GuardrailProfile,
     _safe_float,
     assemble_observed_rows,
-    build_summary,
+    build_summary as build_global_summary,
 )
+from scripts.btc5_regime_policy_lab import build_summary as build_regime_policy_summary  # noqa: E402
 
 
 DEFAULT_DB_PATH = Path("data/btc_5min_maker.db")
@@ -101,6 +102,174 @@ def _find_candidate(summary: dict[str, Any], name: str) -> dict[str, Any] | None
     return None
 
 
+def _normalized_session_overrides(overrides: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for item in overrides or []:
+        if not isinstance(item, dict):
+            continue
+        profile = item.get("profile") if isinstance(item.get("profile"), dict) else {}
+        hours = sorted(
+            {
+                int(hour)
+                for hour in (item.get("et_hours") or [])
+                if isinstance(hour, int) or (isinstance(hour, str) and hour.isdigit())
+            }
+        )
+        if not hours:
+            continue
+        normalized.append(
+            {
+                "session_name": str(item.get("session_name") or "").strip(),
+                "et_hours": hours,
+                "profile": {
+                    "name": str(profile.get("name") or "").strip(),
+                    "max_abs_delta": _safe_float(profile.get("max_abs_delta"), 0.0) or None,
+                    "up_max_buy_price": _safe_float(profile.get("up_max_buy_price"), 0.0) or None,
+                    "down_max_buy_price": _safe_float(profile.get("down_max_buy_price"), 0.0) or None,
+                },
+            }
+        )
+    normalized.sort(key=lambda item: (item["session_name"], item["et_hours"]))
+    return normalized
+
+
+def _runtime_session_policy_from_overrides(overrides: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    runtime_policy: list[dict[str, Any]] = []
+    for item in _normalized_session_overrides(overrides):
+        profile = item.get("profile") if isinstance(item.get("profile"), dict) else {}
+        record: dict[str, Any] = {
+            "name": str(item.get("session_name") or profile.get("name") or "session_policy").strip(),
+            "et_hours": list(item.get("et_hours") or []),
+        }
+        max_abs_delta = profile.get("max_abs_delta")
+        up_max_buy_price = profile.get("up_max_buy_price")
+        down_max_buy_price = profile.get("down_max_buy_price")
+        if max_abs_delta is not None:
+            record["max_abs_delta"] = _safe_float(max_abs_delta, 0.0) or 0.0
+        if up_max_buy_price is not None:
+            record["up_max_buy_price"] = _safe_float(up_max_buy_price, 0.0) or 0.0
+        if down_max_buy_price is not None:
+            record["down_max_buy_price"] = _safe_float(down_max_buy_price, 0.0) or 0.0
+        runtime_policy.append(record)
+    return runtime_policy
+
+
+def _normalize_global_candidate(candidate: dict[str, Any] | None) -> dict[str, Any] | None:
+    if candidate is None:
+        return None
+    profile = dict(candidate.get("profile") or {})
+    return {
+        **candidate,
+        "candidate_family": "global_profile",
+        "profile": profile,
+        "base_profile": dict(profile),
+        "session_overrides": [],
+        "recommended_session_policy": [],
+    }
+
+
+def _normalize_regime_candidate(candidate: dict[str, Any] | None) -> dict[str, Any] | None:
+    if candidate is None:
+        return None
+    policy = candidate.get("policy") or {}
+    base_profile = dict(policy.get("default_profile") or {})
+    session_overrides = _normalized_session_overrides((policy.get("overrides") or []))
+    profile = dict(base_profile)
+    profile["name"] = str(policy.get("name") or base_profile.get("name") or "session_policy")
+    return {
+        "candidate_family": "regime_policy",
+        "profile": profile,
+        "base_profile": base_profile,
+        "session_overrides": session_overrides,
+        "recommended_session_policy": _runtime_session_policy_from_overrides(session_overrides),
+        "historical": candidate.get("historical") or {},
+        "monte_carlo": candidate.get("monte_carlo") or {},
+        "continuation": candidate.get("continuation") or {},
+        "scoring": candidate.get("scoring") or {},
+        "policy": policy,
+    }
+
+
+def _candidate_identity(candidate: dict[str, Any] | None) -> tuple[Any, ...]:
+    if candidate is None:
+        return tuple()
+    base_profile = (candidate.get("base_profile") or candidate.get("profile") or {})
+    return (
+        _safe_float(base_profile.get("max_abs_delta"), 0.0) or None,
+        _safe_float(base_profile.get("up_max_buy_price"), 0.0) or None,
+        _safe_float(base_profile.get("down_max_buy_price"), 0.0) or None,
+        tuple(
+            (
+                item.get("session_name"),
+                tuple(item.get("et_hours") or []),
+                (item.get("profile") or {}).get("max_abs_delta"),
+                (item.get("profile") or {}).get("up_max_buy_price"),
+                (item.get("profile") or {}).get("down_max_buy_price"),
+            )
+            for item in _normalized_session_overrides(candidate.get("session_overrides"))
+        ),
+    )
+
+
+def _select_best_target(
+    *,
+    candidates: list[tuple[str, dict[str, Any] | None]],
+    current: dict[str, Any] | None,
+    min_median_arr_improvement_pct: float,
+    min_median_pnl_improvement_usd: float,
+    min_replay_pnl_improvement_usd: float,
+    max_profit_prob_drop: float,
+    max_p95_drawdown_increase_usd: float,
+    max_loss_hit_prob_increase: float,
+    min_fill_lift: int,
+    min_fill_retention_ratio: float,
+) -> tuple[dict[str, Any] | None, dict[str, Any], list[dict[str, Any]]]:
+    evaluated: list[dict[str, Any]] = []
+    for source_name, candidate in candidates:
+        if candidate is None:
+            continue
+        decision = _promotion_decision(
+            best=candidate,
+            current=current,
+            min_median_arr_improvement_pct=min_median_arr_improvement_pct,
+            min_median_pnl_improvement_usd=min_median_pnl_improvement_usd,
+            min_replay_pnl_improvement_usd=min_replay_pnl_improvement_usd,
+            max_profit_prob_drop=max_profit_prob_drop,
+            max_p95_drawdown_increase_usd=max_p95_drawdown_increase_usd,
+            max_loss_hit_prob_increase=max_loss_hit_prob_increase,
+            min_fill_lift=min_fill_lift,
+            min_fill_retention_ratio=min_fill_retention_ratio,
+        )
+        evaluated.append(
+            {
+                "source": source_name,
+                "candidate": candidate,
+                "decision": decision,
+            }
+        )
+
+    if not evaluated:
+        return None, {"action": "hold", "reason": "missing_candidate_data"}, []
+
+    evaluated.sort(
+        key=lambda item: (
+            1 if (item.get("decision") or {}).get("action") == "promote" else 0,
+            _safe_float((item.get("decision") or {}).get("median_arr_delta_pct"), float("-inf")),
+            _safe_float((item.get("decision") or {}).get("replay_pnl_delta_usd"), float("-inf")),
+            _safe_float((item.get("decision") or {}).get("median_pnl_delta_usd"), float("-inf")),
+            _safe_float((item.get("decision") or {}).get("p05_arr_delta_pct"), float("-inf")),
+            -_safe_float((item.get("decision") or {}).get("p95_drawdown_delta_usd"), float("inf")),
+            _safe_float(((item.get("candidate") or {}).get("continuation") or {}).get("median_arr_pct"), float("-inf")),
+        ),
+        reverse=True,
+    )
+    best_entry = evaluated[0]
+    decision = dict(best_entry.get("decision") or {})
+    decision["selected_source"] = best_entry.get("source")
+    decision["selected_family"] = ((best_entry.get("candidate") or {}).get("candidate_family") or "unknown")
+    return best_entry.get("candidate"), decision, evaluated
+
+
 def _promotion_decision(
     *,
     best: dict[str, Any] | None,
@@ -112,17 +281,12 @@ def _promotion_decision(
     max_p95_drawdown_increase_usd: float,
     max_loss_hit_prob_increase: float,
     min_fill_lift: int,
+    min_fill_retention_ratio: float,
 ) -> dict[str, Any]:
     if best is None or current is None:
         return {"action": "hold", "reason": "missing_candidate_data"}
 
-    best_profile = best.get("profile") or {}
-    current_profile = current.get("profile") or {}
-    if (
-        best_profile.get("max_abs_delta") == current_profile.get("max_abs_delta")
-        and best_profile.get("up_max_buy_price") == current_profile.get("up_max_buy_price")
-        and best_profile.get("down_max_buy_price") == current_profile.get("down_max_buy_price")
-    ):
+    if _candidate_identity(best) == _candidate_identity(current):
         return {"action": "hold", "reason": "current_profile_is_best"}
 
     best_hist = best.get("historical") or {}
@@ -148,9 +312,10 @@ def _promotion_decision(
     loss_hit_delta = _safe_float(best_mc.get("loss_limit_hit_probability")) - _safe_float(
         current_mc.get("loss_limit_hit_probability")
     )
-    fill_lift = int(best_hist.get("replay_live_filled_rows") or 0) - int(
-        current_hist.get("replay_live_filled_rows") or 0
-    )
+    current_fill_rows = max(1, int(current_hist.get("replay_live_filled_rows") or 0))
+    best_fill_rows = int(best_hist.get("replay_live_filled_rows") or 0)
+    fill_lift = best_fill_rows - current_fill_rows
+    fill_retention_ratio = best_fill_rows / float(current_fill_rows) if current_fill_rows > 0 else 1.0
 
     reasons: list[str] = []
     if median_arr_delta < min_median_arr_improvement_pct:
@@ -177,8 +342,11 @@ def _promotion_decision(
         reasons.append(
             f"loss_hit_increase_too_large:{loss_hit_delta:.4f}>{max_loss_hit_prob_increase:.4f}"
         )
-    if fill_lift < min_fill_lift:
-        reasons.append(f"fill_lift_below_threshold:{fill_lift}<{min_fill_lift}")
+    if fill_lift < min_fill_lift and fill_retention_ratio < max(0.0, float(min_fill_retention_ratio)):
+        reasons.append(
+            "fill_retention_below_threshold:"
+            f"{fill_retention_ratio:.4f}<{max(0.0, float(min_fill_retention_ratio)):.4f}"
+        )
 
     decision = {
         "action": "promote" if not reasons else "hold",
@@ -192,15 +360,20 @@ def _promotion_decision(
         "p95_drawdown_delta_usd": round(p95_drawdown_delta, 4),
         "loss_hit_probability_delta": round(loss_hit_delta, 4),
         "fill_lift": int(fill_lift),
+        "fill_retention_ratio": round(fill_retention_ratio, 4),
     }
     return decision
 
 
-def render_strategy_env(profile: dict[str, Any], metadata: dict[str, Any]) -> str:
+def render_strategy_env(target: dict[str, Any], metadata: dict[str, Any]) -> str:
+    base_profile = target.get("base_profile") if isinstance(target.get("base_profile"), dict) else None
+    profile = base_profile or (target.get("profile") if isinstance(target.get("profile"), dict) else target)
+    candidate_profile = target.get("profile") if isinstance(target.get("profile"), dict) else profile
+    session_overrides = _normalized_session_overrides(target.get("session_overrides"))
     lines = [
         "# Managed by scripts/run_btc5_autoresearch_cycle.py",
         f"# generated_at={metadata['generated_at']}",
-        f"# candidate={profile.get('name')}",
+        f"# candidate={candidate_profile.get('name')}",
         f"# reason={metadata['reason']}",
         f"BTC5_MAX_ABS_DELTA={profile.get('max_abs_delta')}",
         f"BTC5_UP_MAX_BUY_PRICE={profile.get('up_max_buy_price')}",
@@ -208,15 +381,16 @@ def render_strategy_env(profile: dict[str, Any], metadata: dict[str, Any]) -> st
         f"BTC5_PROBE_MAX_ABS_DELTA={profile.get('max_abs_delta')}",
         f"BTC5_PROBE_UP_MAX_BUY_PRICE={profile.get('up_max_buy_price')}",
         f"BTC5_PROBE_DOWN_MAX_BUY_PRICE={profile.get('down_max_buy_price')}",
+        f"BTC5_SESSION_OVERRIDES_JSON={json.dumps(session_overrides, separators=(',', ':'))}",
     ]
     return "\n".join(lines) + "\n"
 
 
-def _write_override_env(path: Path, *, best_profile: dict[str, Any], decision: dict[str, Any]) -> None:
+def _write_override_env(path: Path, *, best_target: dict[str, Any], decision: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         render_strategy_env(
-            best_profile,
+            best_target,
             {
                 "generated_at": _now_utc().isoformat(),
                 "reason": decision.get("reason"),
@@ -266,6 +440,8 @@ def _write_reports(report_dir: Path, payload: dict[str, Any]) -> dict[str, str]:
         f"- Generated at: `{payload['generated_at']}`",
         f"- Action: `{payload['decision']['action']}`",
         f"- Reason: `{payload['decision']['reason']}`",
+        f"- Selected source: `{payload['decision'].get('selected_source', 'none')}`",
+        f"- Selected family: `{payload['decision'].get('selected_family', 'none')}`",
         f"- Active profile: `{payload['active_profile']['name']}`",
         f"- Best profile: `{payload['best_candidate']['profile']['name'] if payload.get('best_candidate') else 'none'}`",
         f"- Observed window rows: `{payload['simulation_summary']['input']['observed_window_rows']}`",
@@ -281,6 +457,15 @@ def _write_reports(report_dir: Path, payload: dict[str, Any]) -> dict[str, str]:
         f"- Profit-probability delta: `{payload['decision'].get('profit_probability_delta', 0.0):.2%}`",
         f"- P95 drawdown delta: `{payload['decision'].get('p95_drawdown_delta_usd', 0.0):.4f}` USD",
         f"- Loss-hit delta: `{payload['decision'].get('loss_hit_probability_delta', 0.0):.2%}`",
+        f"- Fill lift: `{payload['decision'].get('fill_lift', 0)}`",
+        "",
+        "## Recommended Session Policy",
+        "",
+        f"- Runtime-ready policy records: `{len(payload.get('recommended_session_policy') or [])}`",
+        "",
+        "```json",
+        json.dumps(payload.get("recommended_session_policy") or [], indent=2, sort_keys=True),
+        "```",
         "",
         "## Best Candidate",
         "",
@@ -317,6 +502,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-p95-drawdown-increase-usd", type=float, default=3.0)
     parser.add_argument("--max-loss-hit-prob-increase", type=float, default=0.03)
     parser.add_argument("--min-fill-lift", type=int, default=0)
+    parser.add_argument("--min-fill-retention-ratio", type=float, default=0.85)
+    parser.add_argument("--regime-min-session-rows", type=int, default=6)
     return parser.parse_args()
 
 
@@ -335,7 +522,7 @@ def main() -> int:
         remote_cache_json=args.remote_cache_json,
     )
     horizon_trades = max(len(rows), 40)
-    summary = build_summary(
+    global_summary = build_global_summary(
         rows=rows,
         db_path=args.db_path,
         current_live_profile=active_profile,
@@ -348,12 +535,31 @@ def main() -> int:
         top_grid_candidates=max(1, int(args.top_grid_candidates)),
         min_replay_fills=max(1, int(args.min_replay_fills)),
     )
-    summary["baseline"] = baseline
+    global_summary["baseline"] = baseline
+    regime_policy_summary = build_regime_policy_summary(
+        rows=rows,
+        db_path=args.db_path,
+        current_live_profile=active_profile,
+        runtime_recommended_profile=runtime_profile,
+        paths=max(1, int(args.paths)),
+        block_size=max(1, int(args.block_size)),
+        loss_limit_usd=float(args.loss_limit_usd),
+        seed=int(args.seed),
+        min_replay_fills=max(1, int(args.min_replay_fills)),
+        min_session_rows=max(1, int(args.regime_min_session_rows)),
+    )
+    regime_policy_summary["baseline"] = baseline
 
-    best_candidate = summary.get("best_candidate")
-    current_candidate = _find_candidate(summary, "current_live_profile")
-    decision = _promotion_decision(
-        best=best_candidate,
+    current_candidate = _normalize_global_candidate(_find_candidate(global_summary, "current_live_profile"))
+    if current_candidate is None:
+        current_candidate = _normalize_regime_candidate(regime_policy_summary.get("current_policy"))
+    global_best_candidate = _normalize_global_candidate(global_summary.get("best_candidate"))
+    regime_best_candidate = _normalize_regime_candidate(regime_policy_summary.get("best_policy"))
+    best_candidate, decision, evaluated_targets = _select_best_target(
+        candidates=[
+            ("global_best_candidate", global_best_candidate),
+            ("regime_best_candidate", regime_best_candidate),
+        ],
         current=current_candidate,
         min_median_arr_improvement_pct=float(args.min_median_arr_improvement_pct),
         min_median_pnl_improvement_usd=float(args.min_median_pnl_improvement_usd),
@@ -362,13 +568,14 @@ def main() -> int:
         max_p95_drawdown_increase_usd=float(args.max_p95_drawdown_increase_usd),
         max_loss_hit_prob_increase=float(args.max_loss_hit_prob_increase),
         min_fill_lift=int(args.min_fill_lift),
+        min_fill_retention_ratio=float(args.min_fill_retention_ratio),
     )
 
     restart_result: dict[str, Any] | None = None
     if decision["action"] == "promote" and best_candidate is not None:
         _write_override_env(
             args.override_env,
-            best_profile=best_candidate.get("profile") or {},
+            best_target=best_candidate,
             decision=decision,
         )
         if args.restart_on_promote:
@@ -387,9 +594,16 @@ def main() -> int:
         },
         "decision": decision,
         "arr_tracking": _arr_tracking(best_candidate, current_candidate),
+        "recommended_session_policy": _runtime_session_policy_from_overrides(
+            (best_candidate or {}).get("session_overrides")
+        ),
         "best_candidate": best_candidate,
         "current_candidate": current_candidate,
-        "simulation_summary": summary,
+        "global_best_candidate": global_best_candidate,
+        "regime_best_candidate": regime_best_candidate,
+        "promotion_candidates": evaluated_targets,
+        "simulation_summary": global_summary,
+        "regime_policy_summary": regime_policy_summary,
         "service_restart": restart_result,
     }
     artifacts = _write_reports(args.report_dir, payload)

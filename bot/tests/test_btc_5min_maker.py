@@ -3,7 +3,10 @@
 
 import sys
 import time
+import json
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -16,6 +19,8 @@ from bot.btc_5min_maker import (  # noqa: E402
     MakerConfig,
     MarketHttpClient,
     PlacementResult,
+    SessionGuardrailOverride,
+    active_session_guardrail_override,
     calc_trade_size_usd,
     clob_min_order_size,
     choose_maker_buy_price,
@@ -27,8 +32,13 @@ from bot.btc_5min_maker import (  # noqa: E402
     effective_quote_ticks,
     market_slug_for_window,
     parse_json_list,
+    parse_session_guardrail_overrides,
+    session_guardrail_reason,
     summarize_recent_direction_regime,
 )
+
+
+ET = ZoneInfo("America/New_York")
 
 
 def test_current_window_start_alignment() -> None:
@@ -38,6 +48,10 @@ def test_current_window_start_alignment() -> None:
 
 def test_market_slug_for_window() -> None:
     assert market_slug_for_window(1710000000) == "btc-updown-5m-1710000000"
+
+
+def _ts(year: int, month: int, day: int, hour: int, minute: int) -> int:
+    return int(datetime(year, month, day, hour, minute, tzinfo=ET).timestamp())
 
 
 def test_direction_from_prices_above_threshold() -> None:
@@ -86,6 +100,113 @@ def test_effective_max_buy_price_prefers_directional_caps() -> None:
     assert effective_max_buy_price(cfg, "UP") == pytest.approx(0.51)
     assert effective_max_buy_price(cfg, "DOWN") == pytest.approx(0.50)
     assert effective_max_buy_price(cfg, "OTHER") == pytest.approx(0.95)
+
+
+def test_parse_session_guardrail_overrides_normalizes_valid_rows() -> None:
+    overrides = parse_session_guardrail_overrides(
+        '[{"name":"hour_et_09","et_hours":[9],"max_abs_delta":0.0001,"up_max_buy_price":0.48,"down_max_buy_price":0.49,"min_delta":0.0004,"maker_improve_ticks":0},{"name":"","et_hours":[12]}]'
+    )
+
+    assert len(overrides) == 1
+    assert overrides[0].name == "hour_et_09"
+    assert overrides[0].et_hours == (9,)
+    assert overrides[0].min_delta == pytest.approx(0.0004)
+    assert overrides[0].max_abs_delta == pytest.approx(0.0001)
+    assert overrides[0].up_max_buy_price == pytest.approx(0.48)
+    assert overrides[0].down_max_buy_price == pytest.approx(0.49)
+    assert overrides[0].maker_improve_ticks == 0
+
+
+def test_active_session_guardrail_override_matches_et_hour() -> None:
+    cfg = MakerConfig(
+        session_policy_json='[{"name":"hour_et_09","et_hours":[9],"up_max_buy_price":0.48,"down_max_buy_price":0.49}]'
+    )
+
+    active = active_session_guardrail_override(cfg, window_start_ts=_ts(2026, 3, 9, 9, 35))
+    inactive = active_session_guardrail_override(cfg, window_start_ts=_ts(2026, 3, 9, 12, 5))
+
+    assert active is not None
+    assert active.session_name == "hour_et_09"
+    assert inactive is None
+
+
+def test_effective_max_buy_price_prefers_session_override_cap() -> None:
+    cfg = MakerConfig(
+        up_max_buy_price=0.51,
+        down_max_buy_price=0.50,
+        max_buy_price=0.95,
+    )
+    session_override = SessionGuardrailOverride(
+        name="hour_et_09",
+        et_hours=(9,),
+        up_max_buy_price=0.48,
+        down_max_buy_price=0.49,
+    )
+
+    assert effective_max_buy_price(cfg, "UP", session_override=session_override) == pytest.approx(0.48)
+    assert effective_max_buy_price(cfg, "DOWN", session_override=session_override) == pytest.approx(0.49)
+
+
+def test_session_guardrail_reason_mentions_session_and_hour() -> None:
+    reason = session_guardrail_reason(
+        SessionGuardrailOverride(
+            name="hour_et_09",
+            et_hours=(9,),
+            min_delta=0.0004,
+            max_abs_delta=0.0001,
+            up_max_buy_price=0.48,
+            down_max_buy_price=0.49,
+            maker_improve_ticks=0,
+        ),
+        window_start_ts=_ts(2026, 3, 9, 9, 5),
+    )
+
+    assert reason is not None
+    assert "name=hour_et_09" in reason
+    assert "hour_et=9" in reason
+
+
+def test_session_policy_no_policy_default_behavior() -> None:
+    cfg = MakerConfig(
+        session_policy_json="",
+        session_policy_path="",
+        session_overrides_json="",
+    )
+    assert cfg.session_guardrail_overrides == ()
+
+
+def test_session_policy_path_loading(tmp_path: Path) -> None:
+    path = tmp_path / "policy.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "hour_et_12",
+                    "et_hours": [12],
+                    "max_abs_delta": 0.0002,
+                    "maker_improve_ticks": 0,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cfg = MakerConfig(
+        session_policy_json="",
+        session_policy_path=str(path),
+        session_overrides_json='[{"name":"legacy","et_hours":[12],"max_abs_delta":0.0005}]',
+    )
+    assert len(cfg.session_guardrail_overrides) == 1
+    assert cfg.session_guardrail_overrides[0].name == "hour_et_12"
+    assert cfg.session_guardrail_overrides[0].max_abs_delta == pytest.approx(0.0002)
+
+
+def test_session_policy_malformed_inline_is_noop() -> None:
+    cfg = MakerConfig(
+        session_policy_json="{bad json",
+        session_policy_path="",
+        session_overrides_json="",
+    )
+    assert cfg.session_guardrail_overrides == ()
 
 
 def test_choose_maker_buy_price_rounds_to_tick() -> None:
@@ -710,6 +831,210 @@ async def test_process_window_respects_directional_price_cap(
 
     assert result["status"] == "skip_price_outside_guardrails"
 
+
+@pytest.mark.asyncio
+async def test_process_window_applies_session_guardrail_override(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=False,
+        db_path=tmp_path / "btc5.db",
+        bankroll_usd=250.0,
+        risk_fraction=0.01,
+        max_trade_usd=2.50,
+        min_trade_usd=0.25,
+        min_delta=0.0,
+        max_buy_price=0.95,
+        up_max_buy_price=0.95,
+        down_max_buy_price=0.95,
+        min_buy_price=0.45,
+        tick_size=0.01,
+        cancel_seconds_before_close=2,
+        session_policy_json='[{"name":"hour_et_09","et_hours":[9],"max_abs_delta":0.0001,"up_max_buy_price":0.48,"down_max_buy_price":0.49}]',
+    )
+    bot = BTC5MinMakerBot(cfg)
+
+    async def fake_resolve(http, through_window_start: int) -> None:
+        return None
+
+    async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
+        return 100.0, 100.009
+
+    class SessionBookHTTP(_DummyHTTP):
+        async def fetch_book(self, token_id: str) -> dict:
+            assert token_id == "tok-up"
+            return {
+                "bids": [{"price": 0.47, "size": 50}],
+                "asks": [{"price": 0.48, "size": 50}],
+            }
+
+    class FakeCLOB:
+        def __init__(self) -> None:
+                self.states = [
+                    LiveOrderState(
+                        order_id="ord-session",
+                        status="cancelled",
+                        original_size=10.42,
+                        size_matched=0.0,
+                        price=0.47,
+                    )
+                ]
+
+        def place_post_only_buy(self, token_id: str, price: float, shares: float) -> PlacementResult:
+            assert token_id == "tok-up"
+            assert price == pytest.approx(0.47)
+            return PlacementResult(order_id="ord-session", success=True, status="live")
+
+        def get_order_state(self, order_id: str) -> LiveOrderState:
+            assert order_id == "ord-session"
+            return self.states[0]
+
+        def cancel_order(self, order_id: str) -> bool:
+            assert order_id == "ord-session"
+            return True
+
+    monkeypatch.setattr(bot, "_resolve_unsettled", fake_resolve)
+    monkeypatch.setattr(bot, "_get_open_and_current_price", fake_prices)
+    bot.clob = FakeCLOB()
+
+    window_start_ts = _ts(2026, 3, 9, 9, 35)
+    result = await bot._process_window(window_start_ts=window_start_ts, http=SessionBookHTTP())
+
+    assert result["status"] == "live_cancelled_unfilled"
+    assert result["price"] == pytest.approx(0.47)
+    assert result["session_override_triggered"] is True
+    assert result["session_policy_name"] == "hour_et_09"
+
+    with bot.db._connect() as conn:
+        row = conn.execute(
+            "SELECT order_price, reason, order_status FROM window_trades WHERE window_start_ts = ?",
+            (window_start_ts,),
+        ).fetchone()
+    assert row["order_price"] == pytest.approx(0.47)
+    assert "session_policy" in (row["reason"] or "")
+    assert row["order_status"] == "live_cancelled_unfilled"
+
+
+@pytest.mark.asyncio
+async def test_process_window_session_policy_tightens_min_delta(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=True,
+        db_path=tmp_path / "btc5.db",
+        min_delta=0.0001,
+        session_policy_json='[{"name":"hour_et_09","et_hours":[9],"min_delta":0.0002}]',
+        min_buy_price=0.45,
+        tick_size=0.01,
+    )
+    bot = BTC5MinMakerBot(cfg)
+
+    async def fake_resolve(http, through_window_start: int) -> None:
+        return None
+
+    async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
+        return 100.0, 100.015  # delta=0.00015, passes base but fails tightened session min_delta.
+
+    monkeypatch.setattr(bot, "_resolve_unsettled", fake_resolve)
+    monkeypatch.setattr(bot, "_get_open_and_current_price", fake_prices)
+
+    window_start_ts = _ts(2026, 3, 9, 9, 35)
+    result = await bot._process_window(window_start_ts=window_start_ts, http=_DummyHTTP())
+
+    assert result["status"] == "skip_delta_too_small"
+    assert result["session_policy_name"] == "hour_et_09"
+
+    with bot.db._connect() as conn:
+        row = conn.execute(
+            "SELECT reason, order_status FROM window_trades WHERE window_start_ts = ?",
+            (window_start_ts,),
+        ).fetchone()
+    assert row["order_status"] == "skip_delta_too_small"
+    assert "name=hour_et_09" in (row["reason"] or "")
+
+
+@pytest.mark.asyncio
+async def test_process_window_session_policy_caps_quote_ticks_even_with_regime(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=False,
+        db_path=tmp_path / "btc5.db",
+        bankroll_usd=250.0,
+        risk_fraction=0.01,
+        max_trade_usd=2.50,
+        min_trade_usd=0.25,
+        min_delta=0.0,
+        max_buy_price=0.95,
+        up_max_buy_price=0.95,
+        down_max_buy_price=0.95,
+        min_buy_price=0.45,
+        tick_size=0.01,
+        cancel_seconds_before_close=2,
+        maker_improve_ticks=1,
+        enable_recent_regime_skew=True,
+        recent_regime_fills=12,
+        regime_min_fills_per_direction=5,
+        regime_min_pnl_gap_usd=20.0,
+        regime_weaker_direction_quote_ticks=0,
+        session_policy_json='[{"name":"hour_et_09","et_hours":[9],"maker_improve_ticks":0}]',
+    )
+    bot = BTC5MinMakerBot(cfg)
+
+    async def fake_resolve(http, through_window_start: int) -> None:
+        return None
+
+    async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
+        return 100.0, 99.95  # DOWN direction (favored in seeded regime)
+
+    class TightBookHTTP(_DummyHTTP):
+        async def fetch_book(self, token_id: str) -> dict:
+            assert token_id == "tok-down"
+            return {
+                "bids": [{"price": 0.49, "size": 50}],
+                "asks": [{"price": 0.51, "size": 50}],
+            }
+
+    class FakeCLOB:
+        def __init__(self) -> None:
+            self.states = [
+                LiveOrderState(
+                    order_id="ord-regime-policy",
+                    status="cancelled",
+                    original_size=10.21,
+                    size_matched=0.0,
+                    price=0.49,
+                )
+            ]
+
+        def place_post_only_buy(self, token_id: str, price: float, shares: float) -> PlacementResult:
+            assert token_id == "tok-down"
+            assert price == pytest.approx(0.49)
+            return PlacementResult(order_id="ord-regime-policy", success=True, status="live")
+
+        def get_order_state(self, order_id: str) -> LiveOrderState:
+            assert order_id == "ord-regime-policy"
+            return self.states[0]
+
+        def cancel_order(self, order_id: str) -> bool:
+            assert order_id == "ord-regime-policy"
+            return True
+
+    monkeypatch.setattr(bot, "_resolve_unsettled", fake_resolve)
+    monkeypatch.setattr(bot, "_get_open_and_current_price", fake_prices)
+    bot.clob = FakeCLOB()
+
+    window_start_ts = _ts(2026, 3, 9, 9, 35)
+    _seed_recent_regime(bot, window_start_ts=window_start_ts)
+    result = await bot._process_window(window_start_ts=window_start_ts, http=TightBookHTTP())
+
+    assert result["status"] == "live_cancelled_unfilled"
+    assert result["quote_ticks"] == 0
+    assert result["regime_triggered"] is True
+    assert result["session_policy_name"] == "hour_et_09"
 
 @pytest.mark.asyncio
 async def test_process_window_enters_probe_mode_after_recent_live_loss(

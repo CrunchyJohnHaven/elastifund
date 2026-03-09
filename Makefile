@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: help bootstrap doctor onboard quickstart preflight hygiene test verify test-root test-polymarket test-nontrading smoke-nontrading btc5-autoresearch-local btc5-autoresearch-local-autopush btc5-arr-report btc5-hypothesis-lab btc5-hypothesis-frontier deploy-write-manifest deploy-dry-run api-specs clean
+.PHONY: help bootstrap doctor onboard quickstart preflight hygiene test verify test-root test-polymarket test-nontrading smoke-nontrading btc5-autoresearch-local btc5-autoresearch-local-autopush btc5-arr-report btc5-hypothesis-lab btc5-regime-policy-lab btc5-hypothesis-frontier deploy-write-manifest deploy-dry-run api-specs clean
 
 help:
 	@printf '%s\n' \
@@ -19,6 +19,7 @@ help:
 		'btc5-autoresearch-local-autopush Run the local loop and auto-push allowlisted ARR promotions' \
 		'btc5-arr-report  Render tracked percentage-only ARR progress artifacts' \
 		'btc5-hypothesis-lab Run the BTC5 walk-forward hypothesis generator' \
+		'btc5-regime-policy-lab Run the BTC5 regime-conditioned policy search' \
 		'btc5-hypothesis-frontier Render the tracked BTC5 hypothesis frontier artifacts' \
 		'deploy-write-manifest Regenerate the release manifest from current machine truth' \
 		'deploy-dry-run   Refresh bridge state, regenerate the manifest, and run the VPS deploy dry-run' \
@@ -73,6 +74,9 @@ btc5-arr-report:
 
 btc5-hypothesis-lab:
 	$(PYTHON) scripts/btc5_hypothesis_lab.py --include-archive-csvs
+
+btc5-regime-policy-lab:
+	$(PYTHON) scripts/btc5_regime_policy_lab.py --include-archive-csvs
 
 btc5-hypothesis-frontier:
 	$(PYTHON) scripts/render_btc5_hypothesis_frontier.py

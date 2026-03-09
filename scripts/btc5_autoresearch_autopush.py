@@ -72,7 +72,7 @@ def main() -> int:
 
     args.base_env.write_text(
         render_strategy_env(
-            best_profile,
+            best_candidate,
             {
                 "generated_at": str(payload.get("generated_at") or ""),
                 "reason": str(decision.get("reason") or ""),

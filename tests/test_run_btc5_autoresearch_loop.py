@@ -34,6 +34,7 @@ def test_build_cycle_command_includes_selected_flags() -> None:
         max_p95_drawdown_increase_usd=3.0,
         max_loss_hit_prob_increase=0.03,
         min_fill_lift=0,
+        min_fill_retention_ratio=0.85,
         restart_on_promote=False,
     )
     command = _build_cycle_command(args)
@@ -57,7 +58,9 @@ def test_write_loop_reports_accumulates_summary(tmp_path: Path) -> None:
         "best_profile": {"name": "current_live_profile"},
         "active_profile": {"name": "current_live_profile"},
         "arr": {"active_median_arr_pct": 1000.0, "best_median_arr_pct": 1000.0, "median_arr_delta_pct": 0.0},
+        "recommended_session_policy": [{"name": "open_et", "et_hours": [9, 10, 11], "max_abs_delta": 0.0001}],
         "hypothesis_lab": {"best_hypothesis": {"name": "hyp_down_open"}},
+        "regime_policy_lab": {"best_policy": {"name": "policy_current_live_profile__open_et__grid_d0.00010_up0.49_down0.49"}},
         "artifacts": {},
         "hook": None,
         "stdout_tail": "",
@@ -84,5 +87,10 @@ def test_write_loop_reports_accumulates_summary(tmp_path: Path) -> None:
     history_lines = (tmp_path / "history.jsonl").read_text().strip().splitlines()
     assert latest_json["summary"]["cycles_total"] == 2
     assert latest_json["latest_entry"]["hypothesis_lab"]["best_hypothesis"]["name"] == "hyp_down_open"
+    assert latest_json["latest_entry"]["regime_policy_lab"]["best_policy"]["name"].startswith("policy_current_live_profile")
+    assert len(latest_json["latest_entry"]["recommended_session_policy"]) == 1
     assert "Last best hypothesis" in latest_md
+    assert "Last best regime policy" in latest_md
+    assert "Last best session policy records" in latest_md
+    assert "Last median ARR delta" in latest_md
     assert len(history_lines) == 2
