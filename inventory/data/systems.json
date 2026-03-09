@@ -1,0 +1,617 @@
+{
+  "captured_at": "2026-03-07",
+  "source_artifact": "research/imports/trading_bot_inventory_deep_research_report_2026-03-07.md",
+  "systems": [
+    {
+      "id": "elastifund",
+      "name": "Elastifund",
+      "category": "internal_reference",
+      "tier": 0,
+      "cohort": "reference",
+      "license": "MIT",
+      "license_risk": "low",
+      "languages": [
+        "Python"
+      ],
+      "asset_classes": [
+        "prediction_markets"
+      ],
+      "deployment_model": "self_hosted",
+      "maintenance_status": "active",
+      "benchmark_status": "internal_reference",
+      "preferred_evaluation_mode": "internal_simulation",
+      "evaluation_label": "internal_simulation",
+      "website": "https://github.com/johnbradley/Elastifund",
+      "community": {
+        "stars": null,
+        "forks": null
+      },
+      "notes": "Prediction-market-native internal reference system. Excluded from external rankings until methodology is stable."
+    },
+    {
+      "id": "freqtrade",
+      "name": "Freqtrade",
+      "category": "open_source_execution",
+      "tier": 1,
+      "cohort": "initial",
+      "license": "GPL-3.0",
+      "license_risk": "medium",
+      "languages": [
+        "Python"
+      ],
+      "asset_classes": [
+        "crypto_spot"
+      ],
+      "deployment_model": "self_hosted",
+      "maintenance_status": "active",
+      "benchmark_status": "planned",
+      "preferred_evaluation_mode": "internal_simulation",
+      "evaluation_label": "internal_simulation",
+      "website": "https://github.com/freqtrade/freqtrade",
+      "community": {
+        "stars": 47400,
+        "forks": 9900
+      },
+      "notes": "Dominant open-source crypto baseline with a mature dry-run workflow."
+    },
+    {
+      "id": "hummingbot",
+      "name": "Hummingbot",
+      "category": "open_source_execution",
+      "tier": 1,
+      "cohort": "initial",
+      "license": "Apache-2.0",
+      "license_risk": "low",
+      "languages": [
+        "Python"
+      ],
+      "asset_classes": [
+        "crypto"
+      ],
+      "deployment_model": "self_hosted",
+      "maintenance_status": "active",
+      "benchmark_status": "planned",
+      "preferred_evaluation_mode": "exchange_sandbox",
+      "evaluation_label": "exchange_sandbox",
+      "website": "https://github.com/hummingbot/hummingbot",
+      "community": {
+        "stars": 17600,
+        "forks": 4500
+      },
+      "notes": "Connector-heavy framework and the strongest open market-making reference in the first cohort."
+    },
+    {
+      "id": "jesse",
+      "name": "Jesse",
+      "category": "open_source_execution",
+      "tier": 1,
+      "cohort": "initial",
+      "license": "MIT",
+      "license_risk": "low",
+      "languages": [
+        "Python",
+        "JavaScript"
+      ],
+      "asset_classes": [
+        "crypto"
+      ],
+      "deployment_model": "self_hosted",
+      "maintenance_status": "active",
+      "benchmark_status": "backlog",
+      "preferred_evaluation_mode": "internal_simulation",
+      "evaluation_label": "internal_simulation",
+      "website": "https://github.com/jesse-ai/jesse",
+      "community": {
+        "stars": 7500,
+        "forks": 1100
+      },
+      "notes": "Research-to-live workflow with a programmable strategy API."
+    },
+    {
+      "id": "octobot",
+      "name": "OctoBot",
+      "category": "open_source_execution",
+      "tier": 1,
+      "cohort": "initial",
+      "license": "GPL-3.0",
+      "license_risk": "medium",
+      "languages": [
+        "Python"
+      ],
+      "asset_classes": [
+        "crypto"
+      ],
+      "deployment_model": "self_hosted",
+      "maintenance_status": "active",
+      "benchmark_status": "backlog",
+      "preferred_evaluation_mode": "internal_simulation",
+      "evaluation_label": "internal_simulation",
+      "website": "https://github.com/Drakkar-Software/OctoBot",
+      "community": {
+        "stars": 5400,
+        "forks": 1100
+      },
+      "notes": "Retail-friendly feature breadth with explicit paper mode."
+    },
+    {
+      "id": "nautilustrader",
+      "name": "NautilusTrader",
+      "category": "open_source_engine",
+      "tier": 1,
+      "cohort": "initial",
+      "license": "LGPL-3.0",
+      "license_risk": "low_medium",
+      "languages": [
+        "Rust",
+        "Python"
+      ],
+      "asset_classes": [
+        "multi_asset"
+      ],
+      "deployment_model": "self_hosted",
+      "maintenance_status": "active",
+      "benchmark_status": "planned",
+      "preferred_evaluation_mode": "deterministic_simulation",
+      "evaluation_label": "deterministic_simulation",
+      "website": "https://github.com/nautechsystems/nautilus_trader",
+      "community": {
+        "stars": 21000,
+        "forks": 2500
+      },
+      "notes": "Strongest research-to-live parity candidate and a likely reference engine."
+    },
+    {
+      "id": "lean",
+      "name": "Lean",
+      "category": "open_source_engine",
+      "tier": 1,
+      "cohort": "initial",
+      "license": "Apache-2.0",
+      "license_risk": "low",
+      "languages": [
+        "C#",
+        "Python"
+      ],
+      "asset_classes": [
+        "multi_asset"
+      ],
+      "deployment_model": "self_hosted",
+      "maintenance_status": "active",
+      "benchmark_status": "backlog",
+      "preferred_evaluation_mode": "deterministic_simulation",
+      "evaluation_label": "deterministic_simulation",
+      "website": "https://github.com/QuantConnect/Lean",
+      "community": {
+        "stars": 17600,
+        "forks": 4500
+      },
+      "notes": "General quant benchmark outside crypto-native tooling."
+    },
+    {
+      "id": "vnpy",
+      "name": "vn.py / VeighNa",
+      "category": "open_source_engine",
+      "tier": 2,
+      "cohort": "second_wave",
+      "license": "MIT",
+      "license_risk": "low",
+      "languages": [
+        "Python"
+      ],
+      "asset_classes": [
+        "multi_asset"
+      ],
+      "deployment_model": "self_hosted",
+      "maintenance_status": "active",
+      "benchmark_status": "backlog",
+      "preferred_evaluation_mode": "deterministic_simulation",
+      "evaluation_label": "deterministic_simulation",
+      "website": "https://github.com/vnpy/vnpy",
+      "community": {
+        "stars": 37400,
+        "forks": 11000
+      },
+      "notes": "Institutional-style gateway architecture with broad market support."
+    },
+    {
+      "id": "lumibot",
+      "name": "Lumibot",
+      "category": "open_source_engine",
+      "tier": 2,
+      "cohort": "second_wave",
+      "license": "GPL-3.0",
+      "license_risk": "medium",
+      "languages": [
+        "Python"
+      ],
+      "asset_classes": [
+        "stocks",
+        "options",
+        "crypto",
+        "futures",
+        "forex"
+      ],
+      "deployment_model": "self_hosted",
+      "maintenance_status": "active",
+      "benchmark_status": "backlog",
+      "preferred_evaluation_mode": "deterministic_simulation",
+      "evaluation_label": "deterministic_simulation",
+      "website": "https://github.com/Lumiwealth/lumibot",
+      "community": {
+        "stars": 1300,
+        "forks": 264
+      },
+      "notes": "Useful same-code backtest-to-live comparison candidate."
+    },
+    {
+      "id": "ccxt",
+      "name": "CCXT",
+      "category": "open_source_engine",
+      "tier": 2,
+      "cohort": "second_wave",
+      "license": "MIT",
+      "license_risk": "low",
+      "languages": [
+        "TypeScript",
+        "Python",
+        "C#",
+        "Go",
+        "PHP"
+      ],
+      "asset_classes": [
+        "crypto"
+      ],
+      "deployment_model": "library",
+      "maintenance_status": "active",
+      "benchmark_status": "backlog",
+      "preferred_evaluation_mode": "exchange_sandbox",
+      "evaluation_label": "exchange_sandbox",
+      "website": "https://github.com/ccxt/ccxt",
+      "community": {
+        "stars": 41200,
+        "forks": 8500
+      },
+      "notes": "Toolkit baseline for connectivity and adapter ergonomics, not a full bot."
+    },
+    {
+      "id": "qlib",
+      "name": "Qlib",
+      "category": "open_source_engine",
+      "tier": 2,
+      "cohort": "second_wave",
+      "license": "MIT",
+      "license_risk": "low",
+      "languages": [
+        "Python"
+      ],
+      "asset_classes": [
+        "equities",
+        "ml_research"
+      ],
+      "deployment_model": "self_hosted",
+      "maintenance_status": "active",
+      "benchmark_status": "backlog",
+      "preferred_evaluation_mode": "deterministic_simulation",
+      "evaluation_label": "deterministic_simulation",
+      "website": "https://github.com/microsoft/qlib",
+      "community": {
+        "stars": 38400,
+        "forks": 6000
+      },
+      "notes": "ML quant research pipeline; useful as a research-stack baseline rather than a bot peer."
+    },
+    {
+      "id": "superalgos",
+      "name": "Superalgos",
+      "category": "open_source_engine",
+      "tier": 2,
+      "cohort": "second_wave",
+      "license": "Apache-2.0",
+      "license_risk": "low",
+      "languages": [
+        "JavaScript"
+      ],
+      "asset_classes": [
+        "crypto"
+      ],
+      "deployment_model": "self_hosted",
+      "maintenance_status": "active",
+      "benchmark_status": "backlog",
+      "preferred_evaluation_mode": "internal_simulation",
+      "evaluation_label": "internal_simulation",
+      "website": "https://github.com/Superalgos/Superalgos",
+      "community": {
+        "stars": 5300,
+        "forks": 6100
+      },
+      "notes": "Large visual platform that belongs in a second wave because of operational weight."
+    },
+    {
+      "id": "backtrader",
+      "name": "Backtrader",
+      "category": "open_source_engine",
+      "tier": 2,
+      "cohort": "legacy_relevant",
+      "license": "GPL-3.0",
+      "license_risk": "medium",
+      "languages": [
+        "Python"
+      ],
+      "asset_classes": [
+        "general"
+      ],
+      "deployment_model": "library",
+      "maintenance_status": "slow",
+      "benchmark_status": "backlog",
+      "preferred_evaluation_mode": "deterministic_simulation",
+      "evaluation_label": "deterministic_simulation",
+      "website": "https://github.com/mementum/backtrader",
+      "community": {
+        "stars": 20600,
+        "forks": 4900
+      },
+      "notes": "Still relevant for strategy metrics, but no longer the freshest execution baseline."
+    },
+    {
+      "id": "hftbacktest",
+      "name": "HftBacktest",
+      "category": "market_making_hft",
+      "tier": 2,
+      "cohort": "order_book_track",
+      "license": "MIT",
+      "license_risk": "low",
+      "languages": [
+        "Rust",
+        "Python"
+      ],
+      "asset_classes": [
+        "crypto"
+      ],
+      "deployment_model": "self_hosted",
+      "maintenance_status": "active",
+      "benchmark_status": "backlog",
+      "preferred_evaluation_mode": "deterministic_simulation",
+      "evaluation_label": "deterministic_simulation",
+      "website": "https://github.com/nkaz001/hftbacktest",
+      "community": {
+        "stars": 3800,
+        "forks": 455
+      },
+      "notes": "Strong order-book replay candidate that should live on a separate track."
+    },
+    {
+      "id": "3commas",
+      "name": "3Commas",
+      "category": "commercial_saas",
+      "tier": 3,
+      "cohort": "black_box",
+      "license": "Proprietary",
+      "license_risk": "proprietary",
+      "languages": [
+        "unknown"
+      ],
+      "asset_classes": [
+        "crypto"
+      ],
+      "deployment_model": "saas",
+      "maintenance_status": "active",
+      "benchmark_status": "black_box_only",
+      "preferred_evaluation_mode": "black_box_comparison",
+      "evaluation_label": "black_box_comparison",
+      "website": "https://3commas.io/",
+      "community": {
+        "stars": null,
+        "forks": null
+      },
+      "notes": "Feature and incident-history comparison only. Internal execution loop is not observable."
+    },
+    {
+      "id": "cryptohopper",
+      "name": "Cryptohopper",
+      "category": "commercial_saas",
+      "tier": 3,
+      "cohort": "black_box",
+      "license": "Proprietary",
+      "license_risk": "proprietary",
+      "languages": [
+        "unknown"
+      ],
+      "asset_classes": [
+        "crypto"
+      ],
+      "deployment_model": "saas",
+      "maintenance_status": "active",
+      "benchmark_status": "black_box_only",
+      "preferred_evaluation_mode": "black_box_comparison",
+      "evaluation_label": "black_box_comparison",
+      "website": "https://www.cryptohopper.com/",
+      "community": {
+        "stars": null,
+        "forks": null
+      },
+      "notes": "Commercial comparison only; internal execution fidelity cannot be audited directly."
+    },
+    {
+      "id": "coinrule",
+      "name": "Coinrule",
+      "category": "commercial_saas",
+      "tier": 3,
+      "cohort": "black_box",
+      "license": "Proprietary",
+      "license_risk": "proprietary",
+      "languages": [
+        "unknown"
+      ],
+      "asset_classes": [
+        "crypto"
+      ],
+      "deployment_model": "saas",
+      "maintenance_status": "active",
+      "benchmark_status": "black_box_only",
+      "preferred_evaluation_mode": "black_box_comparison",
+      "evaluation_label": "black_box_comparison",
+      "website": "https://help.coinrule.com/",
+      "community": {
+        "stars": null,
+        "forks": null
+      },
+      "notes": "Useful as a no-code product benchmark with demo-trading surface."
+    },
+    {
+      "id": "wundertrading",
+      "name": "WunderTrading",
+      "category": "commercial_saas",
+      "tier": 3,
+      "cohort": "black_box",
+      "license": "Proprietary",
+      "license_risk": "proprietary",
+      "languages": [
+        "unknown"
+      ],
+      "asset_classes": [
+        "crypto"
+      ],
+      "deployment_model": "saas",
+      "maintenance_status": "active",
+      "benchmark_status": "black_box_only",
+      "preferred_evaluation_mode": "black_box_comparison",
+      "evaluation_label": "black_box_comparison",
+      "website": "https://help.wundertrading.com/",
+      "community": {
+        "stars": null,
+        "forks": null
+      },
+      "notes": "Feature-comparison entry only."
+    },
+    {
+      "id": "bitsgap",
+      "name": "Bitsgap",
+      "category": "commercial_saas",
+      "tier": 3,
+      "cohort": "black_box",
+      "license": "Proprietary",
+      "license_risk": "proprietary",
+      "languages": [
+        "unknown"
+      ],
+      "asset_classes": [
+        "crypto"
+      ],
+      "deployment_model": "saas",
+      "maintenance_status": "active",
+      "benchmark_status": "black_box_only",
+      "preferred_evaluation_mode": "black_box_comparison",
+      "evaluation_label": "black_box_comparison",
+      "website": "https://bitsgap.com/",
+      "community": {
+        "stars": null,
+        "forks": null
+      },
+      "notes": "Commercial comparison only."
+    },
+    {
+      "id": "gunbot",
+      "name": "Gunbot",
+      "category": "commercial_self_hosted",
+      "tier": 3,
+      "cohort": "black_box",
+      "license": "Proprietary",
+      "license_risk": "proprietary",
+      "languages": [
+        "unknown"
+      ],
+      "asset_classes": [
+        "crypto"
+      ],
+      "deployment_model": "self_hosted_paid",
+      "maintenance_status": "active",
+      "benchmark_status": "black_box_only",
+      "preferred_evaluation_mode": "black_box_comparison",
+      "evaluation_label": "black_box_comparison",
+      "website": "https://www.gunbot.com/",
+      "community": {
+        "stars": null,
+        "forks": null
+      },
+      "notes": "Self-hosted proprietary software with stronger sandboxing requirements."
+    },
+    {
+      "id": "pionex",
+      "name": "Pionex",
+      "category": "exchange_native",
+      "tier": 3,
+      "cohort": "black_box",
+      "license": "Proprietary",
+      "license_risk": "proprietary",
+      "languages": [
+        "unknown"
+      ],
+      "asset_classes": [
+        "crypto"
+      ],
+      "deployment_model": "exchange_native",
+      "maintenance_status": "active",
+      "benchmark_status": "black_box_only",
+      "preferred_evaluation_mode": "black_box_comparison",
+      "evaluation_label": "black_box_comparison",
+      "website": "https://support.pionex.com/",
+      "community": {
+        "stars": null,
+        "forks": null
+      },
+      "notes": "Exchange-native bot surface. Compare features, not internals."
+    },
+    {
+      "id": "zenbot",
+      "name": "Zenbot",
+      "category": "historical_baseline",
+      "tier": 4,
+      "cohort": "historical",
+      "license": "MIT",
+      "license_risk": "low",
+      "languages": [
+        "Node.js"
+      ],
+      "asset_classes": [
+        "crypto"
+      ],
+      "deployment_model": "self_hosted",
+      "maintenance_status": "archived",
+      "benchmark_status": "historical_only",
+      "preferred_evaluation_mode": "build_only",
+      "evaluation_label": "build_only",
+      "website": "https://github.com/DeviaVir/zenbot",
+      "community": {
+        "stars": 8300,
+        "forks": 2000
+      },
+      "notes": "Archived system. Keep only as a historical baseline, never as a production peer."
+    },
+    {
+      "id": "gekko",
+      "name": "Gekko",
+      "category": "historical_baseline",
+      "tier": 4,
+      "cohort": "historical",
+      "license": "MIT",
+      "license_risk": "low",
+      "languages": [
+        "Node.js"
+      ],
+      "asset_classes": [
+        "crypto"
+      ],
+      "deployment_model": "self_hosted",
+      "maintenance_status": "archived",
+      "benchmark_status": "historical_only",
+      "preferred_evaluation_mode": "build_only",
+      "evaluation_label": "build_only",
+      "website": "https://gekko.wizb.it/",
+      "community": {
+        "stars": 10200,
+        "forks": 3900
+      },
+      "notes": "Explicitly unmaintained and included only for historical context."
+    }
+  ]
+}

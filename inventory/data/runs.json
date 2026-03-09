@@ -1,0 +1,81 @@
+{
+  "as_of": "2026-03-07",
+  "state": "methodology_only",
+  "runs": [
+    {
+      "id": "freqtrade-cycle3-t0-t5",
+      "system_id": "freqtrade",
+      "spec_version": "2026.03-candidate1",
+      "track": "candle",
+      "execution_label": "internal_simulation",
+      "strategy_mode": "native",
+      "status": "planned",
+      "scheduled_cycle": "cycle3",
+      "tests": [
+        "T0",
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5"
+      ],
+      "status_note": "Methodology is published, but the clean-room Freqtrade run has not started yet.",
+      "paper_status": {
+        "state": "not_started",
+        "last_heartbeat": null,
+        "last_error": null
+      },
+      "artifacts": []
+    },
+    {
+      "id": "hummingbot-cycle3-t0-t5",
+      "system_id": "hummingbot",
+      "spec_version": "2026.03-candidate1",
+      "track": "candle",
+      "execution_label": "exchange_sandbox",
+      "strategy_mode": "native",
+      "status": "planned",
+      "scheduled_cycle": "cycle3",
+      "tests": [
+        "T0",
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5"
+      ],
+      "status_note": "Queued behind the methodology page. Sandbox credentials and allowlists still need to be provisioned.",
+      "paper_status": {
+        "state": "not_started",
+        "last_heartbeat": null,
+        "last_error": null
+      },
+      "artifacts": []
+    },
+    {
+      "id": "nautilustrader-cycle3-t0-t5",
+      "system_id": "nautilustrader",
+      "spec_version": "2026.03-candidate1",
+      "track": "candle",
+      "execution_label": "deterministic_simulation",
+      "strategy_mode": "translated",
+      "status": "planned",
+      "scheduled_cycle": "cycle3",
+      "tests": [
+        "T0",
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5"
+      ],
+      "status_note": "Reference-engine batch planned after the first Dockerized OSS bot runs are green.",
+      "paper_status": {
+        "state": "not_started",
+        "last_heartbeat": null,
+        "last_error": null
+      },
+      "artifacts": []
+    }
+  ]
+}
