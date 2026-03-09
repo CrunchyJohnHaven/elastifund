@@ -29,13 +29,19 @@ def _init_repo(path: Path) -> None:
     _git(path, "config", "user.email", "jj@example.com")
 
 
+def _init_bare_remote(path: Path) -> None:
+    _git(path, "init", "--bare")
+    # Linux git clones can skip checkout if the bare remote HEAD still points at master.
+    _git(path, "symbolic-ref", "HEAD", "refs/heads/main")
+
+
 def test_self_push_commits_only_selected_paths(tmp_path: Path) -> None:
     remote = tmp_path / "remote.git"
     repo = tmp_path / "repo"
     remote.mkdir()
     repo.mkdir()
 
-    _git(remote, "init", "--bare")
+    _init_bare_remote(remote)
     _init_repo(repo)
     (repo / "reports").mkdir()
     (repo / "FAST_TRADE_EDGE_ANALYSIS.md").write_text("base\n")
@@ -73,7 +79,7 @@ def test_self_push_skips_json_timestamp_only_changes(tmp_path: Path) -> None:
     remote.mkdir()
     repo.mkdir()
 
-    _git(remote, "init", "--bare")
+    _init_bare_remote(remote)
     _init_repo(repo)
     (repo / "reports").mkdir()
     snapshot = {
