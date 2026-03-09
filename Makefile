@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: help bootstrap doctor onboard quickstart preflight hygiene test verify test-root test-polymarket test-nontrading smoke-nontrading deploy-write-manifest deploy-dry-run api-specs clean
+.PHONY: help bootstrap doctor onboard quickstart preflight hygiene test verify test-root test-polymarket test-nontrading smoke-nontrading btc5-autoresearch-local deploy-write-manifest deploy-dry-run api-specs clean
 
 help:
 	@printf '%s\n' \
@@ -15,6 +15,7 @@ help:
 		'test-root        Run the repo-root pytest matrix' \
 		'test-nontrading  Run the nontrading test suite only' \
 		'smoke-nontrading Run the deterministic nontrading smoke check' \
+		'btc5-autoresearch-local Run the local 5-minute BTC5 autoresearch loop' \
 		'deploy-write-manifest Regenerate the release manifest from current machine truth' \
 		'deploy-dry-run   Refresh bridge state, regenerate the manifest, and run the VPS deploy dry-run' \
 		'test-polymarket  Run the nested polymarket-bot test suite' \
@@ -56,6 +57,9 @@ test-nontrading:
 
 smoke-nontrading:
 	$(PYTHON) scripts/nontrading_smoke.py
+
+btc5-autoresearch-local:
+	$(PYTHON) scripts/run_btc5_autoresearch_loop.py --include-archive-csvs
 
 deploy-write-manifest:
 	$(PYTHON) scripts/deploy_release_bundle.py --write-manifest

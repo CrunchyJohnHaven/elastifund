@@ -8,13 +8,14 @@ usage() {
 Usage:
   ./scripts/deploy.sh [user@host]
   ./scripts/deploy.sh --clean-env --profile live_aggressive --restart
-  ./scripts/deploy.sh --clean-env --profile maker_velocity_live --restart --btc5 --kalshi --loop
+  ./scripts/deploy.sh --clean-env --profile maker_velocity_live --restart --btc5 --btc5-autoresearch --kalshi --loop
 
 Options:
   --clean-env         Strip runtime override vars from the VPS .env and set JJ_RUNTIME_PROFILE
   --profile NAME      Runtime profile to write during --clean-env (default: live_aggressive)
   --restart           Restart jj-live.service after syncing files
   --btc5              Install/restart btc-5min-maker.service on the VPS
+  --btc5-autoresearch Install/enable the 5-minute BTC5 autoresearch timer
   --kalshi            Install/enable kalshi-weather-trader.timer (runs every 5m)
   --loop              Install/enable jj-improvement-loop.timer (runs every 30m)
   -h, --help          Show this help
@@ -51,6 +52,7 @@ fi
 CLEAN_ENV=false
 RESTART_SERVICE=false
 ENABLE_BTC5=false
+ENABLE_BTC5_AUTORESEARCH=false
 ENABLE_KALSHI=false
 ENABLE_LOOP=false
 PROFILE_NAME="live_aggressive"
@@ -74,6 +76,9 @@ while [ $# -gt 0 ]; do
             ;;
         --btc5)
             ENABLE_BTC5=true
+            ;;
+        --btc5-autoresearch)
+            ENABLE_BTC5_AUTORESEARCH=true
             ;;
         --kalshi)
             ENABLE_KALSHI=true
@@ -107,6 +112,8 @@ VPS="${TARGET_VPS:-${VPS_USER:-ubuntu}@${VPS_IP:?Set VPS_IP in .env or environme
 BOT_DIR="/home/ubuntu/polymarket-trading-bot"
 SERVICE_NAME="jj-live.service"
 BTC5_SERVICE_NAME="btc-5min-maker.service"
+BTC5_AUTORESEARCH_SERVICE_NAME="btc5-autoresearch.service"
+BTC5_AUTORESEARCH_TIMER_NAME="btc5-autoresearch.timer"
 KALSHI_SERVICE_NAME="kalshi-weather-trader.service"
 KALSHI_TIMER_NAME="kalshi-weather-trader.timer"
 LOOP_SERVICE_NAME="jj-improvement-loop.service"
@@ -128,6 +135,7 @@ echo "  Profile:  $PROFILE_NAME"
 echo "  Clean env: $CLEAN_ENV"
 echo "  Restart:   $RESTART_SERVICE"
 echo "  BTC5 service: $ENABLE_BTC5"
+echo "  BTC5 autoresearch: $ENABLE_BTC5_AUTORESEARCH"
 echo "  Kalshi timer: $ENABLE_KALSHI"
 echo "  Loop timer:   $ENABLE_LOOP"
 echo
@@ -144,6 +152,8 @@ POLYBOT_FILES=(
 SCRIPT_SUPPORT_FILES=(
     "scripts/clean_env_for_profile.sh"
     "scripts/btc5_status.sh"
+    "scripts/btc5_monte_carlo.py"
+    "scripts/run_btc5_autoresearch_cycle.py"
     "scripts/run_kalshi_weather_auto.sh"
     "scripts/run_flywheel_cycle.py"
     "scripts/write_remote_cycle_status.py"
@@ -152,6 +162,8 @@ SCRIPT_SUPPORT_FILES=(
 DEPLOY_ASSET_FILES=(
     "deploy/jj-live.service"
     "deploy/btc-5min-maker.service"
+    "deploy/btc5-autoresearch.service"
+    "deploy/btc5-autoresearch.timer"
     "deploy/kalshi-weather-trader.service"
     "deploy/kalshi-weather-trader.timer"
     "deploy/jj-improvement-loop.service"
@@ -229,12 +241,14 @@ refresh_runtime_artifacts() {
 echo "  Creating remote directories..."
 "${SSH_CMD[@]}" "$VPS" "mkdir -p \
     $BOT_DIR/bot \
+    $BOT_DIR/config \
     $BOT_DIR/config/runtime_profiles \
     $BOT_DIR/data \
     $BOT_DIR/deploy \
     $BOT_DIR/kalshi \
     $BOT_DIR/polymarket-bot/src/core \
-    $BOT_DIR/scripts"
+    $BOT_DIR/scripts \
+    $BOT_DIR/state"
 
 for local_path in "$PROJECT_DIR"/bot/*.py; do
     relative_path="bot/$(basename "$local_path")"
@@ -249,6 +263,9 @@ done
 
 sync_file "config/__init__.py"
 sync_file "config/runtime_profile.py"
+if [ -f "$PROJECT_DIR/config/btc5_strategy.env" ]; then
+    sync_file "config/btc5_strategy.env"
+fi
 if [ -f "$PROJECT_DIR/config/flywheel_runtime.local.json" ]; then
     sync_file "config/flywheel_runtime.local.json"
 fi
@@ -343,6 +360,15 @@ else
     echo "  Skipping BTC 5-min service setup (--btc5 not set)."
 fi
 
+if [[ "$ENABLE_BTC5_AUTORESEARCH" == "true" ]]; then
+    echo
+    echo "  Installing/enabling BTC5 autoresearch timer..."
+    "${SSH_CMD[@]}" "$VPS" "sudo install -m 644 $BOT_DIR/deploy/$BTC5_AUTORESEARCH_SERVICE_NAME /etc/systemd/system/$BTC5_AUTORESEARCH_SERVICE_NAME && sudo install -m 644 $BOT_DIR/deploy/$BTC5_AUTORESEARCH_TIMER_NAME /etc/systemd/system/$BTC5_AUTORESEARCH_TIMER_NAME && sudo systemctl daemon-reload && sudo systemctl enable $BTC5_AUTORESEARCH_TIMER_NAME && sudo systemctl restart $BTC5_AUTORESEARCH_TIMER_NAME && echo 'BTC5 autoresearch timer active:' && sudo systemctl list-timers $BTC5_AUTORESEARCH_TIMER_NAME --no-pager"
+else
+    echo
+    echo "  Skipping BTC5 autoresearch timer (--btc5-autoresearch not set)."
+fi
+
 if [[ "$ENABLE_KALSHI" == "true" ]]; then
     echo
     echo "  Installing/enabling Kalshi weather trader timer..."
@@ -361,7 +387,7 @@ else
     echo "  Skipping improvement loop timer (--loop not set)."
 fi
 
-if [[ "$CLEAN_ENV" == "true" || "$RESTART_SERVICE" == "true" || "$ENABLE_BTC5" == "true" || "$ENABLE_KALSHI" == "true" || "$ENABLE_LOOP" == "true" ]]; then
+if [[ "$CLEAN_ENV" == "true" || "$RESTART_SERVICE" == "true" || "$ENABLE_BTC5" == "true" || "$ENABLE_BTC5_AUTORESEARCH" == "true" || "$ENABLE_KALSHI" == "true" || "$ENABLE_LOOP" == "true" ]]; then
     refresh_runtime_artifacts
 else
     echo
@@ -374,7 +400,7 @@ echo "  Deploy complete."
 echo "========================================"
 echo
 echo "Examples:"
-echo "  ./scripts/deploy.sh --clean-env --profile maker_velocity_live --restart --btc5 --kalshi --loop"
+echo "  ./scripts/deploy.sh --clean-env --profile maker_velocity_live --restart --btc5 --btc5-autoresearch --kalshi --loop"
 echo "  ./scripts/deploy.sh --clean-env --profile live_aggressive --restart"
 echo "  ./scripts/deploy.sh --clean-env --profile paper_aggressive --restart"
 echo "  ./scripts/deploy.sh"

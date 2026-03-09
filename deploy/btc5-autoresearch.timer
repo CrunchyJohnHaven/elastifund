@@ -1,0 +1,11 @@
+[Unit]
+Description=Run BTC5 Autoresearch every 5 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=btc5-autoresearch.service
+
+[Install]
+WantedBy=timers.target

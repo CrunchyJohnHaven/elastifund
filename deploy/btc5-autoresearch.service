@@ -1,0 +1,13 @@
+[Unit]
+Description=BTC5 Autoresearch Cycle
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/polymarket-trading-bot
+ExecStart=/bin/bash -lc 'mkdir -p state reports/btc5_autoresearch && export PYTHONPATH=/home/ubuntu/polymarket-trading-bot:/home/ubuntu/polymarket-trading-bot/bot:/home/ubuntu/polymarket-trading-bot/polymarket-bot && /usr/bin/python3 scripts/run_btc5_autoresearch_cycle.py --db-path data/btc_5min_maker.db --strategy-env config/btc5_strategy.env --override-env state/btc5_autoresearch.env --report-dir reports/btc5_autoresearch --restart-on-promote'
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=btc5autoresearch
