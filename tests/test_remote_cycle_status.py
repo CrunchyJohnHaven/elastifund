@@ -180,11 +180,17 @@ def test_build_remote_cycle_status_includes_btc5_maker_observation(tmp_path: Pat
     assert status["btc_5min_maker"]["live_filled_pnl_usd"] == 5.6231
     assert status["btc_5min_maker"]["fill_attribution"]["best_direction"]["label"] == "DOWN"
     assert status["btc_5min_maker"]["fill_attribution"]["best_price_bucket"]["label"] == "<0.49"
+    assert status["btc_5min_maker"]["fill_attribution"]["recent_direction_regime"]["favored_direction"] == "DOWN"
+    assert status["btc_5min_maker"]["fill_attribution"]["recent_direction_regime"]["weaker_direction"] == "UP"
+    assert status["btc_5min_maker"]["fill_attribution"]["recent_direction_regime"]["triggered"] is False
     assert status["runtime"]["btc5_live_filled_rows"] == 3
     assert status["runtime"]["btc5_latest_order_status"] == "live_filled"
     assert status["runtime"]["btc5_latest_trade_pnl_usd"] == 5.416
     assert status["runtime"]["btc5_best_direction"] == "DOWN"
     assert status["runtime"]["btc5_best_price_bucket"] == "<0.49"
+    assert status["runtime"]["btc5_recent_regime_favored_direction"] == "DOWN"
+    assert status["runtime"]["btc5_recent_regime_weaker_direction"] == "UP"
+    assert status["runtime"]["btc5_recent_regime_triggered"] is False
 
 
 def test_build_remote_cycle_status_refreshes_data_cadence_from_live_observations(

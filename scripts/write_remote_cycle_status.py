@@ -315,6 +315,41 @@ def summarize_fill_attribution(rows):
         ],
         key=lambda item: (-item["pnl_usd"], -item["fills"], item["label"]),
     )
+    recent_direction_regime = {
+        "fills_considered": sum(item["fills"] for item in recent_by_direction),
+        "default_quote_ticks": 1,
+        "weaker_direction_quote_ticks": 0,
+        "min_fills_per_direction": 5,
+        "min_pnl_gap_usd": 20.0,
+        "by_direction": recent_by_direction,
+        "triggered": False,
+        "trigger_reason": "insufficient_directions",
+        "direction_quote_ticks": {},
+    }
+    if len(recent_by_direction) >= 2:
+        favored = recent_by_direction[0]
+        weaker = recent_by_direction[1]
+        pnl_gap = round(favored["pnl_usd"] - weaker["pnl_usd"], 4)
+        recent_direction_regime.update(
+            {
+                "favored_direction": favored["label"],
+                "weaker_direction": weaker["label"],
+                "pnl_gap_usd": pnl_gap,
+            }
+        )
+        if favored["fills"] < 5 or weaker["fills"] < 5:
+            recent_direction_regime["trigger_reason"] = "insufficient_fills"
+        elif favored["avg_pnl_usd"] <= weaker["avg_pnl_usd"]:
+            recent_direction_regime["trigger_reason"] = "no_avg_pnl_edge"
+        elif pnl_gap < 20.0:
+            recent_direction_regime["trigger_reason"] = "pnl_gap_below_threshold"
+        else:
+            recent_direction_regime["triggered"] = True
+            recent_direction_regime["trigger_reason"] = "weaker_direction_quote_tightened"
+            recent_direction_regime["direction_quote_ticks"] = {
+                favored["label"]: 1,
+                weaker["label"]: 0,
+            }
     best_direction = by_direction[0] if by_direction else None
     best_price_bucket = max(
         by_price_bucket,
@@ -325,6 +360,7 @@ def summarize_fill_attribution(rows):
         "by_price_bucket": by_price_bucket,
         "recent_live_filled_summary": rollup(recent, "recent_12_live_filled"),
         "recent_live_filled_by_direction": recent_by_direction,
+        "recent_direction_regime": recent_direction_regime,
         "best_direction": best_direction,
         "best_price_bucket": best_price_bucket,
     }
@@ -423,6 +459,41 @@ def _summarize_btc5_fill_attribution(rows: list[dict[str, Any]]) -> dict[str, An
         ),
         key=lambda item: (-item["pnl_usd"], -item["fills"], item["label"]),
     )
+    recent_direction_regime: dict[str, Any] = {
+        "fills_considered": sum(item["fills"] for item in recent_by_direction),
+        "default_quote_ticks": 1,
+        "weaker_direction_quote_ticks": 0,
+        "min_fills_per_direction": 5,
+        "min_pnl_gap_usd": 20.0,
+        "by_direction": recent_by_direction,
+        "triggered": False,
+        "trigger_reason": "insufficient_directions",
+        "direction_quote_ticks": {},
+    }
+    if len(recent_by_direction) >= 2:
+        favored = recent_by_direction[0]
+        weaker = recent_by_direction[1]
+        pnl_gap = round(favored["pnl_usd"] - weaker["pnl_usd"], 4)
+        recent_direction_regime.update(
+            {
+                "favored_direction": favored["label"],
+                "weaker_direction": weaker["label"],
+                "pnl_gap_usd": pnl_gap,
+            }
+        )
+        if favored["fills"] < 5 or weaker["fills"] < 5:
+            recent_direction_regime["trigger_reason"] = "insufficient_fills"
+        elif favored["avg_pnl_usd"] <= weaker["avg_pnl_usd"]:
+            recent_direction_regime["trigger_reason"] = "no_avg_pnl_edge"
+        elif pnl_gap < 20.0:
+            recent_direction_regime["trigger_reason"] = "pnl_gap_below_threshold"
+        else:
+            recent_direction_regime["triggered"] = True
+            recent_direction_regime["trigger_reason"] = "weaker_direction_quote_tightened"
+            recent_direction_regime["direction_quote_ticks"] = {
+                favored["label"]: 1,
+                weaker["label"]: 0,
+            }
 
     best_direction = by_direction[0] if by_direction else None
     best_price_bucket = max(
@@ -435,6 +506,7 @@ def _summarize_btc5_fill_attribution(rows: list[dict[str, Any]]) -> dict[str, An
         "by_price_bucket": by_price_bucket,
         "recent_live_filled_summary": recent_summary,
         "recent_live_filled_by_direction": recent_by_direction,
+        "recent_direction_regime": recent_direction_regime,
         "best_direction": best_direction,
         "best_price_bucket": best_price_bucket,
     }
@@ -881,6 +953,7 @@ def _merge_btc5_maker_observation(
     runtime = status.setdefault("runtime", {})
     latest_trade = btc5_maker.get("latest_trade") or {}
     fill_attribution = btc5_maker.get("fill_attribution") or {}
+    recent_regime = fill_attribution.get("recent_direction_regime") or {}
     runtime.update(
         {
             "btc5_checked_at": btc5_maker.get("checked_at"),
@@ -912,6 +985,10 @@ def _merge_btc5_maker_observation(
             "btc5_recent_live_filled_rows": _int_or_none(
                 (fill_attribution.get("recent_live_filled_summary") or {}).get("fills")
             ),
+            "btc5_recent_regime_triggered": bool(recent_regime.get("triggered")),
+            "btc5_recent_regime_favored_direction": recent_regime.get("favored_direction"),
+            "btc5_recent_regime_weaker_direction": recent_regime.get("weaker_direction"),
+            "btc5_recent_regime_pnl_gap_usd": _float_or_none(recent_regime.get("pnl_gap_usd")),
         }
     )
 
@@ -1184,6 +1261,7 @@ def render_remote_cycle_status_markdown(status: dict[str, Any]) -> str:
         best_direction = fill_attribution.get("best_direction") or {}
         best_price_bucket = fill_attribution.get("best_price_bucket") or {}
         recent_summary = fill_attribution.get("recent_live_filled_summary") or {}
+        recent_regime = fill_attribution.get("recent_direction_regime") or {}
         lines.extend(
             [
                 f"- Live filled rows: {btc5_maker.get('live_filled_rows') or 0}",
@@ -1211,6 +1289,14 @@ def render_remote_cycle_status_markdown(status: dict[str, Any]) -> str:
                     f"{_format_money(recent_summary.get('avg_pnl_usd') or 0.0)} avg"
                     if recent_summary
                     else "- Recent 12 live fills: n/a"
+                ),
+                (
+                    f"- Recent regime: favored={recent_regime.get('favored_direction')} "
+                    f"weaker={recent_regime.get('weaker_direction')} "
+                    f"gap={_format_money(recent_regime.get('pnl_gap_usd') or 0.0)} "
+                    f"triggered={'yes' if recent_regime.get('triggered') else 'no'}"
+                    if recent_regime
+                    else "- Recent regime: n/a"
                 ),
                 "",
             ]

@@ -151,6 +151,7 @@ def choose_maker_buy_price(
     max_price: float,
     min_price: float,
     tick_size: float,
+    aggression_ticks: int = 1,
 ) -> float | None:
     if best_bid is None or best_ask is None:
         return None
@@ -165,7 +166,8 @@ def choose_maker_buy_price(
         return None
 
     # Stay maker: bid below best ask. Improve by one tick from current best bid.
-    candidate = _round_down_to_tick(best_bid + tick_size, tick_size)
+    quote_ticks = max(0, int(aggression_ticks))
+    candidate = _round_down_to_tick(best_bid + (quote_ticks * tick_size), tick_size)
     price = min(max(candidate, min_valid), max_valid)
     if price >= best_ask:
         return None
@@ -179,6 +181,108 @@ def effective_max_buy_price(cfg: "MakerConfig", direction: str) -> float:
     if normalized == "DOWN" and cfg.down_max_buy_price is not None:
         return float(cfg.down_max_buy_price)
     return float(cfg.max_buy_price)
+
+
+def summarize_recent_direction_regime(
+    rows: list[dict[str, Any]],
+    *,
+    default_quote_ticks: int,
+    weaker_direction_quote_ticks: int,
+    min_fills_per_direction: int,
+    min_pnl_gap_usd: float,
+) -> dict[str, Any] | None:
+    if not rows:
+        return None
+
+    direction_groups: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        direction = str(row.get("direction") or "").strip().upper()
+        if direction not in {"UP", "DOWN"}:
+            continue
+        direction_groups.setdefault(direction, []).append(row)
+
+    if not direction_groups:
+        return None
+
+    def _rollup(direction: str, group_rows: list[dict[str, Any]]) -> dict[str, Any]:
+        fills = len(group_rows)
+        pnl = round(sum(_safe_float(row.get("pnl_usd"), 0.0) for row in group_rows), 4)
+        avg_pnl = round(pnl / fills, 4) if fills else 0.0
+        avg_price = round(
+            sum(_safe_float(row.get("order_price"), 0.0) for row in group_rows) / fills,
+            4,
+        ) if fills else 0.0
+        return {
+            "label": direction,
+            "fills": fills,
+            "pnl_usd": pnl,
+            "avg_pnl_usd": avg_pnl,
+            "avg_order_price": avg_price,
+        }
+
+    by_direction = sorted(
+        (_rollup(direction, group_rows) for direction, group_rows in direction_groups.items()),
+        key=lambda item: (-item["pnl_usd"], -item["fills"], item["label"]),
+    )
+    regime = {
+        "fills_considered": sum(item["fills"] for item in by_direction),
+        "default_quote_ticks": max(0, int(default_quote_ticks)),
+        "weaker_direction_quote_ticks": max(0, int(weaker_direction_quote_ticks)),
+        "min_fills_per_direction": max(1, int(min_fills_per_direction)),
+        "min_pnl_gap_usd": round(max(0.0, float(min_pnl_gap_usd)), 4),
+        "by_direction": by_direction,
+        "triggered": False,
+        "trigger_reason": "insufficient_directions",
+        "direction_quote_ticks": {},
+    }
+    if len(by_direction) < 2:
+        return regime
+
+    favored = by_direction[0]
+    weaker = by_direction[1]
+    pnl_gap = round(favored["pnl_usd"] - weaker["pnl_usd"], 4)
+    regime.update(
+        {
+            "favored_direction": favored["label"],
+            "weaker_direction": weaker["label"],
+            "pnl_gap_usd": pnl_gap,
+        }
+    )
+
+    min_fills = regime["min_fills_per_direction"]
+    if favored["fills"] < min_fills or weaker["fills"] < min_fills:
+        regime["trigger_reason"] = "insufficient_fills"
+        return regime
+    if favored["avg_pnl_usd"] <= weaker["avg_pnl_usd"]:
+        regime["trigger_reason"] = "no_avg_pnl_edge"
+        return regime
+    if pnl_gap < regime["min_pnl_gap_usd"]:
+        regime["trigger_reason"] = "pnl_gap_below_threshold"
+        return regime
+
+    regime["triggered"] = True
+    regime["trigger_reason"] = "weaker_direction_quote_tightened"
+    regime["direction_quote_ticks"] = {
+        favored["label"]: regime["default_quote_ticks"],
+        weaker["label"]: regime["weaker_direction_quote_ticks"],
+    }
+    return regime
+
+
+def effective_quote_ticks(
+    cfg: "MakerConfig",
+    direction: str,
+    *,
+    recent_regime: dict[str, Any] | None = None,
+) -> int:
+    normalized = str(direction or "").strip().upper()
+    base_ticks = max(0, int(cfg.maker_improve_ticks))
+    if not recent_regime or not recent_regime.get("triggered"):
+        return base_ticks
+    override = (recent_regime.get("direction_quote_ticks") or {}).get(normalized)
+    if override is None:
+        return base_ticks
+    return max(0, int(override))
 
 
 def calc_trade_size_usd(bankroll_usd: float, risk_fraction: float, max_trade_usd: float) -> float:
@@ -246,9 +350,21 @@ class MakerConfig:
     min_trade_usd: float = float(os.environ.get("BTC5_MIN_TRADE_USD", "5.00"))
     min_delta: float = float(os.environ.get("BTC5_MIN_DELTA", "0.0003"))
     max_abs_delta: float | None = _optional_env_float("BTC5_MAX_ABS_DELTA")
+    maker_improve_ticks: int = int(os.environ.get("BTC5_MAKER_IMPROVE_TICKS", "1"))
     max_buy_price: float = float(os.environ.get("BTC5_MAX_BUY_PRICE", "0.95"))
     up_max_buy_price: float | None = _optional_env_float("BTC5_UP_MAX_BUY_PRICE")
     down_max_buy_price: float | None = _optional_env_float("BTC5_DOWN_MAX_BUY_PRICE")
+    enable_recent_regime_skew: bool = os.environ.get("BTC5_ENABLE_RECENT_REGIME_SKEW", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    recent_regime_fills: int = int(os.environ.get("BTC5_RECENT_REGIME_FILLS", "12"))
+    regime_min_fills_per_direction: int = int(os.environ.get("BTC5_REGIME_MIN_FILLS_PER_DIRECTION", "5"))
+    regime_min_pnl_gap_usd: float = float(os.environ.get("BTC5_REGIME_MIN_PNL_GAP_USD", "20.0"))
+    regime_weaker_direction_quote_ticks: int = int(
+        os.environ.get("BTC5_REGIME_WEAKER_DIRECTION_QUOTE_TICKS", "0")
+    )
     min_buy_price: float = float(os.environ.get("BTC5_MIN_BUY_PRICE", "0.90"))
     tick_size: float = float(os.environ.get("BTC5_TICK_SIZE", "0.01"))
     entry_seconds_before_close: int = int(os.environ.get("BTC5_ENTRY_SECONDS_BEFORE_CLOSE", "10"))
@@ -470,6 +586,27 @@ class TradeDB:
                 (day_start,),
             ).fetchone()
         return float(row["pnl"] if row else 0.0)
+
+    def recent_live_filled(self, *, limit: int) -> list[dict[str, Any]]:
+        capped_limit = max(0, int(limit))
+        if capped_limit <= 0:
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    id,
+                    direction,
+                    order_price,
+                    pnl_usd
+                FROM window_trades
+                WHERE order_status = 'live_filled'
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (capped_limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def status_summary(self) -> dict[str, Any]:
         with self._connect() as conn:
@@ -815,6 +952,18 @@ class BTC5MinMakerBot:
         self.cache = BinancePriceCache()
         self.clob = CLOBExecutor(cfg)
 
+    def _recent_direction_regime(self) -> dict[str, Any] | None:
+        if not self.cfg.enable_recent_regime_skew:
+            return None
+        rows = self.db.recent_live_filled(limit=self.cfg.recent_regime_fills)
+        return summarize_recent_direction_regime(
+            rows,
+            default_quote_ticks=self.cfg.maker_improve_ticks,
+            weaker_direction_quote_ticks=self.cfg.regime_weaker_direction_quote_ticks,
+            min_fills_per_direction=self.cfg.regime_min_fills_per_direction,
+            min_pnl_gap_usd=self.cfg.regime_min_pnl_gap_usd,
+        )
+
     async def _resolve_unsettled(self, http: MarketHttpClient, through_window_start: int) -> None:
         rows = self.db.unsettled_rows(max_window_start_ts=through_window_start)
         for row in rows:
@@ -1043,6 +1192,17 @@ class BTC5MinMakerBot:
             self.db.upsert_window(row)
             return {"window_start_ts": window_start_ts, "status": row["order_status"]}
 
+        recent_regime = self._recent_direction_regime()
+        quote_ticks = effective_quote_ticks(self.cfg, direction, recent_regime=recent_regime)
+        regime_reason = None
+        if recent_regime and recent_regime.get("triggered"):
+            favored = recent_regime.get("favored_direction") or "n/a"
+            weaker = recent_regime.get("weaker_direction") or "n/a"
+            regime_reason = (
+                f"recent_regime favored={favored} weaker={weaker} "
+                f"{direction}_quote_ticks={quote_ticks}"
+            )
+
         best_bid, best_ask = http.top_of_book(book)
         order_price = choose_maker_buy_price(
             best_bid=best_bid,
@@ -1050,6 +1210,7 @@ class BTC5MinMakerBot:
             max_price=effective_max_buy_price(self.cfg, direction),
             min_price=self.cfg.min_buy_price,
             tick_size=self.cfg.tick_size,
+            aggression_ticks=quote_ticks,
         )
         if order_price is None:
             row = {
@@ -1064,9 +1225,15 @@ class BTC5MinMakerBot:
                 "best_bid": best_bid,
                 "best_ask": best_ask,
                 "order_status": "skip_price_outside_guardrails",
+                "reason": regime_reason,
             }
             self.db.upsert_window(row)
-            return {"window_start_ts": window_start_ts, "status": row["order_status"]}
+            return {
+                "window_start_ts": window_start_ts,
+                "status": row["order_status"],
+                "quote_ticks": quote_ticks,
+                "regime_triggered": bool(recent_regime and recent_regime.get("triggered")),
+            }
 
         size_usd = calc_trade_size_usd(self.cfg.bankroll_usd, self.cfg.risk_fraction, self.cfg.max_trade_usd)
         if size_usd < self.cfg.min_trade_usd:
@@ -1124,7 +1291,7 @@ class BTC5MinMakerBot:
         order_id = None
         filled: int | None = None
         order_status = "order_error"
-        reason: str | None = None
+        reason: str | None = regime_reason
         executed_shares = shares
 
         if self.cfg.paper_trading:
@@ -1138,7 +1305,7 @@ class BTC5MinMakerBot:
                 placement = self.clob.place_post_only_buy(token_id=token_id, price=order_price, shares=shares)
                 order_id = placement.order_id
                 order_status = f"live_{placement.status}" if placement.status else "live_order_placed"
-                reason = placement.error_msg
+                reason = placement.error_msg or regime_reason
             except Exception as exc:
                 logger.error("Live order placement failed: %s", exc)
                 placement = PlacementResult(
@@ -1191,6 +1358,8 @@ class BTC5MinMakerBot:
             "size_usd": row["trade_size_usd"],
             "filled": filled,
             "reason": reason,
+            "quote_ticks": quote_ticks,
+            "regime_triggered": bool(recent_regime and recent_regime.get("triggered")),
         }
 
     async def run_windows(self, *, count: int, continuous: bool) -> None:
@@ -1296,7 +1465,7 @@ async def _run(args: argparse.Namespace) -> None:
         raise SystemExit("--windows must be >= 1")
 
     logger.info(
-        "Starting BTC5 maker | mode=%s | bankroll=%.2f | risk_fraction=%.4f | max_trade=%.2f | max_abs_delta=%s | up_max=%.2f | down_max=%.2f",
+        "Starting BTC5 maker | mode=%s | bankroll=%.2f | risk_fraction=%.4f | max_trade=%.2f | max_abs_delta=%s | up_max=%.2f | down_max=%.2f | improve_ticks=%d | regime_skew=%s",
         "paper" if cfg.paper_trading else "live",
         cfg.bankroll_usd,
         cfg.risk_fraction,
@@ -1304,6 +1473,8 @@ async def _run(args: argparse.Namespace) -> None:
         "disabled" if cfg.max_abs_delta is None else f"{cfg.max_abs_delta:.6f}",
         effective_max_buy_price(cfg, "UP"),
         effective_max_buy_price(cfg, "DOWN"),
+        max(0, int(cfg.maker_improve_ticks)),
+        "enabled" if cfg.enable_recent_regime_skew else "disabled",
     )
     await bot.run_windows(count=args.windows, continuous=args.continuous)
     bot.print_status()

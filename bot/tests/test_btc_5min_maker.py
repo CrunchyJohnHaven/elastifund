@@ -24,8 +24,10 @@ from bot.btc_5min_maker import (  # noqa: E402
     deterministic_fill,
     direction_from_prices,
     effective_max_buy_price,
+    effective_quote_ticks,
     market_slug_for_window,
     parse_json_list,
+    summarize_recent_direction_regime,
 )
 
 
@@ -95,6 +97,52 @@ def test_choose_maker_buy_price_rounds_to_tick() -> None:
         tick_size=0.01,
     )
     assert price == pytest.approx(0.92)
+
+
+def test_choose_maker_buy_price_respects_custom_aggression_ticks() -> None:
+    price = choose_maker_buy_price(
+        best_bid=0.49,
+        best_ask=0.51,
+        max_price=0.95,
+        min_price=0.45,
+        tick_size=0.01,
+        aggression_ticks=0,
+    )
+    assert price == pytest.approx(0.49)
+
+
+def test_summarize_recent_direction_regime_tightens_weaker_direction() -> None:
+    rows = [
+        {"id": idx, "direction": "DOWN", "order_price": 0.49, "pnl_usd": 5.0}
+        for idx in range(1, 7)
+    ] + [
+        {"id": idx + 6, "direction": "UP", "order_price": 0.51, "pnl_usd": 1.0}
+        for idx in range(1, 7)
+    ]
+    regime = summarize_recent_direction_regime(
+        rows,
+        default_quote_ticks=1,
+        weaker_direction_quote_ticks=0,
+        min_fills_per_direction=5,
+        min_pnl_gap_usd=20.0,
+    )
+
+    assert regime is not None
+    assert regime["triggered"] is True
+    assert regime["favored_direction"] == "DOWN"
+    assert regime["weaker_direction"] == "UP"
+    assert regime["direction_quote_ticks"] == {"DOWN": 1, "UP": 0}
+
+
+def test_effective_quote_ticks_prefers_recent_regime_override() -> None:
+    cfg = MakerConfig(maker_improve_ticks=1)
+    regime = {
+        "triggered": True,
+        "direction_quote_ticks": {"UP": 0, "DOWN": 1},
+    }
+    assert effective_quote_ticks(cfg, "UP", recent_regime=regime) == 0
+    assert effective_quote_ticks(cfg, "DOWN", recent_regime=regime) == 1
+    assert effective_quote_ticks(cfg, "UP", recent_regime=None) == 1
 
 
 def test_calc_trade_size_usd() -> None:
@@ -186,6 +234,40 @@ class _DummyHTTP:
         }
 
 
+def _seed_recent_regime(bot: BTC5MinMakerBot, *, window_start_ts: int) -> None:
+    start = window_start_ts - (12 * 300)
+    for idx in range(12):
+        direction = "DOWN" if idx < 6 else "UP"
+        pnl = 5.0 if direction == "DOWN" else 1.0
+        order_price = 0.49 if direction == "DOWN" else 0.51
+        ws = start + (idx * 300)
+        bot.db.upsert_window(
+            {
+                "window_start_ts": ws,
+                "window_end_ts": ws + 300,
+                "slug": market_slug_for_window(ws),
+                "decision_ts": ws + 290,
+                "direction": direction,
+                "open_price": 100.0,
+                "current_price": 100.05,
+                "delta": 0.0005,
+                "token_id": f"tok-{direction.lower()}",
+                "best_bid": order_price - 0.01,
+                "best_ask": order_price,
+                "order_price": order_price,
+                "trade_size_usd": 5.0,
+                "shares": round(5.0 / order_price, 2),
+                "order_id": f"hist-{idx}",
+                "order_status": "live_filled",
+                "filled": 1,
+                "reason": "seed",
+                "resolved_side": direction,
+                "won": 1,
+                "pnl_usd": pnl,
+            }
+        )
+
+
 @pytest.mark.asyncio
 async def test_process_window_records_partial_live_fill(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     cfg = MakerConfig(
@@ -259,6 +341,107 @@ async def test_process_window_records_partial_live_fill(monkeypatch: pytest.Monk
     assert row["trade_size_usd"] == pytest.approx(1.104, rel=1e-3)
     assert row["filled"] == 1
     assert row["order_status"] == "live_partial_fill_cancelled"
+
+
+@pytest.mark.asyncio
+async def test_process_window_uses_less_aggressive_quote_on_weaker_recent_direction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=False,
+        db_path=tmp_path / "btc5.db",
+        bankroll_usd=250.0,
+        risk_fraction=0.01,
+        max_trade_usd=2.50,
+        min_trade_usd=0.25,
+        min_delta=0.0003,
+        max_buy_price=0.95,
+        up_max_buy_price=0.95,
+        down_max_buy_price=0.95,
+        min_buy_price=0.45,
+        tick_size=0.01,
+        cancel_seconds_before_close=2,
+        maker_improve_ticks=1,
+        enable_recent_regime_skew=True,
+        recent_regime_fills=12,
+        regime_min_fills_per_direction=5,
+        regime_min_pnl_gap_usd=20.0,
+        regime_weaker_direction_quote_ticks=0,
+    )
+    bot = BTC5MinMakerBot(cfg)
+
+    async def fake_resolve(http, through_window_start: int) -> None:
+        return None
+
+    async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
+        return 100.0, 100.05
+
+    class TightBookHTTP:
+        top_of_book = staticmethod(MarketHttpClient.top_of_book)
+
+        async def fetch_market_by_slug(self, slug: str) -> dict:
+            return {
+                "slug": slug,
+                "tokens": [
+                    {"outcome": "Up", "token_id": "tok-up"},
+                    {"outcome": "Down", "token_id": "tok-down"},
+                ],
+            }
+
+        async def fetch_book(self, token_id: str) -> dict:
+            assert token_id == "tok-up"
+            return {
+                "bids": [{"price": 0.49, "size": 50}],
+                "asks": [{"price": 0.51, "size": 50}],
+            }
+
+    class FakeCLOB:
+        def __init__(self) -> None:
+            self.states = [
+                LiveOrderState(
+                    order_id="ord-regime",
+                    status="cancelled",
+                    original_size=10.21,
+                    size_matched=0.0,
+                    price=0.49,
+                )
+            ]
+
+        def place_post_only_buy(self, token_id: str, price: float, shares: float) -> PlacementResult:
+            assert token_id == "tok-up"
+            assert price == pytest.approx(0.49)
+            return PlacementResult(order_id="ord-regime", success=True, status="live")
+
+        def get_order_state(self, order_id: str) -> LiveOrderState:
+            assert order_id == "ord-regime"
+            return self.states[0]
+
+        def cancel_order(self, order_id: str) -> bool:
+            assert order_id == "ord-regime"
+            return True
+
+    monkeypatch.setattr(bot, "_resolve_unsettled", fake_resolve)
+    monkeypatch.setattr(bot, "_get_open_and_current_price", fake_prices)
+    bot.clob = FakeCLOB()
+
+    window_start_ts = current_window_start(time.time()) - (2 * 300)
+    _seed_recent_regime(bot, window_start_ts=window_start_ts)
+
+    result = await bot._process_window(window_start_ts=window_start_ts, http=TightBookHTTP())
+
+    assert result["status"] == "live_cancelled_unfilled"
+    assert result["quote_ticks"] == 0
+    assert result["regime_triggered"] is True
+
+    with bot.db._connect() as conn:
+        row = conn.execute(
+            "SELECT order_price, reason, order_status FROM window_trades WHERE window_start_ts = ?",
+            (window_start_ts,),
+        ).fetchone()
+    assert row["order_price"] == pytest.approx(0.49)
+    assert "recent_regime" in (row["reason"] or "")
+    assert row["order_status"] == "live_cancelled_unfilled"
 
 
 @pytest.mark.asyncio
