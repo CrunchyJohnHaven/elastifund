@@ -5463,14 +5463,14 @@ class JJLive:
         if not private_key.startswith("0x"):
             private_key = "0x" + private_key
 
-        # Create client without creds first to derive them
-        # signature_type=1 (POLY_PROXY) — Polymarket proxy wallet
-        # signature_type=2 (Gnosis Safe) causes "invalid signature" on orders
+        signature_type = int(os.environ.get("JJ_CLOB_SIGNATURE_TYPE", "1"))
+        # Create client without creds first to derive them.
+        # Some wallets require signature_type=0 (EOA), while proxy flows use 1.
         client = OfficialClobClient(
             host="https://clob.polymarket.com",
             key=private_key,
             chain_id=137,
-            signature_type=1,
+            signature_type=signature_type,
             funder=safe_address,
         )
 
@@ -5497,9 +5497,10 @@ class JJLive:
             key=private_key,
             chain_id=137,
             creds=creds,
-            signature_type=1,
+            signature_type=signature_type,
             funder=safe_address,
         )
+        logger.info("CLOB signing mode: signature_type=%s", signature_type)
 
         # Verify auth works
         try:
