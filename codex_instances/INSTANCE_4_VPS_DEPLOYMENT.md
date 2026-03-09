@@ -1,135 +1,127 @@
-# Execute Instance #4 — AWS VPS Deployment & Infrastructure
+# Execute Instance #4 — VPS Deployment & Release Manifest Fix
 
 You are an autonomous Codex instance for the Elastifund trading system. Execute every step below without human intervention. Report findings, commit code, and produce the handoff artifact.
 
 ---
 
-## STATE SNAPSHOT (Injected 2026-03-09)
+## STATE SNAPSHOT (Injected 2026-03-09 v2.8.0)
 
-- VPS: Dublin AWS Lightsail eu-west-1, IP: 52.208.155.0
+- VPS: 52.208.155.0 (AWS Lightsail Dublin, eu-west-1)
 - SSH: `ssh -i ~/Downloads/LightsailDefaultKey-eu-west-1.pem ubuntu@52.208.155.0`
 - Bot path on VPS: `/home/ubuntu/polymarket-trading-bot/`
-- Service: `jj-live.service` — last known `active` (drift, 0 trades in 298 cycles)
-- Dashboard sidecar: NOT YET DEPLOYED (new `jj-dashboard.service` planned)
-- Local git HEAD: `cde466f` (7 cleanup commits this session)
-- Key changes to deploy: env-var threshold configurability, doc reorg, Elastic stack, new tests
-- Required env vars: ANTHROPIC_API_KEY, POLYMARKET_API_KEY, POLYMARKET_SECRET, POLYMARKET_PASSPHRASE, POLYMARKET_PRIVATE_KEY, PAPER_TRADING
+- Service: `jj-live.service` `active` at `2026-03-09T01:06:09Z`
+- Service mode: UNKNOWN — treat as drift. Must confirm paper/shadow/live before any action.
+- Cycles: 305 completed, 0 live trades placed
+- Deploy dry-run: BLOCKED at `2026-03-09T01:06:52Z` — release manifest expects `config/runtime_profiles/blocked_safe.yaml` but actual file is `config/runtime_profiles/blocked_safe.json`
+- Runtime profiles available: `blocked_safe.json`, `shadow_fast_flow.json`, `research_scan.json`
+- Runtime profile contract: `docs/ops/runtime_profile_contract.md`
+- Wallet-flow: ready (80 scored wallets, fast_flow_restart_ready=true)
+- Launch posture: BLOCKED (no closed trades, no deployed capital, A-6/B-1 gates, flywheel hold)
+- Tests: 1,278 total verified, all green
 - New env vars available: JJ_YES_THRESHOLD, JJ_NO_THRESHOLD, JJ_MIN_CATEGORY_PRIORITY, JJ_CAT_PRIORITY_*
+- Required env vars: ANTHROPIC_API_KEY, POLYMARKET_API_KEY, POLYMARKET_SECRET, POLYMARKET_PASSPHRASE, POLYMARKET_PRIVATE_KEY, PAPER_TRADING
 
 ---
 
 ## OBJECTIVE
 
-Push all committed code to the Dublin VPS. Verify runtime health. Prepare for threshold-tuned restart. DO NOT restart the live service unless it is already running — restarting a stopped service that trades real money is a human escalation.
+Fix the release manifest path mismatch that blocks deploy dry-runs, confirm the running service mode, prepare the deployment pipeline for the eventual first-trade restart, and push code to VPS. Do NOT enable live trading or deploy with real money routing. Restarting a stopped service that trades real money is a human escalation.
 
 ## YOU OWN
 
-`deploy/`, `config/`, `.github/workflows/`, VPS operations, `infra/jj-dashboard.service`, `reports/`
+`deploy/`, `config/`, `Makefile` (deploy targets only), `reports/deploy_*.json`, `.github/workflows/`
 
 ## DO NOT TOUCH
 
-`docs/`, `research/`, website files, `CLAUDE.md`, `COMMAND_NODE.md`
+`bot/` (except reading mode/config), `docs/`, `research/`, website files, `CLAUDE.md`, `COMMAND_NODE.md`, `PROJECT_INSTRUCTIONS.md`
 
 ## STEPS
 
-1. Read `CLAUDE.md` "Current State" for current VPS status and deployment config.
+1. Read `docs/ops/runtime_profile_contract.md` for the profile specification.
 
-2. Verify local repo is clean:
+2. **Find and fix the manifest path mismatch:**
    ```bash
-   git status
+   grep -rn "blocked_safe.yaml" deploy/ config/ Makefile .github/ 2>/dev/null
+   ```
+   The actual file is `config/runtime_profiles/blocked_safe.json`. Either:
+   - (a) Update the manifest/script to reference `.json` instead of `.yaml`, OR
+   - (b) Create a `.yaml` version if the contract requires YAML format
+   Choose the option that matches the runtime profile contract.
+
+3. Verify all three runtime profiles are valid:
+   ```bash
+   for f in config/runtime_profiles/*.json; do
+     python3 -m json.tool "$f" > /dev/null && echo "VALID: $f" || echo "INVALID: $f"
+   done
    ```
 
-3. Run the full test suite locally — do NOT deploy if tests fail:
+4. Run the deploy dry-run after the fix:
    ```bash
+   make deploy-dry-run 2>&1 || python3 deploy/dry_run.py 2>&1 || echo "No deploy script found — check Makefile targets"
+   ```
+
+5. Verify local repo is clean and tests pass:
+   ```bash
+   git status
    python3 -m pytest tests/ -x -q --tb=short
    ```
 
-4. Push to GitHub:
+6. Push to GitHub:
    ```bash
    git push origin main
    ```
 
-5. SSH to Dublin VPS:
+7. SSH to Dublin VPS and pull:
    ```bash
-   ssh -i ~/Downloads/LightsailDefaultKey-eu-west-1.pem ubuntu@52.208.155.0
-   ```
-
-6. On VPS — pull latest code:
-   ```bash
+   ssh -i ~/Downloads/LightsailDefaultKey-eu-west-1.pem ubuntu@52.208.155.0 << 'REMOTE'
    cd /home/ubuntu/polymarket-trading-bot/
    git pull origin main
-   git log --oneline -5
+   git log --oneline -3
+   python3 -c "from bot.jj_live import TradingBot; print('import OK')"
+   sudo systemctl status jj-live.service --no-pager
+   grep "PAPER_TRADING\|LIVE_TRADING\|JJ_RUNTIME_PROFILE" .env 2>/dev/null || echo "Mode env vars not set"
+   sudo journalctl -u jj-live.service --no-pager -n 10
+   REMOTE
    ```
 
-7. Verify HEAD matches local:
+8. Check if new threshold env vars are set on VPS:
    ```bash
-   git rev-parse HEAD  # Should match local cde466f or later
+   ssh -i ~/Downloads/LightsailDefaultKey-eu-west-1.pem ubuntu@52.208.155.0 \
+     "grep 'JJ_YES_THRESHOLD\|JJ_NO_THRESHOLD\|JJ_MIN_CATEGORY' /home/ubuntu/polymarket-trading-bot/.env || echo 'Threshold env vars not yet configured'"
    ```
 
-8. Check `.env` on VPS for all required keys (DO NOT create or modify — just report):
-   ```bash
-   grep -c "ANTHROPIC_API_KEY" .env
-   grep -c "POLYMARKET_API_KEY" .env
-   grep -c "POLYMARKET_SECRET" .env
-   grep -c "POLYMARKET_PASSPHRASE" .env
-   grep -c "POLYMARKET_PRIVATE_KEY" .env
-   grep "PAPER_TRADING" .env
-   ```
-   Flag any missing keys for human action.
+9. If service is RUNNING: note in handoff. Do NOT restart — it will pick up code on next natural restart.
+   If service is STOPPED: DO NOT restart. Prepare the restart command for John.
 
-9. Check if new threshold env vars are set:
-   ```bash
-   grep "JJ_YES_THRESHOLD\|JJ_NO_THRESHOLD\|JJ_MIN_CATEGORY" .env || echo "Threshold env vars not yet configured — using defaults"
-   ```
-
-10. Verify Python environment:
-    ```bash
-    python3 -c "from bot.jj_live import TradingBot; print('import OK')"
-    ```
-
-11. Check current service state:
-    ```bash
-    sudo systemctl status jj-live.service
-    ```
-
-12. If service is RUNNING: it will pick up code changes on next restart. Note the service state in handoff.
-    If service is STOPPED: DO NOT restart. Flag as "restart-recommended-with-aggressive-thresholds" in handoff. This is a human escalation (spending real money).
-
-13. Check systemd service file is current:
-    ```bash
-    cat /etc/systemd/system/jj-live.service
-    ```
-
-14. Verify logging works:
-    ```bash
-    sudo journalctl -u jj-live.service --no-pager -n 20
-    ```
-
-15. Write handoff to `reports/deploy_<timestamp>.json`:
+10. Produce `reports/deploy_<timestamp>.json`:
     ```json
     {
       "timestamp": "<ISO>",
+      "instance_version": "2.8.0",
+      "manifest_fix": "blocked_safe.yaml → blocked_safe.json (or describe what was done)",
+      "dry_run_result": "pass|fail",
       "vps_sha": "<git rev-parse HEAD on VPS>",
       "repo_sha": "<git rev-parse HEAD local>",
-      "sha_match": true|false,
+      "sha_match": true,
       "service_status": "active|inactive|failed",
+      "service_mode_confirmed": "paper|shadow|live|unknown",
       "env_keys_present": ["ANTHROPIC_API_KEY", ...],
       "env_keys_missing": [],
-      "threshold_env_vars_configured": true|false,
-      "paper_trading": "true|false",
-      "restart_recommended": true|false,
-      "restart_reason": "...",
-      "recommended_env_additions": [
-        "JJ_YES_THRESHOLD=0.08",
-        "JJ_NO_THRESHOLD=0.03",
-        "JJ_MIN_CATEGORY_PRIORITY=0"
-      ]
+      "threshold_env_vars_configured": false,
+      "launch_gates_status": {
+        "closed_trades": false,
+        "deployed_capital": false,
+        "a6_gate": false,
+        "b1_gate": false,
+        "flywheel_hold": true
+      },
+      "recommended_action": "confirm-service-mode | add-threshold-env-vars | ready-for-paper-restart"
     }
     ```
 
 ## ESCALATION NOTE
 
-Per CLAUDE.md rules, restarting a stopped service that trades real money requires human approval. If the service is stopped, this instance prepares the restart command but does NOT execute it. The handoff artifact tells John exactly what to run:
+Per CLAUDE.md rules, restarting a stopped service that trades real money requires human approval. If the service is stopped, this instance prepares the restart command but does NOT execute it:
 ```bash
 # Add to VPS .env:
 echo 'JJ_YES_THRESHOLD=0.08' >> .env
@@ -141,10 +133,13 @@ sudo systemctl restart jj-live.service
 
 ## VERIFICATION
 
-- VPS git SHA matches local HEAD
-- `systemctl status jj-live.service` returns expected state
-- All required env keys present
-- Python import succeeds on VPS
+```bash
+python3 -m pytest tests/ -x -q --tb=short
+# Confirm the yaml reference is gone
+! grep -r "blocked_safe.yaml" deploy/ config/ Makefile .github/ 2>/dev/null && echo "No stale yaml refs"
+# Confirm profiles are valid
+for f in config/runtime_profiles/*.json; do python3 -m json.tool "$f" > /dev/null; done && echo "All profiles valid"
+```
 
 ## HANDOFF
 
@@ -153,8 +148,11 @@ INSTANCE #4 HANDOFF
 ---
 Files changed: [list]
 Commands run: [list]
-Key findings: [1-3 sentences]
-Numbers that moved: [before→after]
+Manifest fix: [exact change made]
+Service mode: [paper|shadow|live|unknown — what you found]
+Dry-run result: [pass|fail + reason]
+VPS SHA match: [yes|no]
+Launch gates: [which are met, which are not]
 Unverified: [anything next cycle should check]
 Next instance can edit these files: [yes/no per file]
 ```

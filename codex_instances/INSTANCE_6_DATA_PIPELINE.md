@@ -4,23 +4,26 @@ You are an autonomous Codex instance for the Elastifund trading system. Execute 
 
 ---
 
-## STATE SNAPSHOT (Injected 2026-03-09)
+## STATE SNAPSHOT (Injected 2026-03-09 v2.8.0)
 
 - Pipeline status: REJECT ALL (all hypotheses failed kill rules or expectancy tests)
-- Last pipeline run: 2026-03-09T00:20:02+00:00
-- Data window: 2026-03-07T14:53:53+00:00 to 2026-03-07T19:08:13+00:00
-- Markets observed: 29 (15-min), 40 (5-min), 7 (4-hour)
-- Trade records: 2,882
-- Unique wallets: 1,607
+- Last pipeline run: 2026-03-09T01:05:57+00:00
+- Markets observed: 74 total (29×15-min, 38×5-min, 7×4-hour)
+- Trade records: 2,850
+- Unique wallets: 1,591
 - Platt calibration: A=0.5914, B=-0.3977 (532-market fit)
 - Edge thresholds: YES=0.15, NO=0.05 (now env-var configurable)
-- Strategies validated: 0 | Candidates: 0 | Rejected: 2 (Residual Horizon, Chainlink Basis)
+- Strategies validated: 0 | Candidates: 0
+- A-6: 563 allowed neg-risk events, 57 qualified, 0 executable below 0.95
+- B-1: 0 deterministic template pairs in first 1,000 allowed markets
+- Wallet-flow: ready (80 scored wallets, fast_flow_restart_ready=true)
+- Tests: 1,278 total verified
 
 ---
 
 ## OBJECTIVE
 
-Pull fresh market data, evaluate current opportunities against both current AND aggressive thresholds, and produce an updated `FAST_TRADE_EDGE_ANALYSIS.md`.
+Pull fresh market data, evaluate current opportunities against current, aggressive, and wide-open thresholds, and produce an updated `FAST_TRADE_EDGE_ANALYSIS.md`. The key question: does lowering thresholds unlock any real trades?
 
 ## YOU OWN
 
@@ -53,6 +56,7 @@ Pull fresh market data, evaluate current opportunities against both current AND 
    For each market that passes basic filters (price window + resolution), compute:
    - What LLM raw probability is required to trigger a YES trade at current thresholds (YES=0.15)?
    - What LLM raw probability is required at aggressive thresholds (YES=0.08)?
+   - What LLM raw probability is required at wide-open thresholds (YES=0.05)?
    - How many markets become theoretically tradeable at each threshold?
 
    The Platt calibration formula is:
@@ -86,6 +90,7 @@ Pull fresh market data, evaluate current opportunities against both current AND 
    **Last Updated:** <ISO timestamp>
    **System Status:** <running|paused>
    **Data Window:** <fresh pull timestamp>
+   **Instance Version:** 2.8.0
 
    ## Data Coverage
    - Active markets pulled: N
@@ -124,12 +129,16 @@ Pull fresh market data, evaluate current opportunities against both current AND 
 
    ## A-6 Structural Scan
    <results or "0 executable constructions">
+
+   ## Wallet-Flow Status
+   Ready: 80 scored wallets, fast_flow_restart_ready=true
    ```
 
 9. Write detailed results to `reports/pipeline_refresh_<timestamp>.json`:
    ```json
    {
      "timestamp": "<ISO>",
+     "instance_version": "2.8.0",
      "markets_pulled": N,
      "markets_under_24h": N,
      "markets_under_48h": N,
@@ -140,8 +149,9 @@ Pull fresh market data, evaluate current opportunities against both current AND 
        "aggressive": {"yes": 0.08, "no": 0.03, "tradeable": N},
        "wide_open": {"yes": 0.05, "no": 0.02, "tradeable": N}
      },
-     "category_breakdown": {"politics": N, "weather": N, ...},
-     "a6_scan": {"candidates": N, "executable": N},
+     "category_breakdown": {"politics": N, "weather": N, "economic": N, "crypto": N, "sports": N, "other": N},
+     "a6_scan": {"allowed_events": 563, "qualified": 57, "executable": N},
+     "wallet_flow": {"ready": true, "scored_wallets": 80},
      "calibration_params": {"A": 0.5914, "B": -0.3977},
      "recommendation": "...",
      "new_viable_strategies": []
@@ -156,7 +166,7 @@ Pull fresh market data, evaluate current opportunities against both current AND 
 ## VERIFICATION
 
 ```bash
-python3 -m pytest tests/ -x -q  # All pass
+python3 -m pytest tests/ -x -q
 head -5 FAST_TRADE_EDGE_ANALYSIS.md  # Timestamp is current
 ls data/pulls/  # Fresh directory exists
 ls reports/pipeline_refresh_*.json  # Handoff artifact exists

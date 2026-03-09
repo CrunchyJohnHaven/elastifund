@@ -1,0 +1,350 @@
+CODEX DISPATCH PLAN — March 9, 2026
+Source truth: COMMAND_NODE.md v2.8.0 | jj_state.json: 311 cycles, 0 trades
+Guiding principle: Nothing matters until there is a first trade.
+
+================================================================================
+INSTANCE #4 — VPS DEPLOY & MANIFEST FIX
+================================================================================
+PRIORITY: CRITICAL — dispatch first, unblocks everything downstream
+DURATION: 15 min
+DEPENDS ON: nothing
+
+STATE SNAPSHOT (v2.8.0):
+- VPS: 52.208.155.0 (AWS Lightsail Dublin, eu-west-1)
+- SSH: ssh -i ~/Downloads/LightsailDefaultKey-eu-west-1.pem ubuntu@52.208.155.0
+- Bot path: /home/ubuntu/polymarket-trading-bot/
+- Service: jj-live.service active at 2026-03-09T01:06:09Z — mode UNKNOWN
+- Cycles: 311 completed, 0 live trades
+- Deploy blocker: release manifest expects config/runtime_profiles/blocked_safe.yaml but file is .json
+- Runtime profiles: blocked_safe.json, shadow_fast_flow.json, research_scan.json
+- Tests: 1,278 total verified, all green
+
+MISSION: Fix the manifest, confirm service mode, get the dry-run passing.
+
+YOU OWN: deploy/, config/, Makefile (deploy targets), .github/workflows/, reports/deploy_*
+DO NOT TOUCH: bot/ (except reading mode), docs/, research/, website, COMMAND_NODE.md
+
+STEPS:
+1. grep -rn "blocked_safe.yaml" deploy/ config/ Makefile .github/ — find the stale reference
+2. Fix it: change .yaml to .json (or create .yaml if contract requires it)
+3. Validate all profiles: for f in config/runtime_profiles/*.json; do python3 -m json.tool "$f" > /dev/null; done
+4. Run deploy dry-run: make deploy-dry-run || python3 deploy/dry_run.py
+5. SSH to VPS: grep "PAPER_TRADING\|LIVE_TRADING\|JJ_RUNTIME_PROFILE" .env — CONFIRM THE MODE
+6. sudo systemctl status jj-live.service --no-pager
+7. sudo journalctl -u jj-live.service --no-pager -n 20
+8. cat jj_state.json | python3 -m json.tool | head -20
+9. Write reports/deploy_<timestamp>.json with: manifest fix, dry-run result, service mode, launch gates
+10. python3 -m pytest tests/ -x -q --tb=short
+
+DO NOT restart the service. DO NOT change .env on VPS. Report what you find.
+
+HANDOFF:
+  Files changed: [list]
+  Manifest fix: [exact change]
+  Service mode confirmed: [paper|shadow|live|unknown]
+  Dry-run result: [pass|fail + reason]
+  Launch gates: closed_trades=false, deployed_capital=false, a6=false, b1=false
+
+================================================================================
+INSTANCE #6 — DATA PIPELINE REFRESH
+================================================================================
+PRIORITY: CRITICAL — answers "is there anything to trade?"
+DURATION: 10 min
+DEPENDS ON: nothing
+
+STATE SNAPSHOT (v2.8.0):
+- Pipeline: REJECT ALL across 74 markets (29x15m, 38x5m, 7x4h)
+- Last run: 2026-03-09T01:05:57+00:00
+- Trade records: 2,850 | Wallets: 1,591
+- Platt calibration: A=0.5914, B=-0.3977
+- Thresholds: YES=0.15, NO=0.05 (env-var configurable)
+- A-6: 563 allowed, 57 qualified, 0 executable below 0.95
+- B-1: 0 deterministic pairs in first 1,000 markets
+- Wallet-flow: ready (80 scored wallets)
+
+MISSION: Pull fresh data. Run the threshold sensitivity that has been promised for two cycles and never done. Answer one question: how many markets become tradeable at 0.08/0.03?
+
+YOU OWN: src/, backtest/, data/, data_layer/, reports/, FAST_TRADE_EDGE_ANALYSIS.md
+DO NOT TOUCH: bot/ (except reading configs), docs/, website, COMMAND_NODE.md
+
+STEPS:
+1. mkdir -p data/pulls/$(date +%Y%m%dT%H%M%S)
+2. curl -s "https://gamma-api.polymarket.com/events?closed=false&limit=500" > data/pulls/<ts>/gamma_events.json
+3. For each market: compute resolution_hours, yes_price, category, passes basic filters (0.10-0.90, <48h)
+4. THIS IS THE KEY DELIVERABLE — threshold sensitivity:
+   Platt formula: calibrated = 1 / (1 + exp(-(0.5914 * log(p/(1-p)) + (-0.3977))))
+   YES trade fires when: calibrated - market_price >= YES_THRESHOLD
+   NO trade fires when: market_price - calibrated >= NO_THRESHOLD
+
+   For EVERY market passing basic filters, compute required LLM probability at:
+   - Current: YES=0.15, NO=0.05 — how many tradeable?
+   - Aggressive: YES=0.08, NO=0.03 — how many tradeable?
+   - Wide open: YES=0.05, NO=0.02 — how many tradeable?
+
+5. Run A-6 scanner: python3 -c "from bot.a6_sum_scanner import scan_neg_risk_events; print(scan_neg_risk_events())"
+6. Update FAST_TRADE_EDGE_ANALYSIS.md with fresh numbers and threshold sensitivity table
+7. Write reports/pipeline_refresh_<timestamp>.json
+8. python3 -m pytest tests/ -x -q --tb=short
+
+HANDOFF:
+  Markets pulled: N
+  Markets <24h in price window: N
+  Tradeable at current (0.15/0.05): N
+  Tradeable at aggressive (0.08/0.03): N
+  Tradeable at wide open (0.05/0.02): N
+  A-6 executable: N
+  Recommendation: [REJECT ALL | LOWER THRESHOLDS | specific markets]
+
+================================================================================
+INSTANCE #1 — EDGE SCANNER
+================================================================================
+PRIORITY: HIGH — determines if restart makes sense
+DURATION: 15 min
+DEPENDS ON: benefits from #6 data but can run independently
+
+STATE SNAPSHOT (v2.8.0):
+- Capital: $247.51 Polymarket (USDC) + $100 Kalshi (USD)
+- Live trades: 0 (311 cycles)
+- Service: active but drift — mode unconfirmed
+- Execution mode: 100% Post-Only maker orders
+- Config: $5/position, 5 max open, $5 daily loss cap, 0.25 Kelly
+- Thresholds: YES=0.15, NO=0.05
+- Platt: A=0.5914, B=-0.3977
+- A-6: 0 executable | B-1: 0 deterministic pairs
+- Wallet-flow: ready (80 scored wallets)
+- Category filter: politics(3), weather(3), economic(2), geopolitical(1), all others(0)
+
+MISSION: Find the highest-edge, shortest-duration opportunities on Polymarket and Kalshi RIGHT NOW. Produce a concrete restart recommendation with specific threshold values.
+
+YOU OWN: bot/, execution/, strategies/, signals/, reports/
+DO NOT TOUCH: docs/, research/, deploy/, website, COMMAND_NODE.md, PROJECT_INSTRUCTIONS.md
+
+STEPS:
+1. Read PROJECT_INSTRUCTIONS.md Section 3 for signal architecture
+2. Read research/edge_backlog_ranked.md — which strategies target <24h?
+3. curl -s "https://gamma-api.polymarket.com/events?closed=false&limit=100" > /tmp/gamma_markets.json
+4. Filter for end_date within 24h. Rank by liquidity and spread.
+5. For each: compute required edge at 0.15/0.05, 0.08/0.03, and 0.05/0.02
+6. Run A-6 scanner: python3 -c "from bot.a6_sum_scanner import scan_neg_risk_events; print(scan_neg_risk_events())"
+7. Check Kalshi: read bot/cross_platform_arb.py, pull markets if credentials exist
+8. For viable opportunities: compute quarter-Kelly size, verify maker path, run kill rules
+9. Write reports/edge_scan_<timestamp>.json
+10. python3 -m pytest tests/ -x -q --tb=short
+
+IF >= 3 viable at aggressive: recommend restart with JJ_YES_THRESHOLD=0.08 JJ_NO_THRESHOLD=0.03
+IF 0 viable at wide open: recommend recalibration — the Platt parameters may be stale
+
+HANDOFF:
+  Markets pulled: N
+  Viable at current: N
+  Viable at aggressive: N
+  Viable at wide open: N
+  A-6 executable: N
+  Cross-platform arb opportunities: N
+  Recommended action: [restart-aggressive | stay-paused | recalibrate]
+
+================================================================================
+INSTANCE #7 — JJ-N NON-TRADING WORKER FOUNDATIONS
+================================================================================
+PRIORITY: HIGH — parallel economic output path
+DURATION: 30 min
+DEPENDS ON: nothing
+
+STATE SNAPSHOT (v2.8.0):
+- JJ-N phase: Phase 0 Foundations, NOT STARTED
+- Modules complete: 0 revenue-producing
+- nontrading/ directory: 47 Python files exist (check what's already built)
+- Five-engine model: defined (Account Intelligence, Outreach, Interaction, Proposal, Learning)
+- Opportunity scoring: 7 criteria with weights defined in COMMAND_NODE.md
+- Tests: 11 non-trading tests passing
+
+MISSION: Build Phase 0 foundations — CRM schema, opportunity registry, five engine stubs, approval gates, telemetry. Everything must be testable. Target 25+ new tests.
+
+YOU OWN: nontrading/, tests/nontrading/, infra/ (non-trading templates only)
+DO NOT TOUCH: bot/, src/, deploy/, docs/, website, COMMAND_NODE.md, PROJECT_INSTRUCTIONS.md
+
+STEPS:
+1. Read research/elastic_vision_document.md for non-trading architecture
+2. Read COMMAND_NODE.md sections: Non-Trading Architecture, Opportunity Scoring, JJ-N Rollout
+3. find nontrading/ -type f | sort — see what already exists
+4. find tests/nontrading/ -type f | sort — see existing tests
+5. Create nontrading/crm_schema.py: Lead, Opportunity, Interaction dataclasses with to_event() methods
+6. Create nontrading/opportunity_registry.py: in-memory registry, add/score/rank/flush
+7. Create nontrading/engines/ directory with 5 engine stubs (account_intelligence, outreach, interaction, proposal, learning)
+8. Create nontrading/approval_gate.py: AUTO/REVIEW/ESCALATE routing, paper mode
+9. Create nontrading/telemetry.py: ECS-compatible event writer to events.jsonl
+10. Create nontrading/__init__.py
+11. Write tests: test_crm_schema, test_opportunity_registry, test_approval_gate, test_engines, test_telemetry
+12. python3 -m pytest tests/nontrading/ -v --tb=short
+13. python3 -m pytest tests/ -x -q --tb=short
+14. Write reports/jjn_phase0_<timestamp>.json
+
+HANDOFF:
+  Modules created: [list]
+  Tests added: N
+  Tests passing: N/N
+  Phase 0 checklist: [N/8 items]
+  Next: SQLite backing, Elastic templates, first curated lead list
+
+================================================================================
+INSTANCE #2 — WEBSITE BUILD (VISION-ALIGNED)
+================================================================================
+PRIORITY: MEDIUM — dispatch after #1 and #7 for fresh numbers
+DURATION: 20 min
+DEPENDS ON: benefits from #1 (edge scan results) and #7 (JJ-N content)
+
+STATE SNAPSHOT (v2.8.0):
+- Site: https://elastifund.replit.app — single static index.html (2,212 lines)
+- Stale metrics on site: test counts, cycle counts, strategy counts all outdated
+- Vision messaging: not yet applied to site
+- JJ-N: not represented on site
+- Routes: none beyond / — no /elastic, /develop, /leaderboards
+
+MISSION: Update the website with correct numbers, vision-aligned messaging, JJ-N section, and route stubs.
+
+Approved messaging: "self-improving," "policy-governed autonomy," "agentic work," "economic work"
+Forbidden messaging: "self-modifying binary," "remove the human from the loop," "agent swarm that makes money"
+Homepage hero: "A self-improving agentic operating system for real economic work."
+
+YOU OWN: index.html, REPLIT_NEXT_BUILD.md, website source files
+DO NOT TOUCH: bot/, execution/, strategies/, signals/, src/, tests/
+
+STEPS:
+1. Read REPLIT_NEXT_BUILD.md for build spec
+2. Read research/elastic_vision_document.md and research/platform_vision_document.md
+3. Correct all metrics: 1,278 tests, 311 cycles, 131 strategies, 7 signal sources, $347.51 capital
+4. Rewrite homepage hero to vision-approved copy
+5. Add JJ-N section with five-engine overview
+6. Add route stubs: /elastic, /develop, /leaderboards/trading, /leaderboards/worker, /diary, /roadmap, /docs
+7. Add system status: 311 cycles, 0 trades, REJECT ALL, wallet-flow ready
+8. Verify: no forbidden terms, all metrics match CLAUDE.md
+9. Update footer timestamp
+
+HANDOFF:
+  Metrics corrected: [list with before→after]
+  Routes added: [list]
+  Messaging compliance: [pass/fail]
+
+================================================================================
+INSTANCE #5 — GITHUB VELOCITY
+================================================================================
+PRIORITY: MEDIUM — public repo hygiene
+DURATION: 10 min
+DEPENDS ON: best after other instances complete for accurate numbers
+
+STATE SNAPSHOT (v2.8.0):
+- Tests: 1,278 total (871+22 root, 374 polymarket, 11 non-trading)
+- Strategies: 131 tracked
+- Cycles: 311 | Trades: 0
+- Bot modules: 47 | Test files: 78
+- Wallet-flow: ready (80 scored wallets)
+
+MISSION: Push all changes to GitHub. Generate updated velocity JSON and chart. Include JJ-N status.
+
+YOU OWN: .github/, improvement_velocity.json, improvement_velocity.svg, README.md (charts section)
+DO NOT TOUCH: bot/ internals, docs/ prose, website, COMMAND_NODE.md
+
+STEPS:
+1. git status — verify clean
+2. Read CLAUDE.md Current State for numbers
+3. Generate improvement_velocity.json with: 1,278 tests, 311 cycles, 131 strategies, JJ-N Phase 0 status
+4. Generate improvement_velocity.svg chart (dark theme, strategies + tests + dispatches)
+5. git add improvement_velocity.json improvement_velocity.svg
+6. git commit -m "chore: update velocity metrics [Cycle 2, v2.8.0]"
+7. git push origin main
+
+HANDOFF:
+  GitHub push: [success|failed]
+  Chart updated: [yes/no]
+  Numbers in JSON: [key metrics]
+
+================================================================================
+INSTANCE #8 — GOVERNANCE SCAFFOLD
+================================================================================
+PRIORITY: MEDIUM — important but not blocking trades
+DURATION: 25 min
+DEPENDS ON: nothing
+
+STATE SNAPSHOT (v2.8.0):
+- Numbered root documents: 0 of 13 created
+- Governance plan: defined in COMMAND_NODE.md (files 00-12)
+- Messaging system: defined but no lint check exists
+
+MISSION: Create all 13 numbered docs with substantive content from existing sources. Build messaging lint.
+
+YOU OWN: docs/numbered/ (new), scripts/lint_messaging.py, docs/REPO_MAP.md
+DO NOT TOUCH: bot/, src/, deploy/, website, COMMAND_NODE.md, PROJECT_INSTRUCTIONS.md
+
+STEPS:
+1. mkdir -p docs/numbered
+2. Read COMMAND_NODE.md, vision docs, CLAUDE.md, PROJECT_INSTRUCTIONS.md, diary entries
+3. Create all 13 docs (00-12) — minimum 50 lines each, substantive content, not stubs
+4. Priority: 00_MISSION, 02_ARCHITECTURE, 04_TRADING, 05_NON_TRADING, 09_GOVERNANCE, 11_MESSAGING first
+5. Create scripts/lint_messaging.py — check public files for forbidden terms
+6. Run the lint: python3 scripts/lint_messaging.py
+7. Update docs/REPO_MAP.md
+8. python3 -m pytest tests/ -x -q --tb=short
+9. Write reports/governance_scaffold_<timestamp>.json
+
+HANDOFF:
+  Documents created: 13
+  Total lines: N
+  Messaging lint: [pass/fail]
+
+================================================================================
+INSTANCE #3 — COMMAND NODE SYNC (DISPATCH LAST)
+================================================================================
+PRIORITY: CRITICAL — runs last, reads all handoffs
+DURATION: 15 min
+DEPENDS ON: ALL other instances
+
+STATE SNAPSHOT (v2.8.0):
+- COMMAND_NODE.md: v2.8.0
+- PROJECT_INSTRUCTIONS.md: v3.8.0
+- Tests: 1,278 verified
+- Cycles: 311 | Trades: 0
+
+MISSION: Read every handoff artifact from instances 1-8. Reconcile all numbers. Bump COMMAND_NODE to v2.9.0. This is the single source of truth.
+
+YOU OWN: COMMAND_NODE.md, PROJECT_INSTRUCTIONS.md, CLAUDE.md (Current State), docs/, README.md, AGENTS.md, docs/REPO_MAP.md
+DO NOT TOUCH: bot/, execution/, strategies/, signals/, src/, website, index.html
+
+STEPS:
+1. Read CLAUDE.md Current State as baseline
+2. find reports/ -name "*.json" -mtime -1 -ls — find all fresh handoff artifacts
+3. Read: edge_scan_*.json, pipeline_refresh_*.json, deploy_*.json, jjn_phase0_*.json, governance_scaffold_*.json
+4. python3 -m pytest tests/ -q --tb=no | tail -3 — fresh test count
+5. ls research/dispatches/ | wc -l — fresh dispatch count
+6. Update COMMAND_NODE.md to v2.9.0: all numbers, version log, status, next action
+7. Update PROJECT_INSTRUCTIONS.md: Section 1 status, Section 2A snapshot
+8. Update CLAUDE.md Current State: date, test counts, cycle count, trade count, findings
+9. Update README.md scorecard if numbers changed
+10. Update docs/REPO_MAP.md if new directories/files created
+11. python3 -m pytest tests/ -x -q --tb=short
+
+HANDOFF:
+  Version bumps: COMMAND_NODE 2.8.0→2.9.0, PROJECT_INSTRUCTIONS 3.8.0→3.9.0
+  Numbers reconciled: [list all before→after]
+  Findings from other instances: [summary]
+
+================================================================================
+DISPATCH SUMMARY
+================================================================================
+
+PARALLEL GROUP A (fire immediately):
+  #4 VPS Deploy     — fix manifest, confirm service mode
+  #6 Data Pipeline   — threshold sensitivity (THE critical question)
+  #1 Edge Scanner    — find tradeable markets
+  #7 JJ-N Foundations — build Phase 0
+
+PARALLEL GROUP B (fire after A, or in parallel if acceptable):
+  #2 Website         — vision-aligned update
+  #5 GitHub Velocity — push and chart
+  #8 Governance      — numbered docs
+
+SEQUENTIAL (fire last):
+  #3 Command Node    — reconcile everything into v2.9.0
+
+CRITICAL PATH: #4 confirms service mode → #6 answers threshold question → #1 finds markets → John decides restart.
+
+Everything else is infrastructure. The bot needs a trade.

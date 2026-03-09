@@ -4,19 +4,21 @@ You are an autonomous Codex instance for the Elastifund trading system. Execute 
 
 ---
 
-## STATE SNAPSHOT (Injected 2026-03-09)
+## STATE SNAPSHOT (Injected 2026-03-09 v2.8.0)
 
 - Capital: $247.51 Polymarket (USDC) + $100 Kalshi (USD) = $347.51 total
-- Live trades executed: 0 (298 cycles completed, zero trades placed)
-- Service: `jj-live.service` status ambiguous — remote shows `active`, treat as drift
-- Fast-trade pipeline: REJECT ALL
+- Live trades executed: 0 (305 cycles completed, zero trades placed)
+- Service: `jj-live.service` `active` at `2026-03-09T01:06:09Z` — treat as drift until mode confirmed
+- Fast-trade pipeline: REJECT ALL across 74 observed markets (29×15m, 38×5m, 7×4h)
 - Execution mode: 100% Post-Only maker orders
 - Live config: $5/position, 5 max open, $5 daily loss cap, 0.25 Kelly
-- Edge thresholds: YES=0.15, NO=0.05 (NOW env-var configurable: `JJ_YES_THRESHOLD`, `JJ_NO_THRESHOLD`)
+- Edge thresholds: YES=0.15, NO=0.05 (env-var configurable: `JJ_YES_THRESHOLD`, `JJ_NO_THRESHOLD`)
 - Platt calibration: A=0.5914, B=-0.3977
-- A-6 gate: 0 executable constructions below 0.95
-- B-1 gate: 0 deterministic template pairs
-- Category filter: politics(3), weather(3), economic(2), geopolitical(1), all others(0)
+- A-6 gate: 0 executable constructions below 0.95 (563 allowed neg-risk events, 57 qualified)
+- B-1 gate: 0 deterministic template pairs in first 1,000 allowed markets
+- Wallet-flow: ready with 80 scored wallets, `fast_flow_restart_ready=true`
+- Tests: 1,278 total verified (871+22 root, 374 polymarket, 11 non-trading)
+- Deploy blocker: release manifest expects `config/runtime_profiles/blocked_safe.yaml` but file is `.json`
 
 ---
 
@@ -51,15 +53,16 @@ Find the highest-edge, shortest-duration (<24h resolution) opportunities availab
 6. For each surviving market, compute the edge that the LLM would need to produce at:
    - Current thresholds: YES=0.15, NO=0.05
    - Aggressive thresholds: YES=0.08, NO=0.03
-   Report: how many MORE markets become tradeable at aggressive thresholds?
+   - Wide open: YES=0.05, NO=0.02
+   Report: how many MORE markets become tradeable at each step?
 
-7. Run the A-6 guaranteed-dollar scanner if `bot/a6_sum_scanner.py` exists:
+7. Run the A-6 guaranteed-dollar scanner:
    ```python
    python3 -c "from bot.a6_sum_scanner import scan_neg_risk_events; print(scan_neg_risk_events())"
    ```
    Log any combo where cheapest construction < $0.95.
 
-8. Check Kalshi: read `bot/cross_platform_arb.py` for matching logic. If Kalshi API credentials exist in `.env`, pull available markets.
+8. Check Kalshi: read `bot/cross_platform_arb.py` for matching logic. If Kalshi API credentials exist in `.env`, pull available markets and run cross-platform arb detection.
 
 9. For every viable opportunity: compute Kelly size (quarter-Kelly, capped at $5), verify maker-only execution path, verify kill rules pass (`bot/kill_rules.py`).
 
@@ -67,29 +70,24 @@ Find the highest-edge, shortest-duration (<24h resolution) opportunities availab
     ```json
     {
       "timestamp": "<ISO>",
+      "instance_version": "2.8.0",
       "markets_pulled": N,
       "markets_under_24h": N,
       "markets_in_price_window": N,
       "markets_in_allowed_categories": N,
       "viable_at_current_thresholds": N,
       "viable_at_aggressive_thresholds": N,
+      "viable_at_wide_open": N,
       "threshold_sensitivity": {
         "current": {"yes": 0.15, "no": 0.05},
-        "aggressive": {"yes": 0.08, "no": 0.03}
+        "aggressive": {"yes": 0.08, "no": 0.03},
+        "wide_open": {"yes": 0.05, "no": 0.02}
       },
-      "a6_scan_result": {"candidates": N, "executable": N},
-      "markets": [
-        {
-          "id": "...",
-          "title": "...",
-          "resolution_time": "...",
-          "yes_price": 0.XX,
-          "required_llm_prob_yes": 0.XX,
-          "required_llm_prob_no": 0.XX,
-          "category": "...",
-          "kill_rule_status": "pass|fail"
-        }
-      ],
+      "a6_scan_result": {"allowed_events": 563, "qualified": 57, "executable": N},
+      "b1_scan_result": {"template_pairs": N},
+      "cross_platform_arb": {"kalshi_markets": N, "matches": N, "arb_opportunities": N},
+      "wallet_flow_status": {"ready": true, "scored_wallets": 80},
+      "markets": [...],
       "capital_available": 247.51,
       "recommended_action": "restart-with-aggressive-thresholds | stay-paused | restart-current"
     }
@@ -102,6 +100,7 @@ Find the highest-edge, shortest-duration (<24h resolution) opportunities availab
 ```bash
 python3 -m pytest tests/ -x -q --tb=short
 python3 -c "from bot.jj_live import TradingBot; print('import ok')"
+cat reports/edge_scan_*.json | python3 -m json.tool > /dev/null && echo "JSON valid"
 ```
 
 ## HANDOFF

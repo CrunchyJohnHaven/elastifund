@@ -4,27 +4,31 @@ You are an autonomous Codex instance for the Elastifund trading system. Execute 
 
 ---
 
-## STATE SNAPSHOT (Injected 2026-03-09)
+## STATE SNAPSHOT (Injected 2026-03-09 v2.8.0)
 
-- Cycle: 2 — Machine Truth Reconciliation
+- Cycle: 2 — Structural Alpha & Microstructure Defense
 - Capital: $347.51 ($247.51 Polymarket + $100 Kalshi)
-- Strategies: 131 tracked (7 deployed, 6 building, 2 structural, 10 rejected, 8 pre-rejected, 1 re-evaluating, 97 research)
-- Tests: 353 local; 1,256 total verified
-- Dispatches: 95
-- Signal sources: 7
-- Bot modules: 45 bot/*.py files
-- Test files: 74
-- Diary entries: 14
+- Strategies: 131 tracked (7 deployed, 6 building, 2 structural alpha, 10 rejected, 8 pre-rejected, 1 re-evaluating, 97 research)
+- Tests: 1,278 total verified (871+22 root, 374 polymarket, 11 non-trading)
+- Dispatches: 11 DISPATCH_* work-orders; 95 markdown files in `research/dispatches/`
+- Signal sources: 7 (LLM Ensemble, LMSR, WalletFlow, CrossPlatformArb, VPIN/OFI, LeadLag, ElasticML)
+- Bot modules: 46 bot/*.py files (all pass syntax)
+- Cycles: 305 completed, 0 live trades
+- Wallet-flow: ready (80 scored wallets)
 - Backtest win rate: 71.2% calibrated (NO-only: 76.2%)
 - Maker excess return: +1.12% (jbecker 72M trades)
 - Velocity benchmarks: 72% win rate on <24h, 6007% ARR maker-only
-- Git HEAD: cde466f (7 cleanup commits this session)
+- Vision integration: completed March 9
+
+### VISION CONTEXT
+
+Both trading AND non-trading velocity metrics must be tracked. The improvement_velocity.json must include JJ-N status. The chart title should reflect "agentic operating system" not just "trading."
 
 ---
 
 ## OBJECTIVE
 
-Push all changes to GitHub. Generate updated improvement velocity metrics and charts. Cover both trading agent and non-trading agent systems.
+Push all changes to GitHub. Generate updated improvement velocity metrics and charts covering both trading and non-trading agent systems. Ensure the public repo reflects the latest verified state.
 
 ## YOU OWN
 
@@ -45,19 +49,12 @@ Push all changes to GitHub. Generate updated improvement velocity metrics and ch
 
 3. Read `research/velocity_maker_strategy.md` for velocity benchmarks.
 
-4. Read `nontrading/` directory for non-trading revenue lane status.
+4. Read `nontrading/` directory for non-trading revenue lane status:
+   ```bash
+   ls nontrading/ 2>/dev/null || echo "nontrading/ directory status"
+   ```
 
-5. Read all `docs/diary/` entries to extract timeline:
-   - 2026-02-15: Project inception
-   - 2026-02-20: First backtest
-   - 2026-02-22: Calibration breakthrough
-   - 2026-02-24: Kelly criterion
-   - 2026-02-28: Four signal sources
-   - 2026-03-01: Dublin VPS live
-   - 2026-03-02: Edge discovery pipeline
-   - 2026-03-04: Cross-platform arb
-   - 2026-03-06: Nine strategies rejected, then twelve
-   - 2026-03-07: Day one, the flywheel, weather fail / latency win
+5. Read all `docs/diary/` entries to extract timeline.
 
 6. Read `research/edge_backlog_ranked.md` for strategy funnel metrics.
 
@@ -65,55 +62,67 @@ Push all changes to GitHub. Generate updated improvement velocity metrics and ch
    ```json
    {
      "generated_at": "<ISO timestamp>",
-     "cycle": "2 — Machine Truth Reconciliation",
+     "instance_version": "2.8.0",
+     "cycle": "2 — Structural Alpha & Microstructure Defense",
      "trading_agent": {
        "strategies_total": 131,
        "strategies_deployed": 7,
-       "strategies_building": 8,
+       "strategies_building": 6,
        "strategies_structural_alpha": 2,
-       "strategies_rejected": 18,
+       "strategies_rejected": 10,
        "strategies_pre_rejected": 8,
        "strategies_re_evaluating": 1,
        "strategies_research": 97,
-       "test_count_local": 353,
-       "test_count_total": 1256,
+       "test_count_root": 893,
+       "test_count_polymarket": 374,
+       "test_count_nontrading": 11,
+       "test_count_total": 1278,
        "dispatch_count": 95,
-       "capital_deployed_usd": 347.51,
+       "dispatch_work_orders": 11,
+       "capital_tracked_usd": 347.51,
+       "capital_deployed_usd": 0,
        "backtest_win_rate_calibrated": 0.712,
        "backtest_win_rate_no_only": 0.762,
        "maker_excess_return_pct": 1.12,
        "signal_sources": 7,
-       "bot_modules": 45,
+       "bot_modules": 46,
        "live_trades": 0,
-       "cycles_completed": 298
+       "cycles_completed": 305,
+       "wallet_flow_ready": true,
+       "scored_wallets": 80,
+       "a6_executable": 0,
+       "b1_deterministic_pairs": 0
      },
      "non_trading_agent": {
        "modules_complete": 0,
        "revenue_lanes_active": 0,
        "compliance_status": "planning",
-       "jj_n_rollout_status": "90-day plan canonical, not started"
+       "jj_n_rollout_phase": "Phase 0 — Foundations (not started)",
+       "five_engines_defined": true,
+       "opportunity_scoring_framework": true,
+       "crm_schema": false,
+       "telemetry_wired": false
      },
-     "threshold_config": {
-       "yes_threshold": "env:JJ_YES_THRESHOLD (default 0.15)",
-       "no_threshold": "env:JJ_NO_THRESHOLD (default 0.05)",
-       "min_category_priority": "env:JJ_MIN_CATEGORY_PRIORITY (default 1)",
-       "category_overrides": "env:JJ_CAT_PRIORITY_<CATEGORY>",
-       "configurable_since": "2026-03-09"
+     "vision_compliance": {
+       "product_definition": "agentic OS for real economic work",
+       "worker_families": ["trading", "non-trading (JJ-N)"],
+       "messaging_approved": true,
+       "numbered_docs_created": 0,
+       "numbered_docs_planned": 13
      },
      "velocity_metrics": {
        "project_age_days": 22,
        "strategies_per_week": 42,
-       "tests_added_total": 1256,
+       "tests_added_total": 1278,
        "dispatches_total": 95,
        "diary_entries": 14,
-       "commits_this_session": 7,
-       "files_reorganized": 21
+       "vision_docs_integrated": 2
      },
      "arr_estimate": {
-       "trading_arr_backtest": "velocity_maker: $247.51 × 72% win × 6007% annualized = theoretical only (0 live trades)",
+       "trading_arr_backtest": "theoretical only (0 live trades, 0 closed positions)",
        "non_trading_arr": "not started",
        "combined_arr": "no live data yet",
-       "methodology": "No live ARR can be computed with 0 closed trades. Backtest ARR is theoretical. First live trade is the prerequisite."
+       "methodology": "No live ARR can be computed with 0 closed trades. First live trade is the prerequisite."
      }
    }
    ```
@@ -132,7 +141,7 @@ Push all changes to GitHub. Generate updated improvement velocity metrics and ch
        datetime(2026,3,2), datetime(2026,3,6), datetime(2026,3,7), datetime(2026,3,9)
    ]
    strategies = [1, 3, 5, 8, 15, 25, 62, 121, 131, 131]
-   tests = [10, 50, 100, 150, 200, 345, 500, 900, 1200, 1256]
+   tests = [10, 50, 100, 150, 200, 345, 500, 900, 1200, 1278]
    dispatches = [0, 5, 10, 15, 25, 40, 60, 80, 90, 95]
 
    fig, ax1 = plt.subplots(figsize=(12, 6))
@@ -152,7 +161,7 @@ Push all changes to GitHub. Generate updated improvement velocity metrics and ch
    ax2.legend(loc='upper right', facecolor='#1a1f2e', edgecolor='#2d3748', labelcolor='white')
 
    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
-   plt.title('Elastifund Improvement Velocity — Cycle 2', color='white', fontsize=14)
+   plt.title('Elastifund Improvement Velocity — Agentic OS Cycle 2', color='white', fontsize=14)
    for spine in [*ax1.spines.values(), *ax2.spines.values()]:
        spine.set_color('#2d3748')
 
@@ -161,26 +170,23 @@ Push all changes to GitHub. Generate updated improvement velocity metrics and ch
    print('Chart saved')
    ```
 
-9. Update `README.md` to reference the chart if not already linked.
+9. Update `README.md` to reference the chart and reflect vision-aligned framing if not already done.
 
-10. Commit:
+10. Commit and push:
     ```bash
     git add improvement_velocity.json improvement_velocity.svg
-    git commit -m "chore: update velocity metrics and chart [Cycle 2]
+    git commit -m "chore: update velocity metrics and chart [Cycle 2, v2.8.0]
 
     Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
-    ```
-
-11. Push to GitHub:
-    ```bash
     git push origin main
     ```
 
 ## VERIFICATION
 
 ```bash
-git log -1 --oneline  # Shows new commit
-ls improvement_velocity.json improvement_velocity.svg  # Files exist
+git log -1 --oneline
+ls improvement_velocity.json improvement_velocity.svg
+python3 -c "import json; d=json.load(open('improvement_velocity.json')); assert d['trading_agent']['test_count_total']==1278; print('JSON valid')"
 ```
 
 ## HANDOFF
@@ -192,6 +198,7 @@ Files changed: [list]
 Commands run: [list]
 Key findings: [1-3 sentences]
 Numbers that moved: [before→after]
+GitHub push: [success|failed + reason]
 Unverified: [anything next cycle should check]
 Next instance can edit these files: [yes/no per file]
 ```
