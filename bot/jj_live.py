@@ -1065,12 +1065,56 @@ def _parse_iso8601_utc(value: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _infer_intraday_interval_minutes(question: str) -> int | None:
+    """Infer candle/window length from natural-language intraday titles."""
+    title = str(question or "")
+    match = re.search(
+        r"(\d{1,2}):(\d{2})\s*(am|pm)\s*-\s*(\d{1,2}):(\d{2})\s*(am|pm)",
+        title,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+
+    def _to_minutes(hour_text: str, minute_text: str, ampm: str) -> int:
+        hour = int(hour_text) % 12
+        if ampm.lower() == "pm":
+            hour += 12
+        minute = int(minute_text)
+        return (hour * 60) + minute
+
+    start = _to_minutes(match.group(1), match.group(2), match.group(3))
+    end = _to_minutes(match.group(4), match.group(5), match.group(6))
+    if end < start:
+        end += 24 * 60
+    diff = end - start
+    return diff if diff > 0 else None
+
+
 def looks_like_fast_flow_market(question: str) -> bool:
     """Identify the short-duration crypto markets tracked by wallet flow."""
     lowered = (question or "").lower()
     if "up or down" not in lowered:
         return False
-    return any(token in lowered for token in ("5m", "15m", "5-minute", "15-minute", "5 minute", "15 minute"))
+    if any(token in lowered for token in ("5m", "15m", "5-minute", "15-minute", "5 minute", "15 minute")):
+        return True
+    return _infer_intraday_interval_minutes(question) in {5, 15}
+
+
+def is_dedicated_btc5_market(question: str, *, slug: str | None = None) -> bool:
+    """Return True when the market belongs to the standalone BTC5 service."""
+    normalized_slug = str(slug or "").strip().lower()
+    if normalized_slug.startswith("btc-updown-5m"):
+        return True
+
+    lowered = (question or "").lower()
+    if "up or down" not in lowered:
+        return False
+    if "bitcoin" not in lowered and "btc" not in lowered:
+        return False
+    if any(token in lowered for token in ("5m", "5-minute", "5 minute")):
+        return True
+    return _infer_intraday_interval_minutes(question) == 5
 
 
 def velocity_score(edge: float, resolution_hours: float) -> float:
@@ -1167,6 +1211,7 @@ def apply_llm_market_filters(
     question: str,
     *,
     resolution_hours: float | None,
+    slug: str | None = None,
 ) -> tuple[bool, str, str, float | None]:
     """Enforce the LLM category and velocity gates in one place.
 
@@ -1174,16 +1219,24 @@ def apply_llm_market_filters(
         (allowed, reason, category, normalized_resolution_hours)
     """
     category = classify_market_category(question)
+    if is_dedicated_btc5_market(question, slug=slug):
+        return False, "btc5_dedicated", category, resolution_hours
     if CATEGORY_PRIORITY.get(category, 2) < MIN_CATEGORY_PRIORITY:
         return False, "category", category, resolution_hours
 
     normalized_resolution = resolution_hours
     if MAX_RESOLUTION_HOURS > 0:
         if normalized_resolution is None:
-            # Preserve the existing behavior for markets without parseable
-            # end dates: treat them as 24h markets rather than disabling
-            # the signal path entirely.
-            normalized_resolution = 24.0
+            # SAFETY: Markets without parseable end dates are rejected when a
+            # velocity gate is active.  The old 24h fallback let multi-month
+            # markets (Morocco Dec 2026, Russia April) slip through because
+            # their end dates were unparseable.  Better to miss a fast market
+            # than to lock capital in a 9-month position.
+            logger.info(
+                "Velocity gate: rejecting %s — no parseable resolution_hours (category=%s)",
+                question[:60], category,
+            )
+            return False, "unknown_resolution", category, None
         if normalized_resolution > MAX_RESOLUTION_HOURS:
             return False, "velocity", category, normalized_resolution
 
@@ -3638,7 +3691,7 @@ class JJLive:
         if not (self.fast_flow_only or self.enable_wallet_flow or self.enable_lmsr):
             return False
 
-        max_hours = max(24.0, float(MAX_RESOLUTION_HOURS))
+        max_hours = float(MAX_RESOLUTION_HOURS)
         for market in markets:
             question = str(market.get("question") or "")
             if not looks_like_fast_flow_market(question):
@@ -3696,7 +3749,7 @@ class JJLive:
             }
 
         hydrated_markets: list[dict[str, Any]] = []
-        max_hours = max(24.0, float(MAX_RESOLUTION_HOURS))
+        max_hours = float(MAX_RESOLUTION_HOURS)
         for item in hydrated_payloads:
             if isinstance(item, Exception):
                 continue
@@ -3951,6 +4004,8 @@ class JJLive:
 
         signal.setdefault("question", market.get("question", ""))
         signal.setdefault("category", market.get("category", "unknown"))
+        signal.setdefault("slug", market.get("slug", ""))
+        signal.setdefault("market_gate_reason", market.get("market_gate_reason", "ok"))
 
         source = str(signal.get("source", "") or "")
         if source == "wallet_flow" or signal.get("market_price") in (None, 0, 0.0, 0.5):
@@ -4021,10 +4076,12 @@ class JJLive:
             return None
 
         question = str(fetched_market.get("question", "") or "")
+        slug = str(fetched_market.get("slug", "") or "").strip()
         raw_resolution_hours = estimate_resolution_hours(fetched_market) if MAX_RESOLUTION_HOURS > 0 else None
-        allowed, _, category, llm_resolution_hours = apply_llm_market_filters(
+        allowed, filter_reason, category, llm_resolution_hours = apply_llm_market_filters(
             question,
             resolution_hours=raw_resolution_hours,
+            slug=slug,
         )
 
         yes_price = None
@@ -4078,6 +4135,7 @@ class JJLive:
         )
         market_payload = {
             "question": question,
+            "slug": slug,
             "token_ids": token_ids,
             "yes_price": yes_price,
             "volume": float(fetched_market.get("volume", 0) or 0),
@@ -4086,6 +4144,7 @@ class JJLive:
             "category": category,
             "resolution_hours": resolution_hours,
             "llm_allowed": allowed,
+            "market_gate_reason": filter_reason if not allowed else "ok",
         }
         aliases = {
             market_id,
@@ -6055,6 +6114,7 @@ class JJLive:
         skipped_category = 0
         skipped_too_slow = 0
         skipped_no_resolution = 0
+        skipped_dedicated_btc5 = 0
         skipped_quarantined = 0
         for m in markets:
             try:
@@ -6066,13 +6126,17 @@ class JJLive:
                         continue
 
                 question = m.get("question", "")
+                slug = str(m.get("slug", "") or "").strip()
                 raw_resolution_hours = estimate_resolution_hours(m) if MAX_RESOLUTION_HOURS > 0 else None
                 allowed, filter_reason, category, llm_resolution_hours = apply_llm_market_filters(
                     question,
                     resolution_hours=raw_resolution_hours,
+                    slug=slug,
                 )
                 if not allowed:
-                    if filter_reason == "category":
+                    if filter_reason == "btc5_dedicated":
+                        skipped_dedicated_btc5 += 1
+                    elif filter_reason == "category":
                         skipped_category += 1
                     elif filter_reason == "velocity":
                         skipped_too_slow += 1
@@ -6143,9 +6207,9 @@ class JJLive:
                     if allowed and llm_resolution_hours is not None
                     else raw_resolution_hours
                 )
-                actionable.append(m)
                 market_payload = {
                     "question": m.get("question", ""),
+                    "slug": slug,
                     "token_ids": token_ids,
                     "yes_price": yes_price,
                     "volume": float(m.get("volume", 0) or 0),
@@ -6154,6 +6218,7 @@ class JJLive:
                     "category": category,
                     "resolution_hours": m.get("_resolution_hours"),
                     "llm_allowed": allowed,
+                    "market_gate_reason": filter_reason if not allowed else "ok",
                 }
                 market_ids = {
                     primary_market_id,
@@ -6163,6 +6228,9 @@ class JJLive:
                 market_ids.discard("")
                 for market_id in market_ids:
                     market_lookup[market_id] = market_payload
+                if self.fast_flow_only and not allowed:
+                    continue
+                actionable.append(m)
                 if allowed:
                     llm_actionable.append(m)
             except Exception as e:
@@ -6173,6 +6241,8 @@ class JJLive:
             logger.info(f"Skipped {skipped_quarantined} quarantined markets (CLOB errors)")
         if skipped_category:
             logger.info(f"Skipped {skipped_category} low-edge-category markets (sports/crypto)")
+        if skipped_dedicated_btc5:
+            logger.info("Skipped %d dedicated BTC5 markets owned by btc_5min_maker", skipped_dedicated_btc5)
         if skipped_too_slow or skipped_no_resolution:
             logger.info(
                 f"Velocity filter: skipped {skipped_too_slow} too slow "
@@ -6483,6 +6553,7 @@ class JJLive:
                 ensemble_daily_cost = _safe_float(r.get("ensemble_daily_cost_usd"), 0.0)
                 cost_cap_triggered = bool(r.get("cost_cap_triggered", False))
                 fallback_mode = str(r.get("fallback_mode", "unknown") or "unknown")
+
                 individual_model_estimates = r.get("individual_model_estimates", {})
                 if not isinstance(individual_model_estimates, dict):
                     individual_model_estimates = {}
@@ -6536,6 +6607,24 @@ class JJLive:
                             "counter_shift": counter_shift,
                         },
                     )
+
+                # ── ENSEMBLE FAILURE GUARD ──────────────────────────────────
+                # If all LLM model calls failed, the ensemble returns 0.5 as
+                # a fallback — that's a coin flip, not a signal. Do NOT trade.
+                _ensemble_errors = r.get("errors", [])
+                _ensemble_reasoning = str(r.get("reasoning", ""))
+                if (
+                    "all_models_failed" in _ensemble_errors
+                    or "All ensemble model calls failed" in _ensemble_reasoning
+                ):
+                    logger.warning(
+                        "ENSEMBLE FAILURE GUARD: Skipping %s — all model calls failed, "
+                        "refusing to trade on 0.5 fallback probability",
+                        mid,
+                    )
+                    emit_llm_family_events(acted_on=False, reason_skipped="ensemble_all_models_failed")
+                    continue
+                # ────────────────────────────────────────────────────────────
 
                 # Map direction from various VPS formats
                 direction = map_vps_signal_direction(r, market_price)
@@ -6997,6 +7086,14 @@ class JJLive:
                 )
                 continue
 
+            market_gate_reason = str(mdata.get("market_gate_reason", "ok") or "ok")
+            if market_gate_reason == "btc5_dedicated":
+                logger.info(
+                    "SKIP execution blocked by dedicated BTC5 ownership: %s",
+                    signal.get("question", "")[:80],
+                )
+                continue
+
             feedback = self._get_elastic_ml_feedback(str(market_id))
             signal["elastic_ml_feedback"] = feedback
             if feedback.get("paused"):
@@ -7012,6 +7109,7 @@ class JJLive:
                 allowed, filter_reason, category, normalized_resolution = apply_llm_market_filters(
                     signal.get("question", ""),
                     resolution_hours=signal.get("resolution_hours"),
+                    slug=mdata.get("slug", signal.get("slug", "")),
                 )
                 if not allowed:
                     logger.info(
