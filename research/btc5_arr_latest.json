@@ -1,0 +1,16 @@
+{
+  "cycles_total": 3,
+  "frontier_active_arr_pct": 4100879.381,
+  "frontier_best_arr_pct": 4524545.3061,
+  "holds_total": 3,
+  "latest_action": "hold",
+  "latest_active_arr_pct": 4100879.381,
+  "latest_best_arr_pct": 4524545.3061,
+  "latest_delta_arr_pct": 423665.9251,
+  "latest_finished_at": "2026-03-09T18:44:10.960645+00:00",
+  "latest_p05_active_arr_pct": 110640.7292,
+  "latest_p05_best_arr_pct": 344418.5885,
+  "latest_reason": "median_pnl_delta_below_threshold:-9.1135<2.0000;replay_pnl_delta_below_threshold:-5.1969<1.0000;fill_lift_below_threshold:-7<0",
+  "metric_name": "continuation_arr_pct",
+  "promotions_total": 0
+}

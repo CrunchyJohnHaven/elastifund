@@ -19,6 +19,10 @@ DEFAULT_BASE_ENV = Path("config/btc5_strategy.env")
 DEFAULT_OVERRIDE_ENV = Path("state/btc5_autoresearch.env")
 DEFAULT_CYCLE_REPORT_DIR = Path("reports/btc5_autoresearch")
 DEFAULT_LOOP_REPORT_DIR = Path("reports/btc5_autoresearch_loop")
+DEFAULT_ARR_TSV = Path("research/btc5_arr_progress.tsv")
+DEFAULT_ARR_SVG = Path("research/btc5_arr_progress.svg")
+DEFAULT_ARR_SUMMARY_MD = Path("research/btc5_arr_summary.md")
+DEFAULT_ARR_LATEST_JSON = Path("research/btc5_arr_latest.json")
 
 
 def _now_utc() -> datetime:
@@ -53,6 +57,8 @@ def _build_cycle_command(args: argparse.Namespace) -> list[str]:
         str(args.archive_glob),
         "--remote-cache-json",
         str(args.remote_cache_json),
+        "--min-median-arr-improvement-pct",
+        str(args.min_median_arr_improvement_pct),
         "--min-median-pnl-improvement-usd",
         str(args.min_median_pnl_improvement_usd),
         "--min-replay-pnl-improvement-usd",
@@ -104,6 +110,37 @@ def _run_hook(command: str) -> dict[str, Any]:
     }
 
 
+def _render_arr_progress(args: argparse.Namespace) -> dict[str, Any]:
+    command = [
+        sys.executable,
+        str(ROOT / "scripts" / "render_btc5_arr_progress.py"),
+        "--history-jsonl",
+        str(args.loop_report_dir / "history.jsonl"),
+        "--tsv-out",
+        str(args.arr_tsv_out),
+        "--svg-out",
+        str(args.arr_svg_out),
+        "--summary-md-out",
+        str(args.arr_summary_md_out),
+        "--latest-json-out",
+        str(args.arr_latest_json_out),
+    ]
+    result = subprocess.run(
+        command,
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=120,
+    )
+    return {
+        "command": command,
+        "returncode": result.returncode,
+        "stdout_tail": (result.stdout or "").strip()[-500:],
+        "stderr_tail": (result.stderr or "").strip()[-500:],
+    }
+
+
 def _build_entry(
     *,
     cycle_command: list[str],
@@ -116,6 +153,7 @@ def _build_entry(
     decision = (cycle_payload or {}).get("decision") or {}
     best_profile = ((cycle_payload or {}).get("best_candidate") or {}).get("profile") or {}
     active_profile = (cycle_payload or {}).get("active_profile") or {}
+    arr = (cycle_payload or {}).get("arr_tracking") or {}
     return {
         "started_at": started_at.isoformat(),
         "finished_at": finished_at.isoformat(),
@@ -126,6 +164,14 @@ def _build_entry(
         "decision": decision,
         "best_profile": best_profile,
         "active_profile": active_profile,
+        "arr": {
+            "active_median_arr_pct": arr.get("current_median_arr_pct"),
+            "best_median_arr_pct": arr.get("best_median_arr_pct"),
+            "median_arr_delta_pct": arr.get("median_arr_delta_pct"),
+            "active_p05_arr_pct": arr.get("current_p05_arr_pct"),
+            "best_p05_arr_pct": arr.get("best_p05_arr_pct"),
+            "historical_arr_delta_pct": arr.get("historical_arr_delta_pct"),
+        },
         "artifacts": (cycle_payload or {}).get("artifacts") or {},
         "hook": hook_result,
         "stdout_tail": (cycle_result.stdout or "").strip()[-1000:],
@@ -198,6 +244,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--refresh-remote", action="store_true")
     parser.add_argument("--remote-cache-json", type=Path, default=Path("reports/tmp_remote_btc5_window_rows.json"))
+    parser.add_argument("--min-median-arr-improvement-pct", type=float, default=0.0)
     parser.add_argument("--min-median-pnl-improvement-usd", type=float, default=2.0)
     parser.add_argument("--min-replay-pnl-improvement-usd", type=float, default=1.0)
     parser.add_argument("--max-profit-prob-drop", type=float, default=0.01)
@@ -208,6 +255,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--interval-seconds", type=int, default=300)
     parser.add_argument("--max-cycles", type=int, default=0)
     parser.add_argument("--on-promote-command", default="")
+    parser.add_argument("--arr-tsv-out", type=Path, default=DEFAULT_ARR_TSV)
+    parser.add_argument("--arr-svg-out", type=Path, default=DEFAULT_ARR_SVG)
+    parser.add_argument("--arr-summary-md-out", type=Path, default=DEFAULT_ARR_SUMMARY_MD)
+    parser.add_argument("--arr-latest-json-out", type=Path, default=DEFAULT_ARR_LATEST_JSON)
+    parser.add_argument("--skip-arr-render", action="store_true")
     return parser.parse_args()
 
 
@@ -243,6 +295,8 @@ def main() -> int:
             hook_result=hook_result,
         )
         loop_payload = _write_loop_reports(args.loop_report_dir, entry)
+        if not args.skip_arr_render:
+            loop_payload["arr_render"] = _render_arr_progress(args)
         print(json.dumps(loop_payload, indent=2, sort_keys=True))
         cycle_count += 1
         if args.max_cycles and cycle_count >= args.max_cycles:

@@ -30,6 +30,8 @@ DEFAULT_UP_MAX = 0.49
 DEFAULT_DOWN_MAX = 0.51
 DEFAULT_MAX_ABS_DELTA = 0.00015
 DEFAULT_LOSS_LIMIT_USD = 10.0
+WINDOW_MINUTES = 5
+WINDOWS_PER_YEAR = int((365 * 24 * 60) / WINDOW_MINUTES)
 REMOTE_BOT_DIR = "/home/ubuntu/polymarket-trading-bot"
 
 REMOTE_ROWS_PROBE_SCRIPT = """import json
@@ -121,6 +123,75 @@ def _round_metrics(payload: dict[str, Any]) -> dict[str, Any]:
         else:
             rounded[key] = value
     return rounded
+
+
+def _annualize_arr_pct(
+    *,
+    total_pnl_usd: float,
+    average_deployed_capital_usd: float,
+    horizon_windows: int,
+) -> float:
+    if average_deployed_capital_usd <= 0 or horizon_windows <= 0:
+        return 0.0
+    pnl_per_window = total_pnl_usd / float(horizon_windows)
+    annual_profit_usd = pnl_per_window * float(WINDOWS_PER_YEAR)
+    return (annual_profit_usd / average_deployed_capital_usd) * 100.0
+
+
+def summarize_continuation_arr(
+    *,
+    historical: dict[str, Any],
+    monte_carlo: dict[str, Any],
+) -> dict[str, Any]:
+    replay_window_rows = max(0, _safe_int(historical.get("replay_window_rows")))
+    replay_live_filled_rows = max(0, _safe_int(historical.get("replay_live_filled_rows")))
+    trade_notional_usd = max(0.0, _safe_float(historical.get("trade_notional_usd"), 0.0))
+    avg_trade_size_usd = (
+        trade_notional_usd / float(replay_live_filled_rows) if replay_live_filled_rows > 0 else 0.0
+    )
+    historical_avg_deployed_capital_usd = (
+        trade_notional_usd / float(replay_window_rows) if replay_window_rows > 0 else 0.0
+    )
+    avg_active_trades = max(0.0, _safe_float(monte_carlo.get("avg_active_trades"), 0.0))
+    horizon_trades = max(0, _safe_int(monte_carlo.get("horizon_trades")))
+    monte_carlo_avg_deployed_capital_usd = (
+        avg_trade_size_usd * avg_active_trades / float(horizon_trades) if horizon_trades > 0 else 0.0
+    )
+    return _round_metrics(
+        {
+            "metric_name": "continuation_arr_pct",
+            "window_minutes": WINDOW_MINUTES,
+            "windows_per_year": WINDOWS_PER_YEAR,
+            "avg_trade_size_usd": avg_trade_size_usd,
+            "historical_avg_deployed_capital_usd": historical_avg_deployed_capital_usd,
+            "historical_arr_pct": _annualize_arr_pct(
+                total_pnl_usd=_safe_float(historical.get("replay_live_filled_pnl_usd"), 0.0),
+                average_deployed_capital_usd=historical_avg_deployed_capital_usd,
+                horizon_windows=replay_window_rows,
+            ),
+            "monte_carlo_avg_deployed_capital_usd": monte_carlo_avg_deployed_capital_usd,
+            "mean_arr_pct": _annualize_arr_pct(
+                total_pnl_usd=_safe_float(monte_carlo.get("mean_total_pnl_usd"), 0.0),
+                average_deployed_capital_usd=monte_carlo_avg_deployed_capital_usd,
+                horizon_windows=horizon_trades,
+            ),
+            "median_arr_pct": _annualize_arr_pct(
+                total_pnl_usd=_safe_float(monte_carlo.get("median_total_pnl_usd"), 0.0),
+                average_deployed_capital_usd=monte_carlo_avg_deployed_capital_usd,
+                horizon_windows=horizon_trades,
+            ),
+            "p05_arr_pct": _annualize_arr_pct(
+                total_pnl_usd=_safe_float(monte_carlo.get("p05_total_pnl_usd"), 0.0),
+                average_deployed_capital_usd=monte_carlo_avg_deployed_capital_usd,
+                horizon_windows=horizon_trades,
+            ),
+            "p95_arr_pct": _annualize_arr_pct(
+                total_pnl_usd=_safe_float(monte_carlo.get("p95_total_pnl_usd"), 0.0),
+                average_deployed_capital_usd=monte_carlo_avg_deployed_capital_usd,
+                horizon_windows=horizon_trades,
+            ),
+        }
+    )
 
 
 def _parse_env_file(path: Path) -> dict[str, str]:
@@ -616,6 +687,11 @@ def run_monte_carlo(
 
 
 def _render_markdown(summary: dict[str, Any]) -> str:
+    current_arr_pct = 0.0
+    for candidate in summary["candidates"]:
+        if candidate["profile"]["name"] == summary["current_live_profile"]["name"]:
+            current_arr_pct = _safe_float(candidate["continuation"].get("median_arr_pct"), 0.0)
+            break
     lines = [
         "# BTC5 Monte Carlo Report",
         "",
@@ -635,19 +711,20 @@ def _render_markdown(summary: dict[str, Any]) -> str:
         "",
         "## Candidate Ranking",
         "",
-        "| Rank | Profile | Replay PnL | Replay Fills | MC Median PnL | Profit Prob | P95 Drawdown | Loss-Limit Hit |",
+        "| Rank | Profile | Hist ARR | MC Median ARR | ARR Delta vs Current | Profit Prob | P95 Drawdown | Loss-Limit Hit |",
         "|---|---|---:|---:|---:|---:|---:|---:|",
     ]
 
     for index, candidate in enumerate(summary["candidates"], start=1):
-        historical = candidate["historical"]
+        continuation = candidate["continuation"]
         monte_carlo = candidate["monte_carlo"]
+        arr_delta_pct = _safe_float(continuation.get("median_arr_pct"), 0.0) - current_arr_pct
         lines.append(
             "| "
             + f"{index} | {candidate['profile']['name']} | "
-            + f"{historical['replay_live_filled_pnl_usd']:.4f} | "
-            + f"{historical['replay_live_filled_rows']} | "
-            + f"{monte_carlo['median_total_pnl_usd']:.4f} | "
+            + f"{continuation['historical_arr_pct']:.2f}% | "
+            + f"{continuation['median_arr_pct']:.2f}% | "
+            + f"{arr_delta_pct:.2f}pp | "
             + f"{monte_carlo['profit_probability']:.2%} | "
             + f"{monte_carlo['p95_max_drawdown_usd']:.4f} | "
             + f"{monte_carlo['loss_limit_hit_probability']:.2%} |"
@@ -664,6 +741,9 @@ def _render_markdown(summary: dict[str, Any]) -> str:
             f"- Max abs delta: `{best['profile']['max_abs_delta']}`",
             f"- UP max buy price: `{best['profile']['up_max_buy_price']}`",
             f"- DOWN max buy price: `{best['profile']['down_max_buy_price']}`",
+            f"- Historical continuation ARR: `{best['continuation']['historical_arr_pct']:.2f}%`",
+            f"- Monte Carlo median continuation ARR: `{best['continuation']['median_arr_pct']:.2f}%`",
+            f"- Monte Carlo P05 continuation ARR: `{best['continuation']['p05_arr_pct']:.2f}%`",
             f"- Replay PnL: `{best['historical']['replay_live_filled_pnl_usd']:.4f}` USD on `{best['historical']['replay_live_filled_rows']}` fills",
             f"- Monte Carlo median PnL: `{best['monte_carlo']['median_total_pnl_usd']:.4f}` USD",
             f"- Monte Carlo profit probability: `{best['monte_carlo']['profit_probability']:.2%}`",
@@ -673,6 +753,9 @@ def _render_markdown(summary: dict[str, Any]) -> str:
             "",
             f"- Best candidate: `{comparison.get('best_candidate_name')}`",
             f"- Current live candidate: `{comparison.get('current_candidate_name')}`",
+            f"- Historical continuation ARR delta vs current: `{comparison.get('historical_arr_pct_delta', 0.0):.2f}` percentage points",
+            f"- Monte Carlo median continuation ARR delta vs current: `{comparison.get('median_arr_pct_delta', 0.0):.2f}` percentage points",
+            f"- Monte Carlo P05 continuation ARR delta vs current: `{comparison.get('p05_arr_pct_delta', 0.0):.2f}` percentage points",
             f"- Replay PnL delta vs current: `{comparison.get('replay_pnl_delta_usd', 0.0):.4f}` USD",
             f"- Monte Carlo median PnL delta vs current: `{comparison.get('median_pnl_delta_usd', 0.0):.4f}` USD",
             f"- Profit-probability delta vs current: `{comparison.get('profit_probability_delta', 0.0):.2%}`",
@@ -738,20 +821,22 @@ def build_summary(
             loss_limit_usd=loss_limit_usd,
             seed=seed,
         )
+        continuation = summarize_continuation_arr(historical=historical, monte_carlo=monte_carlo)
         evaluated.append(
             {
                 "profile": asdict(profile),
                 "historical": historical,
                 "monte_carlo": monte_carlo,
+                "continuation": continuation,
             }
         )
 
     evaluated.sort(
         key=lambda candidate: (
-            _safe_float(candidate["monte_carlo"].get("median_total_pnl_usd"), 0.0),
+            _safe_float(candidate["continuation"].get("median_arr_pct"), 0.0),
             _safe_float(candidate["monte_carlo"].get("profit_probability"), 0.0),
             -_safe_float(candidate["monte_carlo"].get("p95_max_drawdown_usd"), 0.0),
-            _safe_float(candidate["historical"].get("replay_live_filled_pnl_usd"), 0.0),
+            _safe_float(candidate["historical"].get("replay_live_filled_rows"), 0.0),
         ),
         reverse=True,
     )
@@ -767,6 +852,18 @@ def build_summary(
             {
                 "best_candidate_name": best_candidate["profile"]["name"],
                 "current_candidate_name": current_candidate["profile"]["name"],
+                "historical_arr_pct_delta": _safe_float(
+                    best_candidate["continuation"].get("historical_arr_pct"), 0.0
+                )
+                - _safe_float(current_candidate["continuation"].get("historical_arr_pct"), 0.0),
+                "median_arr_pct_delta": _safe_float(
+                    best_candidate["continuation"].get("median_arr_pct"), 0.0
+                )
+                - _safe_float(current_candidate["continuation"].get("median_arr_pct"), 0.0),
+                "p05_arr_pct_delta": _safe_float(
+                    best_candidate["continuation"].get("p05_arr_pct"), 0.0
+                )
+                - _safe_float(current_candidate["continuation"].get("p05_arr_pct"), 0.0),
                 "replay_pnl_delta_usd": _safe_float(
                     best_candidate["historical"].get("replay_live_filled_pnl_usd"), 0.0
                 )

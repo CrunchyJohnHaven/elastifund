@@ -12,6 +12,7 @@ from scripts.btc5_monte_carlo import (
     load_observed_rows_from_db,
     row_matches_profile,
     run_monte_carlo,
+    summarize_continuation_arr,
     summarize_profile_history,
 )
 
@@ -143,6 +144,32 @@ def test_run_monte_carlo_is_deterministic_for_same_seed(tmp_path: Path) -> None:
     assert first["profit_probability"] > 0.8
 
 
+def test_summarize_continuation_arr_emits_percentage_metrics(tmp_path: Path) -> None:
+    db_path = tmp_path / "btc5.db"
+    _write_test_db(db_path)
+    rows = load_observed_rows_from_db(db_path)
+    profile = GuardrailProfile(
+        name="current",
+        max_abs_delta=0.00015,
+        up_max_buy_price=0.49,
+        down_max_buy_price=0.51,
+    )
+    history = summarize_profile_history(rows, profile)
+    monte_carlo = run_monte_carlo(
+        rows,
+        profile,
+        paths=250,
+        horizon_trades=12,
+        block_size=3,
+        loss_limit_usd=10.0,
+        seed=7,
+    )
+    continuation = summarize_continuation_arr(historical=history, monte_carlo=monte_carlo)
+    assert continuation["metric_name"] == "continuation_arr_pct"
+    assert continuation["historical_arr_pct"] > 0.0
+    assert continuation["median_arr_pct"] > 0.0
+
+
 def test_build_candidate_profiles_keeps_current_and_runtime_profiles(tmp_path: Path) -> None:
     db_path = tmp_path / "btc5.db"
     _write_test_db(db_path)
@@ -188,6 +215,8 @@ def test_build_summary_ranks_candidates(tmp_path: Path) -> None:
     assert summary["best_candidate"] is not None
     assert summary["best_vs_current"] is not None
     assert summary["best_candidate"]["monte_carlo"]["median_total_pnl_usd"] >= 0.0
+    assert "continuation" in summary["best_candidate"]
+    assert "median_arr_pct_delta" in summary["best_vs_current"]
     assert summary["candidates"][0]["profile"]["name"] == summary["best_candidate"]["profile"]["name"]
 
 

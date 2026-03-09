@@ -27,6 +27,7 @@ def test_build_cycle_command_includes_selected_flags() -> None:
         archive_glob="reports/archive/*.csv",
         refresh_remote=False,
         remote_cache_json=Path("reports/tmp_remote.json"),
+        min_median_arr_improvement_pct=0.0,
         min_median_pnl_improvement_usd=2.0,
         min_replay_pnl_improvement_usd=1.0,
         max_profit_prob_drop=0.01,
@@ -38,6 +39,7 @@ def test_build_cycle_command_includes_selected_flags() -> None:
     command = _build_cycle_command(args)
     assert "--db-path" in command
     assert "--include-archive-csvs" in command
+    assert "--min-median-arr-improvement-pct" in command
     assert "--service-name" in command
     assert "btc-5min-maker.service" in command
     assert "--restart-on-promote" not in command
@@ -54,6 +56,7 @@ def test_write_loop_reports_accumulates_summary(tmp_path: Path) -> None:
         "decision": {"action": "hold", "reason": "current_profile_is_best"},
         "best_profile": {"name": "current_live_profile"},
         "active_profile": {"name": "current_live_profile"},
+        "arr": {"active_median_arr_pct": 1000.0, "best_median_arr_pct": 1000.0, "median_arr_delta_pct": 0.0},
         "artifacts": {},
         "hook": None,
         "stdout_tail": "",

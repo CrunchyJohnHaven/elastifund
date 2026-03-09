@@ -68,6 +68,32 @@ def _profile_from_env(name: str, env: dict[str, str]) -> GuardrailProfile:
     )
 
 
+def _arr_for_candidate(candidate: dict[str, Any] | None) -> dict[str, float]:
+    continuation = (candidate or {}).get("continuation") or {}
+    return {
+        "historical_arr_pct": _safe_float(continuation.get("historical_arr_pct"), 0.0),
+        "median_arr_pct": _safe_float(continuation.get("median_arr_pct"), 0.0),
+        "p05_arr_pct": _safe_float(continuation.get("p05_arr_pct"), 0.0),
+    }
+
+
+def _arr_tracking(best: dict[str, Any] | None, current: dict[str, Any] | None) -> dict[str, Any]:
+    best_arr = _arr_for_candidate(best)
+    current_arr = _arr_for_candidate(current)
+    return {
+        "metric_name": "continuation_arr_pct",
+        "current_historical_arr_pct": round(current_arr["historical_arr_pct"], 4),
+        "current_median_arr_pct": round(current_arr["median_arr_pct"], 4),
+        "current_p05_arr_pct": round(current_arr["p05_arr_pct"], 4),
+        "best_historical_arr_pct": round(best_arr["historical_arr_pct"], 4),
+        "best_median_arr_pct": round(best_arr["median_arr_pct"], 4),
+        "best_p05_arr_pct": round(best_arr["p05_arr_pct"], 4),
+        "historical_arr_delta_pct": round(best_arr["historical_arr_pct"] - current_arr["historical_arr_pct"], 4),
+        "median_arr_delta_pct": round(best_arr["median_arr_pct"] - current_arr["median_arr_pct"], 4),
+        "p05_arr_delta_pct": round(best_arr["p05_arr_pct"] - current_arr["p05_arr_pct"], 4),
+    }
+
+
 def _find_candidate(summary: dict[str, Any], name: str) -> dict[str, Any] | None:
     for candidate in summary.get("candidates") or []:
         if candidate.get("profile", {}).get("name") == name:
@@ -79,6 +105,7 @@ def _promotion_decision(
     *,
     best: dict[str, Any] | None,
     current: dict[str, Any] | None,
+    min_median_arr_improvement_pct: float,
     min_median_pnl_improvement_usd: float,
     min_replay_pnl_improvement_usd: float,
     max_profit_prob_drop: float,
@@ -102,7 +129,10 @@ def _promotion_decision(
     current_hist = current.get("historical") or {}
     best_mc = best.get("monte_carlo") or {}
     current_mc = current.get("monte_carlo") or {}
+    best_arr = _arr_for_candidate(best)
+    current_arr = _arr_for_candidate(current)
 
+    median_arr_delta = best_arr["median_arr_pct"] - current_arr["median_arr_pct"]
     median_pnl_delta = _safe_float(best_mc.get("median_total_pnl_usd")) - _safe_float(
         current_mc.get("median_total_pnl_usd")
     )
@@ -123,6 +153,10 @@ def _promotion_decision(
     )
 
     reasons: list[str] = []
+    if median_arr_delta < min_median_arr_improvement_pct:
+        reasons.append(
+            f"median_arr_delta_below_threshold:{median_arr_delta:.4f}<{min_median_arr_improvement_pct:.4f}"
+        )
     if median_pnl_delta < min_median_pnl_improvement_usd:
         reasons.append(
             f"median_pnl_delta_below_threshold:{median_pnl_delta:.4f}<{min_median_pnl_improvement_usd:.4f}"
@@ -149,6 +183,9 @@ def _promotion_decision(
     decision = {
         "action": "promote" if not reasons else "hold",
         "reason": "promotion_thresholds_met" if not reasons else ";".join(reasons),
+        "median_arr_delta_pct": round(median_arr_delta, 4),
+        "historical_arr_delta_pct": round(best_arr["historical_arr_pct"] - current_arr["historical_arr_pct"], 4),
+        "p05_arr_delta_pct": round(best_arr["p05_arr_pct"] - current_arr["p05_arr_pct"], 4),
         "median_pnl_delta_usd": round(median_pnl_delta, 4),
         "replay_pnl_delta_usd": round(replay_pnl_delta, 4),
         "profit_probability_delta": round(profit_prob_delta, 4),
@@ -159,7 +196,7 @@ def _promotion_decision(
     return decision
 
 
-def _render_override_env(profile: dict[str, Any], metadata: dict[str, Any]) -> str:
+def render_strategy_env(profile: dict[str, Any], metadata: dict[str, Any]) -> str:
     lines = [
         "# Managed by scripts/run_btc5_autoresearch_cycle.py",
         f"# generated_at={metadata['generated_at']}",
@@ -178,7 +215,7 @@ def _render_override_env(profile: dict[str, Any], metadata: dict[str, Any]) -> s
 def _write_override_env(path: Path, *, best_profile: dict[str, Any], decision: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        _render_override_env(
+        render_strategy_env(
             best_profile,
             {
                 "generated_at": _now_utc().isoformat(),
@@ -236,6 +273,9 @@ def _write_reports(report_dir: Path, payload: dict[str, Any]) -> dict[str, str]:
         "",
         "## Deltas",
         "",
+        f"- Median continuation ARR delta: `{payload['decision'].get('median_arr_delta_pct', 0.0):.2f}` percentage points",
+        f"- Historical continuation ARR delta: `{payload['decision'].get('historical_arr_delta_pct', 0.0):.2f}` percentage points",
+        f"- P05 continuation ARR delta: `{payload['decision'].get('p05_arr_delta_pct', 0.0):.2f}` percentage points",
         f"- Replay PnL delta: `{payload['decision'].get('replay_pnl_delta_usd', 0.0):.4f}` USD",
         f"- Median Monte Carlo PnL delta: `{payload['decision'].get('median_pnl_delta_usd', 0.0):.4f}` USD",
         f"- Profit-probability delta: `{payload['decision'].get('profit_probability_delta', 0.0):.2%}`",
@@ -270,6 +310,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--archive-glob", default="reports/btc_intraday_llm_bundle_*/raw/remote_btc5_window_trades.csv")
     parser.add_argument("--refresh-remote", action="store_true")
     parser.add_argument("--remote-cache-json", type=Path, default=Path("reports/tmp_remote_btc5_window_rows.json"))
+    parser.add_argument("--min-median-arr-improvement-pct", type=float, default=0.0)
     parser.add_argument("--min-median-pnl-improvement-usd", type=float, default=2.0)
     parser.add_argument("--min-replay-pnl-improvement-usd", type=float, default=1.0)
     parser.add_argument("--max-profit-prob-drop", type=float, default=0.01)
@@ -314,6 +355,7 @@ def main() -> int:
     decision = _promotion_decision(
         best=best_candidate,
         current=current_candidate,
+        min_median_arr_improvement_pct=float(args.min_median_arr_improvement_pct),
         min_median_pnl_improvement_usd=float(args.min_median_pnl_improvement_usd),
         min_replay_pnl_improvement_usd=float(args.min_replay_pnl_improvement_usd),
         max_profit_prob_drop=float(args.max_profit_prob_drop),
@@ -344,6 +386,7 @@ def main() -> int:
             "down_max_buy_price": active_profile.down_max_buy_price,
         },
         "decision": decision,
+        "arr_tracking": _arr_tracking(best_candidate, current_candidate),
         "best_candidate": best_candidate,
         "current_candidate": current_candidate,
         "simulation_summary": summary,
