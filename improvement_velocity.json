@@ -1,5 +1,6 @@
 {
-  "generated_at": "2026-03-09T01:24:03Z",
+  "generated_at": "2026-03-09T01:31:10Z",
+  "instance_version": "2.8.0",
   "cycle": {
     "number": 2,
     "name": "Flywheel Cycle 2 \u2014 Structural Alpha & Microstructure Defense"
@@ -8,32 +9,55 @@
     "runtime_public_snapshot": "reports/public_runtime_snapshot.json",
     "runtime_truth": "reports/runtime_truth_latest.json",
     "remote_cycle_status": "reports/remote_cycle_status.json",
+    "remote_service_status": "reports/remote_service_status.json",
     "root_test_status": "reports/root_test_status.json",
-    "full_verified_handoff": "reports/parallel/instance3.done.json",
     "backlog": "research/edge_backlog_ranked.md",
     "velocity_strategy": "research/velocity_maker_strategy.md",
-    "nontrading_status": "docs/NON_TRADING_STATUS.md",
-    "diary_dir": "docs/diary",
-    "repo_git_state": "git rev-list/git status"
+    "nontrading_readme": "nontrading/README.md",
+    "verification": {
+      "root_suite": {
+        "source": "reports/root_test_status.json",
+        "summary": "913 passed in 18.38s; 22 passed in 3.49s",
+        "checked_at": "2026-03-09T01:28:44.150318+00:00"
+      },
+      "polymarket_suite": {
+        "command": "make test-polymarket",
+        "summary": "374 passed in 2.99s",
+        "checked_at": "2026-03-09T01:31:10Z"
+      },
+      "nontrading_suite": {
+        "command": "make test-nontrading",
+        "summary": "39 passed in 0.36s",
+        "checked_at": "2026-03-09T01:31:10Z"
+      }
+    }
   },
   "trading_agent": {
     "tracked_capital_usd": 347.51,
     "deployed_capital_usd": 0.0,
     "undeployed_capital_usd": 347.51,
-    "cycles_completed": 306,
+    "cycles_completed": 313,
     "closed_trades": 0,
     "total_trades": 0,
-    "service_status": "running",
-    "service_checked_at": "2026-03-09T01:08:09.314461+00:00",
+    "service_status": "stopped",
+    "service_checked_at": "2026-03-09T01:28:43.910481+00:00",
+    "launch_posture": "blocked",
     "launch_blocked": true,
     "launch_blocked_checks": [
+      "service_not_running",
       "no_closed_trades",
       "no_deployed_capital",
       "a6_gate_blocked",
       "b1_gate_blocked",
       "flywheel_not_green"
     ],
+    "launch_next_action": "Restart `jj_live` in paper or shadow with conservative caps, keep A-6/B-1 blocked, and collect the first closed trades or structural samples.",
+    "run_mode_drift_detected": false,
     "fast_trade_verdict": "REJECT ALL",
+    "latest_pipeline_generated_at": "2026-03-09T01:20:11.169283+00:00",
+    "markets_observed": 74,
+    "trade_records": 2848,
+    "unique_wallets": 1638,
     "wallet_flow_ready": true,
     "wallet_count": 80,
     "strategies_total": 131,
@@ -45,59 +69,72 @@
     "strategies_rejected": 10,
     "strategies_pre_rejected": 8,
     "strategies_research_pipeline": 97,
-    "current_root_tests_main": 872,
+    "current_root_tests_main": 913,
     "current_root_tests_import_boundary": 22,
-    "current_root_tests_total": 894,
-    "current_root_test_summary": "872 passed in 17.67s; 22 passed in 3.54s",
-    "last_full_verified_total": 1278,
-    "last_full_verified_breakdown": {
-      "root_main": 871,
-      "root_import_boundary": 22,
-      "polymarket": 374,
-      "nontrading": 11
-    },
+    "current_root_tests_total": 935,
+    "current_root_test_summary": "913 passed in 18.38s; 22 passed in 3.49s",
+    "verified_polymarket_tests": 374,
+    "verified_nontrading_tests": 39,
+    "current_full_verified_total": 1348,
     "backtest_win_rate_calibrated": 0.712,
     "backtest_win_rate_no_only": 0.762,
     "velocity_win_rate_sub24h": 0.72,
     "velocity_backtest_arr_pct_theoretical": 6007.0,
     "maker_excess_return_pct": 1.12,
     "signal_sources_documented": 6,
-    "bot_modules": 47
+    "bot_modules": 47,
+    "allowed_neg_risk_event_count": 563,
+    "qualified_a6_live_surface_count": 57,
+    "a6_executable_below_gate": 0,
+    "b1_deterministic_pairs": 0
   },
   "non_trading_agent": {
-    "status_date": "2026-03-08",
-    "implemented_subsystems": 2,
-    "implemented_subsystem_names": [
+    "status_date": "2026-03-09",
+    "implemented_end_to_end_lanes": 2,
+    "implemented_lane_names": [
       "compliance_first_revenue_agent_harness",
       "digital_product_niche_discovery"
     ],
+    "phase0_foundations_landed": true,
+    "phase0_foundation_components": [
+      "crm_schema",
+      "opportunity_registry",
+      "approval_gate",
+      "compliance_guard",
+      "telemetry",
+      "five_engine_stubs"
+    ],
+    "phase0_engine_stub_count": 5,
     "revenue_lanes_active": 0,
-    "compliance_status": "dry-run capable with policy rails",
-    "jj_n_rollout_status": "phase-1 launch wedge still design-only",
-    "tests_passed": 11,
-    "smoke_coverage": true,
-    "launch_ready": false
+    "compliance_status": "paper-mode approval plus compliance guard active",
+    "jj_n_rollout_status": "Phase 0 foundations landed; production wedge still not launched",
+    "tests_passed": 39,
+    "smoke_coverage_documented": true,
+    "launch_ready": false,
+    "crm_schema": true,
+    "opportunity_registry": true,
+    "approval_gate": true,
+    "telemetry_wired": true
   },
   "contribution_flywheel": {
     "diary_entries": 14,
     "dispatch_markdown_files": 95,
     "dispatch_work_orders": 11,
-    "commits_total_after_instance": 37,
-    "commits_last_7_days_after_instance": 37,
+    "commits_total_current": 37,
+    "commits_last_7_days_current": 37,
     "ci_workflows": 1,
-    "issue_templates": 3,
-    "origin_aligned_before_instance_commit": true
+    "issue_templates": 3
   },
   "velocity_metrics": {
     "project_age_days": 22,
     "tracked_strategies_per_week": 41.7,
-    "current_root_tests_total": 894,
-    "last_full_verified_total": 1278,
+    "current_root_tests_total": 935,
+    "full_verified_tests_total": 1348,
     "dispatch_markdown_files": 95,
     "dispatch_work_orders": 11,
     "diary_entries": 14,
-    "commits_total_after_instance": 37,
-    "commits_last_7_days_after_instance": 37,
+    "commits_total_current": 37,
+    "commits_last_7_days_current": 37,
     "bot_modules": 47,
     "issue_templates": 3,
     "ci_workflows": 1
@@ -109,15 +146,15 @@
     "trading_next_target_usd": 34.75,
     "trading_next_target_confidence": "low",
     "trading_backtest_reference_pct": 6007.0,
-    "trading_backtest_reference_methodology": "Velocity maker backtest on <24h markets; theoretical and not realized live performance.",
+    "trading_backtest_reference_methodology": "Velocity maker backtest on sub-24h markets; theoretical and not realized live performance.",
     "non_trading_current_pct": 0.0,
     "non_trading_current_usd": 0.0,
-    "non_trading_status": "prototype and dry-run capable, not revenue-bearing",
+    "non_trading_status": "Phase 0 foundations landed; no revenue-bearing wedge yet.",
     "combined_current_pct": 0.0,
     "combined_current_usd": 0.0,
     "combined_next_target_pct": 10.0,
     "combined_next_target_usd": 34.75,
-    "methodology": "No live ARR can be computed yet because there are 0 closed trades and 0 deployed capital. Current run-rate remains 0%; the 10% figure is the operator target, while 6007% is a theoretical backtest reference only."
+    "methodology": "No live ARR can be computed yet because there are 0 closed trades and 0 deployed capital. Current run-rate remains 0%; the 10% figure is the operator target, while 6007% remains a theoretical backtest reference only."
   },
   "timeline": [
     {
@@ -146,7 +183,7 @@
       "rejected_total": 0,
       "arr_reference_pct": 0.0,
       "under_evaluation": 1,
-      "tests_normalized_pct": 1.3,
+      "tests_normalized_pct": 0.9,
       "dispatches_normalized_pct": 8.4,
       "capital_normalized_pct": 0.0
     },
@@ -161,7 +198,7 @@
       "rejected_total": 0,
       "arr_reference_pct": 0.0,
       "under_evaluation": 2,
-      "tests_normalized_pct": 3.8,
+      "tests_normalized_pct": 2.5,
       "dispatches_normalized_pct": 15.8,
       "capital_normalized_pct": 0.0
     },
@@ -176,7 +213,7 @@
       "rejected_total": 0,
       "arr_reference_pct": 1704.0,
       "under_evaluation": 3,
-      "tests_normalized_pct": 7.5,
+      "tests_normalized_pct": 5.0,
       "dispatches_normalized_pct": 21.1,
       "capital_normalized_pct": 0.0
     },
@@ -191,7 +228,7 @@
       "rejected_total": 0,
       "arr_reference_pct": 1704.0,
       "under_evaluation": 4,
-      "tests_normalized_pct": 19.6,
+      "tests_normalized_pct": 13.0,
       "dispatches_normalized_pct": 36.8,
       "capital_normalized_pct": 0.0
     },
@@ -206,7 +243,7 @@
       "rejected_total": 0,
       "arr_reference_pct": 1704.0,
       "under_evaluation": 8,
-      "tests_normalized_pct": 23.5,
+      "tests_normalized_pct": 15.6,
       "dispatches_normalized_pct": 36.8,
       "capital_normalized_pct": 71.2
     },
@@ -221,7 +258,7 @@
       "rejected_total": 0,
       "arr_reference_pct": 1704.0,
       "under_evaluation": 11,
-      "tests_normalized_pct": 25.7,
+      "tests_normalized_pct": 17.1,
       "dispatches_normalized_pct": 47.4,
       "capital_normalized_pct": 71.2
     },
@@ -236,7 +273,7 @@
       "rejected_total": 0,
       "arr_reference_pct": 1704.0,
       "under_evaluation": 15,
-      "tests_normalized_pct": 30.2,
+      "tests_normalized_pct": 20.0,
       "dispatches_normalized_pct": 54.7,
       "capital_normalized_pct": 100.0
     },
@@ -251,7 +288,7 @@
       "rejected_total": 10,
       "arr_reference_pct": 1704.0,
       "under_evaluation": 11,
-      "tests_normalized_pct": 34.7,
+      "tests_normalized_pct": 23.0,
       "dispatches_normalized_pct": 77.9,
       "capital_normalized_pct": 100.0
     },
@@ -266,14 +303,14 @@
       "rejected_total": 10,
       "arr_reference_pct": 6007.0,
       "under_evaluation": 15,
-      "tests_normalized_pct": 38.6,
+      "tests_normalized_pct": 25.6,
       "dispatches_normalized_pct": 77.9,
       "capital_normalized_pct": 100.0
     },
     {
       "date": "2026-03-09",
-      "label": "Runtime truth reconciled",
-      "tests": 894,
+      "label": "Runtime truth + JJ-N Phase 0",
+      "tests": 1348,
       "dispatches": 95,
       "capital": 347.51,
       "tracked_total": 131,
@@ -287,8 +324,8 @@
     }
   ],
   "notes": [
-    "Historical funnel counts before 2026-03-09 are reconstructed from diary milestones plus the ranked backlog; treat them as public progress markers, not machine-perfect daily state.",
-    "reports/root_test_status.json is newer than the March 9 prose snapshots and currently shows 871 + 22 passing root tests.",
-    "README and admin-doc prose may lag this dataset until the docs-sync lane lands its next pass."
+    "This dataset supersedes the earlier March 9 305-cycle / 1,278-test snapshot. Current checked-in runtime truth still shows 308 cycles, and the freshest root suite now reports 913 + 22 passing.",
+    "The published combined verified total is now 1,348 because this Instance 5 pass reran make test, make test-polymarket, and make test-nontrading against the current workspace state.",
+    "JJ-N is no longer accurately described as not started: Phase 0 foundations are landed, but revenue remains zero and the production wedge is still unlaunched."
   ]
 }
