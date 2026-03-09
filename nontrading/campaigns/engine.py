@@ -9,11 +9,12 @@ from nontrading.campaigns.policies import evaluate_lead_policy
 from nontrading.config import RevenueAgentSettings
 from nontrading.email.render import render_campaign_email
 from nontrading.email.sender import BaseSender, DeliveryResult
-from nontrading.models import Campaign, Lead, SendEvent
+from nontrading.models import Campaign, Lead, SendEvent, utc_now
 from nontrading.risk import RevenueRiskManager
 from nontrading.store import RevenueStore
 
 logger = logging.getLogger("nontrading.campaigns")
+OUTBOUND_FOLLOWUP_ENGINE = "outbound_followup"
 
 
 @dataclass
@@ -77,15 +78,34 @@ class CampaignEngine:
 
     def run_once(self) -> EngineRunSummary:
         self.store.touch_heartbeat()
+        self.store.touch_engine_heartbeat(
+            OUTBOUND_FOLLOWUP_ENGINE,
+            status="running",
+            run_mode=self._run_mode(),
+        )
         summary = EngineRunSummary()
         for campaign in self.store.list_active_campaigns():
             summary.add_campaign(self._run_campaign(campaign))
+        self.store.upsert_engine_state(
+            OUTBOUND_FOLLOWUP_ENGINE,
+            status="blocked" if summary.blocked_campaigns else "idle",
+            run_mode=self._run_mode(),
+            metadata={
+                "campaigns_scanned": summary.campaigns_scanned,
+                "blocked_campaigns": summary.blocked_campaigns,
+                "queued": summary.queued,
+                "sent": summary.sent,
+                "failed": summary.failed,
+            },
+            last_heartbeat_at=utc_now(),
+            last_event_at=utc_now() if summary.queued or summary.sent or summary.failed else None,
+        )
         return summary
 
     def _run_campaign(self, campaign: Campaign) -> CampaignRunSummary:
         campaign_id = campaign.id or 0
         summary = CampaignRunSummary(campaign_name=campaign.name, campaign_id=campaign_id)
-        decision = self.risk_manager.evaluate_campaign(campaign)
+        decision = self.risk_manager.evaluate_campaign(campaign, engine_name=OUTBOUND_FOLLOWUP_ENGINE)
         if not decision.allowed:
             logger.warning("campaign_blocked name=%s reason=%s", campaign.name, decision.reason)
             summary.blocked = True
@@ -193,3 +213,5 @@ class CampaignEngine:
             )
         )
 
+    def _run_mode(self) -> str:
+        return "sim" if self.sender.provider_name == "dry_run" else "live"

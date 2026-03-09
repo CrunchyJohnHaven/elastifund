@@ -29,6 +29,7 @@ def test_store_initializes_schema_and_default_campaign(tmp_path: Path) -> None:
 
     assert {
         "agent_state",
+        "engine_states",
         "campaigns",
         "leads",
         "suppression_list",
@@ -39,6 +40,7 @@ def test_store_initializes_schema_and_default_campaign(tmp_path: Path) -> None:
 
     snapshot = store.status_snapshot()
     assert snapshot["campaigns"] == 1
+    assert snapshot["engine_states"] == 0
     assert snapshot["db_path"] == str(settings.db_path)
 
 
@@ -64,3 +66,20 @@ def test_risk_manager_obeys_global_and_campaign_kill_switches(tmp_path: Path) ->
     assert not blocked_campaign.allowed
     assert blocked_campaign.reason == "campaign_kill_switch"
 
+
+def test_engine_kill_switch_blocks_specific_engine(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path)
+    store = RevenueStore(settings.db_path)
+    campaign = store.ensure_default_campaign(settings)
+    risk = RevenueRiskManager(store, settings)
+
+    store.set_engine_kill_switch("outbound_followup", True, "manual_engine_pause")
+
+    blocked = risk.evaluate_campaign(campaign, engine_name="outbound_followup")
+    assert not blocked.allowed
+    assert blocked.reason == "engine_kill_switch"
+
+    engine_state = store.get_engine_state("outbound_followup")
+    assert engine_state is not None
+    assert engine_state.kill_switch_active is True
+    assert engine_state.kill_reason == "manual_engine_pause"

@@ -60,10 +60,25 @@ class RevenueRiskManager:
             status=status,
         )
 
-    def evaluate_campaign(self, campaign: Campaign) -> RiskDecision:
+    def evaluate_engine(self, engine_name: str) -> RiskDecision:
         state = self.store.get_agent_state()
         if state.global_kill_switch:
             return RiskDecision(allowed=False, reason="global_kill_switch")
+
+        engine_state = self.store.get_engine_state(engine_name)
+        if engine_state is not None and engine_state.kill_switch_active:
+            return RiskDecision(
+                allowed=False,
+                reason="engine_kill_switch",
+                metadata={"engine_name": engine_name},
+            )
+
+        return RiskDecision(allowed=True)
+
+    def evaluate_campaign(self, campaign: Campaign, *, engine_name: str = "outbound_followup") -> RiskDecision:
+        engine_decision = self.evaluate_engine(engine_name)
+        if not engine_decision.allowed:
+            return engine_decision
 
         if campaign.kill_switch_active:
             return RiskDecision(allowed=False, reason="campaign_kill_switch")
@@ -113,3 +128,15 @@ class RevenueRiskManager:
             )
         )
 
+    def trigger_engine_kill(self, engine_name: str, reason: str) -> None:
+        self.store.set_engine_kill_switch(engine_name, True, reason)
+        self.store.record_risk_event(
+            RiskEvent(
+                scope="engine",
+                scope_id=engine_name,
+                severity="critical",
+                event_type="engine_kill_switch",
+                detail=reason,
+                metadata={"engine_name": engine_name},
+            )
+        )

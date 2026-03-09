@@ -52,6 +52,10 @@ def test_campaign_engine_only_sends_us_role_based_or_opted_in_recipients(tmp_pat
     }
     assert summary.sent == 3
     assert summary.filtered == 3
+    engine_state = store.get_engine_state("outbound_followup")
+    assert engine_state is not None
+    assert engine_state.status == "idle"
+    assert engine_state.run_mode == "sim"
 
 
 def test_global_kill_switch_stops_all_sends_immediately(tmp_path: Path) -> None:
