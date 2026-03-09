@@ -1,0 +1,4 @@
+cycle	finished_at	hypothesis_name	direction	session_name	evidence_band	validation_p05_arr_pct	validation_median_arr_pct	frontier_p05_arr_pct	frontier_median_arr_pct	frontier_delta_arr_pct	validation_live_filled_rows	generalization_ratio
+1	2026-03-09T19:05:56.414929+00:00	hyp_down_up0.49_down0.51_hour_et_11	DOWN	hour_et_11	exploratory	4265134.2825	10924714.9511	4265134.2825	10924714.9511	0.0000	5	48.6569
+2	2026-03-09T19:05:59.596039+00:00	hyp_down_up0.49_down0.51_hour_et_11	DOWN	hour_et_11	exploratory	4265134.2825	10924714.9511	4265134.2825	10924714.9511	0.0000	5	48.6569
+3	2026-03-09T19:06:02.872433+00:00	hyp_down_up0.49_down0.51_hour_et_11	DOWN	hour_et_11	exploratory	4265134.2825	10924714.9511	4265134.2825	10924714.9511	0.0000	5	48.6569

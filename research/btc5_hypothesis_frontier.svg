@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-label="BTC5 hypothesis frontier">
+<rect width="1280" height="760" fill="#F8F5EE" />
+<text x="90" y="42" font-size="28" font-weight="700" fill="#1E1C18">BTC5 Hypothesis Frontier</text>
+<text x="90" y="66" font-size="16" fill="#5F5A50">Best walk-forward hypothesis per local cycle. Latest hyp_down_up0.49_down0.51_hour_et_11; evidence exploratory; P05 4,265,134.3%.</text>
+<text x="90" y="66" font-size="18" font-weight="600" fill="#1E1C18">Validated Return Estimate</text>
+<line x1="90" y1="430.00" x2="1240" y2="430.00" stroke="#E6DED1" stroke-width="1" /><line x1="90" y1="255.00" x2="1240" y2="255.00" stroke="#E6DED1" stroke-width="1" /><line x1="90" y1="80.00" x2="1240" y2="80.00" stroke="#E6DED1" stroke-width="1" />
+<text x="78" y="435.00" text-anchor="end" font-size="16" fill="#5F5A50">4,265,134.3%</text><text x="78" y="260.00" text-anchor="end" font-size="16" fill="#5F5A50">7,594,924.6%</text><text x="78" y="85.00" text-anchor="end" font-size="16" fill="#5F5A50">10,924,715.0%</text>
+<polyline fill="none" stroke="#6C7E92" stroke-width="2.2" points="90.00,430.00 665.00,430.00 1240.00,430.00" />
+<polyline fill="none" stroke="#1B5E72" stroke-width="3.4" points="90.00,430.00 665.00,430.00 1240.00,430.00" />
+<polyline fill="none" stroke="#C46B1A" stroke-width="3.0" points="90.00,80.00 665.00,80.00 1240.00,80.00" />
+<text x="1240" y="66" text-anchor="end" font-size="15" fill="#1B5E72">Validation P05 ARR</text>
+<text x="1070" y="66" text-anchor="end" font-size="15" fill="#C46B1A">Validation median ARR</text>
+<text x="875" y="66" text-anchor="end" font-size="15" fill="#6C7E92">Frontier P05 ARR</text>
+<text x="90" y="472" font-size="18" font-weight="600" fill="#1E1C18">Validation Fill Count</text>
+<line x1="90" y1="680.00" x2="1240" y2="680.00" stroke="#E6DED1" stroke-width="1" /><line x1="90" y1="608.00" x2="1240" y2="608.00" stroke="#E6DED1" stroke-width="1" /><line x1="90" y1="500.00" x2="1240" y2="500.00" stroke="#E6DED1" stroke-width="1" />
+<text x="78" y="685.00" text-anchor="end" font-size="16" fill="#5F5A50">0</text><text x="78" y="613.00" text-anchor="end" font-size="16" fill="#5F5A50">2</text><text x="78" y="505.00" text-anchor="end" font-size="16" fill="#5F5A50">5</text>
+<polyline fill="none" stroke="#2E8B57" stroke-width="3.0" points="90.00,500.00 665.00,500.00 1240.00,500.00" />
+<text x="1240" y="472" text-anchor="end" font-size="15" fill="#2E8B57">Validation fills</text>
+<text x="1240" y="714" text-anchor="end" font-size="15" fill="#5F5A50">Last cycle 3 at 2026-03-09T19:06:02.872433+00:00</text>
+</svg>
