@@ -19,6 +19,7 @@ DEFAULT_BASE_ENV = Path("config/btc5_strategy.env")
 DEFAULT_OVERRIDE_ENV = Path("state/btc5_autoresearch.env")
 DEFAULT_CYCLE_REPORT_DIR = Path("reports/btc5_autoresearch")
 DEFAULT_LOOP_REPORT_DIR = Path("reports/btc5_autoresearch_loop")
+DEFAULT_HYPOTHESIS_REPORT_DIR = Path("reports/btc5_hypothesis_lab")
 DEFAULT_ARR_TSV = Path("research/btc5_arr_progress.tsv")
 DEFAULT_ARR_SVG = Path("research/btc5_arr_progress.svg")
 DEFAULT_ARR_SUMMARY_MD = Path("research/btc5_arr_summary.md")
@@ -141,6 +142,49 @@ def _render_arr_progress(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _run_hypothesis_lab(args: argparse.Namespace) -> dict[str, Any]:
+    command = [
+        sys.executable,
+        str(ROOT / "scripts" / "btc5_hypothesis_lab.py"),
+        "--db-path",
+        str(args.db_path),
+        "--output-dir",
+        str(args.hypothesis_report_dir),
+        "--paths",
+        str(args.paths),
+        "--block-size",
+        str(args.block_size),
+        "--loss-limit-usd",
+        str(args.loss_limit_usd),
+        "--seed",
+        str(args.seed),
+    ]
+    if args.include_archive_csvs:
+        command.append("--include-archive-csvs")
+    if args.refresh_remote:
+        command.append("--refresh-remote")
+    command.extend(["--archive-glob", str(args.archive_glob)])
+    command.extend(["--remote-cache-json", str(args.remote_cache_json)])
+    result = subprocess.run(
+        command,
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=240,
+    )
+    latest_summary = _load_json(args.hypothesis_report_dir / "summary.json")
+    best_hypothesis = (latest_summary or {}).get("best_hypothesis") or {}
+    return {
+        "command": command,
+        "returncode": result.returncode,
+        "stdout_tail": (result.stdout or "").strip()[-500:],
+        "stderr_tail": (result.stderr or "").strip()[-500:],
+        "best_hypothesis": (best_hypothesis.get("hypothesis") or {}),
+        "best_summary": (best_hypothesis.get("summary") or {}),
+    }
+
+
 def _build_entry(
     *,
     cycle_command: list[str],
@@ -230,6 +274,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--override-env", type=Path, default=DEFAULT_OVERRIDE_ENV)
     parser.add_argument("--cycle-report-dir", type=Path, default=DEFAULT_CYCLE_REPORT_DIR)
     parser.add_argument("--loop-report-dir", type=Path, default=DEFAULT_LOOP_REPORT_DIR)
+    parser.add_argument("--hypothesis-report-dir", type=Path, default=DEFAULT_HYPOTHESIS_REPORT_DIR)
     parser.add_argument("--service-name", default="")
     parser.add_argument("--paths", type=int, default=2000)
     parser.add_argument("--block-size", type=int, default=4)
@@ -260,6 +305,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--arr-summary-md-out", type=Path, default=DEFAULT_ARR_SUMMARY_MD)
     parser.add_argument("--arr-latest-json-out", type=Path, default=DEFAULT_ARR_LATEST_JSON)
     parser.add_argument("--skip-arr-render", action="store_true")
+    parser.add_argument("--skip-hypothesis-lab", action="store_true")
     return parser.parse_args()
 
 
@@ -297,6 +343,8 @@ def main() -> int:
         loop_payload = _write_loop_reports(args.loop_report_dir, entry)
         if not args.skip_arr_render:
             loop_payload["arr_render"] = _render_arr_progress(args)
+        if not args.skip_hypothesis_lab:
+            loop_payload["hypothesis_lab"] = _run_hypothesis_lab(args)
         print(json.dumps(loop_payload, indent=2, sort_keys=True))
         cycle_count += 1
         if args.max_cycles and cycle_count >= args.max_cycles:

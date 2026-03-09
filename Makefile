@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: help bootstrap doctor onboard quickstart preflight hygiene test verify test-root test-polymarket test-nontrading smoke-nontrading btc5-autoresearch-local btc5-autoresearch-local-autopush btc5-arr-report deploy-write-manifest deploy-dry-run api-specs clean
+.PHONY: help bootstrap doctor onboard quickstart preflight hygiene test verify test-root test-polymarket test-nontrading smoke-nontrading btc5-autoresearch-local btc5-autoresearch-local-autopush btc5-arr-report btc5-hypothesis-lab deploy-write-manifest deploy-dry-run api-specs clean
 
 help:
 	@printf '%s\n' \
@@ -18,6 +18,7 @@ help:
 		'btc5-autoresearch-local Run the local 5-minute BTC5 autoresearch loop' \
 		'btc5-autoresearch-local-autopush Run the local loop and auto-push allowlisted ARR promotions' \
 		'btc5-arr-report  Render tracked percentage-only ARR progress artifacts' \
+		'btc5-hypothesis-lab Run the BTC5 walk-forward hypothesis generator' \
 		'deploy-write-manifest Regenerate the release manifest from current machine truth' \
 		'deploy-dry-run   Refresh bridge state, regenerate the manifest, and run the VPS deploy dry-run' \
 		'test-polymarket  Run the nested polymarket-bot test suite' \
@@ -68,6 +69,9 @@ btc5-autoresearch-local-autopush:
 
 btc5-arr-report:
 	$(PYTHON) scripts/render_btc5_arr_progress.py
+
+btc5-hypothesis-lab:
+	$(PYTHON) scripts/btc5_hypothesis_lab.py --include-archive-csvs
 
 deploy-write-manifest:
 	$(PYTHON) scripts/deploy_release_bundle.py --write-manifest
