@@ -89,6 +89,11 @@ try:
 except ImportError:
     from runtime_profile import RuntimeProfileBundle, activate_runtime_profile_env  # type: ignore
 
+try:
+    from bot.polymarket_clob import build_authenticated_clob_client, parse_signature_type
+except ImportError:
+    from polymarket_clob import build_authenticated_clob_client, parse_signature_type  # type: ignore
+
 _ACTIVE_RUNTIME_PROFILE = activate_runtime_profile_env()
 try:
     from bot.health_monitor import HeartbeatWriter
@@ -5848,46 +5853,18 @@ class JJLive:
         if not private_key.startswith("0x"):
             private_key = "0x" + private_key
 
-        signature_type = int(os.environ.get("JJ_CLOB_SIGNATURE_TYPE", "1"))
-        # Create client without creds first to derive them.
-        # Some wallets require signature_type=0 (EOA), while proxy flows use 1.
-        client = OfficialClobClient(
-            host="https://clob.polymarket.com",
-            key=private_key,
-            chain_id=137,
-            signature_type=signature_type,
-            funder=safe_address,
-        )
-
-        # Derive L2 API credentials (the .env builder creds are NOT valid L2 creds)
+        signature_type = parse_signature_type(os.environ.get("JJ_CLOB_SIGNATURE_TYPE", "1"), default=1)
         try:
-            derived = client.derive_api_key()
-            logger.info(f"Derived L2 API key: {derived.api_key[:12]}...")
-        except Exception:
-            try:
-                derived = client.create_api_key()
-                logger.info(f"Created L2 API key: {derived.api_key[:12]}...")
-            except Exception as e:
-                logger.error(f"Failed to get L2 API credentials: {e}")
-                sys.exit(1)
+            client, _, _ = build_authenticated_clob_client(
+                private_key=private_key,
+                safe_address=safe_address,
+                configured_signature_type=signature_type,
+                logger=logger,
+            )
+        except Exception as e:
+            logger.error(f"Failed to get L2 API credentials: {e}")
+            sys.exit(1)
 
-        # Re-create client with derived credentials
-        creds = ApiCreds(
-            api_key=derived.api_key,
-            api_secret=derived.api_secret,
-            api_passphrase=derived.api_passphrase,
-        )
-        client = OfficialClobClient(
-            host="https://clob.polymarket.com",
-            key=private_key,
-            chain_id=137,
-            creds=creds,
-            signature_type=signature_type,
-            funder=safe_address,
-        )
-        logger.info("CLOB signing mode: signature_type=%s", signature_type)
-
-        # Verify auth works
         try:
             client.get_orders()
             logger.info("CLOB auth verified — orders endpoint accessible")

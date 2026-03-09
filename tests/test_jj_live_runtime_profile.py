@@ -126,3 +126,36 @@ def test_sum_violation_lane_disabled_for_paper_aggressive_profile() -> None:
         assert jj_live_module._sum_violation_lane_enabled("shadow_fast_flow") is False
     finally:
         _restore_env("ENABLE_SUM_VIOLATION", original)
+
+
+def test_fast_flow_market_detector_handles_time_window_titles() -> None:
+    assert (
+        jj_live_module.looks_like_fast_flow_market(
+            "Bitcoin Up or Down - March 9, 8:05AM-8:10AM ET"
+        )
+        is True
+    )
+    assert (
+        jj_live_module.looks_like_fast_flow_market(
+            "Bitcoin Up or Down - March 9, 8:00AM-8:15AM ET"
+        )
+        is True
+    )
+    assert jj_live_module.looks_like_fast_flow_market("Aziz Akhannouch out as Morocco Prime Minister?") is False
+
+
+def test_dedicated_btc5_detector_distinguishes_5m_and_15m_titles() -> None:
+    assert (
+        jj_live_module.is_dedicated_btc5_market(
+            "Bitcoin Up or Down - March 9, 8:05AM-8:10AM ET",
+            slug="btc-updown-5m-1741507500",
+        )
+        is True
+    )
+    assert (
+        jj_live_module.is_dedicated_btc5_market(
+            "Bitcoin Up or Down - March 9, 8:00AM-8:15AM ET",
+            slug="btc-updown-15m-1741507200",
+        )
+        is False
+    )

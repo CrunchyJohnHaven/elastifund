@@ -364,7 +364,7 @@ def test_run_cycle_hydrates_recent_fast_markets_when_primary_scan_misses_them(tm
         lambda: [
             {
                 "market_id": "m-recent",
-                "question": "Bitcoin Up or Down - March 8, 10:15PM-10:20PM ET",
+                "question": "Bitcoin Up or Down - March 8, 10:15PM-10:30PM ET",
                 "direction": "buy_yes",
                 "market_price": 0.5,
                 "estimated_prob": 0.79,
@@ -380,19 +380,20 @@ def test_run_cycle_hydrates_recent_fast_markets_when_primary_scan_misses_them(tm
 
     async def _fetch_recent_trade_hydrated_markets():
         return (
-            [
-                {
-                    "id": "m-recent",
-                    "conditionId": "m-recent",
-                    "question": "Bitcoin Up or Down - March 8, 10:15PM-10:20PM ET",
-                    "outcomePrices": [0.44, 0.56],
-                    "clobTokenIds": ["recent-yes", "recent-no"],
-                    "volume": 750.0,
-                    "liquidity": 300.0,
-                    "endDate": "2026-03-09T03:20:00Z",
-                    "acceptingOrders": True,
-                    "closed": False,
-                }
+                [
+                    {
+                        "id": "m-recent",
+                        "conditionId": "m-recent",
+                        "question": "Bitcoin Up or Down - March 8, 10:15PM-10:30PM ET",
+                        "slug": "btc-updown-15m-1741490100",
+                        "outcomePrices": [0.44, 0.56],
+                        "clobTokenIds": ["recent-yes", "recent-no"],
+                        "volume": 750.0,
+                        "liquidity": 300.0,
+                        "endDate": "2026-03-09T03:30:00Z",
+                        "acceptingOrders": True,
+                        "closed": False,
+                    }
             ],
             {
                 "recent_trades_fetched": 1000,
@@ -497,3 +498,61 @@ def test_run_cycle_late_hydrates_wallet_signal_when_scan_has_other_fast_market(t
     assert captured_orders
     assert captured_orders[0]["market_id"] == "cond-missing"
     assert captured_orders[0]["price"] == 0.56
+
+
+def test_run_cycle_skips_wallet_signal_for_dedicated_btc5_market(tmp_path, monkeypatch):
+    live = _make_live(
+        tmp_path,
+        markets=[
+            {
+                "id": "m-btc5",
+                "conditionId": "cond-btc5",
+                "slug": "btc-updown-5m-1741507500",
+                "question": "Bitcoin Up or Down - March 9, 8:05AM-8:10AM ET",
+                "outcomePrices": [0.46, 0.54],
+                "clobTokenIds": ["btc5-yes", "btc5-no"],
+                "volume": 500.0,
+                "liquidity": 200.0,
+                "endDate": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+            }
+        ],
+    )
+
+    live.wallet_flow_scores_file.write_text(
+        json.dumps({"wallets": {"0xabc": {"address": "0xabc", "activity_score": 80.0}}})
+    )
+    live.wallet_flow_db_file.touch()
+
+    monkeypatch.setattr(
+        jj_live_module,
+        "wallet_flow_get_signals",
+        lambda: [
+            {
+                "market_id": "cond-btc5",
+                "question": "Bitcoin Up or Down - March 9, 8:05AM-8:10AM ET",
+                "direction": "buy_no",
+                "market_price": 0.5,
+                "estimated_prob": 0.62,
+                "edge": 0.12,
+                "confidence": 0.62,
+                "reasoning": "Wallet flow consensus",
+                "source": "wallet_flow",
+                "resolution_hours": 0.08,
+                "velocity_score": 120.0,
+            }
+        ],
+    )
+
+    captured_orders: list[dict] = []
+
+    async def _place_order(**kwargs):
+        captured_orders.append(kwargs)
+        return True
+
+    live.place_order = _place_order
+
+    summary = asyncio.run(live.run_cycle())
+
+    assert summary["status"] == "ok"
+    assert summary["trades_placed"] == 0
+    assert captured_orders == []

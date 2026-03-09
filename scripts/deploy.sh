@@ -8,13 +8,15 @@ usage() {
 Usage:
   ./scripts/deploy.sh [user@host]
   ./scripts/deploy.sh --clean-env --profile live_aggressive --restart
-  ./scripts/deploy.sh --clean-env --profile maker_velocity_live --restart --btc5
+  ./scripts/deploy.sh --clean-env --profile maker_velocity_live --restart --btc5 --kalshi --loop
 
 Options:
   --clean-env         Strip runtime override vars from the VPS .env and set JJ_RUNTIME_PROFILE
   --profile NAME      Runtime profile to write during --clean-env (default: live_aggressive)
   --restart           Restart jj-live.service after syncing files
   --btc5              Install/restart btc-5min-maker.service on the VPS
+  --kalshi            Install/enable kalshi-weather-trader.timer (runs every 5m)
+  --loop              Install/enable jj-improvement-loop.timer (runs every 30m)
   -h, --help          Show this help
 
 Notes:
@@ -48,6 +50,8 @@ fi
 CLEAN_ENV=false
 RESTART_SERVICE=false
 ENABLE_BTC5=false
+ENABLE_KALSHI=false
+ENABLE_LOOP=false
 PROFILE_NAME="live_aggressive"
 TARGET_VPS=""
 
@@ -69,6 +73,12 @@ while [ $# -gt 0 ]; do
             ;;
         --btc5)
             ENABLE_BTC5=true
+            ;;
+        --kalshi)
+            ENABLE_KALSHI=true
+            ;;
+        --loop)
+            ENABLE_LOOP=true
             ;;
         -h|--help)
             usage
@@ -96,6 +106,10 @@ VPS="${TARGET_VPS:-${VPS_USER:-ubuntu}@${VPS_IP:?Set VPS_IP in .env or environme
 BOT_DIR="/home/ubuntu/polymarket-trading-bot"
 SERVICE_NAME="jj-live.service"
 BTC5_SERVICE_NAME="btc-5min-maker.service"
+KALSHI_SERVICE_NAME="kalshi-weather-trader.service"
+KALSHI_TIMER_NAME="kalshi-weather-trader.timer"
+LOOP_SERVICE_NAME="jj-improvement-loop.service"
+LOOP_TIMER_NAME="jj-improvement-loop.timer"
 REMOTE_PYTHONPATH="$BOT_DIR:$BOT_DIR/bot:$BOT_DIR/polymarket-bot"
 SSH_CMD=(ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no)
 SCP_CMD=(scp -i "$SSH_KEY" -o StrictHostKeyChecking=no)
@@ -113,6 +127,8 @@ echo "  Profile:  $PROFILE_NAME"
 echo "  Clean env: $CLEAN_ENV"
 echo "  Restart:   $RESTART_SERVICE"
 echo "  BTC5 service: $ENABLE_BTC5"
+echo "  Kalshi timer: $ENABLE_KALSHI"
+echo "  Loop timer:   $ENABLE_LOOP"
 echo
 
 POLYBOT_FILES=(
@@ -127,11 +143,16 @@ POLYBOT_FILES=(
 SCRIPT_SUPPORT_FILES=(
     "scripts/clean_env_for_profile.sh"
     "scripts/btc5_status.sh"
+    "scripts/run_kalshi_weather_auto.sh"
 )
 
 DEPLOY_ASSET_FILES=(
     "deploy/jj-live.service"
     "deploy/btc-5min-maker.service"
+    "deploy/kalshi-weather-trader.service"
+    "deploy/kalshi-weather-trader.timer"
+    "deploy/jj-improvement-loop.service"
+    "deploy/jj-improvement-loop.timer"
 )
 
 sync_file() {
@@ -151,11 +172,18 @@ echo "  Creating remote directories..."
     $BOT_DIR/config/runtime_profiles \
     $BOT_DIR/data \
     $BOT_DIR/deploy \
+    $BOT_DIR/kalshi \
     $BOT_DIR/polymarket-bot/src/core \
     $BOT_DIR/scripts"
 
 for local_path in "$PROJECT_DIR"/bot/*.py; do
     relative_path="bot/$(basename "$local_path")"
+    sync_file "$relative_path"
+done
+
+for local_path in "$PROJECT_DIR"/kalshi/*.py; do
+    [ -f "$local_path" ] || continue
+    relative_path="kalshi/$(basename "$local_path")"
     sync_file "$relative_path"
 done
 
@@ -252,13 +280,31 @@ else
     echo "  Skipping BTC 5-min service setup (--btc5 not set)."
 fi
 
+if [[ "$ENABLE_KALSHI" == "true" ]]; then
+    echo
+    echo "  Installing/enabling Kalshi weather trader timer..."
+    "${SSH_CMD[@]}" "$VPS" "cd $BOT_DIR && mkdir -p kalshi && sudo install -m 644 $BOT_DIR/deploy/$KALSHI_SERVICE_NAME /etc/systemd/system/$KALSHI_SERVICE_NAME && sudo install -m 644 $BOT_DIR/deploy/$KALSHI_TIMER_NAME /etc/systemd/system/$KALSHI_TIMER_NAME && sudo systemctl daemon-reload && sudo systemctl enable $KALSHI_TIMER_NAME && sudo systemctl start $KALSHI_TIMER_NAME && echo 'Kalshi timer active:' && sudo systemctl list-timers $KALSHI_TIMER_NAME --no-pager"
+else
+    echo
+    echo "  Skipping Kalshi weather trader (--kalshi not set)."
+fi
+
+if [[ "$ENABLE_LOOP" == "true" ]]; then
+    echo
+    echo "  Installing/enabling improvement loop timer..."
+    "${SSH_CMD[@]}" "$VPS" "sudo install -m 644 $BOT_DIR/deploy/$LOOP_SERVICE_NAME /etc/systemd/system/$LOOP_SERVICE_NAME && sudo install -m 644 $BOT_DIR/deploy/$LOOP_TIMER_NAME /etc/systemd/system/$LOOP_TIMER_NAME && sudo systemctl daemon-reload && sudo systemctl enable $LOOP_TIMER_NAME && sudo systemctl start $LOOP_TIMER_NAME && echo 'Improvement loop timer active:' && sudo systemctl list-timers $LOOP_TIMER_NAME --no-pager"
+else
+    echo
+    echo "  Skipping improvement loop timer (--loop not set)."
+fi
+
 echo
 echo "========================================"
 echo "  Deploy complete."
 echo "========================================"
 echo
 echo "Examples:"
+echo "  ./scripts/deploy.sh --clean-env --profile maker_velocity_live --restart --btc5 --kalshi --loop"
 echo "  ./scripts/deploy.sh --clean-env --profile live_aggressive --restart"
 echo "  ./scripts/deploy.sh --clean-env --profile paper_aggressive --restart"
-echo "  ./scripts/deploy.sh --clean-env --profile maker_velocity_live --restart --btc5"
 echo "  ./scripts/deploy.sh"

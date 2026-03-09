@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Live maker-velocity full deployment. All capital available across fast-resolving markets. Crypto unlocked (priority 3), politics/weather/economic enabled. $10 per position, uncapped daily loss, 0.25 Kelly, 30 max positions. 24h max resolution for velocity. LLM signals ON, wallet-flow ON, VPIN defense active. A6/B1 disabled. Purpose: deploy all capital, collect data, see what happens.",
+  "description": "Live maker-velocity fast-turn deployment. JJ is restricted to sub-1h crypto markets, with wallet-flow and LMSR enabled but the dedicated BTC 5-minute surface reserved for the standalone btc_5min_maker service. $10 per position, uncapped daily loss, 0.25 Kelly, 30 max positions, VPIN defense active, A6/B1 disabled.",
   "mode": {
     "execution_mode": "shadow",
     "paper_trading": false,
@@ -8,11 +8,11 @@
     "launch_gate": "none"
   },
   "feature_flags": {
-    "enable_llm_signals": true,
+    "enable_llm_signals": false,
     "enable_wallet_flow": true,
     "enable_lmsr": true,
     "enable_cross_platform_arb": false,
-    "fast_flow_only": false,
+    "fast_flow_only": true,
     "enable_a6_shadow": false,
     "enable_a6_live": false,
     "enable_b1_shadow": false,
@@ -32,17 +32,17 @@
     "hourly_notional_budget_usd": 227.38
   },
   "market_filters": {
-    "max_resolution_hours": 24.0,
+    "max_resolution_hours": 1.0,
     "min_category_priority": 1,
     "category_priorities": {
-      "politics": 3,
-      "weather": 3,
-      "economic": 2,
+      "politics": 0,
+      "weather": 0,
+      "economic": 0,
       "crypto": 3,
       "sports": 0,
-      "financial_speculation": 1,
-      "geopolitical": 1,
-      "fed_rates": 1,
+      "financial_speculation": 0,
+      "geopolitical": 0,
+      "fed_rates": 0,
       "unknown": 0
     }
   },

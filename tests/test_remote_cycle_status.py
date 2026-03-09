@@ -20,6 +20,241 @@ from scripts.write_remote_cycle_status import (  # noqa: E402
 )
 
 
+def test_build_remote_cycle_status_includes_polymarket_wallet_observation(
+    tmp_path: Path,
+    monkeypatch,
+):
+    _write_base_remote_state(tmp_path)
+    _write_json(
+        tmp_path / "reports" / "remote_service_status.json",
+        {
+            "checked_at": "2026-03-08T09:00:00+00:00",
+            "status": "running",
+            "systemctl_state": "active",
+            "detail": "active",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "root_test_status.json",
+        {
+            "checked_at": "2026-03-08T09:01:00+00:00",
+            "command": "make test",
+            "status": "passing",
+            "summary": "12 passed",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "arb_empirical_snapshot.json",
+        {
+            "gating_metrics": {
+                "all_gates_pass": False,
+                "fill_probability_gate": "insufficient_data",
+                "half_life_gate": "fail",
+                "half_life_seconds": 0.0,
+                "settlement_path_gate": "untested",
+            },
+            "b1": {},
+        },
+    )
+
+    monkeypatch.setattr(
+        "scripts.write_remote_cycle_status._load_polymarket_wallet_state",
+        lambda root: {
+            "status": "ok",
+            "checked_at": "2026-03-09T12:31:00+00:00",
+            "maker_address": "0xabc",
+            "signature_type": 1,
+            "free_collateral_usd": 12.34,
+            "reserved_order_usd": 5.67,
+            "live_orders_count": 2,
+            "live_orders": [],
+            "open_positions_count": 3,
+            "positions_initial_value_usd": 22.22,
+            "positions_current_value_usd": 25.5,
+            "positions_unrealized_pnl_usd": 3.28,
+            "closed_positions_count": 4,
+            "closed_positions_realized_pnl_usd": -1.49,
+            "total_wallet_value_usd": 43.51,
+            "warnings": [],
+        },
+    )
+
+    status = build_remote_cycle_status(tmp_path)
+
+    assert status["polymarket_wallet"]["status"] == "ok"
+    assert status["capital"]["polymarket_actual_deployable_usd"] == 12.34
+    assert status["capital"]["polymarket_observed_deployed_usd"] == 27.89
+    assert status["capital"]["polymarket_observed_total_usd"] == 43.51
+    assert status["capital"]["polymarket_tracked_vs_observed_delta_usd"] == 204.0
+    assert status["runtime"]["polymarket_live_orders"] == 2
+    assert status["runtime"]["polymarket_open_positions"] == 3
+    assert status["runtime"]["polymarket_closed_positions_realized_pnl_usd"] == -1.49
+
+
+def test_build_remote_cycle_status_includes_btc5_maker_observation(tmp_path: Path):
+    _write_base_remote_state(tmp_path)
+    _write_json(
+        tmp_path / "reports" / "remote_service_status.json",
+        {
+            "checked_at": "2026-03-08T09:00:00+00:00",
+            "status": "running",
+            "systemctl_state": "active",
+            "detail": "active",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "root_test_status.json",
+        {
+            "checked_at": "2026-03-08T09:01:00+00:00",
+            "command": "make test",
+            "status": "passing",
+            "summary": "12 passed",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "arb_empirical_snapshot.json",
+        {
+            "gating_metrics": {
+                "all_gates_pass": False,
+                "fill_probability_gate": "insufficient_data",
+                "half_life_gate": "fail",
+                "half_life_seconds": 0.0,
+                "settlement_path_gate": "untested",
+            },
+            "b1": {},
+        },
+    )
+    _write_btc5_db(
+        tmp_path / "data" / "btc_5min_maker.db",
+        [
+            {
+                "window_start_ts": 1773061200,
+                "window_end_ts": 1773061500,
+                "slug": "btc-updown-5m-1773061200",
+                "decision_ts": 1773061499,
+                "direction": "UP",
+                "order_price": 0.49,
+                "trade_size_usd": 5.0,
+                "order_status": "live_filled",
+                "filled": 1,
+                "pnl_usd": 5.2071,
+                "created_at": "2026-03-09T13:04:59+00:00",
+                "updated_at": "2026-03-09T13:05:00+00:00",
+            },
+            {
+                "window_start_ts": 1773062400,
+                "window_end_ts": 1773062700,
+                "slug": "btc-updown-5m-1773062400",
+                "decision_ts": 1773062699,
+                "direction": "UP",
+                "order_price": 0.50,
+                "trade_size_usd": 5.0,
+                "order_status": "live_filled",
+                "filled": 1,
+                "pnl_usd": -5.0,
+                "created_at": "2026-03-09T13:24:59+00:00",
+                "updated_at": "2026-03-09T13:25:00+00:00",
+            },
+        ],
+    )
+
+    status = build_remote_cycle_status(tmp_path)
+
+    assert status["btc_5min_maker"]["status"] == "ok"
+    assert status["btc_5min_maker"]["live_filled_rows"] == 2
+    assert status["btc_5min_maker"]["live_filled_pnl_usd"] == 0.2071
+    assert status["runtime"]["btc5_live_filled_rows"] == 2
+    assert status["runtime"]["btc5_latest_order_status"] == "live_filled"
+    assert status["runtime"]["btc5_latest_trade_pnl_usd"] == -5.0
+
+
+def test_build_remote_cycle_status_prefers_remote_btc5_probe(tmp_path: Path, monkeypatch):
+    _write_base_remote_state(tmp_path)
+    _write_text(
+        tmp_path / ".env",
+        "\n".join(
+            [
+                "LIGHTSAIL_KEY=/tmp/test-key",
+                "VPS_IP=1.2.3.4",
+                "",
+            ]
+        ),
+    )
+    _write_json(
+        tmp_path / "reports" / "remote_service_status.json",
+        {
+            "checked_at": "2026-03-08T09:00:00+00:00",
+            "status": "running",
+            "systemctl_state": "active",
+            "detail": "active",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "root_test_status.json",
+        {
+            "checked_at": "2026-03-08T09:01:00+00:00",
+            "command": "make test",
+            "status": "passing",
+            "summary": "12 passed",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "arb_empirical_snapshot.json",
+        {
+            "gating_metrics": {
+                "all_gates_pass": False,
+                "fill_probability_gate": "insufficient_data",
+                "half_life_gate": "fail",
+                "half_life_seconds": 0.0,
+                "settlement_path_gate": "untested",
+            },
+            "b1": {},
+        },
+    )
+
+    monkeypatch.setattr(
+        "scripts.write_remote_cycle_status._load_polymarket_wallet_state",
+        lambda root: {"status": "unavailable", "checked_at": "2026-03-09T13:31:00+00:00"},
+    )
+
+    def fake_run(*args, **kwargs):
+        command = args[0]
+        if command[0] == "ssh":
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "status": "ok",
+                        "checked_at": "2026-03-09T13:31:16+00:00",
+                        "db_path": "/remote/data/btc_5min_maker.db",
+                        "total_rows": 17,
+                        "live_filled_rows": 6,
+                        "live_filled_pnl_usd": 0.0539,
+                        "avg_live_filled_pnl_usd": 0.009,
+                        "latest_live_filled_at": "2026-03-09T13:30:00+00:00",
+                        "latest_trade": {
+                            "window_start_ts": 1773062700,
+                            "direction": "DOWN",
+                            "order_status": "live_filled",
+                            "pnl_usd": -5.0029,
+                        },
+                        "recent_live_filled": [],
+                    }
+                ),
+                stderr="",
+            )
+        raise AssertionError(f"unexpected subprocess call: {command}")
+
+    monkeypatch.setattr("scripts.write_remote_cycle_status.subprocess.run", fake_run)
+
+    status = build_remote_cycle_status(tmp_path)
+
+    assert status["btc_5min_maker"]["source"] == "remote_sqlite_probe"
+    assert status["runtime"]["btc5_live_filled_rows"] == 6
+    assert status["runtime"]["btc5_live_filled_pnl_usd"] == 0.0539
+    assert status["runtime"]["btc5_latest_trade_pnl_usd"] == -5.0029
+
+
 def test_build_remote_cycle_status_reports_launch_blockers(tmp_path: Path):
     _write_base_remote_state(tmp_path)
     _write_json(
@@ -83,6 +318,109 @@ def test_build_remote_cycle_status_reports_launch_blockers(tmp_path: Path):
     assert status["launch"]["next_operator_action"].startswith(
         "Merge the root regression repair"
     )
+
+
+def test_build_remote_cycle_status_falls_back_to_local_systemctl_and_runtime_truth(
+    tmp_path: Path,
+    monkeypatch,
+):
+    _write_base_remote_state(tmp_path)
+    _write_json(
+        tmp_path / "reports" / "arb_empirical_snapshot.json",
+        {
+            "gating_metrics": {
+                "all_gates_pass": False,
+                "fill_probability_gate": "insufficient_data",
+                "half_life_gate": "fail",
+                "half_life_seconds": 0.0,
+                "settlement_path_gate": "untested",
+            },
+            "b1": {},
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "runtime_truth_20260309T130303Z.json",
+        {
+            "generated_at": "2026-03-09T13:03:03+00:00",
+            "service": {
+                "status": "running",
+                "systemctl_state": "active",
+                "checked_at": "2026-03-09T13:02:00+00:00",
+            },
+            "verification": {
+                "status": "passing",
+                "summary": "1096 passed in 22.67s; 25 passed in 3.59s",
+                "checked_at": "2026-03-09T13:01:00+00:00",
+                "command": "make test",
+            },
+        },
+    )
+
+    def fake_run(*args, **kwargs):
+        command = args[0]
+        if command[:2] == ["systemctl", "show"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout="ActiveState=active\nSubState=running\n",
+                stderr="",
+            )
+        raise AssertionError(f"unexpected subprocess call: {command}")
+
+    monkeypatch.setattr("scripts.write_remote_cycle_status.subprocess.run", fake_run)
+
+    status = build_remote_cycle_status(tmp_path)
+
+    assert status["service"]["status"] == "running"
+    assert status["service"]["source"] == "local_systemctl"
+    assert status["root_tests"]["status"] == "passing"
+    assert (
+        status["root_tests"]["source"]
+        == "reports/runtime_truth_20260309T130303Z.json"
+    )
+
+
+def test_build_remote_cycle_status_falls_back_to_pipeline_verification(tmp_path: Path):
+    _write_base_remote_state(tmp_path)
+    _write_json(
+        tmp_path / "reports" / "remote_service_status.json",
+        {
+            "checked_at": "2026-03-09T13:02:00+00:00",
+            "status": "running",
+            "systemctl_state": "active",
+            "detail": "active",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "arb_empirical_snapshot.json",
+        {
+            "gating_metrics": {
+                "all_gates_pass": False,
+                "fill_probability_gate": "insufficient_data",
+                "half_life_gate": "fail",
+                "half_life_seconds": 0.0,
+                "settlement_path_gate": "untested",
+            },
+            "b1": {},
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "pipeline_20260309T131500Z.json",
+        {
+            "report_generated_at": "2026-03-09T13:15:00+00:00",
+            "verification": {
+                "integrated_entrypoint_status": "passed",
+                "make_test_status": "passed",
+                "root_suite": "1096 passed in 22.67s",
+                "jj_live_import_boundary_suite": "25 passed in 3.59s",
+            },
+        },
+    )
+
+    status = build_remote_cycle_status(tmp_path)
+
+    assert status["root_tests"]["status"] == "passing"
+    assert status["root_tests"]["summary"] == "1096 passed in 22.67s; 25 passed in 3.59s"
+    assert status["root_tests"]["source"] == "reports/pipeline_20260309T131500Z.json"
 
 
 def test_write_remote_cycle_status_refreshes_root_test_snapshot(
@@ -167,7 +505,10 @@ def test_write_remote_cycle_status_refreshes_root_test_snapshot(
     assert payload["structural_gates"]["b1"]["status"] == "ready_for_shadow"
 
 
-def test_write_remote_cycle_status_emits_runtime_truth_and_public_snapshot(tmp_path: Path):
+def test_write_remote_cycle_status_emits_runtime_truth_and_public_snapshot(
+    tmp_path: Path,
+    monkeypatch,
+):
     _write_base_remote_state(tmp_path)
     _write_json(
         tmp_path / "reports" / "remote_service_status.json",
@@ -213,6 +554,25 @@ def test_write_remote_cycle_status_emits_runtime_truth_and_public_snapshot(tmp_p
         },
     )
     (tmp_path / "data" / "wallet_scores.db").write_bytes(b"sqlite-stub")
+    _write_btc5_db(
+        tmp_path / "data" / "btc_5min_maker.db",
+        [
+            {
+                "window_start_ts": 1773061800,
+                "window_end_ts": 1773062100,
+                "slug": "btc-updown-5m-1773061800",
+                "decision_ts": 1773062099,
+                "direction": "UP",
+                "order_price": 0.48,
+                "trade_size_usd": 5.0016,
+                "order_status": "live_filled",
+                "filled": 1,
+                "pnl_usd": 5.4184,
+                "created_at": "2026-03-09T13:14:59+00:00",
+                "updated_at": "2026-03-09T13:15:00+00:00",
+            }
+        ],
+    )
     _write_json(
         tmp_path / "reports" / "edge_scan_20260309T002925Z.json",
         {
@@ -240,6 +600,28 @@ def test_write_remote_cycle_status_emits_runtime_truth_and_public_snapshot(tmp_p
         },
     )
 
+    monkeypatch.setattr(
+        "scripts.write_remote_cycle_status._load_polymarket_wallet_state",
+        lambda root: {
+            "status": "ok",
+            "checked_at": "2026-03-09T00:30:00+00:00",
+            "maker_address": "0xabc",
+            "signature_type": 1,
+            "free_collateral_usd": 0.0,
+            "reserved_order_usd": 11.83,
+            "live_orders_count": 2,
+            "live_orders": [{"id": "o1"}, {"id": "o2"}],
+            "open_positions_count": 5,
+            "positions_initial_value_usd": 46.16,
+            "positions_current_value_usd": 48.84,
+            "positions_unrealized_pnl_usd": -0.33,
+            "closed_positions_count": 2,
+            "closed_positions_realized_pnl_usd": -1.49,
+            "total_wallet_value_usd": 60.67,
+            "warnings": ["closed_positions_fetch_failed:test"],
+        },
+    )
+
     written = write_remote_cycle_status(tmp_path)
 
     runtime_truth = json.loads((tmp_path / "reports" / "runtime_truth_latest.json").read_text())
@@ -262,6 +644,10 @@ def test_write_remote_cycle_status_emits_runtime_truth_and_public_snapshot(tmp_p
     assert runtime_truth["verification"]["summary"] == "849 passed in 18.53s; 22 passed in 3.49s"
     assert runtime_truth["latest_edge_scan"]["recommended_action"] == "human_review_required"
     assert runtime_truth["latest_pipeline"]["recommendation"] == "REJECT ALL"
+    assert runtime_truth["polymarket_wallet"]["maker_address"] == "0xabc"
+    assert runtime_truth["btc_5min_maker"]["live_filled_rows"] == 1
+    assert runtime_truth["reconciliation"]["btc_5min_maker"]["live_filled_pnl_usd"] == 5.4184
+    assert runtime_truth["reconciliation"]["polymarket_wallet"]["free_collateral_usd"] == 0.0
     assert runtime_truth["state_improvement"]["hourly_budget_progress"]["window_minutes"] == 60
     assert runtime_truth["state_improvement"]["per_venue_candidate_counts"]["polymarket"] >= 0
     assert isinstance(runtime_truth["state_improvement"]["reject_reasons"], list)
@@ -269,6 +655,11 @@ def test_write_remote_cycle_status_emits_runtime_truth_and_public_snapshot(tmp_p
     assert public_snapshot["snapshot_source"] == "reports/runtime_truth_latest.json"
     assert public_snapshot["service"]["status"] == "running"
     assert "host" not in public_snapshot["service"]
+    assert public_snapshot["capital"]["polymarket_actual_deployable_usd"] == 0.0
+    assert public_snapshot["polymarket_wallet"]["total_wallet_value_usd"] == 60.67
+    assert public_snapshot["btc_5min_maker"]["live_filled_pnl_usd"] == 5.4184
+    assert public_snapshot["runtime"]["btc5_live_filled_rows"] == 1
+    assert "maker_address" not in public_snapshot["polymarket_wallet"]
     assert public_snapshot["state_improvement"]["operator_digest"]
     assert any(
         "jj-live.service is running while launch posture remains blocked" in headline
@@ -641,7 +1032,10 @@ def test_write_remote_cycle_status_overwrites_stale_remote_summary_artifact(tmp_
     assert runtime_truth["wallet_flow"]["ready"] is True
 
 
-def test_render_remote_cycle_status_markdown_includes_operator_truth(tmp_path: Path):
+def test_render_remote_cycle_status_markdown_includes_operator_truth(
+    tmp_path: Path,
+    monkeypatch,
+):
     _write_base_remote_state(tmp_path)
     _write_json(
         tmp_path / "reports" / "remote_service_status.json",
@@ -681,12 +1075,37 @@ def test_render_remote_cycle_status_markdown_includes_operator_truth(tmp_path: P
         ],
     )
 
+    monkeypatch.setattr(
+        "scripts.write_remote_cycle_status._load_polymarket_wallet_state",
+        lambda root: {
+            "status": "ok",
+            "checked_at": "2026-03-09T12:31:00+00:00",
+            "maker_address": "0xabc",
+            "signature_type": 1,
+            "free_collateral_usd": 0.0,
+            "reserved_order_usd": 0.0,
+            "live_orders_count": 0,
+            "live_orders": [],
+            "open_positions_count": 1,
+            "positions_initial_value_usd": 5.0,
+            "positions_current_value_usd": 4.5,
+            "positions_unrealized_pnl_usd": -0.5,
+            "closed_positions_count": 1,
+            "closed_positions_realized_pnl_usd": -1.49,
+            "total_wallet_value_usd": 4.5,
+            "warnings": ["positions_fetch_failed:test"],
+        },
+    )
+
     markdown = render_remote_cycle_status_markdown(build_remote_cycle_status(tmp_path))
 
     assert "- Service: stopped (inactive)" in markdown
     assert "- Root regression suite: failing" in markdown
     assert "- Wallet-flow bootstrap: not_ready" in markdown
     assert "- Closed trades: 1" in markdown
+    assert "- Polymarket actual deployable USD: $0.00" in markdown
+    assert "- Wallet status: ok" in markdown
+    assert "- Realized PnL: $-1.49" in markdown
     assert "- A-6 gate: blocked" in markdown
     assert "- B-1 gate: blocked" in markdown
     assert "- Live launch blocked: yes" in markdown
@@ -904,6 +1323,78 @@ def _write_trade_db(path: Path, rows: list[dict[str, object]]) -> None:
     conn.executemany(
         "INSERT INTO trades (market_id, outcome) VALUES (?, ?)",
         [(row["market_id"], row["outcome"]) for row in rows],
+    )
+    conn.commit()
+    conn.close()
+
+
+def _write_btc5_db(path: Path, rows: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.execute(
+        """
+        CREATE TABLE window_trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            window_start_ts INTEGER NOT NULL UNIQUE,
+            window_end_ts INTEGER NOT NULL,
+            slug TEXT NOT NULL,
+            decision_ts INTEGER NOT NULL,
+            direction TEXT,
+            open_price REAL,
+            current_price REAL,
+            delta REAL,
+            token_id TEXT,
+            best_bid REAL,
+            best_ask REAL,
+            order_price REAL,
+            trade_size_usd REAL,
+            shares REAL,
+            order_id TEXT,
+            order_status TEXT NOT NULL,
+            filled INTEGER,
+            reason TEXT,
+            resolved_side TEXT,
+            won INTEGER,
+            pnl_usd REAL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.executemany(
+        """
+        INSERT INTO window_trades (
+            window_start_ts,
+            window_end_ts,
+            slug,
+            decision_ts,
+            direction,
+            order_price,
+            trade_size_usd,
+            order_status,
+            filled,
+            pnl_usd,
+            created_at,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                row["window_start_ts"],
+                row["window_end_ts"],
+                row["slug"],
+                row["decision_ts"],
+                row.get("direction"),
+                row.get("order_price"),
+                row.get("trade_size_usd"),
+                row["order_status"],
+                row.get("filled"),
+                row.get("pnl_usd"),
+                row["created_at"],
+                row["updated_at"],
+            )
+            for row in rows
+        ],
     )
     conn.commit()
     conn.close()

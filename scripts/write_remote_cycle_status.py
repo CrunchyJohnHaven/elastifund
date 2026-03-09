@@ -5,13 +5,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shlex
 import sqlite3
 import subprocess
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -39,6 +44,7 @@ DEFAULT_RUNTIME_PROFILE_EFFECTIVE_PATH = Path("reports/runtime_profile_effective
 DEFAULT_WALLET_SCORES_PATH = Path("data/smart_wallets.json")
 DEFAULT_WALLET_DB_PATH = Path("data/wallet_scores.db")
 DEFAULT_TRADES_DB_PATH = Path("data/jj_trades.db")
+DEFAULT_BTC5_DB_PATH = Path("data/btc_5min_maker.db")
 DEFAULT_LAUNCH_CHECKLIST_PATH = Path("docs/ops/TRADING_LAUNCH_CHECKLIST.md")
 DEFAULT_ROOT_TEST_COMMAND = ("make", "test")
 RESULT_SUMMARY_RE = re.compile(
@@ -65,6 +71,550 @@ RUNTIME_ENV_KEYS = (
     "ENABLE_CROSS_PLATFORM_ARB",
     "JJ_FAST_FLOW_ONLY",
 )
+REMOTE_BOT_DIR = "/home/ubuntu/polymarket-trading-bot"
+REMOTE_PYTHONPATH = (
+    f"{REMOTE_BOT_DIR}:{REMOTE_BOT_DIR}/bot:{REMOTE_BOT_DIR}/polymarket-bot"
+)
+WALLET_PROBE_SCRIPT = """import json
+import os
+from py_clob_client.client import ClobClient
+from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+
+pk = os.environ.get("POLY_PRIVATE_KEY") or os.environ.get("PRIVATE_KEY") or os.environ.get("POLYMARKET_PK") or ""
+maker = os.environ.get("POLY_SAFE_ADDRESS") or os.environ.get("POLYMARKET_FUNDER") or ""
+sig = int(os.environ.get("JJ_CLOB_SIGNATURE_TYPE", "1"))
+if pk and not pk.startswith("0x"):
+    pk = "0x" + pk
+
+client = ClobClient(
+    host="https://clob.polymarket.com",
+    key=pk,
+    chain_id=137,
+    signature_type=sig,
+    funder=maker,
+)
+creds = client.create_or_derive_api_creds()
+client.set_api_creds(creds)
+orders = client.get_orders()
+live_orders = []
+for order in orders if isinstance(orders, list) else []:
+    if str(order.get("status") or "").upper() != "LIVE":
+        continue
+    original_size = float(order.get("original_size") or 0.0)
+    size_matched = float(order.get("size_matched") or 0.0)
+    price = float(order.get("price") or 0.0)
+    remaining_shares = max(0.0, original_size - size_matched)
+    live_orders.append(
+        {
+            "id": order.get("id"),
+            "market": order.get("market"),
+            "asset_id": order.get("asset_id"),
+            "outcome": order.get("outcome"),
+            "price": price,
+            "original_size": original_size,
+            "size_matched": size_matched,
+            "remaining_shares": remaining_shares,
+            "reserved_usd": round(remaining_shares * price, 4),
+        }
+    )
+
+balance = client.get_balance_allowance(
+    BalanceAllowanceParams(asset_type=AssetType.COLLATERAL, signature_type=sig)
+)
+print(
+    json.dumps(
+        {
+            "maker_address": maker,
+            "signature_type": sig,
+            "free_collateral_usd": balance.get("balance"),
+            "live_orders": live_orders,
+            "reserved_order_usd": round(sum(item["reserved_usd"] for item in live_orders), 4),
+        },
+        sort_keys=True,
+    )
+)"""
+BTC5_DB_PROBE_SCRIPT = """import json
+import sqlite3
+from pathlib import Path
+
+db_path = Path("data/btc_5min_maker.db")
+checked_at = "__CHECKED_AT__"
+if not db_path.exists():
+    print(json.dumps({"status": "unavailable", "checked_at": checked_at, "reason": "missing_data/btc_5min_maker.db"}))
+    raise SystemExit(0)
+
+conn = sqlite3.connect(db_path)
+conn.row_factory = sqlite3.Row
+summary_row = conn.execute(
+    \"\"\"
+    SELECT
+        COUNT(*) AS total_rows,
+        SUM(CASE WHEN order_status = 'live_filled' THEN 1 ELSE 0 END) AS live_filled_rows,
+        SUM(CASE WHEN order_status = 'live_filled' THEN pnl_usd ELSE 0 END) AS live_filled_pnl_usd,
+        AVG(CASE WHEN order_status = 'live_filled' THEN pnl_usd END) AS avg_live_filled_pnl_usd,
+        MAX(CASE WHEN order_status = 'live_filled' THEN updated_at END) AS latest_live_filled_at
+    FROM window_trades
+    \"\"\"
+).fetchone()
+latest_row = conn.execute(
+    \"\"\"
+    SELECT
+        id,
+        window_start_ts,
+        slug,
+        direction,
+        order_status,
+        order_price,
+        trade_size_usd,
+        pnl_usd,
+        created_at,
+        updated_at
+    FROM window_trades
+    ORDER BY id DESC
+    LIMIT 1
+    \"\"\"
+).fetchone()
+recent_live_filled = conn.execute(
+    \"\"\"
+    SELECT
+        id,
+        window_start_ts,
+        slug,
+        direction,
+        order_price,
+        trade_size_usd,
+        pnl_usd,
+        updated_at
+    FROM window_trades
+    WHERE order_status = 'live_filled'
+    ORDER BY id DESC
+    LIMIT 5
+    \"\"\"
+).fetchall()
+conn.close()
+
+def f(value):
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+print(json.dumps({
+    "status": "ok",
+    "checked_at": checked_at,
+    "db_path": str(db_path.resolve()),
+    "total_rows": int(summary_row["total_rows"] or 0),
+    "live_filled_rows": int(summary_row["live_filled_rows"] or 0),
+    "live_filled_pnl_usd": round(f(summary_row["live_filled_pnl_usd"]), 4),
+    "avg_live_filled_pnl_usd": round(f(summary_row["avg_live_filled_pnl_usd"]), 4),
+    "latest_live_filled_at": summary_row["latest_live_filled_at"],
+    "latest_trade": dict(latest_row) if latest_row is not None else {},
+    "recent_live_filled": [dict(row) for row in recent_live_filled],
+}, sort_keys=True))
+"""
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _fetch_json_url(url: str, *, timeout_seconds: int = 20) -> Any:
+    request = urllib.request.Request(url, headers={"User-Agent": "elastifund-runtime-truth/1.0"})
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _micro_usdc_to_usd(value: Any) -> float:
+    parsed = _float_or_none(value)
+    if parsed is None:
+        return 0.0
+    return round(parsed / 1_000_000.0, 6)
+
+
+def _load_polymarket_wallet_state(root: Path) -> dict[str, Any]:
+    env = _parse_env_file(root / DEFAULT_ENV_PATH)
+    ssh_key = env.get("LIGHTSAIL_KEY")
+    vps_ip = env.get("VPS_IP")
+    vps_user = env.get("VPS_USER", "ubuntu")
+    checked_at = _now_iso()
+
+    if not ssh_key or not vps_ip:
+        local_env = dict(os.environ)
+        local_env.update(env)
+        local_env["PYTHONPATH"] = str(root) + ":" + str(root / "bot") + ":" + str(root / "polymarket-bot")
+        try:
+            result = subprocess.run(
+                ["/usr/bin/python3", "-c", WALLET_PROBE_SCRIPT],
+                cwd=root,
+                env=local_env,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=90,
+            )
+        except Exception as exc:
+            return {
+                "status": "unavailable",
+                "checked_at": checked_at,
+                "reason": f"local_wallet_probe_failed:{exc}",
+            }
+    else:
+        remote_cmd = """cd __REMOTE_BOT_DIR__ && set -a && source .env >/dev/null 2>&1 && set +a && export PYTHONPATH=__REMOTE_PYTHONPATH__ && /usr/bin/python3 - <<'PY'
+__WALLET_PROBE_SCRIPT__
+PY""".replace("__REMOTE_BOT_DIR__", shlex.quote(REMOTE_BOT_DIR)).replace(
+            "__REMOTE_PYTHONPATH__",
+            shlex.quote(REMOTE_PYTHONPATH),
+        ).replace("__WALLET_PROBE_SCRIPT__", WALLET_PROBE_SCRIPT)
+
+        try:
+            result = subprocess.run(
+                [
+                    "ssh",
+                    "-i",
+                    ssh_key,
+                    "-o",
+                    "StrictHostKeyChecking=no",
+                    f"{vps_user}@{vps_ip}",
+                    remote_cmd,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=90,
+            )
+        except Exception as exc:
+            return {
+                "status": "unavailable",
+                "checked_at": checked_at,
+                "reason": f"remote_wallet_probe_failed:{exc}",
+            }
+
+    if result.returncode != 0:
+        return {
+            "status": "unavailable",
+            "checked_at": checked_at,
+            "reason": "remote_wallet_probe_failed",
+            "stderr_tail": (result.stderr or "").strip()[-300:],
+        }
+
+    try:
+        remote_payload = json.loads((result.stdout or "").strip())
+    except json.JSONDecodeError:
+        return {
+            "status": "unavailable",
+            "checked_at": checked_at,
+            "reason": "remote_wallet_probe_invalid_json",
+            "stdout_tail": (result.stdout or "").strip()[-300:],
+        }
+
+    maker_address = str(remote_payload.get("maker_address") or "").strip()
+    if not maker_address:
+        return {
+            "status": "unavailable",
+            "checked_at": checked_at,
+            "reason": "remote_wallet_probe_missing_maker_address",
+        }
+
+    warnings: list[str] = []
+    positions: list[dict[str, Any]] = []
+    closed_positions: list[dict[str, Any]] = []
+    try:
+        payload = _fetch_json_url(
+            "https://data-api.polymarket.com/positions?"
+            + urllib.parse.urlencode({"user": maker_address, "sizeThreshold": ".01"})
+        )
+        if isinstance(payload, list):
+            positions = [item for item in payload if isinstance(item, dict)]
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        warnings.append(f"positions_fetch_failed:{exc}")
+
+    try:
+        payload = _fetch_json_url(
+            "https://data-api.polymarket.com/closed-positions?"
+            + urllib.parse.urlencode({"user": maker_address, "limit": "50", "offset": "0"})
+        )
+        if isinstance(payload, list):
+            closed_positions = [item for item in payload if isinstance(item, dict)]
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        warnings.append(f"closed_positions_fetch_failed:{exc}")
+
+    initial_value = round(sum(_safe_float(item.get("initialValue"), 0.0) for item in positions), 4)
+    current_value = round(sum(_safe_float(item.get("currentValue"), 0.0) for item in positions), 4)
+    unrealized_pnl = round(sum(_safe_float(item.get("cashPnl"), 0.0) for item in positions), 4)
+    realized_pnl = round(sum(_safe_float(item.get("realizedPnl"), 0.0) for item in closed_positions), 4)
+    free_collateral = _micro_usdc_to_usd(remote_payload.get("free_collateral_usd"))
+    reserved_order_usd = round(_safe_float(remote_payload.get("reserved_order_usd"), 0.0), 4)
+
+    return {
+        "status": "ok",
+        "checked_at": checked_at,
+        "maker_address": maker_address,
+        "signature_type": remote_payload.get("signature_type"),
+        "free_collateral_usd": free_collateral,
+        "reserved_order_usd": reserved_order_usd,
+        "live_orders_count": len(remote_payload.get("live_orders") or []),
+        "live_orders": list(remote_payload.get("live_orders") or []),
+        "open_positions_count": len(positions),
+        "positions_initial_value_usd": initial_value,
+        "positions_current_value_usd": current_value,
+        "positions_unrealized_pnl_usd": unrealized_pnl,
+        "closed_positions_count": len(closed_positions),
+        "closed_positions_realized_pnl_usd": realized_pnl,
+        "total_wallet_value_usd": round(free_collateral + reserved_order_usd + current_value, 4),
+        "warnings": warnings,
+    }
+
+
+def _merge_polymarket_wallet_observation(
+    status: dict[str, Any],
+    polymarket_wallet: dict[str, Any],
+) -> None:
+    status["polymarket_wallet"] = polymarket_wallet
+
+    capital = status.setdefault("capital", {})
+    runtime = status.setdefault("runtime", {})
+    if polymarket_wallet.get("status") != "ok":
+        return
+
+    free_collateral = round(_safe_float(polymarket_wallet.get("free_collateral_usd"), 0.0), 4)
+    reserved_order_usd = round(_safe_float(polymarket_wallet.get("reserved_order_usd"), 0.0), 4)
+    positions_initial_value = round(
+        _safe_float(polymarket_wallet.get("positions_initial_value_usd"), 0.0),
+        4,
+    )
+    positions_current_value = round(
+        _safe_float(polymarket_wallet.get("positions_current_value_usd"), 0.0),
+        4,
+    )
+    positions_unrealized_pnl = round(
+        _safe_float(polymarket_wallet.get("positions_unrealized_pnl_usd"), 0.0),
+        4,
+    )
+    realized_pnl = round(
+        _safe_float(polymarket_wallet.get("closed_positions_realized_pnl_usd"), 0.0),
+        4,
+    )
+    observed_total = round(_safe_float(polymarket_wallet.get("total_wallet_value_usd"), 0.0), 4)
+    observed_deployed = round(positions_initial_value + reserved_order_usd, 4)
+    tracked_polymarket_capital = round(
+        sum(
+            _safe_float(item.get("amount_usd"), 0.0)
+            for item in capital.get("sources") or []
+            if str(item.get("account") or "").strip().lower() == "polymarket"
+        ),
+        4,
+    )
+    net_pnl = round(realized_pnl + positions_unrealized_pnl, 4)
+    accounting_expected_total = round(tracked_polymarket_capital + net_pnl, 4)
+    accounting_delta = round(observed_total - accounting_expected_total, 4)
+
+    capital.update(
+        {
+            "polymarket_tracked_capital_usd": tracked_polymarket_capital,
+            "polymarket_actual_deployable_usd": free_collateral,
+            "polymarket_reserved_order_usd": reserved_order_usd,
+            "polymarket_positions_initial_value_usd": positions_initial_value,
+            "polymarket_positions_current_value_usd": positions_current_value,
+            "polymarket_observed_deployed_usd": observed_deployed,
+            "polymarket_observed_total_usd": observed_total,
+            "polymarket_net_pnl_usd": net_pnl,
+            "polymarket_accounting_expected_total_usd": accounting_expected_total,
+            "polymarket_accounting_delta_usd": accounting_delta,
+            "polymarket_tracked_vs_observed_delta_usd": round(
+                tracked_polymarket_capital - observed_total,
+                4,
+            ),
+        }
+    )
+    runtime.update(
+        {
+            "polymarket_wallet_checked_at": polymarket_wallet.get("checked_at"),
+            "polymarket_live_orders": int(polymarket_wallet.get("live_orders_count") or 0),
+            "polymarket_open_positions": int(polymarket_wallet.get("open_positions_count") or 0),
+            "polymarket_positions_current_value_usd": positions_current_value,
+            "polymarket_positions_unrealized_pnl_usd": positions_unrealized_pnl,
+            "polymarket_closed_positions": int(
+                polymarket_wallet.get("closed_positions_count") or 0
+            ),
+            "polymarket_closed_positions_realized_pnl_usd": realized_pnl,
+            "polymarket_wallet_value_usd": observed_total,
+        }
+    )
+
+
+def _load_btc5_maker_state(root: Path) -> dict[str, Any]:
+    env = _parse_env_file(root / DEFAULT_ENV_PATH)
+    ssh_key = env.get("LIGHTSAIL_KEY")
+    vps_ip = env.get("VPS_IP")
+    vps_user = env.get("VPS_USER", "ubuntu")
+    checked_at = _now_iso()
+
+    if ssh_key and vps_ip:
+        remote_cmd = """cd __REMOTE_BOT_DIR__ && /usr/bin/python3 - <<'PY'
+__BTC5_DB_PROBE_SCRIPT__
+PY""".replace("__REMOTE_BOT_DIR__", shlex.quote(REMOTE_BOT_DIR)).replace(
+            "__BTC5_DB_PROBE_SCRIPT__",
+            BTC5_DB_PROBE_SCRIPT.replace("__CHECKED_AT__", checked_at),
+        )
+        try:
+            result = subprocess.run(
+                [
+                    "ssh",
+                    "-i",
+                    ssh_key,
+                    "-o",
+                    "StrictHostKeyChecking=no",
+                    f"{vps_user}@{vps_ip}",
+                    remote_cmd,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                payload = json.loads(result.stdout.strip() or "{}")
+                if isinstance(payload, dict):
+                    payload.setdefault("source", "remote_sqlite_probe")
+                    return payload
+        except Exception:
+            pass
+
+    return _load_btc5_maker_state_from_db(root / DEFAULT_BTC5_DB_PATH, checked_at=checked_at)
+
+
+def _load_btc5_maker_state_from_db(
+    db_path: Path,
+    *,
+    checked_at: str,
+) -> dict[str, Any]:
+    if not db_path.exists():
+        return {
+            "status": "unavailable",
+            "checked_at": checked_at,
+            "reason": "missing_data/btc_5min_maker.db",
+        }
+
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        summary_row = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS total_rows,
+                SUM(CASE WHEN order_status = 'live_filled' THEN 1 ELSE 0 END) AS live_filled_rows,
+                SUM(CASE WHEN order_status = 'live_filled' THEN pnl_usd ELSE 0 END) AS live_filled_pnl_usd,
+                AVG(CASE WHEN order_status = 'live_filled' THEN pnl_usd END) AS avg_live_filled_pnl_usd,
+                MAX(CASE WHEN order_status = 'live_filled' THEN updated_at END) AS latest_live_filled_at
+            FROM window_trades
+            """
+        ).fetchone()
+        latest_row = conn.execute(
+            """
+            SELECT
+                id,
+                window_start_ts,
+                slug,
+                direction,
+                order_status,
+                order_price,
+                trade_size_usd,
+                pnl_usd,
+                created_at,
+                updated_at
+            FROM window_trades
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        recent_live_filled = conn.execute(
+            """
+            SELECT
+                id,
+                window_start_ts,
+                slug,
+                direction,
+                order_price,
+                trade_size_usd,
+                pnl_usd,
+                updated_at
+            FROM window_trades
+            WHERE order_status = 'live_filled'
+            ORDER BY id DESC
+            LIMIT 5
+            """
+        ).fetchall()
+    except sqlite3.DatabaseError as exc:
+        return {
+            "status": "unavailable",
+            "checked_at": checked_at,
+            "reason": f"btc5_db_error:{exc}",
+        }
+    finally:
+        try:
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
+
+    latest_summary = dict(latest_row) if latest_row is not None else {}
+    recent_rows = [dict(row) for row in recent_live_filled]
+    return {
+        "status": "ok",
+        "checked_at": checked_at,
+        "db_path": str(db_path),
+        "source": "local_sqlite_db",
+        "total_rows": int((summary_row["total_rows"] or 0) if summary_row is not None else 0),
+        "live_filled_rows": int(
+            (summary_row["live_filled_rows"] or 0) if summary_row is not None else 0
+        ),
+        "live_filled_pnl_usd": round(
+            _safe_float(summary_row["live_filled_pnl_usd"] if summary_row is not None else 0.0),
+            4,
+        ),
+        "avg_live_filled_pnl_usd": round(
+            _safe_float(
+                summary_row["avg_live_filled_pnl_usd"] if summary_row is not None else 0.0
+            ),
+            4,
+        ),
+        "latest_live_filled_at": (
+            summary_row["latest_live_filled_at"] if summary_row is not None else None
+        ),
+        "latest_trade": latest_summary,
+        "recent_live_filled": recent_rows,
+    }
+
+
+def _merge_btc5_maker_observation(
+    status: dict[str, Any],
+    btc5_maker: dict[str, Any],
+) -> None:
+    status["btc_5min_maker"] = btc5_maker
+    if btc5_maker.get("status") != "ok":
+        return
+
+    runtime = status.setdefault("runtime", {})
+    latest_trade = btc5_maker.get("latest_trade") or {}
+    runtime.update(
+        {
+            "btc5_checked_at": btc5_maker.get("checked_at"),
+            "btc5_total_rows": int(btc5_maker.get("total_rows") or 0),
+            "btc5_live_filled_rows": int(btc5_maker.get("live_filled_rows") or 0),
+            "btc5_live_filled_pnl_usd": round(
+                _safe_float(btc5_maker.get("live_filled_pnl_usd"), 0.0),
+                4,
+            ),
+            "btc5_avg_live_filled_pnl_usd": round(
+                _safe_float(btc5_maker.get("avg_live_filled_pnl_usd"), 0.0),
+                4,
+            ),
+            "btc5_latest_order_status": latest_trade.get("order_status"),
+            "btc5_latest_window_start_ts": _int_or_none(latest_trade.get("window_start_ts")),
+            "btc5_latest_trade_pnl_usd": _float_or_none(latest_trade.get("pnl_usd")),
+        }
+    )
 
 
 def build_remote_cycle_status(
@@ -94,6 +644,10 @@ def build_remote_cycle_status(
         _resolve_path(repo_root, root_test_status_path or DEFAULT_ROOT_TEST_STATUS_PATH)
     )
     wallet_flow = _load_wallet_flow_status(repo_root)
+    polymarket_wallet = _load_polymarket_wallet_state(repo_root)
+    btc5_maker = _load_btc5_maker_state(repo_root)
+    _merge_polymarket_wallet_observation(status, polymarket_wallet)
+    _merge_btc5_maker_observation(status, btc5_maker)
 
     arb_payload = _load_json(
         _resolve_path(repo_root, arb_status_path or DEFAULT_ARB_STATUS_PATH),
@@ -121,6 +675,8 @@ def build_remote_cycle_status(
     status["service"] = service
     status["root_tests"] = root_tests
     status["wallet_flow"] = wallet_flow
+    status["polymarket_wallet"] = polymarket_wallet
+    status["btc_5min_maker"] = btc5_maker
     status["structural_gates"] = {"a6": a6_gate, "b1": b1_gate}
     status["launch"] = launch
     status["runtime_truth"] = runtime_truth
@@ -154,6 +710,8 @@ def render_remote_cycle_status_markdown(status: dict[str, Any]) -> str:
     service = status["service"]
     root_tests = status["root_tests"]
     wallet_flow = status["wallet_flow"]
+    polymarket_wallet = status.get("polymarket_wallet") or {}
+    btc5_maker = status.get("btc_5min_maker") or {}
     gates = status["structural_gates"]
     launch = status["launch"]
     truth = status["runtime_truth"]
@@ -189,6 +747,18 @@ def render_remote_cycle_status_markdown(status: dict[str, Any]) -> str:
             f"- Capital currently deployed: {_format_money(capital['deployed_capital_usd'])}",
             f"- Capital still undeployed: {_format_money(capital['undeployed_capital_usd'])}",
             f"- Deployment progress: {capital['deployment_progress_pct']:.2f}%",
+            (
+                f"- Polymarket actual deployable USD: "
+                f"{_format_money(capital['polymarket_actual_deployable_usd'])}"
+                if capital.get("polymarket_actual_deployable_usd") is not None
+                else "- Polymarket actual deployable USD: n/a"
+            ),
+            (
+                f"- Polymarket tracked vs observed delta: "
+                f"{_format_money(capital['polymarket_tracked_vs_observed_delta_usd'])}"
+                if capital.get("polymarket_tracked_vs_observed_delta_usd") is not None
+                else "- Polymarket tracked vs observed delta: n/a"
+            ),
             "",
             "## Runtime",
             "",
@@ -202,6 +772,71 @@ def render_remote_cycle_status_markdown(status: dict[str, Any]) -> str:
             f"- Cycles completed: {runtime['cycles_completed']}",
             f"- Last remote pull: {runtime.get('last_remote_pull_at') or 'unknown'}",
             "",
+            "## Polymarket Wallet",
+            "",
+            f"- Wallet status: {polymarket_wallet.get('status') or 'unknown'}",
+            f"- Wallet checked at: {polymarket_wallet.get('checked_at') or 'unknown'}",
+        ]
+    )
+
+    if polymarket_wallet.get("status") == "ok":
+        lines.extend(
+            [
+                f"- Free collateral: {_format_money(polymarket_wallet.get('free_collateral_usd') or 0.0)}",
+                f"- Reserved by live orders: {_format_money(polymarket_wallet.get('reserved_order_usd') or 0.0)}",
+                f"- Live orders: {polymarket_wallet.get('live_orders_count') or 0}",
+                f"- Open positions: {polymarket_wallet.get('open_positions_count') or 0}",
+                f"- Position mark value: {_format_money(polymarket_wallet.get('positions_current_value_usd') or 0.0)}",
+                f"- Unrealized PnL: {_format_money(polymarket_wallet.get('positions_unrealized_pnl_usd') or 0.0)}",
+                f"- Realized PnL: {_format_money(polymarket_wallet.get('closed_positions_realized_pnl_usd') or 0.0)}",
+                f"- Total observed wallet value: {_format_money(polymarket_wallet.get('total_wallet_value_usd') or 0.0)}",
+                "",
+                "### Wallet Warnings",
+                "",
+            ]
+        )
+        wallet_warnings = polymarket_wallet.get("warnings") or ["none"]
+        lines.extend(f"- {warning}" for warning in wallet_warnings)
+    else:
+        lines.extend(
+            [
+                f"- Wallet probe reason: {polymarket_wallet.get('reason') or 'unknown'}",
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
+            "## BTC 5-Min Maker",
+            "",
+            f"- Status: {btc5_maker.get('status') or 'unknown'}",
+            f"- Checked at: {btc5_maker.get('checked_at') or 'unknown'}",
+        ]
+    )
+    if btc5_maker.get("status") == "ok":
+        latest_trade = btc5_maker.get("latest_trade") or {}
+        lines.extend(
+            [
+                f"- Live filled rows: {btc5_maker.get('live_filled_rows') or 0}",
+                f"- Live filled PnL: {_format_money(btc5_maker.get('live_filled_pnl_usd') or 0.0)}",
+                f"- Average filled PnL: {_format_money(btc5_maker.get('avg_live_filled_pnl_usd') or 0.0)}",
+                f"- Latest live fill at: {btc5_maker.get('latest_live_filled_at') or 'unknown'}",
+                f"- Latest trade status: {latest_trade.get('order_status') or 'unknown'}",
+                f"- Latest trade direction: {latest_trade.get('direction') or 'unknown'}",
+                f"- Latest trade PnL: {_format_money(latest_trade.get('pnl_usd') or 0.0)}",
+                "",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                f"- BTC 5-min reason: {btc5_maker.get('reason') or 'unknown'}",
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
             "## Service And Validation",
             "",
             f"- Service status: {service['status']}",
@@ -698,6 +1333,7 @@ def build_runtime_mode_reconciliation(
 
     jj_state = _load_json(root / "jj_state.json", default={})
     remote_probe = dict(deploy_evidence.get("remote_probe") or {})
+    polymarket_wallet = status.get("polymarket_wallet") or {}
     local_counts = {
         "cycles_completed": int(status.get("runtime", {}).get("cycles_completed") or 0),
         "total_trades": int(status.get("runtime", {}).get("total_trades") or 0),
@@ -726,6 +1362,7 @@ def build_runtime_mode_reconciliation(
                 "jj_state.json": len(jj_state.get("open_positions") or {}),
                 "reports/remote_cycle_status.json": _int_or_none(status.get("runtime", {}).get("open_positions")),
                 "deploy_status_command": _int_or_none(remote_probe.get("open_positions")),
+                "polymarket_wallet_api": _int_or_none(polymarket_wallet.get("open_positions_count")),
             }
         ),
         "deployed_capital_usd": _build_metric_drift(
@@ -734,10 +1371,21 @@ def build_runtime_mode_reconciliation(
                 "reports/runtime_truth_latest.json": _float_or_none(
                     status.get("capital", {}).get("deployed_capital_usd")
                 ),
+                "polymarket_wallet_api": _float_or_none(
+                    status.get("capital", {}).get("polymarket_observed_deployed_usd")
+                ),
             }
         ),
     }
     count_drift_detected = any(item["drift_detected"] for item in metric_drifts.values())
+    wallet_balance_delta_usd = _float_or_none(
+        status.get("capital", {}).get("polymarket_accounting_delta_usd")
+    )
+    wallet_balance_drift = bool(
+        polymarket_wallet.get("status") == "ok"
+        and wallet_balance_delta_usd is not None
+        and abs(wallet_balance_delta_usd) >= 5.0
+    )
 
     profile_override_diff = _compare_profile_contract(
         bundle.selected_profile,
@@ -776,6 +1424,11 @@ def build_runtime_mode_reconciliation(
             "public/operator docs still describe the stale 314-cycle / zero-activity runtime"
             if docs_drift["stale"]
             else "",
+            (
+                "tracked Polymarket capital differs materially from observed wallet value"
+                if wallet_balance_drift
+                else ""
+            ),
             "remote status probe does not match the recomputed local effective profile"
             if local_remote_truth_mismatch
             else "",
@@ -828,6 +1481,8 @@ def build_runtime_mode_reconciliation(
             "runtime_profile_effective_stale_before_refresh": bool(
                 runtime_profile_refresh.get("stale_before_refresh")
             ),
+            "wallet_balance_drift": wallet_balance_drift,
+            "wallet_balance_delta_usd": wallet_balance_delta_usd,
             "drift_reasons": drift_reasons,
         },
         "launch_posture": launch_posture,
@@ -981,6 +1636,7 @@ def render_runtime_mode_reconciliation_markdown(payload: dict[str, Any]) -> str:
             f"- Mode field ambiguity: {'yes' if drift_flags['mode_field_ambiguity'] else 'no'}",
             f"- Mode field inconsistency: {'yes' if drift_flags['mode_field_inconsistency'] else 'no'}",
             f"- Service running while launch blocked: {'yes' if drift_flags['service_running_while_launch_blocked'] else 'no'}",
+            f"- Wallet balance drift: {'yes' if drift_flags.get('wallet_balance_drift') else 'no'}",
             "",
             "### Drift Reasons",
             "",
@@ -1120,7 +1776,7 @@ def build_runtime_truth_snapshot(
                 },
                 {
                     "field": "service_status",
-                    "selected_source": "reports/remote_service_status.json",
+                    "selected_source": service.get("source") or "reports/remote_service_status.json",
                     "fallback_sources": ["reports/remote_cycle_status.json"],
                     "selected_value": service["status"],
                 },
@@ -1132,7 +1788,7 @@ def build_runtime_truth_snapshot(
                 },
                 {
                     "field": "verification_status",
-                    "selected_source": "reports/root_test_status.json",
+                    "selected_source": root_tests.get("source") or "reports/root_test_status.json",
                     "fallback_sources": ["reports/pipeline_*.json.verification"],
                     "selected_value": root_tests["status"],
                 },
@@ -1149,7 +1805,7 @@ def build_runtime_truth_snapshot(
                 "reasons": list(wallet_flow.get("reasons") or []),
             },
             "service": {
-                "selected_source": "reports/remote_service_status.json",
+                "selected_source": service.get("source") or "reports/remote_service_status.json",
                 "status": service["status"],
                 "systemctl_state": service.get("systemctl_state"),
                 "checked_at": service.get("checked_at"),
@@ -1166,16 +1822,49 @@ def build_runtime_truth_snapshot(
                 "next_operator_action": launch["next_operator_action"],
             },
             "verification": {
-                "selected_source": "reports/root_test_status.json",
+                "selected_source": root_tests.get("source") or "reports/root_test_status.json",
                 "status": root_tests["status"],
                 "summary": verification_summary,
                 "checked_at": root_tests.get("checked_at"),
                 "command": root_tests.get("command"),
             },
+            "polymarket_wallet": {
+                "selected_source": "remote CLOB + Polymarket data API",
+                "status": status.get("polymarket_wallet", {}).get("status"),
+                "checked_at": status.get("polymarket_wallet", {}).get("checked_at"),
+                "free_collateral_usd": status.get("polymarket_wallet", {}).get(
+                    "free_collateral_usd"
+                ),
+                "reserved_order_usd": status.get("polymarket_wallet", {}).get(
+                    "reserved_order_usd"
+                ),
+                "open_positions_count": status.get("polymarket_wallet", {}).get(
+                    "open_positions_count"
+                ),
+                "closed_positions_realized_pnl_usd": status.get("polymarket_wallet", {}).get(
+                    "closed_positions_realized_pnl_usd"
+                ),
+                "warnings": list(status.get("polymarket_wallet", {}).get("warnings") or []),
+            },
+            "btc_5min_maker": {
+                "selected_source": "data/btc_5min_maker.db",
+                "status": status.get("btc_5min_maker", {}).get("status"),
+                "checked_at": status.get("btc_5min_maker", {}).get("checked_at"),
+                "live_filled_rows": status.get("btc_5min_maker", {}).get("live_filled_rows"),
+                "live_filled_pnl_usd": status.get("btc_5min_maker", {}).get(
+                    "live_filled_pnl_usd"
+                ),
+                "latest_live_filled_at": status.get("btc_5min_maker", {}).get(
+                    "latest_live_filled_at"
+                ),
+                "latest_trade": status.get("btc_5min_maker", {}).get("latest_trade") or {},
+            },
         },
         "capital": status["capital"],
         "runtime": status["runtime"],
         "wallet_flow": status["wallet_flow"],
+        "polymarket_wallet": status.get("polymarket_wallet") or {},
+        "btc_5min_maker": status.get("btc_5min_maker") or {},
         "service": {
             "status": service["status"],
             "systemctl_state": service.get("systemctl_state"),
@@ -1246,6 +1935,8 @@ def build_public_runtime_snapshot(runtime_truth_snapshot: dict[str, Any]) -> dic
     runtime = runtime_truth_snapshot["runtime"]
     launch = runtime_truth_snapshot["launch"]
     wallet_flow = runtime_truth_snapshot["wallet_flow"]
+    polymarket_wallet = runtime_truth_snapshot.get("polymarket_wallet") or {}
+    btc5_maker = runtime_truth_snapshot.get("btc_5min_maker") or {}
     service = runtime_truth_snapshot["service"]
     verification = runtime_truth_snapshot["verification"]
     structural_gates = runtime_truth_snapshot["structural_gates"]
@@ -1264,6 +1955,11 @@ def build_public_runtime_snapshot(runtime_truth_snapshot: dict[str, Any]) -> dic
             "deployed_capital_usd": capital["deployed_capital_usd"],
             "undeployed_capital_usd": capital["undeployed_capital_usd"],
             "bankroll_usd": runtime["bankroll_usd"],
+            "polymarket_actual_deployable_usd": capital.get("polymarket_actual_deployable_usd"),
+            "polymarket_observed_total_usd": capital.get("polymarket_observed_total_usd"),
+            "polymarket_tracked_vs_observed_delta_usd": capital.get(
+                "polymarket_tracked_vs_observed_delta_usd"
+            ),
         },
         "runtime": {
             "cycles_completed": runtime["cycles_completed"],
@@ -1272,6 +1968,14 @@ def build_public_runtime_snapshot(runtime_truth_snapshot: dict[str, Any]) -> dic
             "open_positions": runtime["open_positions"],
             "daily_pnl_usd": runtime["daily_pnl_usd"],
             "total_pnl_usd": runtime["total_pnl_usd"],
+            "polymarket_open_positions": runtime.get("polymarket_open_positions"),
+            "polymarket_live_orders": runtime.get("polymarket_live_orders"),
+            "polymarket_closed_positions_realized_pnl_usd": runtime.get(
+                "polymarket_closed_positions_realized_pnl_usd"
+            ),
+            "btc5_live_filled_rows": runtime.get("btc5_live_filled_rows"),
+            "btc5_live_filled_pnl_usd": runtime.get("btc5_live_filled_pnl_usd"),
+            "btc5_latest_order_status": runtime.get("btc5_latest_order_status"),
         },
         "runtime_mode": {
             "remote_runtime_profile": runtime_truth_snapshot.get("remote_runtime_profile"),
@@ -1299,6 +2003,33 @@ def build_public_runtime_snapshot(runtime_truth_snapshot: dict[str, Any]) -> dic
             "ready": wallet_flow["ready"],
             "wallet_count": wallet_flow["wallet_count"],
             "last_updated": wallet_flow.get("last_updated"),
+        },
+        "polymarket_wallet": {
+            "status": polymarket_wallet.get("status"),
+            "checked_at": polymarket_wallet.get("checked_at"),
+            "free_collateral_usd": polymarket_wallet.get("free_collateral_usd"),
+            "reserved_order_usd": polymarket_wallet.get("reserved_order_usd"),
+            "live_orders_count": polymarket_wallet.get("live_orders_count"),
+            "open_positions_count": polymarket_wallet.get("open_positions_count"),
+            "positions_current_value_usd": polymarket_wallet.get("positions_current_value_usd"),
+            "positions_unrealized_pnl_usd": polymarket_wallet.get(
+                "positions_unrealized_pnl_usd"
+            ),
+            "closed_positions_realized_pnl_usd": polymarket_wallet.get(
+                "closed_positions_realized_pnl_usd"
+            ),
+            "total_wallet_value_usd": polymarket_wallet.get("total_wallet_value_usd"),
+            "warnings": list(polymarket_wallet.get("warnings") or []),
+        },
+        "btc_5min_maker": {
+            "status": btc5_maker.get("status"),
+            "checked_at": btc5_maker.get("checked_at"),
+            "live_filled_rows": btc5_maker.get("live_filled_rows"),
+            "live_filled_pnl_usd": btc5_maker.get("live_filled_pnl_usd"),
+            "avg_live_filled_pnl_usd": btc5_maker.get("avg_live_filled_pnl_usd"),
+            "latest_live_filled_at": btc5_maker.get("latest_live_filled_at"),
+            "latest_trade": btc5_maker.get("latest_trade") or {},
+            "recent_live_filled": list(btc5_maker.get("recent_live_filled") or []),
         },
         "structural_gates": {
             "a6": {
@@ -1439,14 +2170,81 @@ def _load_trade_counts(root: Path) -> dict[str, Any]:
 
 
 def _load_service_status(path: Path) -> dict[str, Any]:
+    return _load_service_status_with_fallback(path.parent.parent, path)
+
+
+def _load_service_status_with_fallback(root: Path, path: Path) -> dict[str, Any]:
     raw = _load_json(path, default={})
+    service = _normalize_service_status_payload(
+        raw,
+        default_service_name="jj-live.service",
+        source=_relative_path_text(root, path) or str(path),
+    )
+    if service["status"] != "unknown":
+        return service
+
+    local_probe = _probe_local_systemctl_service_status(service["service_name"])
+    if local_probe["status"] != "unknown":
+        return local_probe
+
+    fallback = _find_latest_artifact_payload(
+        root,
+        [
+            Path("reports/runtime_truth_latest.json"),
+            Path("reports/remote_cycle_status.json"),
+            "reports/runtime_truth_*.json",
+            "reports/deploy_*.json",
+        ],
+        extractor=_extract_service_status_candidate,
+    )
+    if fallback is not None:
+        return fallback
+    return service
+
+
+def _load_root_test_status(path: Path) -> dict[str, Any]:
+    return _load_root_test_status_with_fallback(path.parent.parent, path)
+
+
+def _load_root_test_status_with_fallback(root: Path, path: Path) -> dict[str, Any]:
+    raw = _load_json(path, default={})
+    root_tests = _normalize_root_test_status_payload(
+        raw,
+        source=_relative_path_text(root, path) or str(path),
+    )
+    if root_tests["status"] != "unknown":
+        return root_tests
+
+    fallback = _find_latest_artifact_payload(
+        root,
+        [
+            Path("reports/runtime_truth_latest.json"),
+            Path("reports/remote_cycle_status.json"),
+            "reports/runtime_truth_*.json",
+            "reports/pipeline_*.json",
+            "reports/pipeline_refresh_*.json",
+        ],
+        extractor=_extract_root_test_status_candidate,
+    )
+    if fallback is not None:
+        return fallback
+    return root_tests
+
+
+def _normalize_service_status_payload(
+    raw: dict[str, Any],
+    *,
+    default_service_name: str,
+    source: str | None,
+) -> dict[str, Any]:
     systemctl_state = str(
         raw.get("systemctl_state")
         or raw.get("active_state")
         or raw.get("state")
+        or raw.get("systemd_status")
         or "unknown"
     ).strip()
-    status = str(raw.get("status") or "").strip().lower()
+    status = str(raw.get("status") or raw.get("service_state") or "").strip().lower()
     if not status:
         lowered = systemctl_state.lower()
         if lowered == "active":
@@ -1459,29 +2257,211 @@ def _load_service_status(path: Path) -> dict[str, Any]:
     return {
         "status": status,
         "systemctl_state": systemctl_state or "unknown",
-        "detail": raw.get("detail") or raw.get("error") or systemctl_state or "unknown",
+        "detail": raw.get("detail")
+        or raw.get("error")
+        or raw.get("systemd_status")
+        or systemctl_state
+        or "unknown",
         "checked_at": raw.get("checked_at"),
-        "service_name": raw.get("service_name") or "jj-live.service",
+        "service_name": raw.get("service_name") or default_service_name,
         "host": raw.get("host"),
+        "source": source,
     }
 
 
-def _load_root_test_status(path: Path) -> dict[str, Any]:
-    raw = _load_json(path, default={})
+def _normalize_root_test_status_payload(
+    raw: dict[str, Any],
+    *,
+    source: str | None,
+) -> dict[str, Any]:
     output_tail = list(raw.get("output_tail") or [])
     summary = raw.get("summary") or "Root regression status has not been refreshed yet."
+    status = _normalize_test_status(raw.get("status"))
     return {
-        "status": str(raw.get("status") or "unknown"),
+        "status": status,
         "checked_at": raw.get("checked_at"),
         "command": raw.get("command") or "make test",
         "summary": summary,
         "display_summary": _summarize_test_output(
             "\n".join(output_tail),
-            success=str(raw.get("status") or "unknown") == "passing",
+            success=status == "passing",
             default=summary,
         ),
         "returncode": raw.get("returncode"),
         "output_tail": output_tail,
+        "source": source,
+    }
+
+
+def _normalize_test_status(value: Any) -> str:
+    normalized = str(value or "unknown").strip().lower()
+    if normalized in {"passed", "pass", "ok", "success", "successful"}:
+        return "passing"
+    if normalized in {"failed", "fail", "error", "errors"}:
+        return "failing"
+    return normalized or "unknown"
+
+
+def _probe_local_systemctl_service_status(service_name: str) -> dict[str, Any]:
+    checked_at = datetime.now(timezone.utc).isoformat()
+    try:
+        result = subprocess.run(
+            [
+                "systemctl",
+                "show",
+                service_name,
+                "--property=ActiveState,SubState",
+                "--no-pager",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError, PermissionError):
+        return {
+            "status": "unknown",
+            "systemctl_state": "unknown",
+            "detail": "local systemctl probe unavailable",
+            "checked_at": checked_at,
+            "service_name": service_name,
+            "host": None,
+            "source": None,
+        }
+
+    fields: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        fields[key.strip()] = value.strip()
+    active_state = fields.get("ActiveState") or "unknown"
+    sub_state = fields.get("SubState") or ""
+    service = _normalize_service_status_payload(
+        {
+            "systemctl_state": active_state,
+            "detail": "/".join(part for part in (active_state, sub_state) if part),
+            "checked_at": checked_at,
+            "service_name": service_name,
+        },
+        default_service_name=service_name,
+        source="local_systemctl",
+    )
+    if service["status"] == "unknown" and result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        if stderr:
+            service["detail"] = stderr
+    return service
+
+
+def _find_latest_artifact_payload(
+    root: Path,
+    candidates: Sequence[Path | str],
+    *,
+    extractor: Callable[[dict[str, Any]], dict[str, Any] | None],
+) -> dict[str, Any] | None:
+    artifact_paths = _expand_artifact_candidates(root, candidates)
+    if not artifact_paths:
+        return None
+
+    usable: list[tuple[Path, dict[str, Any]]] = []
+    for artifact_path in artifact_paths:
+        payload = _load_json(artifact_path, default={})
+        if not isinstance(payload, dict):
+            continue
+        extracted = extractor(payload)
+        if not extracted:
+            continue
+        status = str(extracted.get("status") or "unknown").strip().lower()
+        if status == "unknown":
+            continue
+        extracted["source"] = _relative_path_text(root, artifact_path) or str(artifact_path)
+        usable.append((artifact_path, extracted))
+
+    if not usable:
+        return None
+    usable.sort(key=lambda item: _artifact_sort_key(item[0]), reverse=True)
+    return usable[0][1]
+
+
+def _expand_artifact_candidates(root: Path, candidates: Sequence[Path | str]) -> list[Path]:
+    reports: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if isinstance(candidate, Path):
+            path = candidate if candidate.is_absolute() else root / candidate
+            if path.is_file() and path not in seen:
+                reports.append(path)
+                seen.add(path)
+            continue
+        for path in (root / ".").glob(candidate):
+            if path.is_file() and path not in seen:
+                reports.append(path)
+                seen.add(path)
+    return reports
+
+
+def _extract_service_status_candidate(payload: dict[str, Any]) -> dict[str, Any] | None:
+    if isinstance(payload.get("service"), dict):
+        return _normalize_service_status_payload(
+            payload["service"],
+            default_service_name="jj-live.service",
+            source=None,
+        )
+    if any(
+        key in payload
+        for key in ("status", "systemctl_state", "active_state", "state", "service_state")
+    ):
+        return _normalize_service_status_payload(
+            payload,
+            default_service_name="jj-live.service",
+            source=None,
+        )
+    return None
+
+
+def _extract_root_test_status_candidate(payload: dict[str, Any]) -> dict[str, Any] | None:
+    root_tests = payload.get("root_tests")
+    if isinstance(root_tests, dict):
+        return _normalize_root_test_status_payload(root_tests, source=None)
+
+    verification = payload.get("verification")
+    if isinstance(verification, dict):
+        if any(key in verification for key in ("status", "summary", "output_tail")):
+            return _normalize_root_test_status_payload(verification, source=None)
+        pipeline_candidate = _normalize_pipeline_verification_payload(verification)
+        if pipeline_candidate is not None:
+            return _normalize_root_test_status_payload(pipeline_candidate, source=None)
+    return None
+
+
+def _normalize_pipeline_verification_payload(
+    verification: dict[str, Any],
+) -> dict[str, Any] | None:
+    status = _normalize_test_status(
+        verification.get("status")
+        or verification.get("make_test_status")
+        or verification.get("integrated_entrypoint_status")
+    )
+    summary_parts = [
+        str(part).strip()
+        for part in (
+            verification.get("summary"),
+            verification.get("root_suite"),
+            verification.get("jj_live_import_boundary_suite"),
+        )
+        if str(part or "").strip()
+    ]
+    if status == "unknown" and not summary_parts:
+        return None
+    return {
+        "status": status,
+        "checked_at": verification.get("checked_at"),
+        "command": verification.get("command") or "make test",
+        "summary": "; ".join(summary_parts)
+        or "Root regression status was recovered from the latest pipeline artifact.",
+        "output_tail": summary_parts[-2:],
+        "returncode": verification.get("returncode"),
     }
 
 
@@ -1700,6 +2680,26 @@ def _build_launch_status(
     if status["capital"]["deployed_capital_usd"] <= 0:
         blocked_checks.append("no_deployed_capital")
         blocked_reasons.append("No capital is currently deployed.")
+    if status["polymarket_wallet"].get("status") == "ok":
+        actual_deployable = _safe_float(
+            status["capital"].get("polymarket_actual_deployable_usd"),
+            0.0,
+        )
+        accounting_delta = _safe_float(
+            status["capital"].get("polymarket_accounting_delta_usd"),
+            0.0,
+        )
+        if actual_deployable <= 0:
+            blocked_checks.append("no_polymarket_free_collateral")
+            blocked_reasons.append(
+                "Observed Polymarket wallet has no free collateral for new maker orders."
+            )
+        if abs(accounting_delta) >= 5.0:
+            blocked_checks.append("polymarket_capital_truth_drift")
+            blocked_reasons.append(
+                "Observed Polymarket wallet differs from tracked capital plus observed PnL by "
+                f"{_format_money(accounting_delta)}."
+            )
     if a6_gate["status"] == "blocked":
         blocked_checks.append("a6_gate_blocked")
         blocked_reasons.append(a6_gate["summary"])
@@ -1732,6 +2732,13 @@ def _build_launch_status(
     elif service["status"] != "running":
         next_operator_action = (
             "Restart `jj_live` in paper or shadow with conservative caps, keep A-6/B-1 blocked, and collect the first closed trades or structural samples."
+        )
+    elif any(
+        check in blocked_checks
+        for check in ("no_polymarket_free_collateral", "polymarket_capital_truth_drift")
+    ):
+        next_operator_action = (
+            "Reconcile the observed Polymarket wallet balance against tracked capital, refresh runtime truth, and do not route new orders until free collateral is visible."
         )
     elif blocked_checks:
         next_operator_action = (
@@ -2854,6 +3861,11 @@ def _format_optional_pct(value: Any) -> str:
     if value in (None, ""):
         return "n/a"
     return f"{float(value) * 100.0:.2f}%"
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    parsed = _float_or_none(value)
+    return default if parsed is None else parsed
 
 
 def _float_or_none(value: Any) -> float | None:
