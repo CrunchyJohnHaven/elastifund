@@ -4,10 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
+import os
 import random
+import shlex
 import shutil
 import sqlite3
+import subprocess
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,10 +23,50 @@ REPORTS_DIR = REPO_ROOT / "reports"
 DEFAULT_REMOTE_DB = REPORTS_DIR / "tmp_remote_btc_5min_maker.db"
 DEFAULT_LOCAL_DB = REPO_ROOT / "data" / "btc_5min_maker.db"
 DEFAULT_RUNTIME_TRUTH = REPORTS_DIR / "runtime_truth_latest.json"
+DEFAULT_ENV_PATH = REPO_ROOT / ".env"
+DEFAULT_ARCHIVE_GLOB = "reports/btc_intraday_llm_bundle_*/raw/remote_btc5_window_trades.csv"
+DEFAULT_REMOTE_ROWS_JSON = REPORTS_DIR / "tmp_remote_btc5_window_rows.json"
 DEFAULT_UP_MAX = 0.49
 DEFAULT_DOWN_MAX = 0.51
 DEFAULT_MAX_ABS_DELTA = 0.00015
 DEFAULT_LOSS_LIMIT_USD = 10.0
+REMOTE_BOT_DIR = "/home/ubuntu/polymarket-trading-bot"
+
+REMOTE_ROWS_PROBE_SCRIPT = """import json
+import sqlite3
+from pathlib import Path
+
+db_path = Path("data/btc_5min_maker.db")
+if not db_path.exists():
+    print(json.dumps({"status": "unavailable", "reason": "missing_data/btc_5min_maker.db"}))
+    raise SystemExit(0)
+
+conn = sqlite3.connect(db_path)
+conn.row_factory = sqlite3.Row
+rows = [
+    dict(row)
+    for row in conn.execute(
+        '''
+        SELECT
+            id,
+            window_start_ts,
+            slug,
+            direction,
+            delta,
+            order_price,
+            trade_size_usd,
+            won,
+            pnl_usd,
+            order_status,
+            updated_at
+        FROM window_trades
+        ORDER BY window_start_ts ASC, id ASC
+        '''
+    ).fetchall()
+]
+conn.close()
+print(json.dumps({"status": "ok", "rows": rows}))
+"""
 
 
 @dataclass(frozen=True)
@@ -79,6 +123,95 @@ def _round_metrics(payload: dict[str, Any]) -> dict[str, Any]:
     return rounded
 
 
+def _parse_env_file(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    values: dict[str, str] = {}
+    for line in path.read_text().splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        values[key.strip()] = value.strip().strip("'").strip('"')
+    return values
+
+
+def _parse_iso(value: Any) -> str:
+    text = str(value or "").strip()
+    return text
+
+
+def _source_priority(source: str) -> int:
+    normalized = str(source or "").strip().lower()
+    if normalized.startswith("remote_probe"):
+        return 4
+    if normalized.startswith("sqlite"):
+        return 3
+    if normalized.startswith("archive_csv"):
+        return 2
+    return 1
+
+
+def _row_identity(row: dict[str, Any]) -> str:
+    slug = str(row.get("slug") or "").strip()
+    if slug:
+        return slug
+    window_start_ts = _safe_int(row.get("window_start_ts"))
+    direction = str(row.get("direction") or "").strip().upper()
+    return f"{window_start_ts}:{direction}"
+
+
+def _normalize_row(payload: dict[str, Any], *, source: str) -> dict[str, Any]:
+    direction = str(payload.get("direction") or "").strip().upper()
+    window_start_ts = _safe_int(payload.get("window_start_ts"))
+    slug = str(payload.get("slug") or "").strip() or (
+        f"btc-updown-5m-{window_start_ts}" if window_start_ts else ""
+    )
+    order_status = str(payload.get("order_status") or "").strip()
+    delta = _safe_float(payload.get("delta"), 0.0)
+    pnl_usd = _safe_float(payload.get("pnl_usd"), 0.0)
+    return {
+        "id": _safe_int(payload.get("id")),
+        "window_start_ts": window_start_ts,
+        "slug": slug,
+        "direction": direction,
+        "delta": delta,
+        "abs_delta": abs(delta),
+        "order_price": _safe_float(payload.get("order_price"), 0.0),
+        "trade_size_usd": _safe_float(payload.get("trade_size_usd"), 0.0),
+        "won": bool(payload.get("won")),
+        "pnl_usd": pnl_usd,
+        "realized_pnl_usd": pnl_usd if order_status == "live_filled" else 0.0,
+        "order_status": order_status,
+        "updated_at": _parse_iso(payload.get("updated_at")),
+        "source": source,
+        "source_priority": _source_priority(source),
+    }
+
+
+def _dedupe_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    best_by_identity: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        identity = _row_identity(row)
+        current = best_by_identity.get(identity)
+        if current is None:
+            best_by_identity[identity] = row
+            continue
+        current_key = (
+            _safe_int(current.get("source_priority")),
+            str(current.get("updated_at") or ""),
+            _safe_int(current.get("id")),
+        )
+        candidate_key = (
+            _safe_int(row.get("source_priority")),
+            str(row.get("updated_at") or ""),
+            _safe_int(row.get("id")),
+        )
+        if candidate_key > current_key:
+            best_by_identity[identity] = row
+    return sorted(best_by_identity.values(), key=lambda row: (_safe_int(row.get("window_start_ts")), _safe_int(row.get("id"))))
+
+
 def _default_db_path() -> Path:
     if DEFAULT_REMOTE_DB.exists():
         return DEFAULT_REMOTE_DB
@@ -114,7 +247,7 @@ def _live_profile_from_runtime_truth(runtime_truth: dict[str, Any]) -> Guardrail
     )
 
 
-def load_live_filled_rows(db_path: Path) -> list[dict[str, Any]]:
+def load_observed_rows_from_db(db_path: Path) -> list[dict[str, Any]]:
     if not db_path.exists():
         raise FileNotFoundError(f"BTC5 DB not found: {db_path}")
     conn = sqlite3.connect(db_path)
@@ -124,35 +257,130 @@ def load_live_filled_rows(db_path: Path) -> list[dict[str, Any]]:
             """
             SELECT
                 id,
+                window_start_ts,
+                slug,
                 direction,
                 delta,
                 order_price,
                 trade_size_usd,
                 won,
                 pnl_usd,
+                order_status,
                 updated_at
             FROM window_trades
-            WHERE order_status = 'live_filled'
-            ORDER BY id ASC
+            ORDER BY window_start_ts ASC, id ASC
             """
         ).fetchall()
     finally:
         conn.close()
 
-    live_rows: list[dict[str, Any]] = []
+    return [_normalize_row(dict(row), source=f"sqlite:{db_path.name}") for row in rows]
+
+
+def load_observed_rows_from_csv(csv_path: Path, *, source: str) -> list[dict[str, Any]]:
+    if not csv_path.exists():
+        raise FileNotFoundError(f"BTC5 CSV not found: {csv_path}")
+    with csv_path.open(newline="") as handle:
+        reader = csv.DictReader(handle)
+        return [_normalize_row(dict(row), source=source) for row in reader]
+
+
+def fetch_remote_rows(env_path: Path = DEFAULT_ENV_PATH) -> list[dict[str, Any]]:
+    env = {**os.environ, **_parse_env_file(env_path)}
+    ssh_key = env.get("LIGHTSAIL_KEY")
+    vps_ip = env.get("VPS_IP")
+    vps_user = env.get("VPS_USER", "ubuntu")
+    if not ssh_key or not vps_ip:
+        raise RuntimeError("Missing LIGHTSAIL_KEY or VPS_IP for remote BTC5 pull.")
+    remote_cmd = (
+        f"cd {shlex.quote(REMOTE_BOT_DIR)} && /usr/bin/python3 - <<'PY'\n"
+        f"{REMOTE_ROWS_PROBE_SCRIPT}\nPY"
+    )
+    result = subprocess.run(
+        [
+            "ssh",
+            "-i",
+            ssh_key,
+            "-o",
+            "StrictHostKeyChecking=no",
+            f"{vps_user}@{vps_ip}",
+            remote_cmd,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout or "remote probe failed").strip()[-400:])
+    payload = json.loads((result.stdout or "").strip() or "{}")
+    if payload.get("status") != "ok":
+        raise RuntimeError(str(payload))
+    rows = payload.get("rows") or []
+    return [_normalize_row(dict(row), source="remote_probe:ssh") for row in rows if isinstance(row, dict)]
+
+
+def assemble_observed_rows(
+    *,
+    db_path: Path | None,
+    include_archive_csvs: bool,
+    archive_glob: str,
+    refresh_remote: bool,
+    remote_cache_json: Path,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    collected: list[dict[str, Any]] = []
+    sources: list[dict[str, Any]] = []
+
+    if db_path is not None and db_path.exists():
+        db_rows = load_observed_rows_from_db(db_path)
+        collected.extend(db_rows)
+        sources.append(
+            {
+                "path": str(db_path),
+                "source": f"sqlite:{db_path.name}",
+                "rows_loaded": len(db_rows),
+            }
+        )
+
+    if refresh_remote:
+        remote_rows = fetch_remote_rows()
+        remote_cache_json.parent.mkdir(parents=True, exist_ok=True)
+        remote_cache_json.write_text(json.dumps(remote_rows, indent=2) + "\n")
+        collected.extend(remote_rows)
+        sources.append(
+            {
+                "path": str(remote_cache_json),
+                "source": "remote_probe:ssh",
+                "rows_loaded": len(remote_rows),
+            }
+        )
+
+    if include_archive_csvs:
+        for csv_path in sorted(REPO_ROOT.glob(archive_glob)):
+            archive_rows = load_observed_rows_from_csv(csv_path, source=f"archive_csv:{csv_path.parent.parent.name}")
+            collected.extend(archive_rows)
+            sources.append(
+                {
+                    "path": str(csv_path),
+                    "source": f"archive_csv:{csv_path.parent.parent.name}",
+                    "rows_loaded": len(archive_rows),
+                }
+            )
+
+    rows = _dedupe_rows(collected)
+    filled_rows = [row for row in rows if row.get("order_status") == "live_filled"]
+    source_rollup: dict[str, int] = {}
     for row in rows:
-        payload = dict(row)
-        payload["id"] = _safe_int(payload.get("id"))
-        payload["direction"] = str(payload.get("direction") or "").strip().upper()
-        payload["delta"] = _safe_float(payload.get("delta"), 0.0)
-        payload["abs_delta"] = abs(payload["delta"])
-        payload["order_price"] = _safe_float(payload.get("order_price"), 0.0)
-        payload["trade_size_usd"] = _safe_float(payload.get("trade_size_usd"), 0.0)
-        payload["won"] = bool(payload.get("won"))
-        payload["pnl_usd"] = _safe_float(payload.get("pnl_usd"), 0.0)
-        payload["updated_at"] = payload.get("updated_at")
-        live_rows.append(payload)
-    return live_rows
+        source_rollup[row["source"]] = source_rollup.get(row["source"], 0) + 1
+    source_rollup = dict(sorted(source_rollup.items(), key=lambda item: (-item[1], item[0])))
+    return rows, {
+        "sources": sources,
+        "deduped_rows": len(rows),
+        "deduped_live_filled_rows": len(filled_rows),
+        "rows_by_source": source_rollup,
+        "first_window_start_ts": _safe_int(rows[0].get("window_start_ts")) if rows else None,
+        "last_window_start_ts": _safe_int(rows[-1].get("window_start_ts")) if rows else None,
+    }
 
 
 def row_matches_profile(row: dict[str, Any], profile: GuardrailProfile) -> bool:
@@ -171,19 +399,28 @@ def row_matches_profile(row: dict[str, Any], profile: GuardrailProfile) -> bool:
 
 def summarize_profile_history(rows: list[dict[str, Any]], profile: GuardrailProfile) -> dict[str, Any]:
     matched = [row for row in rows if row_matches_profile(row, profile)]
-    wins = sum(1 for row in matched if _safe_float(row.get("pnl_usd"), 0.0) > 0)
+    baseline_filled = [row for row in rows if row.get("order_status") == "live_filled"]
+    matched_filled = [row for row in matched if row.get("order_status") == "live_filled"]
+    matched_attempted = [row for row in matched if str(row.get("order_status") or "").startswith("live_")]
+    wins = sum(1 for row in matched_filled if _safe_float(row.get("pnl_usd"), 0.0) > 0)
     total_rows = len(rows)
+    total_live_filled = len(baseline_filled)
     matched_rows = len(matched)
-    replay_pnl = sum(_safe_float(row.get("pnl_usd"), 0.0) for row in matched)
-    total_notional = sum(_safe_float(row.get("trade_size_usd"), 0.0) for row in matched)
+    matched_live_filled = len(matched_filled)
+    replay_pnl = sum(_safe_float(row.get("pnl_usd"), 0.0) for row in matched_filled)
+    total_notional = sum(_safe_float(row.get("trade_size_usd"), 0.0) for row in matched_filled)
     return _round_metrics(
         {
-            "baseline_live_filled_rows": total_rows,
-            "replay_live_filled_rows": matched_rows,
-            "coverage_ratio": (matched_rows / total_rows) if total_rows else 0.0,
+            "baseline_window_rows": total_rows,
+            "baseline_live_filled_rows": total_live_filled,
+            "replay_window_rows": matched_rows,
+            "replay_attempt_rows": len(matched_attempted),
+            "replay_live_filled_rows": matched_live_filled,
+            "window_coverage_ratio": (matched_rows / total_rows) if total_rows else 0.0,
+            "fill_coverage_ratio": (matched_live_filled / total_live_filled) if total_live_filled else 0.0,
             "replay_live_filled_pnl_usd": replay_pnl,
-            "avg_pnl_usd": (replay_pnl / matched_rows) if matched_rows else 0.0,
-            "win_rate": (wins / matched_rows) if matched_rows else 0.0,
+            "avg_pnl_usd": (replay_pnl / matched_live_filled) if matched_live_filled else 0.0,
+            "win_rate": (wins / matched_live_filled) if matched_live_filled else 0.0,
             "trade_notional_usd": total_notional,
         }
     )
@@ -284,7 +521,7 @@ def run_monte_carlo(
     seed: int,
 ) -> dict[str, Any]:
     series = [
-        _safe_float(row.get("pnl_usd"), 0.0) if row_matches_profile(row, profile) else 0.0
+        _safe_float(row.get("realized_pnl_usd"), 0.0) if row_matches_profile(row, profile) else 0.0
         for row in rows
     ]
     non_zero = [value for value in series if abs(value) > 1e-12]
@@ -383,12 +620,18 @@ def _render_markdown(summary: dict[str, Any]) -> str:
         "# BTC5 Monte Carlo Report",
         "",
         f"- Generated at: `{summary['generated_at']}`",
-        f"- Source DB: `{summary['db_path']}`",
-        f"- Live-filled sample rows: `{summary['input']['live_filled_rows']}`",
+        f"- Primary DB: `{summary['db_path']}`",
+        f"- Observed decision rows: `{summary['input']['observed_window_rows']}`",
+        f"- Observed live-filled rows: `{summary['input']['live_filled_rows']}`",
         f"- Observed realized PnL: `{summary['input']['observed_pnl_usd']:.4f}` USD",
         f"- Monte Carlo paths: `{summary['simulation']['paths']}`",
         f"- Horizon trades per path: `{summary['simulation']['horizon_trades']}`",
         f"- Bootstrap block size: `{summary['simulation']['block_size']}`",
+        "",
+        "## Baseline",
+        "",
+        f"- Deduped rows by source: `{summary['baseline']['rows_by_source']}`",
+        f"- Window range: `{summary['baseline']['first_window_start_ts']}` to `{summary['baseline']['last_window_start_ts']}`",
         "",
         "## Candidate Ranking",
         "",
@@ -547,8 +790,9 @@ def build_summary(
         "generated_at": _now_utc().isoformat(),
         "db_path": str(db_path),
         "input": {
-            "live_filled_rows": len(rows),
-            "observed_pnl_usd": round(sum(_safe_float(row.get("pnl_usd"), 0.0) for row in rows), 4),
+            "observed_window_rows": len(rows),
+            "live_filled_rows": sum(1 for row in rows if row.get("order_status") == "live_filled"),
+            "observed_pnl_usd": round(sum(_safe_float(row.get("realized_pnl_usd"), 0.0) for row in rows), 4),
         },
         "simulation": {
             "paths": int(paths),
@@ -557,6 +801,7 @@ def build_summary(
             "loss_limit_usd": round(loss_limit_usd, 4),
             "seed": int(seed),
         },
+        "baseline": {},
         "current_live_profile": asdict(current_live_profile),
         "runtime_recommended_profile": asdict(runtime_recommended_profile),
         "candidates": evaluated,
@@ -568,6 +813,27 @@ def build_summary(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db-path", type=Path, default=None, help="Path to BTC5 SQLite DB.")
+    parser.add_argument(
+        "--refresh-remote",
+        action="store_true",
+        help="Pull the latest BTC5 decision rows from the VPS over SSH before simulation.",
+    )
+    parser.add_argument(
+        "--include-archive-csvs",
+        action="store_true",
+        help="Merge archived BTC5 CSV exports into the baseline before deduping.",
+    )
+    parser.add_argument(
+        "--archive-glob",
+        default=DEFAULT_ARCHIVE_GLOB,
+        help="Repo-root glob for archived BTC5 CSV exports.",
+    )
+    parser.add_argument(
+        "--remote-cache-json",
+        type=Path,
+        default=DEFAULT_REMOTE_ROWS_JSON,
+        help="Where to cache freshly pulled remote BTC5 rows.",
+    )
     parser.add_argument(
         "--runtime-truth",
         type=Path,
@@ -637,9 +903,15 @@ def main() -> int:
     args = parse_args()
     db_path = args.db_path or _default_db_path()
     runtime_truth = _load_runtime_truth(args.runtime_truth)
-    rows = load_live_filled_rows(db_path)
+    rows, baseline_summary = assemble_observed_rows(
+        db_path=db_path,
+        include_archive_csvs=bool(args.include_archive_csvs),
+        archive_glob=str(args.archive_glob),
+        refresh_remote=bool(args.refresh_remote),
+        remote_cache_json=args.remote_cache_json,
+    )
     if not rows:
-        raise SystemExit(f"No live_filled BTC5 rows found in {db_path}")
+        raise SystemExit(f"No BTC5 observed rows found from {db_path}")
 
     current_live_profile = GuardrailProfile(
         name="current_live_profile",
@@ -665,6 +937,7 @@ def main() -> int:
         top_grid_candidates=max(1, int(args.top_grid_candidates)),
         min_replay_fills=max(1, int(args.min_replay_fills)),
     )
+    summary["baseline"] = baseline_summary
     json_path, md_path = _write_outputs(output_dir, summary=summary, write_latest=bool(args.write_latest))
     print(json.dumps({"summary_json": str(json_path), "report_md": str(md_path)}, indent=2))
     return 0
