@@ -1,0 +1,19 @@
+experiment	artifact	timestamp	metric	status	frontier_metric	frontier_delta	hours_since_start	hours_since_prev	hours_since_prev_keep	velocity_per_hour	keep_velocity_per_hour	rolling_velocity_per_hour	acceleration_per_hour2	top_hypothesis	description
+1	run_20260307_151042_metrics.json	2026-03-07T15:10:42+00:00	0.785081	keep	0.785081		0.000000							Residual Horizon Fair Value	baseline
+2	run_20260307_151154_metrics.json	2026-03-07T15:11:54+00:00	0.785081	discard	0.785081	0.000000	0.020000	0.020000	0.020000	0.000000		0.000000		Residual Horizon Fair Value	Residual Horizon Fair Value
+3	run_20260307_151457_metrics.json	2026-03-07T15:14:57+00:00	0.785081	discard	0.785081	0.000000	0.070833	0.050833	0.070833	0.000000		0.000000	0.000000	Residual Horizon Fair Value	Residual Horizon Fair Value
+4	run_20260307_155440_metrics.json	2026-03-07T15:54:40+00:00	0.460000	discard	0.785081	0.000000	0.732778	0.661944	0.732778	0.000000		0.000000	0.000000	Post-Extreme Mean Reversion	Post-Extreme Mean Reversion
+5	run_20260307_155833_metrics.json	2026-03-07T15:58:33+00:00	0.460000	discard	0.785081	0.000000	0.797500	0.064722	0.797500	0.000000		0.000000	0.000000	Post-Extreme Mean Reversion	Post-Extreme Mean Reversion
+6	run_20260307_160105_metrics.json	2026-03-07T16:01:05+00:00	0.460000	discard	0.785081	0.000000	0.839722	0.042222	0.839722	0.000000		0.000000	0.000000	Post-Extreme Mean Reversion	Post-Extreme Mean Reversion
+7	run_20260307_163456_metrics.json	2026-03-07T16:34:56+00:00	0.460000	discard	0.785081	0.000000	1.403889	0.564167	1.403889	0.000000		0.000000	0.000000	Post-Extreme Mean Reversion	Post-Extreme Mean Reversion
+8	run_20260307_163602_metrics.json	2026-03-07T16:36:02+00:00	0.460000	discard	0.785081	0.000000	1.422222	0.018333	1.422222	0.000000		0.000000	0.000000	Post-Extreme Mean Reversion	Post-Extreme Mean Reversion
+9	run_20260307_163657_metrics.json	2026-03-07T16:36:57+00:00	0.460000	discard	0.785081	0.000000	1.437500	0.015278	1.437500	0.000000		0.000000	0.000000	Post-Extreme Mean Reversion	Post-Extreme Mean Reversion
+10	run_20260307_164031_metrics.json	2026-03-07T16:40:31+00:00	0.460000	discard	0.785081	0.000000	1.496944	0.059444	1.496944	0.000000		0.000000	0.000000	Post-Extreme Mean Reversion	Post-Extreme Mean Reversion
+11	run_20260307_170201_metrics.json	2026-03-07T17:02:01+00:00	0.460000	discard	0.785081	0.000000	1.855278	0.358333	1.855278	0.000000		0.000000	0.000000	Post-Extreme Mean Reversion	Post-Extreme Mean Reversion
+12	run_20260307_172056_metrics.json	2026-03-07T17:20:56+00:00	0.460000	discard	0.785081	0.000000	2.170556	0.315278	2.170556	0.000000		0.000000	0.000000	Post-Extreme Mean Reversion	Post-Extreme Mean Reversion
+13	run_20260307_172530_metrics.json	2026-03-07T17:25:30+00:00	0.508953	discard	0.785081	0.000000	2.246667	0.076111	2.246667	0.000000		0.000000	0.000000	Residual Horizon Fair Value	Residual Horizon Fair Value
+14	run_20260307_172547_metrics.json	2026-03-07T17:25:47+00:00	0.508953	discard	0.785081	0.000000	2.251389	0.004722	2.251389	0.000000		0.000000	0.000000	Residual Horizon Fair Value	Residual Horizon Fair Value
+15	run_20260307_173300_metrics.json	2026-03-07T17:33:00+00:00	0.508953	discard	0.785081	0.000000	2.371667	0.120278	2.371667	0.000000		0.000000	0.000000	Residual Horizon Fair Value	Residual Horizon Fair Value
+16	run_20260307_173335_metrics.json	2026-03-07T17:33:35+00:00	0.508953	discard	0.785081	0.000000	2.381389	0.009722	2.381389	0.000000		0.000000	0.000000	Residual Horizon Fair Value	Residual Horizon Fair Value
+17	run_20260307_173401_metrics.json	2026-03-07T17:34:01+00:00	0.508953	discard	0.785081	0.000000	2.388611	0.007222	2.388611	0.000000		0.000000	0.000000	Residual Horizon Fair Value	Residual Horizon Fair Value
+18	run_20260307_190738_metrics.json	2026-03-07T19:07:38+00:00	0.508953	discard	0.785081	0.000000	3.948889	1.560278	3.948889	0.000000		0.000000	0.000000	Residual Horizon Fair Value	Residual Horizon Fair Value

@@ -32,6 +32,9 @@ Good splits:
 - Codex: `polymarket-bot/src/` regression fix
 - Claude Code: root onboarding docs and `docs/api/`
 
+- Codex: `nontrading/` implementation or test repair
+- Claude Code: launch/status docs and rollout packaging
+
 - Codex: `signals/` or `strategies/` implementation
 - Claude Code: `research/dispatches/` and evidence write-up
 
@@ -84,6 +87,7 @@ If the agents are working in separate clones or forks:
 |---|---|
 | fix failing tests in `bot/` | rewrite root onboarding docs |
 | patch `polymarket-bot/src/` regressions | refresh API/deploy docs |
+| push `nontrading/` toward a runnable milestone | refine launch docs and status reporting |
 | implement one strategy or signal lane | dispatch planning and research packaging |
 | tighten small scripts and make targets | contributor guidance and release packaging |
 

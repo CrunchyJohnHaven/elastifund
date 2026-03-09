@@ -16,6 +16,12 @@ import time
 from typing import Callable, Optional
 
 from bot.disagreement_signal import build_disagreement_signal
+try:
+    from bot.apm_setup import capture_external_span, get_apm_runtime
+    from bot.latency_tracker import track_latency
+except ImportError:  # pragma: no cover - direct script execution fallback
+    from apm_setup import capture_external_span, get_apm_runtime  # type: ignore
+    from latency_tracker import track_latency  # type: ignore
 
 logger = logging.getLogger("JJ.ensemble")
 
@@ -270,14 +276,25 @@ async def call_claude(
     client = anthropic.AsyncAnthropic(api_key=api_key)
     t0 = time.monotonic()
     try:
-        response = await asyncio.wait_for(
-            client.messages.create(
-                model=model_name,
-                max_tokens=300,
-                messages=[{"role": "user", "content": prompt}],
-            ),
-            timeout=timeout,
-        )
+        with capture_external_span(
+            "anthropic.messages.create",
+            system="llm",
+            action="anthropic",
+            labels={
+                "provider": "anthropic",
+                "model": model_name,
+                "prompt_variant": prompt_variant,
+            },
+            context={"prompt_tokens": _token_estimate(prompt)},
+        ):
+            response = await asyncio.wait_for(
+                client.messages.create(
+                    model=model_name,
+                    max_tokens=300,
+                    messages=[{"role": "user", "content": prompt}],
+                ),
+                timeout=timeout,
+            )
         text = response.content[0].text if response.content else ""
         estimate = parse_llm_response(text, model_name=model_name, provider="anthropic", prompt_variant=prompt_variant)
         estimate.latency_ms = (time.monotonic() - t0) * 1000.0
@@ -286,6 +303,11 @@ async def call_claude(
             text,
             ANTHROPIC_INPUT_COST_PER_M,
             ANTHROPIC_OUTPUT_COST_PER_M,
+        )
+        get_apm_runtime().record_metric(
+            "llm_response_ms",
+            estimate.latency_ms,
+            labels={"provider": "anthropic", "model": model_name},
         )
         return estimate
     except asyncio.TimeoutError:
@@ -331,21 +353,28 @@ async def call_openai(
     client = AsyncOpenAI(api_key=api_key)
     t0 = time.monotonic()
     try:
-        response = await asyncio.wait_for(
-            client.chat.completions.create(
-                model=model_name,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a calibrated probability estimator. Use the exact response format requested.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=300,
-                temperature=0.2,
-            ),
-            timeout=timeout,
-        )
+        with capture_external_span(
+            "openai.chat.completions.create",
+            system="llm",
+            action="openai",
+            labels={"provider": "openai", "model": model_name},
+            context={"prompt_tokens": _token_estimate(prompt)},
+        ):
+            response = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a calibrated probability estimator. Use the exact response format requested.",
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    max_tokens=300,
+                    temperature=0.2,
+                ),
+                timeout=timeout,
+            )
         text = response.choices[0].message.content or ""
         estimate = parse_llm_response(text, model_name=model_name, provider="openai", prompt_variant="base_rate_first")
         estimate.latency_ms = (time.monotonic() - t0) * 1000.0
@@ -354,6 +383,11 @@ async def call_openai(
             text,
             OPENAI_INPUT_COST_PER_M,
             OPENAI_OUTPUT_COST_PER_M,
+        )
+        get_apm_runtime().record_metric(
+            "llm_response_ms",
+            estimate.latency_ms,
+            labels={"provider": "openai", "model": model_name},
         )
         return estimate
     except asyncio.TimeoutError:
@@ -393,25 +427,31 @@ class LLMCostTracker:
         return conn
 
     def _init_db(self) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS llm_cost_events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp TEXT NOT NULL,
-                    day TEXT NOT NULL,
-                    market_id TEXT,
-                    question TEXT,
-                    provider TEXT NOT NULL,
-                    model_name TEXT NOT NULL,
-                    prompt_variant TEXT,
-                    cost_usd REAL NOT NULL,
-                    fallback_mode TEXT NOT NULL
+        with capture_external_span(
+            "sqlite.llm_cost_events.init",
+            system="sqlite",
+            action="write",
+            labels={"db.path": str(self.db_path)},
+        ):
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS llm_cost_events (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        timestamp TEXT NOT NULL,
+                        day TEXT NOT NULL,
+                        market_id TEXT,
+                        question TEXT,
+                        provider TEXT NOT NULL,
+                        model_name TEXT NOT NULL,
+                        prompt_variant TEXT,
+                        cost_usd REAL NOT NULL,
+                        fallback_mode TEXT NOT NULL
+                    )
+                    """
                 )
-                """
-            )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_cost_day ON llm_cost_events(day)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_cost_market ON llm_cost_events(market_id)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_cost_day ON llm_cost_events(day)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_cost_market ON llm_cost_events(market_id)")
 
     @staticmethod
     def _local_day(timestamp: Optional[datetime] = None) -> str:
@@ -432,44 +472,56 @@ class LLMCostTracker:
             return
         timestamp = (event_time or datetime.now().astimezone()).isoformat()
         day = self._local_day(event_time)
-        with self._connect() as conn:
-            conn.executemany(
-                """
-                INSERT INTO llm_cost_events (
-                    timestamp,
-                    day,
-                    market_id,
-                    question,
-                    provider,
-                    model_name,
-                    prompt_variant,
-                    cost_usd,
-                    fallback_mode
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    (
+        with capture_external_span(
+            "sqlite.llm_cost_events.insert",
+            system="sqlite",
+            action="write",
+            labels={"db.path": str(self.db_path)},
+        ):
+            with self._connect() as conn:
+                conn.executemany(
+                    """
+                    INSERT INTO llm_cost_events (
                         timestamp,
                         day,
                         market_id,
-                        question[:500],
-                        estimate.provider,
-                        estimate.model_name,
-                        estimate.prompt_variant,
-                        float(estimate.estimated_cost_usd),
-                        fallback_mode,
-                    )
-                    for estimate in estimates
-                ],
-            )
+                        question,
+                        provider,
+                        model_name,
+                        prompt_variant,
+                        cost_usd,
+                        fallback_mode
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            timestamp,
+                            day,
+                            market_id,
+                            question[:500],
+                            estimate.provider,
+                            estimate.model_name,
+                            estimate.prompt_variant,
+                            float(estimate.estimated_cost_usd),
+                            fallback_mode,
+                        )
+                        for estimate in estimates
+                    ],
+                )
 
     def daily_spend(self, day: Optional[str] = None) -> float:
         target_day = day or self._local_day()
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT COALESCE(SUM(cost_usd), 0.0) AS total_cost FROM llm_cost_events WHERE day = ?",
-                (target_day,),
-            ).fetchone()
+        with capture_external_span(
+            "sqlite.llm_cost_events.daily_spend",
+            system="sqlite",
+            action="read",
+            labels={"db.path": str(self.db_path)},
+        ):
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT COALESCE(SUM(cost_usd), 0.0) AS total_cost FROM llm_cost_events WHERE day = ?",
+                    (target_day,),
+                ).fetchone()
         return float(row["total_cost"]) if row is not None else 0.0
 
     def cost_cap_reached(self, day: Optional[str] = None) -> bool:
@@ -720,6 +772,26 @@ class EnsembleEstimator:
             errors=errors,
         )
 
+    @track_latency("estimate_probability")
+    async def estimate_probability(
+        self,
+        question: str,
+        context: str = "",
+        category: str = "",
+        *,
+        market_price: float = 0.5,
+        market_id: str = "",
+        news_section: str = "",
+    ) -> EnsembleEstimate:
+        return await self.estimate(
+            question,
+            market_price=market_price,
+            category=category,
+            market_id=market_id,
+            context=context,
+            news_section=news_section,
+        )
+
     async def analyze_market(
         self,
         question: str,
@@ -730,12 +802,12 @@ class EnsembleEstimator:
         category: str = "",
     ) -> dict:
         """Compatibility wrapper for the live trading loop."""
-        result = await self.estimate(
+        result = await self.estimate_probability(
             question,
-            market_price=current_price,
-            category=category,
-            market_id=market_id,
             context=context,
+            category=category,
+            market_price=current_price,
+            market_id=market_id,
             news_section=news_section,
         )
         return {

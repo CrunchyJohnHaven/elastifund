@@ -1,10 +1,10 @@
 # Edge Strategy Discovery System — Ranked Backlog
 
-**Version:** 3.0.0
-**Date:** 2026-03-07
-**Flywheel Cycle:** 1 (Post Deep Research v3 — 100 Strategies Assessed)
-**Purpose:** Master list of every strategy evaluated, tested, or queued. Updated every flywheel cycle. Part of the Elastifund research flywheel — see `FLYWHEEL_STRATEGY.md`.
-**Assessment:** See `JJ_ASSESSMENT_DISPATCH.md` for execution orders.
+**Version:** 3.2.0
+**Date:** 2026-03-09
+**Flywheel Cycle:** 2 (Machine Truth Reconciliation)
+**Purpose:** Master list of every strategy evaluated, tested, or queued. Updated every flywheel cycle. Part of the Elastifund research flywheel — see `docs/strategy/flywheel_strategy.md`.
+**Assessment:** See `research/jj_assessment_dispatch.md` for execution orders.
 
 ## Current Counts
 | Status | Count |
@@ -20,6 +20,10 @@
 | **Total Tracked** | **131** |
 
 **Parallel Execution Sprint (2026-03-07):** 7 instances running simultaneously. A-6 and B-1 moved to BUILDING. See `research/dispatches/DISPATCH_082_parallel_sprint.md` and `research/dispatches/DISPATCH_083_structural_alpha_gating_v7.md`. Full failure documentation: `research/what_doesnt_work_diary_v1.md`.
+
+**Cycle 2 gate status (2026-03-09):** No promotion. The latest checked-in fast-trade artifact remains `REJECT ALL` (`FAST_TRADE_EDGE_ANALYSIS.md`, `2026-03-07T19:07:38+00:00`). The March 9 edge scan still found `0` executable A-6 opportunities below `0.95`, and the March 9 B-1 audit still found `0` deterministic template pairs in the first `1,000` allowed markets.
+
+**Remote posture note (2026-03-09):** `reports/remote_service_status.json` shows `jj-live.service` `active` at `2026-03-09T00:06:56Z`, but `reports/remote_cycle_status.json` still marks launch `blocked` and wallet-flow `not_ready`. Treat the running service as operational drift, not as promotion evidence.
 
 ---
 
@@ -46,12 +50,14 @@
 | B5 | Confirmation Layer | Wired in jj_live.py | — | 8.5 |
 | B6 | HFT Shadow Validator (Chainlink Barrier + Tie-Band) | Core module built | 13 passing | 7.8 |
 
+**Fast-flow readiness note (2026-03-09):** wallet-flow remains `not_ready` in `reports/remote_cycle_status.json` because `data/smart_wallets.json` and `data/wallet_scores.db` are still missing and no scored wallets are available yet.
+
 ## BUILDING — STRUCTURAL ALPHA (Parallel Sprint, 2026-03-07)
 
 | # | Strategy | Modules | Tests | Status |
 |---|----------|---------|-------|--------|
-| SA-1 | A-6 Guaranteed Dollar Scanner | constraint_arb_engine, sum_violation_scanner, a6_sum_scanner, a6_executor, neg_risk_inventory, resolution_normalizer, signals/sum_violation/guaranteed_dollar.py | 223 total | Live-public-data audit: 92 allowed neg-risk events, 71 best as two-leg straddles, 21 as neg-risk-conversion variants, 0 below the initial 0.95 cost gate. |
-| SA-2 | B-1 Templated Dependency Engine | dependency_graph, relation_classifier, b1_executor, b1_monitor, relation_cache, bot/b1_template_engine.py | See above | Live-public-data template audit: 0 deterministic pairs in the first 1,000 active allowed markets. Keep scope narrow; do not widen graph yet. |
+| SA-1 | A-6 Guaranteed Dollar Scanner | constraint_arb_engine, sum_violation_scanner, a6_sum_scanner, a6_executor, neg_risk_inventory, resolution_normalizer, signals/sum_violation/guaranteed_dollar.py | 223 total | March 8 broad audit found 563 allowed neg-risk events with 0 executable-at-threshold constructions below the initial 0.95 cost gate. March 9 live scan then found 15 candidate events, 9 tradable events, and 0 executable opportunities. No promotion. |
+| SA-2 | B-1 Templated Dependency Engine | dependency_graph, relation_classifier, b1_executor, b1_monitor, relation_cache, bot/b1_template_engine.py | See above | March 9 live-public-data template audit still found 0 deterministic pairs in the first 1,000 active allowed markets. No promotion. Keep scope narrow; do not widen graph yet. |
 
 ## RE-EVALUATING (Previously Rejected, New Evidence)
 
@@ -145,7 +151,7 @@ Each edge scored on four dimensions (1–5 scale):
 
 ## DEEP RESEARCH v3 — TOP 30 ADDITIONS (Ranked by v3 Composite Score)
 
-*Source: DEEP_RESEARCH_OUTPUT.md, 2026-03-07. See JJ_ASSESSMENT_DISPATCH.md for execution priorities.*
+*Source: research/deep_research_output.md, 2026-03-07. See research/jj_assessment_dispatch.md for execution priorities.*
 
 **JJ Execution Tiers:**
 - **TIER 1 (Days 1-7):** Go live + infrastructure
@@ -155,8 +161,8 @@ Each edge scored on four dimensions (1–5 scale):
 
 | v3 Rank | Strategy ID | Name | P(Works) | v3 Composite | JJ Tier | Notes |
 |---------|------------|------|----------|-------------|---------|-------|
-| 1 | A-6 | Guaranteed Dollar Scanner | 45% | 4.2 | **BUILDING** | Current shipped lane now ranks straddles vs full baskets, but the live allowed-universe snapshot still shows 0 events below the initial 0.95 cost threshold. Fill/dwell study comes before more buildout. |
-| 2 | B-1 | Templated Dependency Engine | 45% | 4.1 | **BUILDING** | Broad graph work is frozen behind density. Promotion still requires a 50-pair gold set with >=85% precision, and the current template audit found 0 deterministic pairs in 1,000 allowed markets. |
+| 1 | A-6 | Guaranteed Dollar Scanner | 45% | 4.2 | **BUILDING** | Current shipped lane ranks straddles vs full baskets, but the March 8 broad audit and March 9 live scan still show 0 executable opportunities below the initial 0.95 cost gate. No promotion. Fill/dwell study comes before more buildout. |
+| 2 | B-1 | Templated Dependency Engine | 45% | 4.1 | **BUILDING** | Broad graph work is frozen behind density. Promotion still requires a 50-pair gold set with >=85% precision, and the March 9 template audit still found 0 deterministic pairs in the first 1,000 allowed markets. No promotion. |
 | 3 | D-12 | Adaptive Platt Calibration (Rolling) | 10% | 2.2 | TIER 4 | Validated negative on 2026-03-07. The current static fitted Platt curve beat rolling windows 50/100/200 on the 532-market walk-forward holdout. Revisit only after 100+ live resolved trades. |
 | 4 | G-1 | WebSocket Upgrade (REST→WS) | 95%* | 3.9 | TIER 1 | *Infrastructure, not alpha. Prerequisite for 8+ strategies. |
 | 5 | D-9 | Ensemble Disagreement Signal | 30% | 3.8 | TIER 2 | 1 day. Simple std() on multi-model outputs. |
@@ -188,7 +194,7 @@ Each edge scored on four dimensions (1–5 scale):
 
 ### v3 Strategies NOT in Top 30 (Queued, Unranked)
 
-Remaining 62 strategies from v3 are catalogued in DEEP_RESEARCH_OUTPUT.md. Key ones worth noting:
+Remaining 62 strategies from v3 are catalogued in research/deep_research_output.md. Key ones worth noting:
 
 | ID | Name | P(Works) | Status |
 |----|------|----------|--------|

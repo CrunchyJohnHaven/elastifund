@@ -60,6 +60,13 @@ make bootstrap
 make verify
 ```
 
+If you also want to sanity-check the current non-trading lane:
+
+```bash
+make test-nontrading
+make smoke-nontrading
+```
+
 ## Bring Up The Full Local Stack
 
 ```bash

@@ -47,6 +47,26 @@ logging.basicConfig(
 logger = logging.getLogger("edge_collector")
 
 
+def _format_log_value(value: object) -> str:
+    """Render log fields into deterministic stdlib-safe text."""
+    try:
+        return json.dumps(value, sort_keys=True, default=str)
+    except TypeError:
+        return json.dumps(str(value))
+
+
+def _log_event(level: int, event: str, **fields: object) -> None:
+    """Log collector events without relying on non-stdlib logger kwargs."""
+    if not fields:
+        logger.log(level, event)
+        return
+
+    details = " ".join(
+        f"{key}={_format_log_value(value)}" for key, value in fields.items()
+    )
+    logger.log(level, "%s %s", event, details)
+
+
 class EdgeCollector:
     """Collects market price snapshots for edge discovery analysis."""
 
@@ -201,7 +221,7 @@ class EdgeCollector:
         now_ts = int(time.time())
         run_id = hashlib.sha1(f"ec-{now_ts}".encode()).hexdigest()[:12]
 
-        logger.info("collection_cycle_start", run_id=run_id)
+        _log_event(logging.INFO, "collection_cycle_start", run_id=run_id)
 
         # Cleanup expired quarantine entries
         self.quarantine.cleanup_expired()
@@ -239,7 +259,8 @@ class EdgeCollector:
             "elapsed_seconds": round(elapsed, 2),
         }
 
-        logger.info(
+        _log_event(
+            logging.INFO,
             "collection_cycle_complete",
             markets=len(snapshots),
             prices=prices_recorded,
@@ -251,7 +272,8 @@ class EdgeCollector:
 
     async def run_daemon(self, interval_seconds: int = 900) -> None:
         """Run collection loop until shutdown signal."""
-        logger.info(
+        _log_event(
+            logging.INFO,
             "edge_collector_daemon_start",
             interval=interval_seconds,
             db=str(self.db_path),
@@ -278,7 +300,12 @@ class EdgeCollector:
                     hourly_summary_at = time.time()
 
             except Exception as e:
-                logger.error("collection_cycle_error", error=str(e), cycle=cycle)
+                _log_event(
+                    logging.ERROR,
+                    "collection_cycle_error",
+                    error=str(e),
+                    cycle=cycle,
+                )
 
             # Wait for next cycle or shutdown
             for _ in range(interval_seconds):
@@ -286,12 +313,16 @@ class EdgeCollector:
                     break
                 await asyncio.sleep(1)
 
-        logger.info("edge_collector_daemon_shutdown", cycles_completed=cycle)
+        _log_event(
+            logging.INFO,
+            "edge_collector_daemon_shutdown",
+            cycles_completed=cycle,
+        )
         await self.scanner.close()
 
     def request_shutdown(self) -> None:
         """Signal the daemon to stop after current cycle."""
-        logger.info("shutdown_requested")
+        _log_event(logging.INFO, "shutdown_requested")
         self._shutdown = True
 
 

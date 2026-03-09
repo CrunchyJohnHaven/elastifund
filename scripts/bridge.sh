@@ -1,14 +1,15 @@
 #!/bin/bash
-# BRIDGE.SH — Bidirectional sync between Mac and Dublin VPS
+# BRIDGE.SH — Controlled sync between Mac and Dublin VPS
 # Run this on your Mac. It handles:
-#   1. Push code FROM Mac TO VPS
-#   2. Pull state/data FROM VPS TO Mac
-#   3. Run the local flywheel cycle from the pulled VPS DB
+#   1. Pull state/data FROM VPS TO Mac before any analysis or deploy
+#   2. Run the local flywheel cycle from the pulled VPS DB
+#   3. Push validated code FROM Mac TO VPS only after the pull step
+#   4. Refresh remote/status artifacts with service and regression truth
 #
 # Usage:
 #   ./scripts/bridge.sh                      # push + pull + local flywheel
 #   ./scripts/bridge.sh --pull-only         # pull VPS data + local flywheel
-#   ./scripts/bridge.sh --push-only         # push code only
+#   ./scripts/bridge.sh --push-only         # mandatory pre-pull + push code
 #   ./scripts/bridge.sh --skip-flywheel     # sync without local flywheel
 #   ./scripts/bridge.sh --key ~/path.pem    # specify key
 #   ./scripts/bridge.sh --loop              # continuous sync every 30 min
@@ -22,6 +23,8 @@ VPS_DIR="/home/ubuntu/polymarket-trading-bot"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 FYWHEEL_CONFIG="${FLYWHEEL_CONFIG:-$PROJECT_DIR/config/flywheel_runtime.local.json}"
 FYWHEEL_LATEST="${FLYWHEEL_LATEST:-$PROJECT_DIR/reports/flywheel/latest_sync.json}"
+REMOTE_SERVICE_STATUS="${REMOTE_SERVICE_STATUS:-$PROJECT_DIR/reports/remote_service_status.json}"
+ROOT_TEST_STATUS="${ROOT_TEST_STATUS:-$PROJECT_DIR/reports/root_test_status.json}"
 
 # ── Find SSH key ──
 KEY="${ELASTIFUND_BRIDGE_KEY:-}"
@@ -29,17 +32,25 @@ LOOP=false
 PUSH_CODE=true
 PULL_DATA=true
 RUN_FLYWHEEL=true
+PUSH_ONLY_REQUESTED=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --key) KEY="$2"; shift 2 ;;
         --loop) LOOP=true; shift ;;
         --pull-only) PUSH_CODE=false; shift ;;
-        --push-only) PULL_DATA=false; shift ;;
+        --push-only) PUSH_ONLY_REQUESTED=true; shift ;;
         --skip-flywheel) RUN_FLYWHEEL=false; shift ;;
         *) echo "Unknown: $1"; exit 1 ;;
     esac
 done
+
+if $PUSH_ONLY_REQUESTED; then
+    echo "[MODE] push-only requested; performing the mandatory pre-deploy pull first."
+    PUSH_CODE=true
+    PULL_DATA=true
+    RUN_FLYWHEEL=false
+fi
 
 if [ -z "$KEY" ]; then
     # Search common locations
@@ -72,11 +83,83 @@ print_tail() {
     fi
 }
 
+pull_remote_data() {
+    local label="$1"
+    echo "[PULL] $label"
+
+    local pull_output
+    if ! pull_output=$(rsync -avz \
+        --include 'data/' \
+        --include 'data/*.db' \
+        --include 'data/*.json' \
+        --include 'data/*.jsonl' \
+        --include 'jj_state.json' \
+        --include 'logs/' \
+        --include 'logs/*' \
+        --include 'FAST_TRADE_EDGE_ANALYSIS.md' \
+        --exclude '*' \
+        -e "$RSYNC_SSH" \
+        "$VPS_HOST:$VPS_DIR/" "$PROJECT_DIR/" 2>&1); then
+        printf '%s\n' "$pull_output"
+        return 1
+    fi
+    print_tail "$pull_output"
+}
+
+capture_remote_service_status() {
+    mkdir -p "$(dirname "$REMOTE_SERVICE_STATUS")"
+    echo "[SERVICE] Capturing jj-live status..."
+
+    local systemctl_state="unknown"
+    local detail="unknown"
+
+    if detail=$($SSH_CMD "$VPS_HOST" "systemctl is-active jj-live.service 2>/dev/null || true" 2>&1); then
+        systemctl_state="$(printf '%s\n' "$detail" | tail -1 | tr -d '\r')"
+        detail="$systemctl_state"
+    else
+        detail="$(printf '%s\n' "$detail" | tail -1 | tr -d '\r')"
+        systemctl_state="unknown"
+    fi
+
+    "$PYTHON_BIN" - "$REMOTE_SERVICE_STATUS" "$VPS_HOST" "$systemctl_state" "$detail" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+target = Path(sys.argv[1])
+host = sys.argv[2]
+systemctl_state = (sys.argv[3] or "unknown").strip()
+detail = (sys.argv[4] or "unknown").strip()
+
+if systemctl_state == "active":
+    status = "running"
+elif systemctl_state in {"inactive", "failed", "deactivating"}:
+    status = "stopped"
+else:
+    status = "unknown"
+
+payload = {
+    "checked_at": datetime.now(timezone.utc).isoformat(),
+    "host": host,
+    "service_name": "jj-live.service",
+    "status": status,
+    "systemctl_state": systemctl_state,
+    "detail": detail,
+}
+target.write_text(json.dumps(payload, indent=2, sort_keys=True))
+print(json.dumps(payload, indent=2, sort_keys=True))
+PY
+}
+
 write_status_report() {
     echo "[REPORT] Refreshing remote cycle status..."
 
     local report_output
-    if ! report_output=$("$PYTHON_BIN" "$PROJECT_DIR/scripts/write_remote_cycle_status.py" 2>&1); then
+    if ! report_output=$("$PYTHON_BIN" "$PROJECT_DIR/scripts/write_remote_cycle_status.py" \
+        --refresh-root-tests \
+        --root-test-status-json "$ROOT_TEST_STATUS" \
+        --service-status-json "$REMOTE_SERVICE_STATUS" 2>&1); then
         printf '%s\n' "$report_output"
         return 1
     fi
@@ -127,6 +210,15 @@ do_sync() {
     local push_changed=false
     echo "$(date '+%Y-%m-%d %H:%M:%S') ── BRIDGE SYNC START ──"
 
+    # ── PULL: VPS → Mac (data, state, logs) ──
+    if $PULL_DATA; then
+        pull_remote_data "Pulling data from VPS before analysis or deploy..."
+    else
+        echo "[PULL] Skipped (push-only mode)."
+    fi
+
+    run_local_flywheel
+
     # ── PUSH: Mac → VPS (code, configs, improvements) ──
     if $PUSH_CODE; then
         echo "[PUSH] Syncing code to VPS..."
@@ -160,30 +252,6 @@ do_sync() {
         echo "[PUSH] Skipped (pull-only mode)."
     fi
 
-    # ── PULL: VPS → Mac (data, state, logs) ──
-    if $PULL_DATA; then
-        echo "[PULL] Pulling data from VPS..."
-        local pull_output
-        if ! pull_output=$(rsync -avz \
-            --include 'data/' \
-            --include 'data/*.db' \
-            --include 'data/*.json' \
-            --include 'data/*.jsonl' \
-            --include 'jj_state.json' \
-            --include 'logs/' \
-            --include 'logs/*' \
-            --include 'FAST_TRADE_EDGE_ANALYSIS.md' \
-            --exclude '*' \
-            -e "$RSYNC_SSH" \
-            "$VPS_HOST:$VPS_DIR/" "$PROJECT_DIR/" 2>&1); then
-            printf '%s\n' "$pull_output"
-            return 1
-        fi
-        print_tail "$pull_output"
-    else
-        echo "[PULL] Skipped (push-only mode)."
-    fi
-
     # ── Restart bot if code changed ──
     if $PUSH_CODE && $push_changed; then
         echo "[RESTART] Restarting jj-live service (code changed)..."
@@ -194,7 +262,11 @@ do_sync() {
         echo "[RESTART] Skipped (pull-only mode)."
     fi
 
-    run_local_flywheel
+    if $PUSH_CODE && $PULL_DATA && $push_changed; then
+        pull_remote_data "Refreshing validation data after deploy..."
+    fi
+
+    capture_remote_service_status
     write_status_report
 
     # ── Quick status ──

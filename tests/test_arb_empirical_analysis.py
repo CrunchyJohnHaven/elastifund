@@ -1,5 +1,7 @@
+import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -8,11 +10,15 @@ from scripts.arb_empirical_analysis import (
     LegObservation,
     PassiveOrderProbe,
     ReplayViolationRow,
+    build_structural_gate_pack,
     build_passive_order_probes,
     build_violation_episodes,
+    evaluate_lane_statuses,
     measure_fill_proxy,
     midpoint_bucket,
     recommend_a6_thresholds,
+    summarize_public_a6_audit,
+    summarize_public_b1_audit,
     trade_matches_passive_yes_buy,
 )
 
@@ -222,6 +228,154 @@ class TestArbEmpiricalAnalysis(unittest.TestCase):
         probes = build_passive_order_probes(legs, fill_sample_size=6)
         sampled_cycles = {probe.cycle_index for probe in probes}
         self.assertEqual(sampled_cycles, {0, 1, 2})
+
+    def test_public_audit_summaries_extract_repo_truth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            a6_json = tmp_path / "guaranteed_dollar_audit.json"
+            a6_md = tmp_path / "guaranteed_dollar_audit.md"
+            b1_json = tmp_path / "b1_template_audit.json"
+            b1_md = tmp_path / "b1_template_audit.md"
+
+            a6_json.write_text(
+                json.dumps(
+                    [
+                        {"best_construction": {"executable": True, "top_of_book_cost": 0.94}},
+                        {"best_construction": {"executable": True, "top_of_book_cost": 0.97}},
+                        {"best_construction": {"executable": False, "top_of_book_cost": 0.90}},
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            a6_md.write_text("- Allowed neg-risk events audited: 92\n", encoding="utf-8")
+            b1_json.write_text(json.dumps({"template_pairs": [{"id": 1}, {"id": 2}]}), encoding="utf-8")
+            b1_md.write_text("- Template-compatible pairs: 2\n", encoding="utf-8")
+
+            a6_summary = summarize_public_a6_audit(
+                json_path=a6_json,
+                markdown_path=a6_md,
+                execute_threshold=0.95,
+            )
+            b1_summary = summarize_public_b1_audit(
+                json_path=b1_json,
+                markdown_path=b1_md,
+                market_sample_size=1000,
+            )
+
+        self.assertEqual(a6_summary["allowed_neg_risk_event_count"], 92)
+        self.assertEqual(a6_summary["executable_constructions_below_threshold"], 1)
+        self.assertEqual(b1_summary["deterministic_template_pair_count"], 2)
+        self.assertEqual(b1_summary["allowed_market_sample_size"], 1000)
+
+    def test_evaluate_lane_statuses_surfaces_blocked_repo_truth(self) -> None:
+        snapshot = {
+            "fill_proxy": {
+                "full_fill_proxy_rate": None,
+                "wilson_low": None,
+            },
+            "a6_replay": {
+                "observed_persistence_lower_bound_seconds": 0.0,
+            },
+            "b1": {
+                "b1_half_life_lower_bound_seconds": None,
+                "classification_accuracy": None,
+                "false_positive_rate": None,
+            },
+            "settlement": {
+                "total": 0,
+            },
+            "repo_truth": {
+                "public_a6_audit": {
+                    "execute_threshold": 0.95,
+                    "executable_constructions_below_threshold": 0,
+                },
+                "public_b1_audit": {
+                    "allowed_market_sample_size": 1000,
+                    "deterministic_template_pair_count": 0,
+                },
+            },
+        }
+
+        lane_status = evaluate_lane_statuses(snapshot)
+
+        self.assertEqual(lane_status["a6"]["status"], "blocked")
+        self.assertEqual(lane_status["b1"]["status"], "blocked")
+        self.assertEqual(lane_status["a6"]["settlement_evidence_count"], 0)
+        self.assertIsNone(lane_status["a6"]["maker_fill_proxy_rate"])
+        self.assertIsNone(lane_status["b1"]["classification_accuracy"])
+        self.assertIsNone(lane_status["b1"]["false_positive_rate"])
+        self.assertIn("maker_fill_proxy_unmeasured", lane_status["a6"]["blocked_reasons"])
+        self.assertIn(
+            "public_audit_zero_executable_constructions_below_0.95_gate",
+            lane_status["a6"]["blocked_reasons"],
+        )
+        self.assertIn("classification_accuracy_unmeasured", lane_status["b1"]["blocked_reasons"])
+        self.assertIn(
+            "public_audit_zero_deterministic_pairs_in_first_1000_allowed_markets",
+            lane_status["b1"]["blocked_reasons"],
+        )
+
+    def test_build_structural_gate_pack_reports_stage_threshold_deltas(self) -> None:
+        snapshot = {
+            "generated_at": "2026-03-09T00:05:51+00:00",
+            "fill_proxy": {
+                "full_fill_proxy_rate": None,
+                "wilson_low": None,
+            },
+            "a6_replay": {
+                "observed_persistence_lower_bound_seconds": 0.0,
+            },
+            "b1": {
+                "b1_half_life_lower_bound_seconds": None,
+                "classification_accuracy": None,
+                "false_positive_rate": None,
+            },
+            "settlement": {
+                "total": 0,
+            },
+            "repo_truth": {
+                "public_a6_audit": {
+                    "execute_threshold": 0.95,
+                    "executable_constructions_below_threshold": 0,
+                },
+                "public_b1_audit": {
+                    "allowed_market_sample_size": 1000,
+                    "deterministic_template_pair_count": 0,
+                },
+            },
+        }
+
+        snapshot["lane_status"] = evaluate_lane_statuses(snapshot)
+        gate_pack = build_structural_gate_pack(snapshot, source_snapshot="reports/arb_empirical_snapshot.json")
+
+        self.assertEqual(gate_pack["source_snapshot"], "reports/arb_empirical_snapshot.json")
+
+        a6 = gate_pack["per_lane_status"]["a6"]
+        self.assertEqual(a6["status"], "blocked")
+        self.assertIn("maker_fill_proxy_unmeasured", a6["blocked_reasons"])
+        self.assertEqual(a6["current_metrics"]["public_a6_executable_count"], 0)
+        self.assertEqual(
+            a6["required_thresholds"]["ready_for_shadow"]["maker_fill_wilson_lower"],
+            {"comparison": ">", "value": 0.2},
+        )
+        self.assertIsNone(a6["threshold_deltas"]["ready_for_shadow"]["maker_fill_wilson_lower"])
+        self.assertEqual(a6["threshold_deltas"]["ready_for_shadow"]["violation_half_life_seconds"], -10.0)
+        self.assertEqual(a6["threshold_deltas"]["ready_for_micro_live"]["settlement_evidence_count"], -3.0)
+        self.assertFalse(a6["stage_readiness"]["ready_for_shadow"])
+        self.assertFalse(a6["stage_readiness"]["ready_for_micro_live"])
+
+        b1 = gate_pack["per_lane_status"]["b1"]
+        self.assertEqual(b1["status"], "blocked")
+        self.assertIn("classification_accuracy_unmeasured", b1["blocked_reasons"])
+        self.assertEqual(
+            b1["required_thresholds"]["ready_for_shadow"]["false_positive_rate"],
+            {"comparison": "<=", "value": 0.05},
+        )
+        self.assertIsNone(b1["threshold_deltas"]["ready_for_shadow"]["classification_accuracy"])
+        self.assertEqual(b1["threshold_deltas"]["ready_for_shadow"]["public_b1_template_pair_count"], -1.0)
+        self.assertEqual(b1["threshold_deltas"]["ready_for_micro_live"]["settlement_evidence_count"], -3.0)
+        self.assertFalse(b1["stage_readiness"]["ready_for_shadow"])
+        self.assertFalse(b1["stage_readiness"]["ready_for_micro_live"])
 
 
 if __name__ == "__main__":

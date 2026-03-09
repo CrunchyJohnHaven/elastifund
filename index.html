@@ -165,6 +165,116 @@ body {
 .badge-green { background: var(--accent-green-dim); color: var(--accent-green); border: 1px solid rgba(16,185,129,0.2); }
 .badge-blue { background: var(--accent-blue-dim); color: var(--accent-blue); border: 1px solid rgba(59,130,246,0.2); }
 .badge-purple { background: var(--accent-purple-dim); color: var(--accent-purple); border: 1px solid rgba(139,92,246,0.2); }
+.badge-red { background: var(--accent-red-dim); color: var(--accent-red); border: 1px solid rgba(239,68,68,0.2); }
+
+.hero-stat-note {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+.topbar-status.paused {
+  color: var(--accent-amber);
+  background: var(--accent-amber-dim);
+  border-color: rgba(245, 158, 11, 0.25);
+}
+.topbar-status.paused .blink { background: var(--accent-amber); }
+
+.status-board {
+  margin-top: 28px;
+  padding: 28px;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.08), rgba(59, 130, 246, 0.05));
+  border: 1px solid rgba(245, 158, 11, 0.18);
+  box-shadow: var(--shadow-card);
+}
+.status-board-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  background: var(--accent-amber-dim);
+  color: var(--accent-amber);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+.status-pill::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.status-stamp {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.status-board h3 {
+  font-size: 24px;
+  color: var(--text-bright);
+  margin-bottom: 10px;
+  letter-spacing: -0.3px;
+}
+.status-board > p {
+  font-size: 15px;
+  color: var(--text-secondary);
+  max-width: 860px;
+}
+.status-grid,
+.freshness-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+.status-grid { margin-top: 22px; }
+.freshness-grid { margin-top: 12px; }
+.status-item,
+.freshness-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  padding: 18px;
+}
+.status-item-label,
+.freshness-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+.status-item-value,
+.freshness-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-bright);
+  line-height: 1.45;
+}
+.status-item-sub,
+.freshness-sub {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
 
 /* Hero Terminal Card */
 .hero-terminal {
@@ -240,6 +350,17 @@ body {
   color: var(--text-bright); letter-spacing: -0.5px;
 }
 .sh p { font-size: 16px; color: var(--text-secondary); margin-top: 8px; max-width: 680px; }
+.catalog-note {
+  margin-bottom: 28px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+.catalog-note .mono { color: var(--text-dim); }
 
 /* ── Tabs ── */
 .tabs { display: flex; gap: 4px; margin-bottom: 32px; flex-wrap: wrap; }
@@ -549,6 +670,7 @@ body {
   .about-grid { grid-template-columns: 1fr; }
   .arch-grid { grid-template-columns: repeat(3, 1fr); }
   .tl-sections { grid-template-columns: 1fr; }
+  .status-board { padding: 24px; }
 }
 @media (max-width: 768px) {
   .topbar-nav { display: none; }
@@ -558,6 +680,7 @@ body {
   .hero-stats-row { gap: 20px; flex-wrap: wrap; }
   .arch-grid { grid-template-columns: 1fr 1fr; }
   .edu-grid { grid-template-columns: 1fr; }
+  .status-board h3 { font-size: 20px; }
 }
 @media (max-width: 480px) {
   .metric-strip-inner { grid-template-columns: 1fr; }
@@ -754,7 +877,7 @@ body {
     <a href="#about">About</a>
   </nav>
   <div class="topbar-actions">
-    <div class="topbar-status"><span class="blink"></span> LIVE ON VPS</div>
+    <div class="topbar-status paused"><span class="blink"></span> LAUNCH BLOCKED</div>
     <a href="https://github.com/CrunchyJohnHaven/elastifund" class="btn-gh" target="_blank" rel="noopener">
       <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
       GitHub
@@ -769,33 +892,35 @@ body {
   <div class="container">
     <div class="hero-grid">
       <div>
-        <div class="hero-eyebrow">Agentic Trading Intelligence Platform</div>
-        <h1>The AI decides<br>what to <span class="gradient">trade.</span></h1>
+        <div class="hero-eyebrow">Cycle 2 Runtime Reconciliation</div>
+        <h1>The AI decides<br>what is <span class="gradient">tradeable.</span></h1>
         <p class="hero-sub">
-          An autonomous trading system that scans prediction markets, estimates probabilities without seeing prices, and executes when it finds edge. Powered by Elastic Stack. Everything is open source. Every failure documented. The research is the product.
+          Open-source operator infrastructure for prediction-market research and execution. The March 9, 2026 refresh shows the runtime drift explicitly: <span class="mono">jj-live.service</span> was observed active on the VPS, while launch posture remains blocked by wallet-flow bootstrap work, REJECT ALL fast-flow evidence, and unresolved A-6 / B-1 gates.
         </p>
         <div class="hero-stats-row">
           <div class="hero-stat">
-            <span class="hero-stat-val">62</span>
-            <span class="hero-stat-label">Strategies Tracked</span>
+            <span class="hero-stat-val">$347.51</span>
+            <span class="hero-stat-label">Tracked Capital</span>
           </div>
           <div class="hero-stat">
-            <span class="hero-stat-val">68.5%</span>
-            <span class="hero-stat-label">Backtest Win Rate</span>
+            <span class="hero-stat-val">71.2%</span>
+            <span class="hero-stat-label">Calibrated Win Rate<span class="hero-stat-note">68.5% legacy / uncalibrated</span></span>
           </div>
           <div class="hero-stat">
-            <span class="hero-stat-val">76</span>
-            <span class="hero-stat-label">Research Dispatches</span>
+            <span class="hero-stat-val">1,256</span>
+            <span class="hero-stat-label">Verified Tests</span>
           </div>
           <div class="hero-stat">
-            <span class="hero-stat-val">345</span>
-            <span class="hero-stat-label">Tests Passing</span>
+            <span class="hero-stat-val">131</span>
+            <span class="hero-stat-label">Strategy Catalog</span>
           </div>
         </div>
         <div class="hero-badges">
           <span class="badge badge-green">MIT License</span>
           <span class="badge badge-blue">Polymarket + Kalshi</span>
-          <span class="badge badge-purple">6 Signal Sources</span>
+          <span class="badge badge-purple">6 Primary + 1 Anomaly Lane</span>
+          <span class="badge badge-blue">23 Benchmarked Systems</span>
+          <span class="badge badge-red">Fast-Market Verdict: REJECT ALL</span>
           <span class="badge" style="background: rgba(6,182,212,0.15); color: #06b6d4; border: 1px solid rgba(6,182,212,0.2);">Elastic Stack</span>
         </div>
       </div>
@@ -804,22 +929,76 @@ body {
           <span class="term-dot term-dot-r"></span>
           <span class="term-dot term-dot-y"></span>
           <span class="term-dot term-dot-g"></span>
-          <span class="term-title">jj-live.service &mdash; Dublin VPS</span>
+          <span class="term-title">runtime truth &mdash; March 9, 2026</span>
         </div>
         <div class="hero-terminal-body">
-          <div class="term-line"><span class="term-prompt">$</span> <span>systemctl status jj-live</span></div>
-          <div class="term-line"><span class="term-key">Status:</span> <span class="term-val green">ACTIVE (running)</span></div>
-          <div class="term-line"><span class="term-key">Uptime:</span> <span class="term-val">since Feb 2026</span></div>
-          <div class="term-line"><span class="term-key">Mode:</span> <span class="term-val">100% Post-Only Maker</span></div>
+          <div class="term-line"><span class="term-prompt">$</span> <span>cat reports/remote_service_status.json</span></div>
+          <div class="term-line"><span class="term-key">Service:</span> <span class="term-val green">ACTIVE on VPS</span></div>
+          <div class="term-line"><span class="term-key">Checked:</span> <span class="term-val">2026-03-09 00:06:56 UTC</span></div>
+          <div class="term-line"><span class="term-key">Launch:</span> <span class="term-val amber">BLOCKED / human review required</span></div>
+          <div class="term-line"><span class="term-key">Hold:</span> <span class="term-val">wallet-flow bootstrap + A-6 / B-1 evidence gap</span></div>
           <hr class="term-sep">
-          <div class="term-line"><span class="term-key">Capital:</span> <span class="term-val">$247.51 USDC + $100 USD</span></div>
+          <div class="term-line"><span class="term-key">Capital:</span> <span class="term-val">$347.51 tracked ($247.51 + $100)</span></div>
           <div class="term-line"><span class="term-key">Platforms:</span> <span class="term-val">Polymarket, Kalshi</span></div>
-          <div class="term-line"><span class="term-key">Cycle time:</span> <span class="term-val">3 min scan interval</span></div>
-          <div class="term-line"><span class="term-key">Signals:</span> <span class="term-val">LLM, Wallet, LMSR, Arb</span></div>
+          <div class="term-line"><span class="term-key">Signals:</span> <span class="term-val">6 primary + 1 anomaly feedback</span></div>
+          <div class="term-line"><span class="term-key">Benchmarks:</span> <span class="term-val">23 systems tracked</span></div>
           <hr class="term-sep">
-          <div class="term-line"><span class="term-key">Last scan:</span> <span class="term-val green">100+ markets</span></div>
-          <div class="term-line"><span class="term-key">Execution:</span> <span class="term-val">Maker-only (0% fee)</span></div>
-          <div class="term-line"><span class="term-key">Risk:</span> <span class="term-val">Quarter-Kelly, $5 daily cap</span></div>
+          <div class="term-line"><span class="term-key">Fast lane:</span> <span class="term-val red">REJECT ALL</span></div>
+          <div class="term-line"><span class="term-key">Live trades:</span> <span class="term-val">0 after 294 cycles</span></div>
+          <div class="term-line"><span class="term-key">Verification:</span> <span class="term-val green">1,256 tests verified</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="status-board">
+      <div class="status-board-top">
+        <span class="status-pill">Launch Posture: Blocked</span>
+        <span class="status-stamp">Service observed active &bull; checked 2026-03-09 00:06:56 UTC</span>
+      </div>
+      <h3>The remote service was active on March 9, 2026, but live launch posture remains blocked by wallet-flow bootstrap work and unresolved A-6 / B-1 evidence gates.</h3>
+      <p>Current uptime does not clear the system for real-capital routing. The authoritative cycle state still says <span class="mono">live_launch_blocked=true</span>, <span class="mono">fast_flow_restart_ready=false</span>, and next action is paper or shadow restart work only after wallet-flow readiness is restored.</p>
+      <div class="status-grid">
+        <div class="status-item">
+          <div class="status-item-label">Service</div>
+          <div class="status-item-value"><span class="mono">jj-live.service</span> active on VPS</div>
+          <div class="status-item-sub">Observed at 2026-03-09 00:06:56 UTC. This supersedes stale March 8 prose that described the service as stopped.</div>
+        </div>
+        <div class="status-item">
+          <div class="status-item-label">Launch Posture</div>
+          <div class="status-item-value">Blocked: wallet-flow, A-6, B-1</div>
+          <div class="status-item-sub">No live-money restart is cleared. Recommended next step is wallet-flow bootstrap, then paper or shadow reassessment.</div>
+        </div>
+        <div class="status-item">
+          <div class="status-item-label">Fast-Market Pipeline</div>
+          <div class="status-item-value text-red">REJECT ALL</div>
+          <div class="status-item-sub">Current public-safe research verdict for the fast-market lane.</div>
+        </div>
+        <div class="status-item">
+          <div class="status-item-label">Trade History</div>
+          <div class="status-item-value">0 live trades after 294 cycles</div>
+          <div class="status-item-sub">No closed trades are available yet for calibration or promotion decisions.</div>
+        </div>
+        <div class="status-item">
+          <div class="status-item-label">Public Edge Snapshot</div>
+          <div class="status-item-value">0 fast markets &le;24h</div>
+          <div class="status-item-sub">A-6 scan: 15 candidate events, 58 candidate markets, 5 raw violations, 0 executable opportunities. B-1: 0 deterministic pairs in 1,000 allowed markets.</div>
+        </div>
+      </div>
+      <div class="freshness-grid">
+        <div class="freshness-item">
+          <div class="freshness-label">Metrics Snapshot</div>
+          <div class="freshness-value">March 9, 2026</div>
+          <div class="freshness-sub">Capital, cycle status, service state, and public edge counts reconciled from authoritative JSON artifacts.</div>
+        </div>
+        <div class="freshness-item">
+          <div class="freshness-label">Verification Baseline</div>
+          <div class="freshness-value">March 9, 2026</div>
+          <div class="freshness-sub"><span class="mono">849 + 22</span> root tests, <span class="mono">374</span> Polymarket tests, and <span class="mono">11</span> non-trading tests = <span class="mono">1,256</span>.</div>
+        </div>
+        <div class="freshness-item">
+          <div class="freshness-label">Build Stamp</div>
+          <div class="freshness-value">March 9, 2026</div>
+          <div class="freshness-sub">Single-file homepage refreshed after service-state drift reconciliation. No <span class="mono">site/</span> scaffold was added.</div>
         </div>
       </div>
     </div>
@@ -831,39 +1010,39 @@ body {
   <div class="container">
     <div class="metric-strip-inner">
       <div class="metric-cell">
-        <div class="metric-cell-val">52</div>
-        <div class="metric-cell-label">Strategies</div>
-        <div class="metric-cell-sub">6 deployed, 6 building</div>
+        <div class="metric-cell-val">131</div>
+        <div class="metric-cell-label">Strategy Catalog</div>
+        <div class="metric-cell-sub">7 deployed, 6 building, 2 structural alpha</div>
       </div>
       <div class="metric-cell">
-        <div class="metric-cell-val">345</div>
-        <div class="metric-cell-label">Tests Passing</div>
-        <div class="metric-cell-sub">All modules green</div>
+        <div class="metric-cell-val">1,256</div>
+        <div class="metric-cell-label">Verified Tests</div>
+        <div class="metric-cell-sub">849 + 22 + 374 + 11</div>
       </div>
       <div class="metric-cell">
-        <div class="metric-cell-val purple">77</div>
-        <div class="metric-cell-label">Dispatches</div>
-        <div class="metric-cell-sub">Original investigations</div>
+        <div class="metric-cell-val purple">11</div>
+        <div class="metric-cell-label">Dispatch Work-Orders</div>
+        <div class="metric-cell-sub">DISPATCH_* only</div>
       </div>
       <div class="metric-cell">
-        <div class="metric-cell-val">68.5%</div>
-        <div class="metric-cell-label">Win Rate</div>
-        <div class="metric-cell-sub">On 532 resolved markets</div>
+        <div class="metric-cell-val">71.2%</div>
+        <div class="metric-cell-label">Calibrated Win Rate</div>
+        <div class="metric-cell-sub">68.5% legacy / uncalibrated</div>
       </div>
       <div class="metric-cell">
-        <div class="metric-cell-val blue">2</div>
-        <div class="metric-cell-label">Platforms</div>
-        <div class="metric-cell-sub">Polymarket + Kalshi</div>
+        <div class="metric-cell-val blue">23</div>
+        <div class="metric-cell-label">Benchmarked Systems</div>
+        <div class="metric-cell-sub">Methodology-first audit</div>
       </div>
       <div class="metric-cell">
-        <div class="metric-cell-val amber">4</div>
-        <div class="metric-cell-label">Signal Sources</div>
-        <div class="metric-cell-sub">LLM, Wallet, LMSR, Arb</div>
+        <div class="metric-cell-val amber">6+1</div>
+        <div class="metric-cell-label">Signal Lanes</div>
+        <div class="metric-cell-sub">6 primary + anomaly feedback</div>
       </div>
       <div class="metric-cell">
-        <div class="metric-cell-val">$347</div>
-        <div class="metric-cell-label">Capital</div>
-        <div class="metric-cell-sub">USDC + USD</div>
+        <div class="metric-cell-val">$347.51</div>
+        <div class="metric-cell-label">Tracked Capital</div>
+        <div class="metric-cell-sub">launch blocked; no deployed capital</div>
       </div>
     </div>
   </div>
@@ -874,34 +1053,34 @@ body {
   <div class="container">
     <div class="sh">
       <div class="sh-eyebrow">System Overview</div>
-      <h2>How the System Works</h2>
-      <p>Three-phase execution loop running every 3 minutes. The AI never sees the market price when estimating probability &mdash; preventing the most common bias in forecasting.</p>
+      <h2>How the System Works Right Now</h2>
+      <p>Current operator mode is shadow-first fast-market scanning with hard execution-validity gates. The architecture still targets autonomous execution, but the service stays stopped until A-6 and B-1 produce evidence that survives real-world fill and toxicity checks.</p>
     </div>
 
     <div class="pipeline-flow">
       <div class="pipeline-node">
         <div class="pipeline-node-title">1. SCAN</div>
-        <div class="pipeline-node-sub">100+ markets<br>every 3 min</div>
+        <div class="pipeline-node-sub">Gamma + matched venues<br>&lt;24h candidates</div>
       </div>
       <div class="pipeline-arrow">&rarr;</div>
       <div class="pipeline-node">
-        <div class="pipeline-node-title">2. ESTIMATE</div>
-        <div class="pipeline-node-sub">3 AI models estimate<br>probability blind</div>
+        <div class="pipeline-node-title">2. RANK</div>
+        <div class="pipeline-node-sub">Liquidity, spread,<br>and venue overlap</div>
       </div>
       <div class="pipeline-arrow">&rarr;</div>
       <div class="pipeline-node">
         <div class="pipeline-node-title">3. FILTER</div>
-        <div class="pipeline-node-sub">Category routing<br>+ fee gating</div>
+        <div class="pipeline-node-sub">A-6, B-1, VPIN,<br>maker-path kills</div>
       </div>
       <div class="pipeline-arrow">&rarr;</div>
       <div class="pipeline-node">
         <div class="pipeline-node-title">4. SIZE</div>
-        <div class="pipeline-node-sub">Quarter-Kelly<br>position sizing</div>
+        <div class="pipeline-node-sub">Quarter-Kelly caps<br>shadow-only sizing</div>
       </div>
       <div class="pipeline-arrow">&rarr;</div>
       <div class="pipeline-node">
-        <div class="pipeline-node-title">5. EXECUTE</div>
-        <div class="pipeline-node-sub">Maker-only orders<br>0% fee</div>
+        <div class="pipeline-node-title">5. RESTART</div>
+        <div class="pipeline-node-sub">Human approval<br>before live capital</div>
       </div>
     </div>
 
@@ -909,23 +1088,23 @@ body {
     <div class="arch-grid">
       <div class="arch-cell">
         <div class="arch-cell-title">Data Sources</div>
-        <div class="arch-cell-detail">Gamma API<br>CLOB WebSocket<br>Binance WS</div>
+        <div class="arch-cell-detail">Gamma API<br>CLOB books<br>Kalshi when credentialed</div>
       </div>
       <div class="arch-cell">
-        <div class="arch-cell-title">83 Features</div>
-        <div class="arch-cell-detail">7 feature groups<br>Market + meta<br>+ order book</div>
+        <div class="arch-cell-title">Signal Lanes</div>
+        <div class="arch-cell-detail">LLM, flow, LMSR<br>cross-venue, A-6, B-1<br>+ anomaly feedback</div>
       </div>
       <div class="arch-cell">
-        <div class="arch-cell-title">4 Signals</div>
-        <div class="arch-cell-detail">LLM Ensemble<br>Wallet Flow<br>LMSR + Arb</div>
+        <div class="arch-cell-title">Execution Gates</div>
+        <div class="arch-cell-detail">A-6 &lt; 0.95<br>B-1 deterministic pairs<br>VPIN + stale-book kills</div>
       </div>
       <div class="arch-cell">
-        <div class="arch-cell-title">Risk Check</div>
-        <div class="arch-cell-detail">6 kill rules<br>Kelly sizing<br>$5 daily cap</div>
+        <div class="arch-cell-title">Risk Posture</div>
+        <div class="arch-cell-detail">Quarter-Kelly cap<br>$5 per-leg / daily cap<br>maker-only path</div>
       </div>
       <div class="arch-cell">
-        <div class="arch-cell-title">Execution</div>
-        <div class="arch-cell-detail">Maker-only<br>Post-only orders<br>0% fee</div>
+        <div class="arch-cell-title">Runtime State</div>
+        <div class="arch-cell-detail">Service active on VPS<br>launch blocked<br>0 live trades / 294 cycles</div>
       </div>
     </div>
 
@@ -953,13 +1132,16 @@ body {
     <div class="sh">
       <div class="sh-eyebrow">Strategy Intelligence</div>
       <h2>Full Strategy Pipeline</h2>
-      <p>52 strategies tracked. Every rejection comes with a full autopsy &mdash; the failure documentation is more valuable than the wins.</p>
+      <p>131 catalog entries are tracked across deployed, building, structural alpha, re-evaluating, rejected, pre-rejected, and research-pipeline lanes. Every rejection still matters because the failure documentation is more valuable than false confidence.</p>
+    </div>
+    <div class="catalog-note">
+      Cycle 2 taxonomy: <span class="mono">7 deployed / 6 building / 2 structural alpha / 1 re-evaluating / 10 rejected / 8 pre-rejected / 97 research pipeline</span>. The expandable cards below are the currently published subset, not the complete canonical ledger.
     </div>
 
     <div class="tabs" id="strat-tabs">
-      <button class="tab active" data-tab="deployed">Deployed <span class="tab-count">6</span></button>
-      <button class="tab" data-tab="building">Building <span class="tab-count">6</span></button>
-      <button class="tab" data-tab="rejected">Rejected <span class="tab-count">10</span></button>
+      <button class="tab active" data-tab="deployed">Published Deployed <span class="tab-count">6</span></button>
+      <button class="tab" data-tab="building">Published Building <span class="tab-count">6</span></button>
+      <button class="tab" data-tab="rejected">Published Rejected <span class="tab-count">10</span></button>
       <button class="tab" data-tab="reeval">Re-Evaluating <span class="tab-count">1</span></button>
     </div>
 
@@ -1448,6 +1630,28 @@ body {
     <div class="timeline">
 
       <div class="tl-entry latest">
+        <div class="tl-date">March 9, 2026 &mdash; Service/Launch Drift Reconciled</div>
+        <div class="tl-card">
+          <div class="tl-title">Remote service was active. Launch posture stayed blocked.</div>
+          <div class="tl-body">Confirmed $347.51 tracked capital, 1,256 verified tests, a fast-market pipeline verdict of REJECT ALL, wallet-flow still not ready, and 0 live trades after 294 cycles. The homepage now shows the March 9 service-active artifact separately from the still-blocked launch posture.</div>
+          <div class="tl-sections">
+            <div><div class="tl-section-label">System</div><p><span class="mono">jj-live.service</span> was observed active at 2026-03-09 00:06:56 UTC, but runtime truth still blocks live launch because wallet-flow bootstrap, A-6, and B-1 have not cleared.</p></div>
+            <div><div class="tl-section-label">Website</div><p>Homepage metrics, service-state copy, public edge counts, freshness stamps, and footer metadata were rewritten so the public site shows both uptime and blocked launch posture without claiming a live restart.</p></div>
+          </div>
+          <div class="tl-stats">
+            <span><span class="tl-stat-key">Capital:</span><span class="tl-stat-val">$347.51</span></span>
+            <span><span class="tl-stat-key">Tests:</span><span class="tl-stat-val">1,256</span></span>
+            <span><span class="tl-stat-key">Cycles:</span><span class="tl-stat-val">294</span></span>
+            <span><span class="tl-stat-key">Service:</span><span class="tl-stat-val">active</span></span>
+          </div>
+          <div class="tl-insight">
+            <div class="tl-insight-label">What We Learned</div>
+            <p>An active systemd unit is not the same thing as permission to trade. Launch posture has to follow evidence gates, not uptime.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="tl-entry">
         <div class="tl-date">March 7, 2026 &mdash; Cycle 0 Complete</div>
         <div class="tl-card">
           <div class="tl-title">Flywheel Cycle 0 Complete. 100 New Strategies Queued.</div>
@@ -1709,7 +1913,7 @@ body {
       <div class="vision-columns">
         <div class="vision-col">
           <h4><span class="vision-icon vi-green">1</span> Trading Agents</h4>
-          <p>Autonomous prediction market liquidity providers. Each instance scans markets, estimates probabilities with multi-model ensembles, sizes positions via Kelly criterion, and places maker-only orders. Currently live on Polymarket and Kalshi with $347 deployed capital, 345 tests passing, and 76 research dispatches documenting what works and what doesn't.</p>
+          <p>Autonomous prediction-market agents with public evidence trails. The current deployment tracks $347.51 in capital across Polymarket and Kalshi, 1,256 verified tests, 11 dispatch work-orders, and 23 benchmarked systems. The remote service was observed active on March 9, 2026, but launch posture remains blocked pending wallet-flow, A-6, and B-1 clearance.</p>
         </div>
         <div class="vision-col">
           <h4><span class="vision-icon vi-blue">2</span> Non-Trading Revenue Agents</h4>
@@ -1832,13 +2036,13 @@ body {
       <div class="roadmap-phase current">
         <div class="roadmap-phase-num">PHASE 1</div>
         <h4>Single Agent &mdash; Prove the Edge</h4>
-        <p>Validate live trading with real capital. Accumulate 100 resolved trades for statistical significance.</p>
+        <p>Keep the fast-market scanner honest while proving execution validity. The next unlock is evidence, not bravado: no restart until A-6 and B-1 clear with real fill quality.</p>
         <ul>
-          <li>Live on Dublin VPS (AWS Lightsail)</li>
-          <li>Maker-only execution, $5 daily loss cap</li>
-          <li>62 strategies tracked, 345 tests passing</li>
-          <li>VPIN + WebSocket integration in progress</li>
-          <li>Multi-agent debate pipeline (B8) built</li>
+          <li>Dublin VPS deployed; service observed active on 2026-03-09</li>
+          <li>0 live trades after 294 cycles</li>
+          <li>131 strategy catalog entries, 1,256 verified tests</li>
+          <li>A-6 and B-1 execution-validity gates still blocked</li>
+          <li>Human approval required before any live restart</li>
         </ul>
       </div>
       <div class="roadmap-phase">
@@ -1881,19 +2085,23 @@ body {
 
     <div class="vision-banner" style="margin-top: 48px;">
       <h3>Why Open Source Matters Here</h3>
-      <p>The architecture, framework, research methodology, and backtesting engine are public under MIT License. Specific calibration parameters, API keys, and live edge signals stay private &mdash; standard practice. Quantopian was open-source but nobody published their live alpha signals. We get credibility from transparency without giving away the fishing spots.</p>
+      <p>The architecture, framework, research methodology, and backtesting engine are public under MIT License. Specific calibration parameters, API keys, and live edge signals stay private &mdash; standard practice. The public site should expose state and evidence, not exact trade sizing or private execution details.</p>
       <div style="margin-top: 20px; display: flex; gap: 32px; flex-wrap: wrap;">
         <div>
           <div style="font-family: var(--font-mono); font-size: 28px; font-weight: 700; color: var(--accent-green);">MIT</div>
           <div style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">License</div>
         </div>
         <div>
-          <div style="font-family: var(--font-mono); font-size: 28px; font-weight: 700; color: var(--accent-green);">345</div>
-          <div style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">Tests Passing</div>
+          <div style="font-family: var(--font-mono); font-size: 28px; font-weight: 700; color: var(--accent-green);">1,256</div>
+          <div style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">Verified Tests</div>
         </div>
         <div>
-          <div style="font-family: var(--font-mono); font-size: 28px; font-weight: 700; color: var(--accent-green);">76+</div>
-          <div style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">Research Dispatches</div>
+          <div style="font-family: var(--font-mono); font-size: 28px; font-weight: 700; color: var(--accent-green);">11</div>
+          <div style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">Dispatch Work-Orders</div>
+        </div>
+        <div>
+          <div style="font-family: var(--font-mono); font-size: 28px; font-weight: 700; color: var(--accent-green);">23</div>
+          <div style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">Benchmarked Systems</div>
         </div>
         <div>
           <div style="font-family: var(--font-mono); font-size: 28px; font-weight: 700; color: var(--accent-green);">20%</div>
@@ -1943,7 +2151,7 @@ body {
       <a href="#elastic">Why Elastic</a>
     </div>
     <p class="footer-copy">
-      <span class="mono">ELASTIFUND v9</span> &mdash; Generated March 7, 2026 &mdash; MIT License &mdash; <span class="mono">345</span> tests passing &mdash; Powered by Elastic Stack
+      <span class="mono">ELASTIFUND Cycle 2 refresh</span> &mdash; March 9, 2026 &mdash; MIT License &mdash; <span class="mono">1,256</span> verified tests &mdash; Powered by Elastic Stack
     </p>
   </div>
 </footer>

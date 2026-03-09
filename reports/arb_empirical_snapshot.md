@@ -1,17 +1,28 @@
 # Arb Empirical Snapshot
 
-- Generated: 2026-03-07T20:12:03+00:00
-- Live cycles: 1
-- Scan interval seconds: 0
-- Book sample events per cycle: 20
+- Generated: 2026-03-09T00:32:34+00:00
+- Live cycles: 3
+- Scan interval seconds: 20
+- Book sample events per cycle: 60
 
 ## Measured Facts
 
-- Active multi-outcome events: latest 9; avg 9.0
-- Active multi-outcome markets: latest 58; avg 58.0
-- Complete-book A-6 event observations: 9/9
-- Token-404 rate: 0.0
-- Incomplete-book leg rate: 0.0
+- Public A-6 audit: 0 executable constructions below the 0.95 gate across 563 allowed neg-risk events
+- Public B-1 audit: 0 deterministic template pairs in the first 1000 allowed markets
+- Active multi-outcome events: latest 149; avg 149.0
+- Active multi-outcome markets: latest 967; avg 967.0
+- Complete-book A-6 event observations: 66/180
+- Token-404 rate: 0.397
+- Incomplete-book leg rate: 0.41
+
+## Explicit Lane Status
+
+- A-6 status: **blocked**
+- A-6 evidence: maker_fill_proxy_rate=None, violation_half_life_seconds=0.0, settlement_evidence_count=0, classification_accuracy=None, false_positive_rate=None
+- A-6 blocked reasons: ('maker_fill_proxy_unmeasured', 'violation_half_life_below_minimum', 'public_audit_zero_executable_constructions_below_0.95_gate')
+- B-1 status: **blocked**
+- B-1 evidence: maker_fill_proxy_rate=None, violation_half_life_seconds=None, settlement_evidence_count=0, classification_accuracy=None, false_positive_rate=None
+- B-1 blocked reasons: ('classification_accuracy_unmeasured', 'false_positive_rate_unmeasured', 'public_audit_zero_deterministic_pairs_in_first_1000_allowed_markets')
 
 ## A-6
 
@@ -19,9 +30,9 @@
 - A-6 modes observed: {'neg_risk_sum': 5}
 - Settlement paths observed: {'hold_to_resolution': 5}
 - Episode count: 5
-- Qualified live A-6 observations: 5 (0 underround / 5 overround)
-- YES-sum deviation median: 0.033
-- YES-sum deviation p90: 0.1038
+- Qualified live A-6 observations: 57 (0 underround / 57 overround)
+- YES-sum deviation median: 0.115
+- YES-sum deviation p90: 0.94
 - A-6 persistence lower bound from replay: 0.0s
 - Actual capture rate: 0.0
 - Modeled capture rate: 0.5431
@@ -30,18 +41,18 @@
 
 | Bucket | Count | Median Spread | P90 Spread |
 | --- | ---: | ---: | ---: |
-| core_35_65pct | 4 | 0.015 | 0.02 |
-| favorite_65_100pct | 5 | 0.02 | 0.0364 |
-| mid_15_35pct | 4 | 0.09 | 0.2232 |
-| tail_0_5pct | 36 | 0.003 | 0.015 |
-| tail_5_15pct | 9 | 0.006 | 0.0734 |
+| core_35_65pct | 71 | 0.18 | 0.424 |
+| favorite_65_100pct | 108 | 0.19 | 0.38 |
+| mid_15_35pct | 190 | 0.147 | 0.4388 |
+| tail_0_5pct | 267 | 0.005 | 0.0322 |
+| tail_5_15pct | 180 | 0.03 | 0.095 |
 
 ## Fill Proxy
 
 - Eligible probes: 0
 - Full $5 fill proxy rate: None
 - Wilson 95% interval: None to None
-- Notes: No eligible probes. The current Gamma /events A-6 watchlist flattening does not preserve conditionId for 58 otherwise-quotable legs, so the live trade tape cannot be joined back to those markets.
+- Notes: No eligible probes. The current Gamma /events A-6 watchlist flattening does not preserve conditionId for 816 otherwise-quotable legs, so the live trade tape cannot be joined back to those markets.
 
 ## Recommendations
 

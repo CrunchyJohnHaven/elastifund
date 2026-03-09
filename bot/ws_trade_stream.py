@@ -30,7 +30,18 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     websockets = None
 
+try:
+    from bot import elastic_client
+except ImportError:  # pragma: no cover - script-style execution fallback
+    import elastic_client  # type: ignore
+
 from bot.vpin_toxicity import FlowRegime, VPINManager
+try:
+    from bot.apm_setup import capture_external_span, get_apm_runtime
+    from bot.latency_tracker import track_latency
+except ImportError:  # pragma: no cover - direct script execution fallback
+    from apm_setup import capture_external_span, get_apm_runtime  # type: ignore
+    from latency_tracker import track_latency  # type: ignore
 
 
 logger = logging.getLogger("JJ.ws_stream")
@@ -48,6 +59,13 @@ LATENCY_SAMPLE_LIMIT = 2048
 MAX_SUBSCRIPTIONS = 50
 LATENCY_LOG_INTERVAL_SECONDS = 300  # 5 minutes
 LATENCY_P99_ALERT_THRESHOLD_MS = 200.0
+
+
+def _safe_emit_signal_event(payload: dict[str, Any]) -> None:
+    try:
+        elastic_client.index_signal(payload)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Elastic signal telemetry failed: %s", exc)
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -76,51 +94,63 @@ class LatencyPersistence:
 
     def _init_db(self) -> None:
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self._db_path)
-        try:
-            conn.execute(
-                """CREATE TABLE IF NOT EXISTS latency_snapshots (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp REAL NOT NULL,
-                    source TEXT NOT NULL DEFAULT 'ws_trade_stream',
-                    exchange_p50_ms REAL,
-                    exchange_p95_ms REAL,
-                    exchange_p99_ms REAL,
-                    processing_p50_ms REAL,
-                    processing_p95_ms REAL,
-                    processing_p99_ms REAL,
-                    sample_count INTEGER,
-                    connection_mode TEXT
-                )"""
-            )
-            conn.commit()
-        finally:
-            conn.close()
+        with capture_external_span(
+            "sqlite.ws_latency.init",
+            system="sqlite",
+            action="write",
+            labels={"db.path": self._db_path},
+        ):
+            conn = sqlite3.connect(self._db_path)
+            try:
+                conn.execute(
+                    """CREATE TABLE IF NOT EXISTS latency_snapshots (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        timestamp REAL NOT NULL,
+                        source TEXT NOT NULL DEFAULT 'ws_trade_stream',
+                        exchange_p50_ms REAL,
+                        exchange_p95_ms REAL,
+                        exchange_p99_ms REAL,
+                        processing_p50_ms REAL,
+                        processing_p95_ms REAL,
+                        processing_p99_ms REAL,
+                        sample_count INTEGER,
+                        connection_mode TEXT
+                    )"""
+                )
+                conn.commit()
+            finally:
+                conn.close()
 
     def record(self, stats: dict[str, float], *, connection_mode: str = "unknown") -> None:
-        conn = sqlite3.connect(self._db_path)
-        try:
-            conn.execute(
-                """INSERT INTO latency_snapshots
-                   (timestamp, exchange_p50_ms, exchange_p95_ms, exchange_p99_ms,
-                    processing_p50_ms, processing_p95_ms, processing_p99_ms,
-                    sample_count, connection_mode)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    time.time(),
-                    stats.get("exchange_p50_ms", 0.0),
-                    stats.get("exchange_p95_ms", 0.0),
-                    stats.get("exchange_p99_ms", 0.0),
-                    stats.get("processing_p50_ms", 0.0),
-                    stats.get("processing_p95_ms", 0.0),
-                    stats.get("processing_p99_ms", 0.0),
-                    stats.get("samples", 0),
-                    connection_mode,
-                ),
-            )
-            conn.commit()
-        finally:
-            conn.close()
+        with capture_external_span(
+            "sqlite.ws_latency.insert",
+            system="sqlite",
+            action="write",
+            labels={"db.path": self._db_path},
+        ):
+            conn = sqlite3.connect(self._db_path)
+            try:
+                conn.execute(
+                    """INSERT INTO latency_snapshots
+                       (timestamp, exchange_p50_ms, exchange_p95_ms, exchange_p99_ms,
+                        processing_p50_ms, processing_p95_ms, processing_p99_ms,
+                        sample_count, connection_mode)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        time.time(),
+                        stats.get("exchange_p50_ms", 0.0),
+                        stats.get("exchange_p95_ms", 0.0),
+                        stats.get("exchange_p99_ms", 0.0),
+                        stats.get("processing_p50_ms", 0.0),
+                        stats.get("processing_p95_ms", 0.0),
+                        stats.get("processing_p99_ms", 0.0),
+                        stats.get("samples", 0),
+                        connection_mode,
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
 
 
 @dataclass
@@ -376,10 +406,34 @@ class TradeStreamManager:
             return
         latency_ms = max(0.0, (time.time() - event_timestamp) * 1000.0)
         self._exchange_latency_samples.append(latency_ms)
+        get_apm_runtime().record_metric(
+            "ws_message_lag_ms",
+            latency_ms,
+            labels={"connection_mode": self.get_status()["connection_mode"]},
+        )
 
     def _record_processing_latency(self, started_at: float) -> None:
         latency_ms = max(0.0, (time.time() - started_at) * 1000.0)
         self._processing_latency_samples.append(latency_ms)
+
+    @track_latency("calculate_vpin")
+    def calculate_vpin(
+        self,
+        market_id: str,
+        price: float,
+        size: float,
+        side: str,
+        timestamp: float,
+    ) -> FlowRegime:
+        return self.vpin.on_trade(market_id, price, size, side, timestamp)
+
+    @track_latency("calculate_ofi")
+    def calculate_ofi(
+        self,
+        market_id: str,
+        book: OrderBookState,
+    ) -> Optional[OFISnapshot]:
+        return self.ofi.update(market_id, book)
 
     def get_latency_stats(self) -> dict[str, float]:
         exchange = sorted(self._exchange_latency_samples)
@@ -476,7 +530,13 @@ class TradeStreamManager:
         async with httpx.AsyncClient(timeout=10.0) as client:
             for token_id in list(self.token_ids):
                 try:
-                    response = await client.get(f"{CLOB_API_BASE}/book", params={"token_id": token_id})
+                    with capture_external_span(
+                        "polymarket.book.get",
+                        system="polymarket",
+                        action="rest",
+                        labels={"token_id": token_id},
+                    ):
+                        response = await client.get(f"{CLOB_API_BASE}/book", params={"token_id": token_id})
                 except Exception as exc:  # pragma: no cover - network failure path
                     logger.debug("book bootstrap failed for %s: %s", token_id, exc)
                     continue
@@ -588,12 +648,27 @@ class TradeStreamManager:
             trade = self._parse_trade_message(message)
             if trade is not None:
                 before = self.vpin.get_regime(trade["token_id"])
-                after = self.vpin.on_trade(
+                after = self.calculate_vpin(
                     trade["token_id"],
                     trade["price"],
                     trade["size"],
                     trade["side"],
                     trade["timestamp"],
+                )
+                vpin_estimate = self.vpin.get_vpin(trade["token_id"])
+                _safe_emit_signal_event(
+                    {
+                        "signal_source": "vpin",
+                        "market_id": trade["token_id"],
+                        "signal_value": vpin_estimate,
+                        "confidence": max(0.0, min(1.0, 1.0 - abs(vpin_estimate - 0.5) * 2.0)),
+                        "acted_on": self.should_quote(trade["token_id"]),
+                        "trade_side": trade["side"],
+                        "trade_price": trade["price"],
+                        "trade_size": trade["size"],
+                        "vpin_estimate": vpin_estimate,
+                        "flow_regime": after.value,
+                    }
                 )
                 if after != before and self.on_regime_change is not None:
                     self.on_regime_change(trade["token_id"], before, after)
@@ -603,9 +678,25 @@ class TradeStreamManager:
                 book = self._books.get(updated_token)
                 if book is None:
                     continue
-                snapshot = self.ofi.update(updated_token, book)
+                snapshot = self.calculate_ofi(updated_token, book)
                 if snapshot:
                     self._last_ofi[updated_token] = snapshot
+                    _safe_emit_signal_event(
+                        {
+                            "signal_source": "ofi",
+                            "market_id": updated_token,
+                            "signal_value": snapshot.normalized_ofi,
+                            "confidence": max(
+                                0.0,
+                                min(1.0, abs(snapshot.normalized_ofi) / max(self.ofi.RATIO_THRESHOLD, 1e-9)),
+                            ),
+                            "acted_on": not self.ofi.should_kill(snapshot),
+                            "raw_ofi": snapshot.raw_ofi,
+                            "levels_used": snapshot.levels_used,
+                            "directional_skew": snapshot.directional_skew,
+                            "vpin_estimate": self.vpin.get_vpin(updated_token),
+                        }
+                    )
                     if self.on_ofi_update is not None:
                         self.on_ofi_update(updated_token, snapshot)
                     if self.ofi.should_kill(snapshot) and self.on_ofi_alert is not None:
@@ -631,6 +722,23 @@ class TradeStreamManager:
             snapshot = self.ofi.update(token_id, book)
             if snapshot:
                 self._last_ofi[token_id] = snapshot
+                _safe_emit_signal_event(
+                    {
+                        "signal_source": "ofi",
+                        "market_id": token_id,
+                        "signal_value": snapshot.normalized_ofi,
+                        "confidence": max(
+                            0.0,
+                            min(1.0, abs(snapshot.normalized_ofi) / max(self.ofi.RATIO_THRESHOLD, 1e-9)),
+                        ),
+                        "acted_on": not self.ofi.should_kill(snapshot),
+                        "raw_ofi": snapshot.raw_ofi,
+                        "levels_used": snapshot.levels_used,
+                        "directional_skew": snapshot.directional_skew,
+                        "vpin_estimate": self.vpin.get_vpin(token_id),
+                        "connection_mode": "rest_fallback",
+                    }
+                )
                 if self.on_ofi_update is not None:
                     self.on_ofi_update(token_id, snapshot)
                 if self.ofi.should_kill(snapshot) and self.on_ofi_alert is not None:
@@ -655,7 +763,13 @@ class TradeStreamManager:
             async for raw in ws:
                 if not self._running:
                     break
-                await self._handle_message(raw)
+                with capture_external_span(
+                    "polymarket.websocket.message",
+                    system="polymarket",
+                    action="websocket",
+                    labels={"tokens_tracked": len(self.token_ids)},
+                ):
+                    await self._handle_message(raw)
 
     async def _latency_log_loop(self) -> None:
         """Periodically log and persist latency stats. Warn if p99 > threshold."""

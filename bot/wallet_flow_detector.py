@@ -31,6 +31,7 @@ Usage:
   python wallet_flow_detector.py --monitor           # Continuous monitoring
   python wallet_flow_detector.py --scan              # Single scan (for jj_live.py)
   python wallet_flow_detector.py --status            # Show database stats
+  python wallet_flow_detector.py --status-json       # Machine-readable readiness
 
 March 7, 2026 — Elastifund / JJ
 """
@@ -46,7 +47,7 @@ import requests
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass, asdict, field
-from typing import Optional, Dict, List
+from typing import Any, Optional, Dict, List
 
 logging.basicConfig(
     level=logging.INFO,
@@ -87,6 +88,7 @@ POLL_INTERVAL_SECONDS = 15     # How often to check for new trades
 # Storage
 DB_FILE = Path("data/wallet_scores.db")
 SCORES_FILE = Path("data/smart_wallets.json")
+BOOTSTRAP_MAX_AGE_HOURS = 24
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +130,18 @@ class WalletFlowSignal:
     timestamp: str
 
 
+@dataclass
+class BootstrapStatus:
+    """Explicit readiness status for wallet-flow bootstrap artifacts."""
+
+    ready: bool
+    reasons: List[str]
+    wallet_count: int
+    scores_exists: bool
+    db_exists: bool
+    last_updated: Optional[str]
+
+
 def is_crypto_fast_market(title: str) -> bool:
     """Check if a market title indicates a crypto fast-resolving market."""
     title_lower = (title or "").lower()
@@ -155,6 +169,145 @@ def get_effective_outcome(side: str, outcome_index) -> int:
     if side_upper == "SELL":
         return 1 - idx
     return idx  # BUY or unknown → same as outcomeIndex
+
+
+def _file_updated_at(path: Path) -> Optional[str]:
+    """Return the file mtime as an ISO8601 UTC timestamp."""
+    if not path.exists():
+        return None
+    try:
+        return datetime.fromtimestamp(
+            path.stat().st_mtime, tz=timezone.utc
+        ).isoformat()
+    except OSError:
+        return None
+
+
+def _parse_timestamp(value: Optional[str]) -> Optional[datetime]:
+    """Parse a stored ISO8601 timestamp into an aware UTC datetime."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _load_scores_payload(scores_path: Optional[Path] = None) -> Dict[str, Any]:
+    """Load the smart-wallet JSON payload."""
+    target = scores_path or SCORES_FILE
+    with open(target) as f:
+        payload = json.load(f)
+    if not isinstance(payload, dict):
+        raise ValueError("scores payload must be a JSON object")
+    return payload
+
+
+def load_smart_wallets(scores_path: Optional[Path] = None) -> tuple[dict, Optional[str]]:
+    """Load smart wallets from JSON for scanning and status reporting."""
+    payload = _load_scores_payload(scores_path)
+    raw_wallets = payload.get("wallets", {})
+    if not isinstance(raw_wallets, dict):
+        raise ValueError("wallets payload must be a JSON object")
+
+    smart = {}
+    for addr, info in raw_wallets.items():
+        if not isinstance(info, dict):
+            continue
+        filtered_info = {"address": addr}
+        for key, value in info.items():
+            if key in WalletScore.__dataclass_fields__:
+                filtered_info[key] = value
+        smart[addr] = WalletScore(**filtered_info)
+    last_updated = payload.get("updated_at")
+    if not isinstance(last_updated, str):
+        last_updated = _file_updated_at(scores_path or SCORES_FILE)
+    return smart, last_updated
+
+
+def get_bootstrap_status(
+    scores_path: Optional[Path] = None,
+    db_path: Optional[Path] = None,
+    now: Optional[datetime] = None,
+) -> BootstrapStatus:
+    """
+    Assess whether wallet-flow bootstrap artifacts are present and fresh enough
+    for live scanning.
+    """
+    scores_target = scores_path or SCORES_FILE
+    db_target = db_path or DB_FILE
+    current_time = now or datetime.now(timezone.utc)
+    scores_exists = scores_target.exists()
+    db_exists = db_target.exists()
+    reasons: List[str] = []
+    wallet_count = 0
+    last_updated = _file_updated_at(scores_target)
+
+    if not scores_exists:
+        reasons.append("missing_scores_json")
+    if not db_exists:
+        reasons.append("missing_scores_db")
+
+    if scores_exists:
+        try:
+            smart, loaded_updated_at = load_smart_wallets(scores_target)
+            wallet_count = len(smart)
+            if loaded_updated_at:
+                last_updated = loaded_updated_at
+            if wallet_count == 0:
+                reasons.append("no_wallets_loaded")
+
+            parsed_updated = _parse_timestamp(last_updated)
+            if parsed_updated is None:
+                reasons.append("invalid_last_updated")
+            elif current_time - parsed_updated > timedelta(hours=BOOTSTRAP_MAX_AGE_HOURS):
+                reasons.append("stale_bootstrap")
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            logger.warning(f"Failed to read wallet bootstrap payload: {exc}")
+            reasons.append("invalid_scores_json")
+
+    return BootstrapStatus(
+        ready=not reasons,
+        reasons=reasons,
+        wallet_count=wallet_count,
+        scores_exists=scores_exists,
+        db_exists=db_exists,
+        last_updated=last_updated,
+    )
+
+
+def _bootstrap_status_payload(status: BootstrapStatus) -> dict:
+    """Convert bootstrap status to a JSON-serializable dict."""
+    return {
+        "ready": status.ready,
+        "reasons": list(status.reasons),
+        "wallet_count": status.wallet_count,
+        "scores_exists": status.scores_exists,
+        "db_exists": status.db_exists,
+        "last_updated": status.last_updated,
+    }
+
+
+def _format_bootstrap_status(status: BootstrapStatus) -> str:
+    """Render a concise human-readable bootstrap summary."""
+    state = "ready" if status.ready else "not ready"
+    lines = [
+        "Smart Wallet Bootstrap Status:",
+        f"  Ready: {state}",
+        f"  Reasons: {', '.join(status.reasons) if status.reasons else 'none'}",
+        f"  Smart Wallets: {status.wallet_count}",
+        f"  smart_wallets.json: {'present' if status.scores_exists else 'missing'}",
+        f"  wallet_scores.db: {'present' if status.db_exists else 'missing'}",
+        f"  Last Updated: {status.last_updated or 'unknown'}",
+        (
+            f"  Thresholds: min_trades={MIN_TRADES}, min_markets={MIN_UNIQUE_MARKETS}, "
+            f"min_vol=${MIN_TOTAL_VOLUME}, max_age={BOOTSTRAP_MAX_AGE_HOURS}h"
+        ),
+    ]
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -714,23 +867,24 @@ def scan_for_signals() -> list:
     """
     global _persistent_monitor, _monitor_initialized_at
 
-    # Load smart wallets
-    if SCORES_FILE.exists():
-        with open(SCORES_FILE) as f:
-            data = json.load(f)
-        smart = {}
-        for addr, info in data.get("wallets", {}).items():
-            # Handle both old and new field names gracefully
-            filtered_info = {}
-            for k, v in info.items():
-                if k in WalletScore.__dataclass_fields__:
-                    filtered_info[k] = v
-            smart[addr] = WalletScore(**filtered_info)
-    else:
-        logger.warning("No smart wallet scores found. Run --build-scores first.")
+    status = get_bootstrap_status()
+    if not status.ready:
+        _persistent_monitor = None
+        logger.warning(
+            "Wallet flow bootstrap not ready: %s",
+            ", ".join(status.reasons),
+        )
+        return []
+
+    try:
+        smart, _ = load_smart_wallets()
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        _persistent_monitor = None
+        logger.warning(f"Failed to load smart wallets for scan: {exc}")
         return []
 
     if not smart:
+        _persistent_monitor = None
         return []
 
     # Create or refresh monitor (refresh every 30 min to pick up new wallets)
@@ -815,6 +969,8 @@ def main():
                        help="Single scan for signals (for integration)")
     parser.add_argument("--status", action="store_true",
                        help="Show current smart wallet database status")
+    parser.add_argument("--status-json", action="store_true",
+                       help="Emit machine-readable bootstrap status as JSON")
     parser.add_argument("--top", type=int, default=20,
                        help="Number of wallets to display (default: 20)")
     args = parser.parse_args()
@@ -834,10 +990,14 @@ def main():
             )
 
     elif args.monitor:
-        scorer = WalletScorer()
-        smart = scorer.get_smart_wallets()
-        if not smart:
-            print("No smart wallets in database. Run --build-scores first.")
+        status = get_bootstrap_status()
+        if not status.ready:
+            print(_format_bootstrap_status(status))
+            return
+        try:
+            smart, _ = load_smart_wallets()
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f"Failed to load smart wallets: {exc}")
             return
 
         print(f"Monitoring {len(smart)} smart wallets...")
@@ -882,40 +1042,38 @@ def main():
 
     elif args.scan:
         signals = scan_for_signals()
-        if signals:
-            print(json.dumps(signals, indent=2))
-        else:
-            print("No consensus signals detected.")
+        print(json.dumps(signals, indent=2))
 
-    elif args.status:
-        if SCORES_FILE.exists():
-            with open(SCORES_FILE) as f:
-                data = json.load(f)
-            n = data.get("count", 0)
-            updated = data.get("updated_at", "?")
-            print(f"Smart Wallet Database:")
-            print(f"  Updated: {updated}")
-            print(f"  Smart Wallets: {n}")
-            print(f"  Thresholds: min_trades={MIN_TRADES}, min_markets={MIN_UNIQUE_MARKETS}, "
-                  f"min_vol=${MIN_TOTAL_VOLUME}")
-            print()
-            wallets = data.get("wallets", {})
-            sorted_wallets = sorted(
-                wallets.items(),
-                key=lambda x: x[1].get("activity_score", 0),
-                reverse=True,
-            )
-            for i, (addr, info) in enumerate(sorted_wallets[:args.top]):
-                print(
-                    f"  {i+1:3d}. {addr[:18]}... | "
-                    f"score={info.get('activity_score', 0):.0f} "
-                    f"trades={info.get('total_trades', 0)} "
-                    f"crypto={info.get('crypto_trades', 0)} "
-                    f"markets={info.get('unique_markets', 0)} "
-                    f"vol=${info.get('total_volume', 0):.0f}"
-                )
-        else:
-            print("No smart wallet database found. Run --build-scores first.")
+    elif args.status or args.status_json:
+        status = get_bootstrap_status()
+        if args.status_json:
+            print(json.dumps(_bootstrap_status_payload(status), indent=2, sort_keys=True))
+            return
+
+        print(_format_bootstrap_status(status))
+
+        if status.scores_exists:
+            try:
+                data = _load_scores_payload()
+                wallets = data.get("wallets", {})
+                if isinstance(wallets, dict) and wallets:
+                    print()
+                    sorted_wallets = sorted(
+                        wallets.items(),
+                        key=lambda x: x[1].get("activity_score", 0),
+                        reverse=True,
+                    )
+                    for i, (addr, info) in enumerate(sorted_wallets[:args.top]):
+                        print(
+                            f"  {i+1:3d}. {addr[:18]}... | "
+                            f"score={info.get('activity_score', 0):.0f} "
+                            f"trades={info.get('total_trades', 0)} "
+                            f"crypto={info.get('crypto_trades', 0)} "
+                            f"markets={info.get('unique_markets', 0)} "
+                            f"vol=${info.get('total_volume', 0):.0f}"
+                        )
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                print(f"\n  Wallet list unavailable: {exc}")
 
         # Also show DB stats if available
         if DB_FILE.exists():

@@ -169,7 +169,7 @@ def build_doc() -> None:
             ("Date", today.isoformat()),
             ("Prepared by", "Codex"),
             ("Primary external reference", "github.com/karpathy/autoresearch"),
-            ("Primary internal references", "KARPATHY_AUTORESEARCH_REPORT.md, src/research_loop.py, flywheel/reporting.py"),
+            ("Primary internal references", "research/karpathy_autoresearch_report.md, src/research_loop.py, flywheel/reporting.py"),
             ("Document purpose", "Turn the autoresearch comparison into a concrete build plan with milestones, repo changes, and governance boundaries"),
         ],
     )
@@ -523,7 +523,7 @@ def build_doc() -> None:
         ],
         bullets=[
             "External: karpathy/autoresearch README.md, program.md, train.py, prepare.py, progress.png",
-            "Internal: KARPATHY_AUTORESEARCH_REPORT.md",
+            "Internal: research/karpathy_autoresearch_report.md",
             "Internal: src/research_loop.py, src/hypothesis_manager.py, src/reporting.py, src/edge_registry.py",
             "Internal: bot/adaptive_platt.py and src/confidence_calibration.py",
             "Internal: docs/ARCHITECTURE.md, docs/PERFORMANCE.md, docs/RESEARCH_LOG.md, docs/website/benchmark-methodology.md, docs/ops/Flywheel_Control_Plane.md",

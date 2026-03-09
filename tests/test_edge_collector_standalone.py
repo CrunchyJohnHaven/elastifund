@@ -117,6 +117,25 @@ class TestCollectionCycle:
             assert summary["markets_scanned"] == 0
             assert summary["prices_recorded"] == 0
 
+    @pytest.mark.asyncio
+    async def test_collect_once_logs_stdlib_safe_event_details(self, collector, caplog):
+        snapshots = [_make_snapshot("m1")]
+        with caplog.at_level("INFO", logger="edge_collector"), patch.object(
+            collector.scanner, "scan_diverse_markets",
+            new_callable=AsyncMock, return_value=snapshots,
+        ):
+            await collector.collect_once()
+
+        messages = [record.getMessage() for record in caplog.records]
+        assert any(
+            "collection_cycle_start" in message and 'run_id="' in message
+            for message in messages
+        )
+        assert any(
+            "collection_cycle_complete" in message and "markets=1" in message
+            for message in messages
+        )
+
 
 class TestCollectorShutdown:
     def test_shutdown_flag(self, tmp_path):

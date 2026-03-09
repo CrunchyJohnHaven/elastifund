@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: help bootstrap doctor onboard quickstart preflight hygiene test verify test-root test-polymarket api-specs clean
+.PHONY: help bootstrap doctor onboard quickstart preflight hygiene test verify test-root test-polymarket test-nontrading smoke-nontrading api-specs clean
 
 help:
 	@printf '%s\n' \
@@ -13,6 +13,8 @@ help:
 		'test             Run the root regression suite' \
 		'verify           Run hygiene + root tests + polymarket-bot tests' \
 		'test-root        Run the repo-root pytest matrix' \
+		'test-nontrading  Run the nontrading test suite only' \
+		'smoke-nontrading Run the deterministic nontrading smoke check' \
 		'test-polymarket  Run the nested polymarket-bot test suite' \
 		'api-specs        Regenerate OpenAPI specs' \
 		'clean            Remove Python/test/Finder caches'
@@ -46,6 +48,12 @@ verify:
 
 test-root:
 	$(PYTHON) -m pytest -q
+
+test-nontrading:
+	$(PYTHON) -m pytest nontrading/tests -q
+
+smoke-nontrading:
+	$(PYTHON) scripts/nontrading_smoke.py
 
 test-polymarket:
 	cd polymarket-bot && $(PYTHON) -m pytest tests -q

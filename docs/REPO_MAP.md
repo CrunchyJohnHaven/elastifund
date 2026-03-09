@@ -13,10 +13,12 @@ This is the canonical map for navigating Elastifund quickly, especially in LLM-d
 | `PROJECT_INSTRUCTIONS.md` | current priorities and operating context |
 | `CLAUDE.md` | JJ operating model and process rules |
 | `CONTRIBUTING.md` | setup, verification, PR expectations |
-| `EDGE_DISCOVERY_SYSTEM.md` | research and kill-rule architecture |
+| `docs/strategy/edge_discovery_system.md` | research and kill-rule architecture |
 | `FAST_TRADE_EDGE_ANALYSIS.md` | latest validation output |
 
 If a new root doc overlaps one of the files above, consolidate instead of creating another source of truth.
+The repo root should stay narrow: session entrypoints, public repo standards, and a small number of compatibility files only.
+For live status, prefer `jj_state.json`, `reports/remote_cycle_status.json`, `reports/remote_service_status.json`, and `research/edge_backlog_ranked.md` over stale prose. Existing JSON handoff artifacts remain the runtime contract.
 
 ## Directory Map
 
@@ -41,7 +43,7 @@ If a new root doc overlaps one of the files above, consolidate instead of creati
 | `research/` | prompts, dispatches, findings, postmortems | investigative output |
 | `deploy/` | deployment and infra artifacts | operator-facing |
 | `scripts/` | reusable repo automation | add repeatable workflows here |
-| `data/`, `logs/`, `reports/`, `state/` | generated runtime artifacts | keep disposable and ignored |
+| `data/`, `logs/`, `reports/`, `state/` | generated runtime artifacts | keep disposable and ignored, except the status JSON handoff artifacts under `reports/` that document current machine truth |
 | `archive/` | superseded material | not current guidance |
 
 ## Parallel Ownership Map
@@ -66,6 +68,8 @@ The hard rule is simple: one owner per file at a time. Split by directory or by 
 | `make hygiene` | scan for tracked sensitive artifacts and broken canonical-doc references |
 | `make test` | run the root regression suite |
 | `make verify` | run hygiene plus both major Python test surfaces |
+| `make test-nontrading` | run only the `nontrading/` suite |
+| `make smoke-nontrading` | run the deterministic non-trading smoke check |
 | `make test-polymarket` | run the nested `polymarket-bot` suite |
 | `make api-specs` | regenerate OpenAPI specs |
 | `make clean` | remove caches and Finder/Python noise |
@@ -73,6 +77,7 @@ The hard rule is simple: one owner per file at a time. Split by directory or by 
 ## Layout Rules
 
 - New durable docs belong in `docs/` or `research/`, not the repo root.
+- Prefer `docs/diary/`, `docs/ops/`, `docs/strategy/`, and `research/` over minting new root folders for writing-heavy workflows.
 - New repeated workflows belong in `scripts/`.
 - New generated artifacts belong under `reports/`, `logs/`, `data/`, or `state/`.
 - Private investor and legal materials are intentionally kept outside the repo; do not reintroduce a `fund/` tree here.

@@ -1,15 +1,15 @@
 # Fast Trade Edge Analysis
-**Last Updated:** 2026-03-07T19:07:38+00:00
+**Last Updated:** 2026-03-09T00:20:02+00:00
 **System Status:** running
 **Data Window:** 2026-03-07T14:53:53+00:00 to 2026-03-07T19:08:13+00:00
 
 ## Data Coverage
-- 15-min markets observed: 21 (16 resolved)
-- 5-min markets observed: 30
-- 4-hour markets observed: 1
+- 15-min markets observed: 29 (22 resolved)
+- 5-min markets observed: 40
+- 4-hour markets observed: 7
 - BTC price data points: 18
-- Trade records: 2615
-- Unique wallets tracked: 1513
+- Trade records: 2882
+- Unique wallets tracked: 1607
 
 ## Current Recommendation
 REJECT ALL
@@ -37,11 +37,11 @@ No hypotheses in investigation bucket.
 | Strategy | Signals | Win Rate | Reason for Rejection |
 |----------|---------|----------|----------------------|
 | Residual Horizon Fair Value | 8 | 50.00% | Too few signals (<50); Negative out-of-sample expectancy; Collapses under worse cost assumptions; Poor calibration |
-| Time-of-Day Session Effect | 0 | 0.00% | Too few signals (<50); Poor calibration |
 | Chainlink vs Binance Basis Lag | 0 | 0.00% | Too few signals (<50); Poor calibration |
 | Wallet Flow Momentum | 0 | 0.00% | Too few signals (<50); Poor calibration |
 | Informed Flow Convergence (Maker-Only) | 0 | 0.00% | Too few signals (<50); Poor calibration |
-| Cross-Timeframe Constraint Violation | 21 | 0.00% | Too few signals (<50); Negative out-of-sample expectancy; Collapses under worse cost assumptions; Poor calibration |
+| Time-of-Day Session Effect | 12 | 66.67% | Too few signals (<50); Negative out-of-sample expectancy; Collapses under worse cost assumptions |
+| Cross-Timeframe Constraint Violation | 25 | 8.00% | Too few signals (<50); Negative out-of-sample expectancy; Collapses under worse cost assumptions; Poor calibration |
 | Post-Extreme Mean Reversion | 1 | 0.00% | Too few signals (<50); Negative out-of-sample expectancy; Collapses under worse cost assumptions; Poor calibration |
 | Order Book / Flow Imbalance | 5 | 0.00% | Too few signals (<50); Negative out-of-sample expectancy; Collapses under worse cost assumptions; Poor calibration |
 | Volatility Regime Mismatch | 34 | 32.35% | Too few signals (<50); Negative out-of-sample expectancy; Collapses under worse cost assumptions; Poor calibration; Monotonic or recent performance decay |
@@ -55,12 +55,12 @@ No hypotheses in investigation bucket.
 - Variants tested: 10
 - Variants passing strict gates: 0
 - Best variant: Bootstrap Cohort
-- 15m feature rows: 71
-- 15m rows with trade-flow data: 7
-- 15m rows with wallet-convergence data: 12
+- 15m feature rows: 87
+- 15m rows with trade-flow data: 8
+- 15m rows with wallet-convergence data: 16
 - 15m rows using wallet fallback mode: 8
-- Avg wallet trades per wallet-signal row: 2.42
-- Shadow tracker (variants): total=6, resolved=0, open=6
+- Avg wallet trades per wallet-signal row: 2.94
+- Shadow tracker (variants): total=10, resolved=0, open=10
 
 ### Pass/Fail Gates
 - Min signals: 25
@@ -71,8 +71,8 @@ No hypotheses in investigation bucket.
 
 | Variant | Raw Signals | Resolved Signals | Win Rate | EV Maker | EV Taker | P-value | Calibration | Fallback Share | Gate | Gate Failures |
 |---------|-------------|------------------|----------|----------|----------|---------|-------------|----------------|------|---------------|
-| Bootstrap Cohort | 3 | 0 | 0.00% | 0.0000 | 0.0000 | 1.0000 | 1.0000 | 66.67% | watch | no_resolved_outcomes_for_generated_signals, excess_fallback_signals |
-| Bootstrap Fast | 3 | 0 | 0.00% | 0.0000 | 0.0000 | 1.0000 | 1.0000 | 66.67% | watch | no_resolved_outcomes_for_generated_signals, excess_fallback_signals |
+| Bootstrap Cohort | 5 | 0 | 0.00% | 0.0000 | 0.0000 | 1.0000 | 1.0000 | 40.00% | watch | no_resolved_outcomes_for_generated_signals |
+| Bootstrap Fast | 5 | 0 | 0.00% | 0.0000 | 0.0000 | 1.0000 | 1.0000 | 40.00% | watch | no_resolved_outcomes_for_generated_signals |
 | Balanced | 0 | 0 | 0.00% | 0.0000 | 0.0000 | 1.0000 | 1.0000 | 0.00% | fail | resolved_signals<25, ev_maker<=0, p_value>0.25, calibration>0.2, maker_edge_not_robust_at_low_fill |
 | Fast/Strict Consensus | 0 | 0 | 0.00% | 0.0000 | 0.0000 | 1.0000 | 1.0000 | 0.00% | fail | resolved_signals<25, ev_maker<=0, p_value>0.25, calibration>0.2, maker_edge_not_robust_at_low_fill |
 | Fast/Low Threshold | 0 | 0 | 0.00% | 0.0000 | 0.0000 | 1.0000 | 1.0000 | 0.00% | fail | resolved_signals<25, ev_maker<=0, p_value>0.25, calibration>0.2, maker_edge_not_robust_at_low_fill |
@@ -103,7 +103,7 @@ No new feature candidates flagged.
 - Maker fill model: trade_through
 - Confidence calibration: sequential_bayes_isotonic
 - Execution delay assumption: 2
-- Data quality issues: missing_market_snapshots, missing_market_snapshots, missing_market_snapshots, missing_market_snapshots, missing_market_snapshots
+- Data quality issues: binance_fallback_failed, binance_ticker_failed, binance_fallback_failed, binance_ticker_failed, missing_market_snapshots
 - Reasons apparent edge may be fake: data leakage from timestamp alignment, execution delay underestimation, selection bias from low-liquidity windows, regime instability
 
 ---
@@ -122,9 +122,9 @@ No new feature candidates flagged.
 ## CHANGE LOG
 | Timestamp | Change |
 |-----------|--------|
-| 2026-03-07T19:07:38+00:00 | Ran collector + feature refresh + full strategy competition cycle. |
-| 2026-03-07T19:07:38+00:00 | Updated hypothesis rankings with kill-rule evaluation and cost stress tests. |
-| 2026-03-07T19:07:38+00:00 | Executed informed-flow convergence variant explorer with maker-fill sensitivity checks. |
-| 2026-03-07T19:07:38+00:00 | Enabled strict trade-through maker fill validation from observed trade tape where available. |
-| 2026-03-07T19:07:38+00:00 | Applied sequential confidence calibration in backtest scoring and diagnostics. |
-| 2026-03-07T19:07:38+00:00 | Regenerated analysis markdown and run-specific artifacts. |
+| 2026-03-09T00:20:02+00:00 | Ran collector + feature refresh + full strategy competition cycle. |
+| 2026-03-09T00:20:02+00:00 | Updated hypothesis rankings with kill-rule evaluation and cost stress tests. |
+| 2026-03-09T00:20:02+00:00 | Executed informed-flow convergence variant explorer with maker-fill sensitivity checks. |
+| 2026-03-09T00:20:02+00:00 | Enabled strict trade-through maker fill validation from observed trade tape where available. |
+| 2026-03-09T00:20:02+00:00 | Applied sequential confidence calibration in backtest scoring and diagnostics. |
+| 2026-03-09T00:20:02+00:00 | Regenerated analysis markdown and run-specific artifacts. |

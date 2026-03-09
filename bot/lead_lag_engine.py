@@ -30,12 +30,31 @@ import logging
 import math
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
 import numpy as np
+try:
+    from bot.apm_setup import capture_external_span, get_apm_runtime
+    from bot.latency_tracker import track_latency
+except ImportError:  # pragma: no cover - direct script execution fallback
+    from apm_setup import capture_external_span, get_apm_runtime  # type: ignore
+    from latency_tracker import track_latency  # type: ignore
+
+try:
+    from bot import elastic_client
+except ImportError:  # pragma: no cover - script-style execution fallback
+    import elastic_client  # type: ignore
 
 logger = logging.getLogger("JJ.lead_lag")
+
+
+def _safe_emit_signal_event(payload: dict) -> None:
+    try:
+        elastic_client.index_signal(payload)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Elastic lead-lag telemetry failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +288,8 @@ def _f_pvalue_approx(f_stat: float, df1: int, df2: int) -> float:
 
 SEMANTIC_PROMPT = """You are a quantitative analyst evaluating whether two prediction market contracts have a genuine causal relationship.
 
+Today's date: {current_date}
+
 LEADER MARKET: "{leader_question}"
 FOLLOWER MARKET: "{follower_question}"
 
@@ -325,17 +346,35 @@ class SemanticValidator:
             follower_question=pair.follower_question,
             lag=pair.optimal_lag,
             p_value=pair.granger_p_value,
+            current_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         )
 
         try:
             client = self._get_client()
             # Run sync API call in thread pool to avoid blocking
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(None, lambda: client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=300,
-                messages=[{"role": "user", "content": prompt}],
-            ))
+            started = time.perf_counter()
+            with capture_external_span(
+                "anthropic.messages.create",
+                system="llm",
+                action="anthropic",
+                labels={"provider": "anthropic", "model": "claude-haiku-4-5-20251001"},
+                context={"prompt_chars": len(prompt)},
+            ):
+                response = await loop.run_in_executor(None, lambda: client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=300,
+                    messages=[{"role": "user", "content": prompt}],
+                ))
+            get_apm_runtime().record_metric(
+                "llm_response_ms",
+                (time.perf_counter() - started) * 1000.0,
+                labels={
+                    "provider": "anthropic",
+                    "model": "claude-haiku-4-5-20251001",
+                    "signal_source": "lead_lag",
+                },
+            )
 
             # Parse response
             text = response.content[0].text.strip()
@@ -504,6 +543,21 @@ class LeadLagEngine:
                         optimal_lag=best_lag,
                     )
                     stat_pairs.append(pair)
+                    _safe_emit_signal_event(
+                        {
+                            "signal_source": "leadlag",
+                            "market_id": follower_id,
+                            "signal_value": p_value,
+                            "confidence": max(0.0, min(1.0, 1.0 - p_value)),
+                            "acted_on": False,
+                            "leader_id": leader_id,
+                            "follower_id": follower_id,
+                            "granger_p_value": p_value,
+                            "granger_f_stat": f_stat,
+                            "optimal_lag": best_lag,
+                            "pair_selected": False,
+                        }
+                    )
 
         logger.info(f"Lead-lag scan: {len(stat_pairs)} statistically significant pairs (p < {self.STAT_THRESHOLD})")
 
@@ -519,6 +573,24 @@ class LeadLagEngine:
         for pair in top_candidates:
             try:
                 await self._validator.validate_pair(pair)
+                _safe_emit_signal_event(
+                    {
+                        "signal_source": "leadlag",
+                        "market_id": pair.follower_id,
+                        "signal_value": pair.granger_p_value,
+                        "confidence": pair.semantic_confidence,
+                        "acted_on": bool(pair.semantic_valid and pair.combined_score > 0),
+                        "leader_id": pair.leader_id,
+                        "follower_id": pair.follower_id,
+                        "granger_p_value": pair.granger_p_value,
+                        "granger_f_stat": pair.granger_f_stat,
+                        "optimal_lag": pair.optimal_lag,
+                        "pair_selected": bool(pair.semantic_valid and pair.combined_score > 0),
+                        "pair_score": pair.combined_score,
+                        "transmission_mechanism": pair.transmission_mechanism,
+                        "semantic_direction": pair.semantic_direction.name,
+                    }
+                )
                 if pair.semantic_valid and pair.combined_score > 0:
                     validated.append(pair)
                     logger.info(
@@ -542,6 +614,13 @@ class LeadLagEngine:
         logger.info(f"Lead-lag scan complete: {len(validated)} validated pairs")
 
         return validated
+
+    @track_latency("scan_lead_lag")
+    async def scan_lead_lag(
+        self,
+        market_ids: Optional[list[str]] = None,
+    ) -> list[LeadLagPair]:
+        return await self.scan_for_pairs(market_ids=market_ids)
 
     def get_signals(self) -> list[LeadLagSignal]:
         """Check validated pairs for actionable trading signals.
@@ -600,6 +679,21 @@ class LeadLagEngine:
                         pair_score=pair.combined_score,
                     )
                     signals.append(signal)
+                    _safe_emit_signal_event(
+                        {
+                            "signal_source": "leadlag",
+                            "market_id": pair.follower_id,
+                            "signal_value": expected_follower,
+                            "confidence": signal.confidence,
+                            "acted_on": True,
+                            "leader_id": pair.leader_id,
+                            "follower_id": pair.follower_id,
+                            "leader_price_change": leader_move,
+                            "follower_gap": follower_gap,
+                            "pair_score": pair.combined_score,
+                            "semantic_direction": pair.semantic_direction.name,
+                        }
+                    )
 
         return signals
 

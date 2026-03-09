@@ -35,7 +35,21 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Optional
+
+
+def _current_date_str() -> str:
+    """Return current date for temporal grounding in LLM prompts."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+try:
+    from bot.apm_setup import capture_external_span, get_apm_runtime
+    from bot.latency_tracker import track_latency
+except ImportError:  # pragma: no cover - direct script execution fallback
+    from apm_setup import capture_external_span, get_apm_runtime  # type: ignore
+    from latency_tracker import track_latency  # type: ignore
 
 logger = logging.getLogger("JJ.debate")
 
@@ -65,6 +79,8 @@ class DebateResult:
 
 THESIS_PROMPT = """You are a senior quantitative analyst. Your task is to estimate the probability of the following event occurring.
 
+Today's date: {current_date}
+
 QUESTION: {question}
 
 CATEGORY: {category}
@@ -84,6 +100,8 @@ PROBABILITY: [Your estimate, e.g., 0.65]
 KEY_FACTORS: [Top 3 factors driving your estimate]"""
 
 COUNTER_PROMPT = """You are a contrarian risk analyst whose job is to STRESS-TEST probability estimates. Another analyst has provided their assessment of this question. Your job is to find every flaw in their reasoning and argue for a DIFFERENT probability.
+
+Today's date: {current_date}
 
 QUESTION: {question}
 
@@ -110,6 +128,8 @@ COUNTER_PROBABILITY: [Your alternative estimate, e.g., 0.42]
 CONFIDENCE_IN_COUNTER: [How confident you are in YOUR alternative, 0-1]"""
 
 JUDGE_PROMPT = """You are a senior portfolio manager who must make a FINAL probability estimate after reviewing a debate between two analysts.
+
+Today's date: {current_date}
 
 QUESTION: {question}
 
@@ -218,11 +238,24 @@ class DebatePipeline:
         """Call GPT-5.1 for thesis generation."""
         if not self._openai_client:
             raise RuntimeError("OpenAI client not available")
-        response = await self._openai_client.chat.completions.create(
-            model=GPT_THESIS_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            max_tokens=1500,
+        started = time.perf_counter()
+        with capture_external_span(
+            "openai.chat.completions.create",
+            system="llm",
+            action="openai",
+            labels={"provider": "openai", "model": GPT_THESIS_MODEL},
+            context={"prompt_chars": len(prompt)},
+        ):
+            response = await self._openai_client.chat.completions.create(
+                model=GPT_THESIS_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=1500,
+            )
+        get_apm_runtime().record_metric(
+            "llm_response_ms",
+            (time.perf_counter() - started) * 1000.0,
+            labels={"provider": "openai", "model": GPT_THESIS_MODEL, "debate_role": "thesis"},
         )
         return response.choices[0].message.content or ""
 
@@ -230,11 +263,24 @@ class DebatePipeline:
         """Call Claude 4.5 for counter-thesis generation."""
         if not self._anthropic_client:
             raise RuntimeError("Anthropic client not available")
-        response = await self._anthropic_client.messages.create(
-            model=CLAUDE_REFUTER_MODEL,
-            max_tokens=1500,
-            temperature=0.4,  # Slightly higher for contrarian thinking
-            messages=[{"role": "user", "content": prompt}],
+        started = time.perf_counter()
+        with capture_external_span(
+            "anthropic.messages.create",
+            system="llm",
+            action="anthropic",
+            labels={"provider": "anthropic", "model": CLAUDE_REFUTER_MODEL},
+            context={"prompt_chars": len(prompt)},
+        ):
+            response = await self._anthropic_client.messages.create(
+                model=CLAUDE_REFUTER_MODEL,
+                max_tokens=1500,
+                temperature=0.4,  # Slightly higher for contrarian thinking
+                messages=[{"role": "user", "content": prompt}],
+            )
+        get_apm_runtime().record_metric(
+            "llm_response_ms",
+            (time.perf_counter() - started) * 1000.0,
+            labels={"provider": "anthropic", "model": CLAUDE_REFUTER_MODEL, "debate_role": "counter"},
         )
         return response.content[0].text if response.content else ""
 
@@ -243,13 +289,27 @@ class DebatePipeline:
         if not self._google_client:
             raise RuntimeError("Google AI client not available")
         model = self._google_client.GenerativeModel(GEMINI_JUDGE_MODEL)
-        response = await asyncio.to_thread(
-            model.generate_content,
-            prompt,
-            generation_config={"temperature": 0.2, "max_output_tokens": 1500},
+        started = time.perf_counter()
+        with capture_external_span(
+            "google.generativeai.generate_content",
+            system="llm",
+            action="gemini",
+            labels={"provider": "google", "model": GEMINI_JUDGE_MODEL},
+            context={"prompt_chars": len(prompt)},
+        ):
+            response = await asyncio.to_thread(
+                model.generate_content,
+                prompt,
+                generation_config={"temperature": 0.2, "max_output_tokens": 1500},
+            )
+        get_apm_runtime().record_metric(
+            "llm_response_ms",
+            (time.perf_counter() - started) * 1000.0,
+            labels={"provider": "google", "model": GEMINI_JUDGE_MODEL, "debate_role": "judge"},
         )
         return response.text or ""
 
+    @track_latency("debate_round")
     async def debate(
         self,
         question: str,
@@ -286,7 +346,8 @@ class DebatePipeline:
         try:
             # Phase 1: Thesis (GPT-5.1)
             thesis_prompt = THESIS_PROMPT.format(
-                question=question, category=category, context=context or "None provided"
+                question=question, category=category, context=context or "None provided",
+                current_date=_current_date_str(),
             )
             thesis_text = await self._call_openai(thesis_prompt)
             thesis_prob = _extract_probability(thesis_text, "PROBABILITY")
@@ -301,6 +362,7 @@ class DebatePipeline:
                 thesis_reasoning=thesis_text,
                 thesis_probability=thesis_prob,
                 context=context or "None provided",
+                current_date=_current_date_str(),
             )
             counter_text = await self._call_anthropic(counter_prompt)
             counter_prob = _extract_probability(counter_text, "COUNTER_PROBABILITY")
@@ -317,6 +379,7 @@ class DebatePipeline:
                 counter_probability=counter_prob,
                 counter_reasoning=counter_text,
                 context=context or "None provided",
+                current_date=_current_date_str(),
             )
             judge_text = await self._call_gemini(judge_prompt)
             judge_prob = _extract_probability(judge_text, "FINAL_PROBABILITY")

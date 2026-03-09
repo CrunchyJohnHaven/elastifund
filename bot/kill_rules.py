@@ -29,7 +29,13 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
+try:
+    from bot import elastic_client
+except ImportError:  # pragma: no cover - script-style execution fallback
+    import elastic_client  # type: ignore
+
 logger = logging.getLogger("JJ.kill_rules")
+_LAST_KILL_EVENT_STATE: dict[str, tuple[tuple[str, str], ...]] = {}
 
 
 class KillReason(Enum):
@@ -64,6 +70,53 @@ class KillResult:
         if self.passed:
             return "PASS"
         return f"KILL: {self.reason.value} — {self.detail}"
+
+
+def _metric_signature(metrics: dict) -> tuple[tuple[str, str], ...]:
+    items: list[tuple[str, str]] = []
+    for key, value in sorted((metrics or {}).items()):
+        if isinstance(value, float):
+            normalized = f"{value:.8f}"
+        else:
+            normalized = str(value)
+        items.append((str(key), normalized))
+    return tuple(items)
+
+
+def _emit_kill_event(
+    rule_name: str,
+    result: KillResult,
+    *,
+    metric_value: float | int | None = None,
+    threshold: float | int | None = None,
+    action_taken: str = "triggered",
+    extra: Optional[dict] = None,
+) -> None:
+    if result.passed:
+        _LAST_KILL_EVENT_STATE.pop(rule_name, None)
+        return
+
+    signature = _metric_signature(result.metrics)
+    if _LAST_KILL_EVENT_STATE.get(rule_name) == signature:
+        return
+
+    payload = {
+        "kill_rule": rule_name,
+        "metric_value": metric_value,
+        "threshold": threshold,
+        "action_taken": action_taken,
+        "detail": result.detail,
+        "reason": result.reason.value if result.reason is not None else rule_name,
+    }
+    if extra:
+        payload.update(extra)
+
+    try:
+        elastic_client.index_kill(payload)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Elastic kill telemetry failed for %s: %s", rule_name, exc)
+
+    _LAST_KILL_EVENT_STATE[rule_name] = signature
 
 
 # ---------------------------------------------------------------------------
@@ -108,13 +161,23 @@ def check_semantic_decay(
         threshold: Minimum acceptable confidence (default 0.3)
     """
     if semantic_confidence < threshold:
-        return KillResult(
+        result = KillResult(
             passed=False,
             reason=KillReason.SEMANTIC_DECAY,
             detail=f"Semantic confidence {semantic_confidence:.3f} < {threshold}",
             metrics={"semantic_confidence": semantic_confidence, "threshold": threshold},
         )
-    return KillResult(passed=True, metrics={"semantic_confidence": semantic_confidence})
+        _emit_kill_event(
+            KillReason.SEMANTIC_DECAY.value,
+            result,
+            metric_value=semantic_confidence,
+            threshold=threshold,
+            extra={"semantic_decay_rate": semantic_confidence},
+        )
+        return result
+    result = KillResult(passed=True, metrics={"semantic_confidence": semantic_confidence})
+    _emit_kill_event(KillReason.SEMANTIC_DECAY.value, result)
+    return result
 
 
 def check_toxicity_survival(
@@ -133,18 +196,32 @@ def check_toxicity_survival(
         pnl_normal: P&L under normal conditions
         max_drawdown_pct: Maximum acceptable degradation (default 50%)
     """
+    survival_ratio = (pnl_under_toxic / pnl_normal) if pnl_normal not in (0, 0.0) else None
+
     if pnl_normal <= 0:
-        return KillResult(
+        result = KillResult(
             passed=False,
             reason=KillReason.TOXICITY_SURVIVAL,
             detail=f"Normal P&L is negative: ${pnl_normal:.2f}",
-            metrics={"pnl_toxic": pnl_under_toxic, "pnl_normal": pnl_normal},
+            metrics={
+                "pnl_toxic": pnl_under_toxic,
+                "pnl_normal": pnl_normal,
+                "toxicity_survival_ratio": survival_ratio,
+            },
         )
+        _emit_kill_event(
+            KillReason.TOXICITY_SURVIVAL.value,
+            result,
+            metric_value=survival_ratio if survival_ratio is not None else pnl_normal,
+            threshold=1.0 - max_drawdown_pct,
+            extra={"toxicity_survival_ratio": survival_ratio},
+        )
+        return result
 
     degradation = 1.0 - (pnl_under_toxic / pnl_normal) if pnl_normal > 0 else 1.0
 
     if degradation > max_drawdown_pct:
-        return KillResult(
+        result = KillResult(
             passed=False,
             reason=KillReason.TOXICITY_SURVIVAL,
             detail=(
@@ -156,13 +233,29 @@ def check_toxicity_survival(
                 "pnl_toxic": pnl_under_toxic,
                 "pnl_normal": pnl_normal,
                 "degradation": degradation,
+                "toxicity_survival_ratio": survival_ratio,
             },
         )
+        _emit_kill_event(
+            KillReason.TOXICITY_SURVIVAL.value,
+            result,
+            metric_value=survival_ratio if survival_ratio is not None else degradation,
+            threshold=1.0 - max_drawdown_pct,
+            extra={"toxicity_survival_ratio": survival_ratio},
+        )
+        return result
 
-    return KillResult(
+    result = KillResult(
         passed=True,
-        metrics={"pnl_toxic": pnl_under_toxic, "pnl_normal": pnl_normal, "degradation": degradation},
+        metrics={
+            "pnl_toxic": pnl_under_toxic,
+            "pnl_normal": pnl_normal,
+            "degradation": degradation,
+            "toxicity_survival_ratio": survival_ratio,
+        },
     )
+    _emit_kill_event(KillReason.TOXICITY_SURVIVAL.value, result)
+    return result
 
 
 def check_cost_stress(
@@ -200,7 +293,7 @@ def check_cost_stress(
     net_ev = gross_ev - total_cost
 
     if net_ev <= 0:
-        return KillResult(
+        result = KillResult(
             passed=False,
             reason=KillReason.COST_STRESS,
             detail=(
@@ -211,14 +304,30 @@ def check_cost_stress(
                 "gross_ev": gross_ev,
                 "taker_fee": taker_fee,
                 "latency_cost": latency_cost,
+                "cost_stress_polynomial_value": taker_fee,
                 "net_ev": net_ev,
             },
         )
+        _emit_kill_event(
+            KillReason.COST_STRESS.value,
+            result,
+            metric_value=net_ev,
+            threshold=0.0,
+            extra={"cost_stress_polynomial_value": taker_fee},
+        )
+        return result
 
-    return KillResult(
+    result = KillResult(
         passed=True,
-        metrics={"gross_ev": gross_ev, "net_ev": net_ev, "total_cost": total_cost},
+        metrics={
+            "gross_ev": gross_ev,
+            "net_ev": net_ev,
+            "total_cost": total_cost,
+            "cost_stress_polynomial_value": taker_fee,
+        },
     )
+    _emit_kill_event(KillReason.COST_STRESS.value, result)
+    return result
 
 
 def check_calibration_enforcement(
@@ -253,7 +362,7 @@ def check_calibration_enforcement(
     diff = abs(calibrated_prob - expected)
 
     if diff > tolerance:
-        return KillResult(
+        result = KillResult(
             passed=False,
             reason=KillReason.CALIBRATION_MISSING,
             detail=(
@@ -264,14 +373,25 @@ def check_calibration_enforcement(
                 "raw_prob": raw_prob,
                 "calibrated_prob": calibrated_prob,
                 "expected_calibrated": expected,
+                "calibration_drift": diff,
                 "diff": diff,
             },
         )
+        _emit_kill_event(
+            KillReason.CALIBRATION_MISSING.value,
+            result,
+            metric_value=diff,
+            threshold=tolerance,
+            extra={"calibration_drift": diff},
+        )
+        return result
 
-    return KillResult(
+    result = KillResult(
         passed=True,
-        metrics={"raw_prob": raw_prob, "calibrated_prob": calibrated_prob},
+        metrics={"raw_prob": raw_prob, "calibrated_prob": calibrated_prob, "calibration_drift": diff},
     )
+    _emit_kill_event(KillReason.CALIBRATION_MISSING.value, result)
+    return result
 
 
 def check_minimum_signals(
@@ -287,14 +407,23 @@ def check_minimum_signals(
     required = thresholds.get(stage, 100)
 
     if signal_count < required:
-        return KillResult(
+        result = KillResult(
             passed=False,
             reason=KillReason.INSUFFICIENT_SIGNALS,
             detail=f"Only {signal_count} signals ({stage} requires {required})",
             metrics={"signal_count": signal_count, "required": required, "stage": stage},
         )
+        _emit_kill_event(
+            KillReason.INSUFFICIENT_SIGNALS.value,
+            result,
+            metric_value=signal_count,
+            threshold=required,
+        )
+        return result
 
-    return KillResult(passed=True, metrics={"signal_count": signal_count})
+    result = KillResult(passed=True, metrics={"signal_count": signal_count, "required": required, "stage": stage})
+    _emit_kill_event(KillReason.INSUFFICIENT_SIGNALS.value, result)
+    return result
 
 
 def check_oos_ev(
@@ -307,17 +436,24 @@ def check_oos_ev(
     OOS EV must be positive and at least 30% of in-sample EV.
     """
     if oos_ev <= 0:
-        return KillResult(
+        result = KillResult(
             passed=False,
             reason=KillReason.NEGATIVE_OOS_EV,
             detail=f"Negative OOS EV: {oos_ev:.4f}",
             metrics={"oos_ev": oos_ev, "in_sample_ev": in_sample_ev},
         )
+        _emit_kill_event(
+            KillReason.NEGATIVE_OOS_EV.value,
+            result,
+            metric_value=oos_ev,
+            threshold=0.0,
+        )
+        return result
 
     if in_sample_ev > 0:
         ratio = oos_ev / in_sample_ev
         if ratio < min_ratio:
-            return KillResult(
+            result = KillResult(
                 passed=False,
                 reason=KillReason.REGIME_DECAY,
                 detail=(
@@ -326,8 +462,18 @@ def check_oos_ev(
                 ),
                 metrics={"oos_ev": oos_ev, "in_sample_ev": in_sample_ev, "ratio": ratio},
             )
+            _emit_kill_event(
+                KillReason.REGIME_DECAY.value,
+                result,
+                metric_value=ratio,
+                threshold=min_ratio,
+            )
+            return result
 
-    return KillResult(passed=True, metrics={"oos_ev": oos_ev, "in_sample_ev": in_sample_ev})
+    result = KillResult(passed=True, metrics={"oos_ev": oos_ev, "in_sample_ev": in_sample_ev})
+    _emit_kill_event(KillReason.NEGATIVE_OOS_EV.value, result)
+    _emit_kill_event(KillReason.REGIME_DECAY.value, result)
+    return result
 
 
 def check_shadow_promotion(
@@ -336,13 +482,22 @@ def check_shadow_promotion(
 ) -> KillResult:
     """Promotion gate: shadow mode needs enough samples before live consideration."""
     if signal_count < minimum_signals:
-        return KillResult(
+        result = KillResult(
             passed=False,
             reason=KillReason.SHADOW_PROMOTION,
             detail=f"Only {signal_count} shadow signals; need {minimum_signals}",
             metrics={"signal_count": signal_count, "minimum_signals": minimum_signals},
         )
-    return KillResult(passed=True, metrics={"signal_count": signal_count})
+        _emit_kill_event(
+            KillReason.SHADOW_PROMOTION.value,
+            result,
+            metric_value=signal_count,
+            threshold=minimum_signals,
+        )
+        return result
+    result = KillResult(passed=True, metrics={"signal_count": signal_count, "minimum_signals": minimum_signals})
+    _emit_kill_event(KillReason.SHADOW_PROMOTION.value, result)
+    return result
 
 
 def check_capture_rate(
@@ -351,20 +506,36 @@ def check_capture_rate(
 ) -> KillResult:
     """Promotion gate: realized capture must retain enough theoretical edge."""
     if capture_rate is None:
-        return KillResult(
+        result = KillResult(
             passed=False,
             reason=KillReason.CAPTURE_RATE,
             detail="Capture rate unavailable",
             metrics={"capture_rate": None, "minimum_capture_rate": minimum_capture_rate},
         )
+        _emit_kill_event(
+            KillReason.CAPTURE_RATE.value,
+            result,
+            metric_value=None,
+            threshold=minimum_capture_rate,
+        )
+        return result
     if capture_rate < minimum_capture_rate:
-        return KillResult(
+        result = KillResult(
             passed=False,
             reason=KillReason.CAPTURE_RATE,
             detail=f"Capture rate {capture_rate:.2%} < {minimum_capture_rate:.2%}",
             metrics={"capture_rate": capture_rate, "minimum_capture_rate": minimum_capture_rate},
         )
-    return KillResult(passed=True, metrics={"capture_rate": capture_rate})
+        _emit_kill_event(
+            KillReason.CAPTURE_RATE.value,
+            result,
+            metric_value=capture_rate,
+            threshold=minimum_capture_rate,
+        )
+        return result
+    result = KillResult(passed=True, metrics={"capture_rate": capture_rate, "minimum_capture_rate": minimum_capture_rate})
+    _emit_kill_event(KillReason.CAPTURE_RATE.value, result)
+    return result
 
 
 def check_classification_accuracy(
@@ -373,20 +544,39 @@ def check_classification_accuracy(
 ) -> KillResult:
     """Promotion gate: B-1 needs validated relation accuracy before live routing."""
     if classification_accuracy is None:
-        return KillResult(
+        result = KillResult(
             passed=False,
             reason=KillReason.CLASSIFICATION_ACCURACY,
             detail="Classification accuracy unavailable",
             metrics={"classification_accuracy": None, "minimum_accuracy": minimum_accuracy},
         )
+        _emit_kill_event(
+            KillReason.CLASSIFICATION_ACCURACY.value,
+            result,
+            metric_value=None,
+            threshold=minimum_accuracy,
+        )
+        return result
     if classification_accuracy < minimum_accuracy:
-        return KillResult(
+        result = KillResult(
             passed=False,
             reason=KillReason.CLASSIFICATION_ACCURACY,
             detail=f"Classification accuracy {classification_accuracy:.2%} < {minimum_accuracy:.2%}",
             metrics={"classification_accuracy": classification_accuracy, "minimum_accuracy": minimum_accuracy},
         )
-    return KillResult(passed=True, metrics={"classification_accuracy": classification_accuracy})
+        _emit_kill_event(
+            KillReason.CLASSIFICATION_ACCURACY.value,
+            result,
+            metric_value=classification_accuracy,
+            threshold=minimum_accuracy,
+        )
+        return result
+    result = KillResult(
+        passed=True,
+        metrics={"classification_accuracy": classification_accuracy, "minimum_accuracy": minimum_accuracy},
+    )
+    _emit_kill_event(KillReason.CLASSIFICATION_ACCURACY.value, result)
+    return result
 
 
 def check_false_positive_rate(
@@ -395,7 +585,7 @@ def check_false_positive_rate(
 ) -> KillResult:
     """Promotion gate: structural lanes halt if resolved false positives drift too high."""
     if false_positive_rate is None:
-        return KillResult(
+        result = KillResult(
             passed=False,
             reason=KillReason.FALSE_POSITIVE_RATE,
             detail="False-positive rate unavailable",
@@ -404,8 +594,15 @@ def check_false_positive_rate(
                 "maximum_false_positive_rate": maximum_false_positive_rate,
             },
         )
+        _emit_kill_event(
+            KillReason.FALSE_POSITIVE_RATE.value,
+            result,
+            metric_value=None,
+            threshold=maximum_false_positive_rate,
+        )
+        return result
     if false_positive_rate > maximum_false_positive_rate:
-        return KillResult(
+        result = KillResult(
             passed=False,
             reason=KillReason.FALSE_POSITIVE_RATE,
             detail=f"False-positive rate {false_positive_rate:.2%} > {maximum_false_positive_rate:.2%}",
@@ -414,7 +611,19 @@ def check_false_positive_rate(
                 "maximum_false_positive_rate": maximum_false_positive_rate,
             },
         )
-    return KillResult(passed=True, metrics={"false_positive_rate": false_positive_rate})
+        _emit_kill_event(
+            KillReason.FALSE_POSITIVE_RATE.value,
+            result,
+            metric_value=false_positive_rate,
+            threshold=maximum_false_positive_rate,
+        )
+        return result
+    result = KillResult(
+        passed=True,
+        metrics={"false_positive_rate": false_positive_rate, "maximum_false_positive_rate": maximum_false_positive_rate},
+    )
+    _emit_kill_event(KillReason.FALSE_POSITIVE_RATE.value, result)
+    return result
 
 
 def check_consecutive_rollbacks(
@@ -423,7 +632,7 @@ def check_consecutive_rollbacks(
 ) -> KillResult:
     """Promotion gate: repeated rollback losses disable live promotion."""
     if consecutive_rollbacks > maximum_consecutive_rollbacks:
-        return KillResult(
+        result = KillResult(
             passed=False,
             reason=KillReason.ROLLBACK_CLUSTER,
             detail=(
@@ -435,7 +644,22 @@ def check_consecutive_rollbacks(
                 "maximum_consecutive_rollbacks": maximum_consecutive_rollbacks,
             },
         )
-    return KillResult(passed=True, metrics={"consecutive_rollbacks": consecutive_rollbacks})
+        _emit_kill_event(
+            KillReason.ROLLBACK_CLUSTER.value,
+            result,
+            metric_value=consecutive_rollbacks,
+            threshold=maximum_consecutive_rollbacks,
+        )
+        return result
+    result = KillResult(
+        passed=True,
+        metrics={
+            "consecutive_rollbacks": consecutive_rollbacks,
+            "maximum_consecutive_rollbacks": maximum_consecutive_rollbacks,
+        },
+    )
+    _emit_kill_event(KillReason.ROLLBACK_CLUSTER.value, result)
+    return result
 
 
 def run_combinatorial_promotion_battery(

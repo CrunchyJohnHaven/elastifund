@@ -2,6 +2,15 @@
 
 This file summarizes the core Elastifund dispatch program and the findings it produced. The indexed dispatch set in [research/dispatches/README.md](../research/dispatches/README.md) covers the original research waves, and the repo now contains follow-on dispatches beyond that first corpus. The point of this log is not to list every prompt verbatim. It is to make the resulting map legible.
 
+Current March 9, 2026 machine snapshot:
+- `11` `DISPATCH_*` work-orders live in `research/dispatches/`.
+- `95` markdown files currently make up the dispatch library.
+- `jj_state.json` still shows `0` trades after `294` cycles.
+- `reports/remote_service_status.json` shows `jj-live.service` `running` at `2026-03-09T00:06:56Z`, which supersedes the older March 8 stopped-service prose for service state.
+- `reports/remote_cycle_status.json` still marks launch `blocked`, wallet-flow `not_ready`, and the next action as paper/shadow-only after wallet-flow bootstrap.
+- The latest checked-in fast-trade engine verdict remains `REJECT ALL` (`FAST_TRADE_EDGE_ANALYSIS.md`, `2026-03-07T19:07:38+00:00`).
+- Structural alpha promotion is still blocked: the March 9 edge scan found `0` executable A-6 opportunities below `0.95`, and the March 9 B-1 audit still found `0` deterministic template pairs in the first `1,000` allowed markets.
+
 ## Dispatch Program Summary
 
 | Phase | Primary focus | What it produced |
@@ -41,7 +50,7 @@ The failure diary is not side content. It is the main map of the territory.
 | Crypto latency arbitrage with takers | fee economics made the setup unusable |
 | Kalshi weather bracket rounding | discretization error destroyed the apparent forecast edge |
 
-Current headline from the fast-trade engine: [FAST_TRADE_EDGE_ANALYSIS.md](../FAST_TRADE_EDGE_ANALYSIS.md) says `REJECT ALL`.
+Current headline from the latest checked-in fast-trade engine artifact: [FAST_TRADE_EDGE_ANALYSIS.md](../FAST_TRADE_EDGE_ANALYSIS.md) says `REJECT ALL`.
 
 That is not marketing copy. It is the honest result.
 
@@ -49,11 +58,13 @@ That is not marketing copy. It is the honest result.
 
 The current hypothesis pipeline is narrower and more realistic than the early search space.
 
-- A-6 guaranteed-dollar and sum-violation style structural arbitrage remains a top-priority lane because it exploits event construction rather than prediction skill alone.
-- B-1 templated dependency monitoring remains viable in principle, but live density is sparse and promotion is gated behind empirical evidence.
+- A-6 guaranteed-dollar and sum-violation style structural arbitrage remains a top-priority lane because it exploits event construction rather than prediction skill alone, but the March 9 live scan still found `0` executable opportunities below `0.95`.
+- B-1 templated dependency monitoring remains viable in principle, but live density is sparse and promotion is gated behind empirical evidence; the March 9 template audit still found `0` deterministic pairs in the first `1,000` allowed markets.
 - Fill-rate measurement, stale-order handling, and position-merging work moved up because execution quality is now recognized as a first-class research problem.
 - Forecasting improvements such as category routing, agentic RAG, and ensemble disagreement remain useful, but they are not enough by themselves on short-dated markets.
 - The external benchmark harness moved into the P2 website lane: useful for comparative authority, recruiting, and methodology credibility, but not a reason to defer current alpha validation.
+
+The March 9 remote running artifact changes the service-state fact, not the launch verdict. In other words: the service was observed running, but the launch remains blocked and the active state is treated as drift until the remote mode is reconciled.
 
 ## Honest Bottom Line
 

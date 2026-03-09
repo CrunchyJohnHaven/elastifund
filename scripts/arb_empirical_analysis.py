@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 import json
 import logging
@@ -21,6 +21,10 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from bot.execution_readiness import (
+    evaluate_structural_lane_readiness,
+    StructuralLaneReadinessInputs,
+)
 from bot.resolution_normalizer import is_tradable_outcome, normalize_market
 from bot.sum_violation_scanner import SumViolationScanner
 
@@ -32,6 +36,11 @@ DEFAULT_HEADERS = {
     "User-Agent": "arb-empirical-analysis/1.0",
     "Accept": "application/json",
 }
+DEFAULT_A6_PUBLIC_AUDIT_JSON = Path("reports/guaranteed_dollar_audit.json")
+DEFAULT_A6_PUBLIC_AUDIT_MD = Path("reports/guaranteed_dollar_audit.md")
+DEFAULT_B1_PUBLIC_AUDIT_JSON = Path("reports/b1_template_audit.json")
+DEFAULT_B1_PUBLIC_AUDIT_MD = Path("reports/b1_template_audit.md")
+DEFAULT_B1_AUDIT_MARKET_SAMPLE_SIZE = 1000
 
 
 @dataclass(frozen=True)
@@ -227,7 +236,7 @@ def normal_cdf(value: float) -> float:
 def serialize_for_json(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
-    if isinstance(value, (ReplayViolationRow, EpisodeRow, LegObservation, EventObservation, ViolationEpisode, PassiveOrderProbe)):
+    if is_dataclass(value):
         return asdict(value)
     if isinstance(value, dict):
         return {str(key): serialize_for_json(val) for key, val in value.items()}
@@ -243,6 +252,89 @@ def _json_loads(value: Any, default: Any) -> Any:
         except json.JSONDecodeError:
             return default
     return value if value is not None else default
+
+
+def _audit_summary_value(markdown_path: Path, label: str) -> int | None:
+    if not markdown_path.exists():
+        return None
+
+    needle = f"- {label}:"
+    with markdown_path.open("r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line.startswith(needle):
+                continue
+            _, _, tail = line.partition(":")
+            digits = "".join(ch for ch in tail if ch.isdigit())
+            if digits:
+                return int(digits)
+    return None
+
+
+def summarize_public_a6_audit(
+    *,
+    json_path: Path = DEFAULT_A6_PUBLIC_AUDIT_JSON,
+    markdown_path: Path = DEFAULT_A6_PUBLIC_AUDIT_MD,
+    execute_threshold: float = 0.95,
+) -> dict[str, Any]:
+    allowed_event_count = _audit_summary_value(markdown_path, "Allowed neg-risk events audited")
+
+    executable_below_threshold = None
+    if json_path.exists():
+        try:
+            payload = json.loads(json_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            payload = []
+        if isinstance(payload, list):
+            executable_below_threshold = 0
+            for row in payload:
+                if not isinstance(row, Mapping):
+                    continue
+                constructions = row.get("constructions")
+                if isinstance(constructions, list):
+                    candidates = [candidate for candidate in constructions if isinstance(candidate, Mapping)]
+                else:
+                    best = row.get("best_construction")
+                    candidates = [best] if isinstance(best, Mapping) else []
+                for candidate in candidates:
+                    top_of_book_cost = _safe_float(candidate.get("top_of_book_cost"))
+                    if not bool(candidate.get("executable")) or top_of_book_cost is None:
+                        continue
+                    if top_of_book_cost <= float(execute_threshold):
+                        executable_below_threshold += 1
+
+    return {
+        "source_json": str(json_path),
+        "source_markdown": str(markdown_path),
+        "allowed_neg_risk_event_count": allowed_event_count,
+        "execute_threshold": float(execute_threshold),
+        "executable_constructions_below_threshold": executable_below_threshold,
+    }
+
+
+def summarize_public_b1_audit(
+    *,
+    json_path: Path = DEFAULT_B1_PUBLIC_AUDIT_JSON,
+    markdown_path: Path = DEFAULT_B1_PUBLIC_AUDIT_MD,
+    market_sample_size: int = DEFAULT_B1_AUDIT_MARKET_SAMPLE_SIZE,
+) -> dict[str, Any]:
+    template_pair_count = _audit_summary_value(markdown_path, "Template-compatible pairs")
+    if template_pair_count is None and json_path.exists():
+        try:
+            payload = json.loads(json_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            payload = {}
+        if isinstance(payload, Mapping):
+            pairs = payload.get("template_pairs")
+            if isinstance(pairs, list):
+                template_pair_count = len(pairs)
+
+    return {
+        "source_json": str(json_path),
+        "source_markdown": str(markdown_path),
+        "allowed_market_sample_size": int(market_sample_size),
+        "deterministic_template_pair_count": template_pair_count,
+    }
 
 
 def parse_replay_row(payload: Mapping[str, Any]) -> ReplayViolationRow:
@@ -962,6 +1054,9 @@ def summarize_b1(db_path: Path) -> dict[str, Any]:
             "historical_violation_count": 0,
             "measurement_status": "db_missing",
             "recommended_implication_threshold": 0.04,
+            "classification_accuracy": None,
+            "false_positive_rate": None,
+            "b1_half_life_lower_bound_seconds": None,
         }
 
     with sqlite3.connect(db_path) as conn:
@@ -987,8 +1082,10 @@ def summarize_b1(db_path: Path) -> dict[str, Any]:
             "graph_edge_count": int(edge_count),
             "historical_violation_count": 0,
             "measurement_status": "insufficient_live_samples",
-            "a6_or_b1_half_life_seconds": None,
+            "b1_half_life_lower_bound_seconds": None,
             "recommended_implication_threshold": 0.04,
+            "classification_accuracy": None,
+            "false_positive_rate": None,
             "notes": "No historical B-1 violations are logged in constraint_arb.db yet.",
         }
 
@@ -1018,6 +1115,8 @@ def summarize_b1(db_path: Path) -> dict[str, Any]:
         "measurement_status": "historical_only",
         "b1_half_life_lower_bound_seconds": quantile(durations, 0.50),
         "recommended_implication_threshold": 0.04,
+        "classification_accuracy": None,
+        "false_positive_rate": None,
     }
 
 
@@ -1053,6 +1152,260 @@ def summarize_settlement(db_path: Path) -> dict[str, Any]:
     }
 
 
+def evaluate_lane_statuses(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    fill = snapshot.get("fill_proxy", {})
+    replay = snapshot.get("a6_replay", {})
+    b1 = snapshot.get("b1", {})
+    settlement = snapshot.get("settlement", {})
+    repo_truth = snapshot.get("repo_truth", {})
+
+    public_a6 = repo_truth.get("public_a6_audit", {})
+    public_b1 = repo_truth.get("public_b1_audit", {})
+    settlement_count = int(settlement.get("total") or 0)
+
+    a6_status = evaluate_structural_lane_readiness(
+        StructuralLaneReadinessInputs(
+            lane="a6",
+            maker_fill_proxy_rate=_safe_float(fill.get("full_fill_proxy_rate")),
+            maker_fill_wilson_lower=_safe_float(fill.get("wilson_low")),
+            violation_half_life_seconds=_safe_float(replay.get("observed_persistence_lower_bound_seconds")),
+            settlement_evidence_count=settlement_count,
+            classification_accuracy=None,
+            false_positive_rate=None,
+            public_a6_executable_count=int(public_a6.get("executable_constructions_below_threshold") or 0)
+            if public_a6.get("executable_constructions_below_threshold") is not None
+            else None,
+            public_a6_threshold=float(public_a6.get("execute_threshold") or 0.95),
+        )
+    )
+    b1_status = evaluate_structural_lane_readiness(
+        StructuralLaneReadinessInputs(
+            lane="b1",
+            maker_fill_proxy_rate=_safe_float(fill.get("full_fill_proxy_rate")),
+            maker_fill_wilson_lower=_safe_float(fill.get("wilson_low")),
+            violation_half_life_seconds=_safe_float(b1.get("b1_half_life_lower_bound_seconds")),
+            settlement_evidence_count=settlement_count,
+            classification_accuracy=_safe_float(b1.get("classification_accuracy")),
+            false_positive_rate=_safe_float(b1.get("false_positive_rate")),
+            public_b1_template_pair_count=int(public_b1.get("deterministic_template_pair_count") or 0)
+            if public_b1.get("deterministic_template_pair_count") is not None
+            else None,
+            public_b1_market_sample_size=int(public_b1.get("allowed_market_sample_size") or DEFAULT_B1_AUDIT_MARKET_SAMPLE_SIZE),
+        )
+    )
+    return {
+        "a6": serialize_for_json(a6_status),
+        "b1": serialize_for_json(b1_status),
+    }
+
+
+def _structural_gate_requirements() -> dict[str, dict[str, dict[str, dict[str, Any]]]]:
+    a6_defaults = StructuralLaneReadinessInputs(lane="a6")
+    b1_defaults = StructuralLaneReadinessInputs(lane="b1")
+    return {
+        "a6": {
+            "ready_for_shadow": {
+                "maker_fill_wilson_lower": {
+                    "comparison": ">",
+                    "value": float(a6_defaults.minimum_fill_wilson_lower),
+                },
+                "violation_half_life_seconds": {
+                    "comparison": ">=",
+                    "value": float(a6_defaults.minimum_violation_half_life_seconds),
+                },
+                "public_a6_executable_count": {
+                    "comparison": ">=",
+                    "value": 1,
+                },
+            },
+            "ready_for_micro_live": {
+                "maker_fill_wilson_lower": {
+                    "comparison": ">",
+                    "value": float(a6_defaults.minimum_fill_wilson_lower),
+                },
+                "violation_half_life_seconds": {
+                    "comparison": ">=",
+                    "value": float(a6_defaults.minimum_violation_half_life_seconds),
+                },
+                "public_a6_executable_count": {
+                    "comparison": ">=",
+                    "value": 1,
+                },
+                "settlement_evidence_count": {
+                    "comparison": ">=",
+                    "value": int(a6_defaults.minimum_settlement_evidence_count),
+                },
+            },
+        },
+        "b1": {
+            "ready_for_shadow": {
+                "classification_accuracy": {
+                    "comparison": ">=",
+                    "value": float(b1_defaults.minimum_classification_accuracy),
+                },
+                "false_positive_rate": {
+                    "comparison": "<=",
+                    "value": float(b1_defaults.maximum_false_positive_rate),
+                },
+                "public_b1_template_pair_count": {
+                    "comparison": ">=",
+                    "value": 1,
+                },
+            },
+            "ready_for_micro_live": {
+                "classification_accuracy": {
+                    "comparison": ">=",
+                    "value": float(b1_defaults.minimum_classification_accuracy),
+                },
+                "false_positive_rate": {
+                    "comparison": "<=",
+                    "value": float(b1_defaults.maximum_false_positive_rate),
+                },
+                "public_b1_template_pair_count": {
+                    "comparison": ">=",
+                    "value": 1,
+                },
+                "violation_half_life_seconds": {
+                    "comparison": ">=",
+                    "value": float(b1_defaults.minimum_violation_half_life_seconds),
+                },
+                "settlement_evidence_count": {
+                    "comparison": ">=",
+                    "value": int(b1_defaults.minimum_settlement_evidence_count),
+                },
+            },
+        },
+    }
+
+
+def _threshold_delta(current: float | int | None, *, value: float | int, comparison: str) -> float | None:
+    if current is None:
+        return None
+    current_value = float(current)
+    required_value = float(value)
+    if comparison in {">", ">="}:
+        return round(current_value - required_value, 4)
+    if comparison in {"<", "<="}:
+        return round(required_value - current_value, 4)
+    raise ValueError(f"Unsupported comparison: {comparison}")
+
+
+def _threshold_passes(current: float | int | None, *, value: float | int, comparison: str) -> bool:
+    if current is None:
+        return False
+    current_value = float(current)
+    required_value = float(value)
+    if comparison == ">":
+        return current_value > required_value
+    if comparison == ">=":
+        return current_value >= required_value
+    if comparison == "<":
+        return current_value < required_value
+    if comparison == "<=":
+        return current_value <= required_value
+    raise ValueError(f"Unsupported comparison: {comparison}")
+
+
+def _stage_is_ready(
+    current_metrics: Mapping[str, float | int | None],
+    requirements: Mapping[str, Mapping[str, Any]],
+) -> bool:
+    for metric_name, requirement in requirements.items():
+        if not _threshold_passes(
+            current_metrics.get(metric_name),
+            value=requirement["value"],
+            comparison=str(requirement["comparison"]),
+        ):
+            return False
+    return True
+
+
+def _structural_gate_current_metrics(
+    lane: str,
+    lane_status: Mapping[str, Any],
+) -> dict[str, float | int | None]:
+    if lane == "a6":
+        return {
+            "maker_fill_proxy_rate": _safe_float(lane_status.get("maker_fill_proxy_rate")),
+            "maker_fill_wilson_lower": _safe_float(lane_status.get("maker_fill_wilson_lower")),
+            "violation_half_life_seconds": _safe_float(lane_status.get("violation_half_life_seconds")),
+            "settlement_evidence_count": int(lane_status.get("settlement_evidence_count") or 0),
+            "public_a6_executable_count": (
+                int(lane_status.get("public_a6_executable_count"))
+                if lane_status.get("public_a6_executable_count") is not None
+                else None
+            ),
+            "public_a6_threshold": _safe_float(lane_status.get("public_a6_threshold")),
+        }
+    if lane == "b1":
+        return {
+            "classification_accuracy": _safe_float(lane_status.get("classification_accuracy")),
+            "false_positive_rate": _safe_float(lane_status.get("false_positive_rate")),
+            "violation_half_life_seconds": _safe_float(lane_status.get("violation_half_life_seconds")),
+            "settlement_evidence_count": int(lane_status.get("settlement_evidence_count") or 0),
+            "public_b1_template_pair_count": (
+                int(lane_status.get("public_b1_template_pair_count"))
+                if lane_status.get("public_b1_template_pair_count") is not None
+                else None
+            ),
+            "public_b1_market_sample_size": (
+                int(lane_status.get("public_b1_market_sample_size"))
+                if lane_status.get("public_b1_market_sample_size") is not None
+                else None
+            ),
+        }
+    raise ValueError(f"Unsupported structural lane: {lane}")
+
+
+def build_structural_gate_pack(
+    snapshot: Mapping[str, Any],
+    *,
+    source_snapshot: str | None = None,
+) -> dict[str, Any]:
+    lane_status = snapshot.get("lane_status") or evaluate_lane_statuses(snapshot)
+    requirements_by_lane = _structural_gate_requirements()
+    per_lane_status: dict[str, Any] = {}
+
+    for lane in ("a6", "b1"):
+        lane_payload = lane_status.get(lane, {})
+        current_metrics = _structural_gate_current_metrics(lane, lane_payload)
+        required_thresholds = requirements_by_lane[lane]
+        threshold_deltas = {
+            stage: {
+                metric_name: _threshold_delta(
+                    current_metrics.get(metric_name),
+                    value=requirement["value"],
+                    comparison=str(requirement["comparison"]),
+                )
+                for metric_name, requirement in stage_requirements.items()
+            }
+            for stage, stage_requirements in required_thresholds.items()
+        }
+        stage_readiness = {
+            stage: _stage_is_ready(current_metrics, stage_requirements)
+            for stage, stage_requirements in required_thresholds.items()
+        }
+        per_lane_status[lane] = {
+            "status": lane_payload.get("status"),
+            "blocked_reasons": list(lane_payload.get("blocked_reasons") or []),
+            "current_metrics": current_metrics,
+            "required_thresholds": required_thresholds,
+            "threshold_deltas": threshold_deltas,
+            "stage_readiness": stage_readiness,
+        }
+
+    return {
+        "generated_at": snapshot.get("generated_at"),
+        "source_snapshot": source_snapshot or "reports/arb_empirical_snapshot.json",
+        "threshold_delta_semantics": (
+            "For minimum gates, delta = current - threshold. For maximum gates, delta = threshold - current. "
+            "Positive values mean the metric is through the gate, zero means it is exactly on the threshold, "
+            "negative values mean remaining shortfall or excess, and null means the metric is unmeasured."
+        ),
+        "per_lane_status": per_lane_status,
+    }
+
+
 def evaluate_gating_metrics(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     """Evaluate the three gating metrics from the research dispatch.
 
@@ -1067,6 +1420,7 @@ def evaluate_gating_metrics(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     replay = snapshot.get("a6_replay", {})
     b1 = snapshot.get("b1", {})
     settlement = snapshot.get("settlement", {})
+    lane_status = snapshot.get("lane_status", {})
 
     # Gate 1: Fill probability — need Wilson lower bound > 0.20
     fill_rate = fill.get("full_fill_proxy_rate")
@@ -1093,7 +1447,6 @@ def evaluate_gating_metrics(snapshot: Mapping[str, Any]) -> dict[str, Any]:
 
     # Confidence-interval kill criterion on effective edge
     capture_rate = replay.get("actual_capture_rate")
-    modeled_rate = replay.get("modeled_capture_rate")
     kill_decision = "continue"
     kill_reason = None
     if capture_rate is not None and violation_count >= 20:
@@ -1120,14 +1473,17 @@ def evaluate_gating_metrics(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             and half_life_gate == "pass"
             and kill_decision == "continue"
         ),
+        "a6_status": lane_status.get("a6", {}).get("status"),
+        "b1_status": lane_status.get("b1", {}).get("status"),
     }
 
 
 def derive_execution_tasks(snapshot: Mapping[str, Any]) -> list[dict[str, str]]:
-    gates = snapshot.get("gating_metrics", {})
     settlement = snapshot.get("settlement", {})
-    replay = snapshot.get("a6_replay", {})
     b1 = snapshot.get("b1", {})
+    lane_status = snapshot.get("lane_status", {})
+    a6_blocked_reasons = set(lane_status.get("a6", {}).get("blocked_reasons", []))
+    b1_blocked_reasons = set(lane_status.get("b1", {}).get("blocked_reasons", []))
 
     tasks = [
         {
@@ -1151,7 +1507,12 @@ def derive_execution_tasks(snapshot: Mapping[str, Any]) -> list[dict[str, str]]:
             "why": "Tick-size changes are now preserved alongside best bid/ask updates for A-6 and B-1 consumers.",
         },
         {
-            "status": "next" if gates.get("fill_probability_gate") != "pass" else "monitor",
+            "status": (
+                "next"
+                if "maker_fill_proxy_unmeasured" in a6_blocked_reasons
+                or "maker_fill_proxy_below_confidence_floor" in a6_blocked_reasons
+                else "monitor"
+            ),
             "title": "Run a 72h maker-fill curve measurement",
             "why": "Promotion still depends on measured joint fill probability, not the current trade-through proxy.",
         },
@@ -1161,7 +1522,7 @@ def derive_execution_tasks(snapshot: Mapping[str, Any]) -> list[dict[str, str]]:
             "why": "No confirmed merge/redeem/convert operations are logged yet, so settlement remains unproven.",
         },
         {
-            "status": "next" if b1.get("historical_violation_count", 0) == 0 else "monitor",
+            "status": "next" if b1_blocked_reasons else ("monitor" if b1.get("historical_violation_count", 0) > 0 else "next"),
             "title": "Finish the 50-pair B-1 gold set and precision audit",
             "why": "B-1 promotion should be gated on validated precision, not only graph size or classifier confidence.",
         },
@@ -1187,6 +1548,12 @@ def build_markdown_report(snapshot: Mapping[str, Any]) -> str:
     settlement = snapshot["settlement"]
     recs = replay["threshold_recommendations"]
     tasks = snapshot.get("execution_tasks", [])
+    lane_status = snapshot.get("lane_status", {})
+    repo_truth = snapshot.get("repo_truth", {})
+    a6_status = lane_status.get("a6", {})
+    b1_status = lane_status.get("b1", {})
+    public_a6 = repo_truth.get("public_a6_audit", {})
+    public_b1 = repo_truth.get("public_b1_audit", {})
 
     lines = [
         "# Arb Empirical Snapshot",
@@ -1198,11 +1565,22 @@ def build_markdown_report(snapshot: Mapping[str, Any]) -> str:
         "",
         "## Measured Facts",
         "",
+        f"- Public A-6 audit: {public_a6.get('executable_constructions_below_threshold')} executable constructions below the {public_a6.get('execute_threshold')} gate across {public_a6.get('allowed_neg_risk_event_count')} allowed neg-risk events",
+        f"- Public B-1 audit: {public_b1.get('deterministic_template_pair_count')} deterministic template pairs in the first {public_b1.get('allowed_market_sample_size')} allowed markets",
         f"- Active multi-outcome events: latest {live['latest_cycle'].get('active_multi_outcome_event_count', 0)}; avg {live.get('active_multi_outcome_events_avg')}",
         f"- Active multi-outcome markets: latest {live['latest_cycle'].get('active_multi_outcome_market_count', 0)}; avg {live.get('active_multi_outcome_markets_avg')}",
         f"- Complete-book A-6 event observations: {live['complete_book_event_count']}/{live['sampled_event_observation_count']}",
         f"- Token-404 rate: {None if live['token_404_rate'] is None else round(live['token_404_rate'], 4)}",
         f"- Incomplete-book leg rate: {None if live['incomplete_book_leg_rate'] is None else round(live['incomplete_book_leg_rate'], 4)}",
+        "",
+        "## Explicit Lane Status",
+        "",
+        f"- A-6 status: **{a6_status.get('status', 'blocked')}**",
+        f"- A-6 evidence: maker_fill_proxy_rate={a6_status.get('maker_fill_proxy_rate')}, violation_half_life_seconds={a6_status.get('violation_half_life_seconds')}, settlement_evidence_count={a6_status.get('settlement_evidence_count')}, classification_accuracy={a6_status.get('classification_accuracy')}, false_positive_rate={a6_status.get('false_positive_rate')}",
+        f"- A-6 blocked reasons: {a6_status.get('blocked_reasons', [])}",
+        f"- B-1 status: **{b1_status.get('status', 'blocked')}**",
+        f"- B-1 evidence: maker_fill_proxy_rate={b1_status.get('maker_fill_proxy_rate')}, violation_half_life_seconds={b1_status.get('violation_half_life_seconds')}, settlement_evidence_count={b1_status.get('settlement_evidence_count')}, classification_accuracy={b1_status.get('classification_accuracy')}, false_positive_rate={b1_status.get('false_positive_rate')}",
+        f"- B-1 blocked reasons: {b1_status.get('blocked_reasons', [])}",
         "",
         "## A-6",
         "",
@@ -1303,6 +1681,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--log-path", default="logs/sum_violation_events.jsonl")
     parser.add_argument("--output-json", default="reports/arb_empirical_snapshot.json")
     parser.add_argument("--output-md", default="reports/arb_empirical_snapshot.md")
+    parser.add_argument("--output-structural-gate-pack", default=None)
     parser.add_argument("--scan-cycles", type=int, default=3)
     parser.add_argument("--scan-interval-seconds", type=int, default=20)
     parser.add_argument("--gamma-pages", type=int, default=12)
@@ -1328,8 +1707,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     log_path = Path(args.log_path)
     output_json = Path(args.output_json)
     output_md = Path(args.output_md)
+    output_structural_gate_pack = (
+        Path(args.output_structural_gate_pack) if args.output_structural_gate_pack else None
+    )
     output_json.parent.mkdir(parents=True, exist_ok=True)
     output_md.parent.mkdir(parents=True, exist_ok=True)
+    if output_structural_gate_pack is not None:
+        output_structural_gate_pack.parent.mkdir(parents=True, exist_ok=True)
 
     replay_rows = load_replay_rows(db_path, log_path)
     episode_rows = load_episode_rows(db_path)
@@ -1384,6 +1768,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     b1_summary = summarize_b1(db_path)
     settlement_summary = summarize_settlement(db_path)
+    repo_truth = {
+        "public_a6_audit": summarize_public_a6_audit(),
+        "public_b1_audit": summarize_public_b1_audit(),
+    }
 
     snapshot = {
         "generated_at": utc_iso(),
@@ -1405,12 +1793,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         "fill_proxy": fill_proxy,
         "b1": b1_summary,
         "settlement": settlement_summary,
+        "repo_truth": repo_truth,
     }
+    snapshot["lane_status"] = evaluate_lane_statuses(snapshot)
     snapshot["gating_metrics"] = evaluate_gating_metrics(snapshot)
     snapshot["execution_tasks"] = derive_execution_tasks(snapshot)
 
     output_json.write_text(json.dumps(serialize_for_json(snapshot), indent=2, sort_keys=True) + "\n", encoding="utf-8")
     output_md.write_text(build_markdown_report(snapshot), encoding="utf-8")
+    if output_structural_gate_pack is not None:
+        gate_pack = build_structural_gate_pack(snapshot, source_snapshot=str(output_json))
+        output_structural_gate_pack.write_text(
+            json.dumps(serialize_for_json(gate_pack), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        logger.info("Wrote %s", output_structural_gate_pack)
     logger.info("Wrote %s and %s", output_json, output_md)
     return 0
 
