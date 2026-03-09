@@ -5795,10 +5795,16 @@ class JJLive:
                     raw_tokens = m.get("clobTokenIds", "")
                     token_ids = normalize_token_ids(raw_tokens)
 
-                # Extract market ID
-                market_id = str(m.get("id", m.get("condition_id", m.get("market_id", ""))))
+                # Extract market IDs. Wallet-flow and some hydrated payloads use
+                # condition_id as the signal market key, while scanner payloads
+                # often key by id. Keep aliases so execution does not silently
+                # drop valid signals due to key mismatch.
+                primary_market_id = str(m.get("id", "") or "").strip()
+                condition_market_id = str(
+                    m.get("condition_id", m.get("conditionId", m.get("market_id", ""))) or ""
+                ).strip()
 
-                if not market_id or not token_ids:
+                if (not primary_market_id and not condition_market_id) or not token_ids:
                     continue
 
                 m["_resolution_hours"] = (
@@ -5807,7 +5813,7 @@ class JJLive:
                     else raw_resolution_hours
                 )
                 actionable.append(m)
-                market_lookup[market_id] = {
+                market_payload = {
                     "question": m.get("question", ""),
                     "token_ids": token_ids,
                     "yes_price": yes_price,
@@ -5818,6 +5824,14 @@ class JJLive:
                     "resolution_hours": m.get("_resolution_hours"),
                     "llm_allowed": allowed,
                 }
+                market_ids = {
+                    primary_market_id,
+                    condition_market_id,
+                    str(m.get("market_id", "") or "").strip(),
+                }
+                market_ids.discard("")
+                for market_id in market_ids:
+                    market_lookup[market_id] = market_payload
                 if allowed:
                     llm_actionable.append(m)
             except Exception as e:
@@ -6632,6 +6646,11 @@ class JJLive:
             mdata = market_lookup.get(market_id)
 
             if not mdata:
+                logger.warning(
+                    "Execution skip: missing market metadata for signal market_id=%s question=%s",
+                    str(market_id)[:32],
+                    signal.get("question", "")[:60],
+                )
                 continue
 
             feedback = self._get_elastic_ml_feedback(str(market_id))
