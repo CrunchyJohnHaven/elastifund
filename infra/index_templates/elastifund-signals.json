@@ -1,0 +1,23 @@
+{
+  "index_patterns": ["elastifund-signals*"],
+  "priority": 500,
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "refresh_interval": "5s"
+    },
+    "mappings": {
+      "dynamic": true,
+      "properties": {
+        "timestamp": { "type": "date" },
+        "signal_source": { "type": "keyword" },
+        "market_id": { "type": "keyword" },
+        "signal_value": { "type": "double" },
+        "confidence": { "type": "double" },
+        "acted_on": { "type": "boolean" },
+        "reason_skipped": { "type": "keyword" }
+      }
+    }
+  }
+}

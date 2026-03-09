@@ -1,0 +1,28 @@
+{
+  "index_patterns": ["elastifund-trades*"],
+  "priority": 500,
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "refresh_interval": "5s"
+    },
+    "mappings": {
+      "dynamic": true,
+      "properties": {
+        "timestamp": { "type": "date" },
+        "market_id": { "type": "keyword" },
+        "side": { "type": "keyword" },
+        "price": { "type": "double" },
+        "size": { "type": "double" },
+        "fee": { "type": "double" },
+        "order_type": { "type": "keyword" },
+        "fill_status": { "type": "keyword" },
+        "latency_ms": { "type": "double" },
+        "strategy": { "type": "keyword" },
+        "confidence": { "type": "double" },
+        "kelly_fraction": { "type": "double" }
+      }
+    }
+  }
+}

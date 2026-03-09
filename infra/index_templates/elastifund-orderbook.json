@@ -1,0 +1,25 @@
+{
+  "index_patterns": ["elastifund-orderbook*"],
+  "priority": 500,
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "refresh_interval": "5s"
+    },
+    "mappings": {
+      "dynamic": true,
+      "properties": {
+        "timestamp": { "type": "date" },
+        "market_id": { "type": "keyword" },
+        "best_bid": { "type": "double" },
+        "best_ask": { "type": "double" },
+        "spread_bps": { "type": "double" },
+        "depth_5lvl_bid": { "type": "double" },
+        "depth_5lvl_ask": { "type": "double" },
+        "vpin": { "type": "double" },
+        "ofi": { "type": "double" }
+      }
+    }
+  }
+}

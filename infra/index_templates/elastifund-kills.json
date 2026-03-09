@@ -1,0 +1,22 @@
+{
+  "index_patterns": ["elastifund-kills*"],
+  "priority": 500,
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "refresh_interval": "5s"
+    },
+    "mappings": {
+      "dynamic": true,
+      "properties": {
+        "timestamp": { "type": "date" },
+        "kill_rule": { "type": "keyword" },
+        "market_id": { "type": "keyword" },
+        "metric_value": { "type": "double" },
+        "threshold": { "type": "double" },
+        "action_taken": { "type": "keyword" }
+      }
+    }
+  }
+}

@@ -1,0 +1,17 @@
+apm-server:
+  host: "0.0.0.0:8200"
+  rum.enabled: false
+
+setup.kibana:
+  host: "http://kibana:5601"
+
+output.elasticsearch:
+  hosts: ["http://elasticsearch:9200"]
+  username: "${ELASTICSEARCH_USERNAME:elastic}"
+  password: "${ELASTIC_PASSWORD}"
+
+queue.mem:
+  events: 4096
+
+logging.level: info
+logging.json: true
