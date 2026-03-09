@@ -111,6 +111,46 @@ def test_self_push_skips_json_timestamp_only_changes(tmp_path: Path) -> None:
     assert result["staged_paths"] == []
 
 
+def test_self_push_force_adds_ignored_selected_paths(tmp_path: Path) -> None:
+    remote = tmp_path / "remote.git"
+    repo = tmp_path / "repo"
+    remote.mkdir()
+    repo.mkdir()
+
+    _init_bare_remote(remote)
+    _init_repo(repo)
+    (repo / "reports").mkdir()
+    (repo / ".gitignore").write_text("reports/\n")
+    (repo / "README.md").write_text("base\n")
+    _git(repo, "add", ".gitignore", "README.md")
+    _git(repo, "commit", "-m", "base")
+    _git(repo, "remote", "add", "origin", str(remote))
+    _git(repo, "push", "-u", "origin", "main")
+
+    snapshot = {
+        "generated_at": "2026-03-09T17:32:19+00:00",
+        "runtime": {"btc5_live_filled_rows": 38},
+    }
+    path = repo / "reports" / "runtime_truth_latest.json"
+    path.write_text(json.dumps(snapshot, indent=2, sort_keys=True))
+
+    result = self_push(
+        repo,
+        message="auto: publish",
+        remote="origin",
+        branch="main",
+        paths=("reports/runtime_truth_latest.json",),
+        dry_run=False,
+    )
+
+    assert result["pushed"] is True
+    assert result["staged_paths"] == ["reports/runtime_truth_latest.json"]
+
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", str(remote), str(clone)], check=True, capture_output=True, text=True)
+    assert json.loads((clone / "reports" / "runtime_truth_latest.json").read_text()) == snapshot
+
+
 def test_normalize_github_https_url_handles_ssh_and_https() -> None:
     assert (
         normalize_github_https_url("git@github.com:CrunchyJohnHaven/elastifund.git")

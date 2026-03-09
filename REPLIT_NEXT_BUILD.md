@@ -10,31 +10,36 @@ GitHub: https://github.com/CrunchyJohnHaven/elastifund
 
 ---
 
-## Cycle 2 runtime reconciliation shipped
+## Cycle 3 publish-truth refresh shipped
 
 This cycle did not migrate the site to `site/`. The live repo source is now a static root build with route directories: `index.html`, `develop/`, `elastic/`, `leaderboards/trading/`, `leaderboards/worker/`, `manage/`, `diary/`, `roadmap/`, `docs/`, plus shared `site.js` and `site.css`.
 
-Delivered in the March 9, 2026 refresh:
+Delivered in the March 9, 2026 `17:32 UTC` refresh:
 
 - shared client-side hydration now pulls from `reports/public_runtime_snapshot.json`, `reports/runtime_truth_latest.json`, `reports/root_test_status.json`, `improvement_velocity.json`, `inventory/data/systems.json`, `docs/PERFORMANCE.md`, and the linked `reports/edge_scan_*.json` artifact
-- the public website snapshot now pins the approved March 9 headline metrics: `1,397` verified tests, `314` cycles, `131` strategies, `7` signal sources, and `$347.51` tracked capital (NOTE: index.html still shows the stale `1,278` / `311` values — next site deploy must update these)
-- dual-state system-status card: the website now distinguishes service state from launch posture; the latest checked-in runtime snapshot at `2026-03-09T02:23:11Z` reports the service `running`/`active` while launch remains blocked (drift flag: service running while launch blocked — remote mode unconfirmed as paper or shadow)
+- runtime-affecting deploys now refresh the checked-in status artifacts locally after the remote restart step, so GitHub/Replit can trust the latest `reports/runtime_truth_latest.json` instead of a stale local DB snapshot
+- the checked-in runtime/public snapshot now captures the current broad system posture: `565` cycles, `5` local trade-db trades, `4` local open positions, `$347.51` tracked capital, `jj-live.service` `stopped`, and launch posture still `blocked`
+- the dedicated BTC5 sleeve is now explicitly the only intended live lane: the latest checked-in truth comes from `remote_sqlite_probe`, not a local fallback DB, and shows `38` `live_filled` rows, `+$46.4181` cumulative live-filled PnL, latest live fill at `2026-03-09T17:30:00Z`, and last `12` live fills at `+$41.9792`
+- BTC5 edge framing is now concrete enough for the site: best filled price bucket is `<0.49` (`+$31.5401` on `9` fills), `0.50` remains the weak bucket (`-$5.0050` on `11` fills), and the best replay guardrails are still `max_abs_delta=0.00015`, `UP max=0.49`, `DOWN max=0.51`, replaying to `+$62.3741` on `27` fills
+- the public snapshot now exposes BTC5 provenance fields the site can render directly: `runtime.btc5_source`, `runtime.btc5_db_path`, `btc_5min_maker.source`, and `btc_5min_maker.db_path`
+- remote wallet truth in the same checked-in refresh is materially ahead of the local trade DB: `19` open positions, `25` closed positions, `$307.2055` total wallet value, `$236.9021` free collateral, and `$107.5739` realized PnL
 - public-safe fast-market verdict note: `REJECT ALL`
 - ARR framing now must stay split across three lines: realized (`0%` until closed trades), operator target, and theoretical backtest reference (non-realized)
-- homepage system status now foregrounds `314` cycles, `0` trades, `REJECT ALL`, and wallet-flow `ready` before the deeper operator context
+- homepage system status now needs to foreground the three-way split: broader runtime `stopped`, launch posture `blocked`, dedicated BTC5 sleeve `live`
 - public-safe edge snapshot counts now follow the latest detailed pipeline and edge-scan artifacts for fast-market totals, A-6/B-1 gate counts, categories, and public-safe opportunity summaries
-- verification surface now keeps the public test-count headline pinned to `1,397` while still exposing the current root-suite detail separately (index.html still shows stale `1,278` — needs deploy)
+- verification surface still needs a clean headline/fallback pass; the latest checked-in root-suite detail is `1140 passed, 1 warning in 25.88s; 25 passed, 1 warning in 4.47s`
 - scorecard hydration now covers the strategy funnel, dispatch load, commit count, calibrated/legacy win-rate framing, benchmark inventory count, and edge-scan summary instead of relying on site constants
 - homepage now carries the JJ-N five-engine model, explicit risk-rail cards, runtime-host card, and the broader eight-route map
 - route stubs now exist for `/manage`, `/diary`, `/roadmap`, and `/docs`
 - terminology enforcement now runs through `scripts/check_website_copy.py` before publish
 - freshness stamps for metrics, verification baseline, service-state check time, and build date
 
-**Stale index.html values requiring next deploy:**
-- `index.html` line 154 still shows `1,278 verified` (should be `1,397`)
-- `index.html` line 174 still shows `311` cycles (should be `314`)
-- `index.html` lines 411-412 still reference `311 cycles` in the dispatch note
-- Service state in runtime snapshot has drifted to `running/active` but index.html copy assumes `stopped`
+**Stale website values requiring next deploy:**
+- `site.js` line 39 still falls back to `311` cycles (should now be `565`)
+- `index.html` line 174 still shows `311` cycles (should now be `565`)
+- `index.html` lines 411-412 still frame the homepage as `311 cycles, 0 trades, still blocked`; that copy now needs the real split: `jj-live` stopped, launch blocked, dedicated BTC5 live
+- `/leaderboards/trading/` still carries a zero-live-trade framing; next build must separate the blocked broad runtime from the active dedicated BTC5 sleeve
+- the next build should render a BTC5 provenance/freshness badge from `btc_5min_maker.source` and `btc_5min_maker.checked_at`
 - REPLIT_WEBSITE_CURRENT.pdf needs a manual browser re-export after these are corrected
 
 Still not delivered this cycle:
@@ -52,7 +57,7 @@ The live site is a static multi-page build with a shared research-terminal aesth
 - `/`: hero, runtime truth, artifact-backed scorecard, JJ-N five-engine section, system-status widget, build note, and route index
 - `/elastic/`: executive-safe Elastic framing tied to the same runtime and scorecard data
 - `/develop/`: one-command onboarding, contributor modes, and current safe-mode contract
-- `/leaderboards/trading/`: honest mode-separated trading evidence with zero-live-trade posture, current guardrails, and public-safe edge summary
+- `/leaderboards/trading/`: honest mode-separated trading evidence, but it is still framed around the older zero-live-trade posture instead of the current dedicated BTC5 sleeve
 - `/leaderboards/worker/`: Phase 0 JJ-N metric-definition stub
 - `/manage/`: public-safe operator surface stub for run ledgers, approval queues, and deployment state
 - `/diary/`: chronological experiment-record stub plus the current homepage dispatch-snapshot note
@@ -64,7 +69,7 @@ The live site is a static multi-page build with a shared research-terminal aesth
 
 - Anti-hype tone throughout — no inflated live-performance language
 - Runtime-versus-launch split is explicit instead of being buried in operator notes
-- The public scorecard now keeps the headline metrics aligned to the March 9 dispatch snapshot rather than drifting with unrelated runtime artifact changes
+- The public scorecard is now close to artifact-backed truth instead of hardcoded copy
 - JJ-N now appears on the homepage as a first-class surface instead of an afterthought
 - The route map is broad enough to explain where the fuller Next.js migration is going
 
@@ -152,7 +157,8 @@ The site must answer four questions immediately on every surface: (1) what is th
 ### Priority 1: Automate the refreshed homepage metrics
 Cycle 2 now hydrates the runtime/status surface from repo artifacts, but the snapshot contract is still incomplete. The next build should finish the job and remove the fallback chain:
 - Export repo-backed public metrics into a snapshot artifact
-- Keep service state and launch posture synchronized as separate fields
+- Keep service state, launch posture, and dedicated BTC5 sleeve state synchronized as separate fields
+- Render the BTC5 provenance contract directly from the snapshot (`btc5_source`, `btc5_db_path`, latest fill freshness) so the site can distinguish remote probe truth from stale local fallbacks
 - Keep pipeline verdict and A-6 / B-1 gate status synchronized
 - Preserve the 71.2% calibrated vs 68.5% legacy/uncalibrated distinction
 - Keep current counts aligned: capital, verified tests, strategy catalog, dispatch work-orders, benchmarked systems, signal lanes, cycles completed, and public-safe edge scan counts

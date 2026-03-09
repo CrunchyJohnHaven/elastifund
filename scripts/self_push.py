@@ -233,13 +233,26 @@ def is_json_metadata_only_change(repo_root: Path, path: str) -> bool:
     return normalize_json_payload(current_payload) == normalize_json_payload(head_payload)
 
 
+def path_has_material_changes(repo_root: Path, path: str) -> bool:
+    current_path = repo_root / path
+    head_text = head_file_text(repo_root, path)
+    if path.endswith(".json") and is_json_metadata_only_change(repo_root, path):
+        return False
+    if not current_path.exists():
+        return head_text is not None
+    if head_text is None:
+        return True
+    try:
+        current_text = current_path.read_text()
+    except UnicodeDecodeError:
+        return True
+    return current_text != head_text
+
+
 def select_paths_to_stage(repo_root: Path, paths: Iterable[str]) -> list[str]:
     selected: list[str] = []
     for path in paths:
-        lines = status_lines_for_path(repo_root, path)
-        if not lines:
-            continue
-        if path.endswith(".json") and is_json_metadata_only_change(repo_root, path):
+        if not path_has_material_changes(repo_root, path):
             continue
         selected.append(path)
     return selected
@@ -249,7 +262,7 @@ def stage_paths(repo_root: Path, paths: Iterable[str]) -> list[str]:
     selected = select_paths_to_stage(repo_root, paths)
     if not selected:
         return []
-    run_git(repo_root, ["add", "--all", "--", *selected])
+    run_git(repo_root, ["add", "--force", "--all", "--", *selected])
     return selected
 
 

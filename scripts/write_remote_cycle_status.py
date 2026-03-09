@@ -957,6 +957,8 @@ def _merge_btc5_maker_observation(
     runtime.update(
         {
             "btc5_checked_at": btc5_maker.get("checked_at"),
+            "btc5_source": btc5_maker.get("source"),
+            "btc5_db_path": btc5_maker.get("db_path"),
             "btc5_total_rows": int(btc5_maker.get("total_rows") or 0),
             "btc5_live_filled_rows": int(btc5_maker.get("live_filled_rows") or 0),
             "btc5_live_filled_pnl_usd": round(
@@ -2322,9 +2324,14 @@ def build_runtime_truth_snapshot(
                 "warnings": list(status.get("polymarket_wallet", {}).get("warnings") or []),
             },
             "btc_5min_maker": {
-                "selected_source": "data/btc_5min_maker.db",
+                "selected_source": (
+                    status.get("btc_5min_maker", {}).get("source")
+                    or status.get("btc_5min_maker", {}).get("db_path")
+                    or "data/btc_5min_maker.db"
+                ),
                 "status": status.get("btc_5min_maker", {}).get("status"),
                 "checked_at": status.get("btc_5min_maker", {}).get("checked_at"),
+                "db_path": status.get("btc_5min_maker", {}).get("db_path"),
                 "live_filled_rows": status.get("btc_5min_maker", {}).get("live_filled_rows"),
                 "live_filled_pnl_usd": status.get("btc_5min_maker", {}).get(
                     "live_filled_pnl_usd"
@@ -2449,6 +2456,8 @@ def build_public_runtime_snapshot(runtime_truth_snapshot: dict[str, Any]) -> dic
             "polymarket_closed_positions_realized_pnl_usd": runtime.get(
                 "polymarket_closed_positions_realized_pnl_usd"
             ),
+            "btc5_source": runtime.get("btc5_source"),
+            "btc5_db_path": runtime.get("btc5_db_path"),
             "btc5_live_filled_rows": runtime.get("btc5_live_filled_rows"),
             "btc5_live_filled_pnl_usd": runtime.get("btc5_live_filled_pnl_usd"),
             "btc5_latest_order_status": runtime.get("btc5_latest_order_status"),
@@ -2500,6 +2509,8 @@ def build_public_runtime_snapshot(runtime_truth_snapshot: dict[str, Any]) -> dic
         "btc_5min_maker": {
             "status": btc5_maker.get("status"),
             "checked_at": btc5_maker.get("checked_at"),
+            "source": btc5_maker.get("source"),
+            "db_path": btc5_maker.get("db_path"),
             "live_filled_rows": btc5_maker.get("live_filled_rows"),
             "live_filled_pnl_usd": btc5_maker.get("live_filled_pnl_usd"),
             "avg_live_filled_pnl_usd": btc5_maker.get("avg_live_filled_pnl_usd"),

@@ -176,6 +176,7 @@ def test_build_remote_cycle_status_includes_btc5_maker_observation(tmp_path: Pat
     status = build_remote_cycle_status(tmp_path)
 
     assert status["btc_5min_maker"]["status"] == "ok"
+    assert status["btc_5min_maker"]["source"] == "local_sqlite_db"
     assert status["btc_5min_maker"]["live_filled_rows"] == 3
     assert status["btc_5min_maker"]["live_filled_pnl_usd"] == 5.6231
     assert status["btc_5min_maker"]["fill_attribution"]["best_direction"]["label"] == "DOWN"
@@ -186,6 +187,7 @@ def test_build_remote_cycle_status_includes_btc5_maker_observation(tmp_path: Pat
     assert status["runtime"]["btc5_live_filled_rows"] == 3
     assert status["runtime"]["btc5_latest_order_status"] == "live_filled"
     assert status["runtime"]["btc5_latest_trade_pnl_usd"] == 5.416
+    assert status["runtime"]["btc5_source"] == "local_sqlite_db"
     assert status["runtime"]["btc5_best_direction"] == "DOWN"
     assert status["runtime"]["btc5_best_price_bucket"] == "<0.49"
     assert status["runtime"]["btc5_recent_regime_favored_direction"] == "DOWN"
@@ -370,6 +372,7 @@ def test_build_remote_cycle_status_prefers_remote_btc5_probe(tmp_path: Path, mon
     assert status["runtime"]["btc5_live_filled_rows"] == 6
     assert status["runtime"]["btc5_live_filled_pnl_usd"] == 0.0539
     assert status["runtime"]["btc5_latest_trade_pnl_usd"] == -5.0029
+    assert status["runtime"]["btc5_source"] == "remote_sqlite_probe"
 
 
 def test_build_remote_cycle_status_reports_launch_blockers(tmp_path: Path):
@@ -765,6 +768,8 @@ def test_write_remote_cycle_status_emits_runtime_truth_and_public_snapshot(
     assert runtime_truth["btc_5min_maker"]["live_filled_rows"] == 1
     assert runtime_truth["btc_5min_maker"]["fill_attribution"]["best_direction"]["label"] == "UP"
     assert runtime_truth["btc_5min_maker"]["fill_attribution"]["best_price_bucket"]["label"] == "<0.49"
+    assert runtime_truth["reconciliation"]["btc_5min_maker"]["selected_source"] == "local_sqlite_db"
+    assert runtime_truth["reconciliation"]["btc_5min_maker"]["db_path"].endswith("data/btc_5min_maker.db")
     assert runtime_truth["reconciliation"]["btc_5min_maker"]["live_filled_pnl_usd"] == 5.4184
     assert runtime_truth["reconciliation"]["btc_5min_maker"]["fill_attribution"]["best_price_bucket"]["label"] == "<0.49"
     assert runtime_truth["reconciliation"]["polymarket_wallet"]["free_collateral_usd"] == 0.0
@@ -778,7 +783,9 @@ def test_write_remote_cycle_status_emits_runtime_truth_and_public_snapshot(
     assert "host" not in public_snapshot["service"]
     assert public_snapshot["capital"]["polymarket_actual_deployable_usd"] == 0.0
     assert public_snapshot["polymarket_wallet"]["total_wallet_value_usd"] == 60.67
+    assert public_snapshot["runtime"]["btc5_source"] == "local_sqlite_db"
     assert public_snapshot["btc_5min_maker"]["live_filled_pnl_usd"] == 5.4184
+    assert public_snapshot["btc_5min_maker"]["source"] == "local_sqlite_db"
     assert public_snapshot["btc_5min_maker"]["fill_attribution"]["best_price_bucket"]["label"] == "<0.49"
     assert public_snapshot["runtime"]["btc5_live_filled_rows"] == 1
     assert "maker_address" not in public_snapshot["polymarket_wallet"]

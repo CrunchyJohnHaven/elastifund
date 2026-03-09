@@ -58,6 +58,8 @@ WINDOW_SECONDS = 300
 DEFAULT_DB_PATH = Path("data/btc_5min_maker.db")
 CLOB_HARD_MIN_SHARES = 5.0
 CLOB_HARD_MIN_NOTIONAL_USD = 5.0
+PROBE_DEFAULT_UP_MAX_BUY_PRICE = 0.49
+PROBE_DEFAULT_DOWN_MAX_BUY_PRICE = 0.51
 
 
 def _safe_float(value: Any, default: float | None = None) -> float | None:
@@ -77,6 +79,18 @@ def _optional_env_float(name: str) -> float | None:
     if parsed is None or parsed <= 0:
         return None
     return float(parsed)
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return bool(default)
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _join_reasons(*parts: str | None) -> str | None:
+    text = " | ".join(part for part in parts if part)
+    return text or None
 
 
 def parse_json_list(value: Any) -> list[Any]:
@@ -370,6 +384,15 @@ class MakerConfig:
     entry_seconds_before_close: int = int(os.environ.get("BTC5_ENTRY_SECONDS_BEFORE_CLOSE", "10"))
     cancel_seconds_before_close: int = int(os.environ.get("BTC5_CANCEL_SECONDS_BEFORE_CLOSE", "2"))
     daily_loss_limit_usd: float = float(os.environ.get("BTC5_DAILY_LOSS_LIMIT_USD", "247"))
+    enable_probe_after_daily_loss: bool = _env_flag("BTC5_ENABLE_PROBE_AFTER_DAILY_LOSS", True)
+    enable_probe_after_recent_loss: bool = _env_flag("BTC5_ENABLE_PROBE_AFTER_RECENT_LOSS", True)
+    probe_recent_fills: int = int(os.environ.get("BTC5_PROBE_RECENT_FILLS", "8"))
+    probe_recent_min_pnl_usd: float = float(os.environ.get("BTC5_PROBE_RECENT_MIN_PNL_USD", "0.0"))
+    probe_min_delta_multiplier: float = float(os.environ.get("BTC5_PROBE_MIN_DELTA_MULTIPLIER", "1.0"))
+    probe_quote_ticks: int = int(os.environ.get("BTC5_PROBE_QUOTE_TICKS", "0"))
+    probe_max_abs_delta: float | None = _optional_env_float("BTC5_PROBE_MAX_ABS_DELTA")
+    probe_up_max_buy_price: float | None = _optional_env_float("BTC5_PROBE_UP_MAX_BUY_PRICE")
+    probe_down_max_buy_price: float | None = _optional_env_float("BTC5_PROBE_DOWN_MAX_BUY_PRICE")
     paper_fill_probability: float = float(os.environ.get("BTC5_PAPER_FILL_PROBABILITY", "0.20"))
     clob_fee_rate_bps: int = int(os.environ.get("BTC5_CLOB_FEE_RATE_BPS", "0"))
     request_timeout_sec: float = float(os.environ.get("BTC5_REQUEST_TIMEOUT_SEC", "8"))
@@ -964,6 +987,70 @@ class BTC5MinMakerBot:
             min_pnl_gap_usd=self.cfg.regime_min_pnl_gap_usd,
         )
 
+    def _probe_max_buy_price(self, direction: str) -> float:
+        normalized = str(direction or "").strip().upper()
+        normal_cap = effective_max_buy_price(self.cfg, normalized)
+        if normalized == "UP":
+            probe_cap = self.cfg.probe_up_max_buy_price
+            if probe_cap is None:
+                probe_cap = PROBE_DEFAULT_UP_MAX_BUY_PRICE
+            return min(normal_cap, float(probe_cap))
+        if normalized == "DOWN":
+            probe_cap = self.cfg.probe_down_max_buy_price
+            if probe_cap is None:
+                probe_cap = PROBE_DEFAULT_DOWN_MAX_BUY_PRICE
+            return min(normal_cap, float(probe_cap))
+        return normal_cap
+
+    def _probe_mode(self, *, today_pnl: float) -> dict[str, Any] | None:
+        reasons: list[str] = []
+        hard_daily_loss_hit = today_pnl <= -abs(self.cfg.daily_loss_limit_usd)
+        if hard_daily_loss_hit and self.cfg.enable_probe_after_daily_loss:
+            reasons.append(
+                f"probe_daily_loss today_pnl={today_pnl:.4f} limit={self.cfg.daily_loss_limit_usd:.2f}"
+            )
+
+        recent_rows = self.db.recent_live_filled(limit=self.cfg.probe_recent_fills)
+        recent_pnl = round(sum(_safe_float(row.get("pnl_usd"), 0.0) for row in recent_rows), 4)
+        if (
+            self.cfg.enable_probe_after_recent_loss
+            and self.cfg.probe_recent_fills > 0
+            and len(recent_rows) >= self.cfg.probe_recent_fills
+            and recent_pnl <= self.cfg.probe_recent_min_pnl_usd
+        ):
+            reasons.append(
+                "probe_recent_live_pnl "
+                f"recent_pnl={recent_pnl:.4f} fills={len(recent_rows)} "
+                f"threshold={self.cfg.probe_recent_min_pnl_usd:.4f}"
+            )
+
+        if not reasons:
+            return None
+
+        effective_max_abs_delta = self.cfg.probe_max_abs_delta
+        if self.cfg.max_abs_delta is not None:
+            effective_max_abs_delta = (
+                min(float(self.cfg.max_abs_delta), float(effective_max_abs_delta))
+                if effective_max_abs_delta is not None
+                else float(self.cfg.max_abs_delta)
+            )
+
+        return {
+            "mode": "probe",
+            "reason": _join_reasons(*reasons),
+            "min_delta": max(
+                float(self.cfg.min_delta),
+                float(self.cfg.min_delta) * max(1.0, float(self.cfg.probe_min_delta_multiplier)),
+            ),
+            "max_abs_delta": effective_max_abs_delta,
+            "quote_ticks": max(0, int(self.cfg.probe_quote_ticks)),
+            "up_max_buy_price": self._probe_max_buy_price("UP"),
+            "down_max_buy_price": self._probe_max_buy_price("DOWN"),
+            "recent_live_pnl_usd": recent_pnl,
+            "recent_live_fills": len(recent_rows),
+            "hard_daily_loss_hit": hard_daily_loss_hit,
+        }
+
     async def _resolve_unsettled(self, http: MarketHttpClient, through_window_start: int) -> None:
         rows = self.db.unsettled_rows(max_window_start_ts=through_window_start)
         for row in rows:
@@ -1092,7 +1179,9 @@ class BTC5MinMakerBot:
         await self._resolve_unsettled(http, through_window_start=window_start_ts - WINDOW_SECONDS)
 
         today_pnl = self.db.today_realized_pnl()
-        if today_pnl <= -abs(self.cfg.daily_loss_limit_usd):
+        probe_mode = self._probe_mode(today_pnl=today_pnl)
+        hard_daily_loss_hit = today_pnl <= -abs(self.cfg.daily_loss_limit_usd)
+        if hard_daily_loss_hit and probe_mode is None:
             row = {
                 "window_start_ts": window_start_ts,
                 "window_end_ts": window_end_ts,
@@ -1102,6 +1191,13 @@ class BTC5MinMakerBot:
             }
             self.db.upsert_window(row)
             return {"window_start_ts": window_start_ts, "status": row["order_status"], "today_pnl": today_pnl}
+        effective_min_delta = float(probe_mode["min_delta"]) if probe_mode else float(self.cfg.min_delta)
+        effective_max_abs_delta = (
+            _safe_float(probe_mode.get("max_abs_delta"), None)
+            if probe_mode
+            else self.cfg.max_abs_delta
+        )
+        probe_reason = probe_mode.get("reason") if probe_mode else None
 
         open_price, current_price = await self._get_open_and_current_price(window_start_ts=window_start_ts, http=http)
         if not open_price or not current_price:
@@ -1116,7 +1212,7 @@ class BTC5MinMakerBot:
             self.db.upsert_window(row)
             return {"window_start_ts": window_start_ts, "status": row["order_status"]}
 
-        direction, delta = direction_from_prices(open_price, current_price, self.cfg.min_delta)
+        direction, delta = direction_from_prices(open_price, current_price, effective_min_delta)
         if direction is None:
             row = {
                 "window_start_ts": window_start_ts,
@@ -1126,12 +1222,20 @@ class BTC5MinMakerBot:
                 "current_price": current_price,
                 "delta": delta,
                 "order_status": "skip_delta_too_small",
-                "reason": f"abs(delta)={abs(delta):.6f} < {self.cfg.min_delta:.6f}",
+                "reason": _join_reasons(
+                    probe_reason,
+                    f"abs(delta)={abs(delta):.6f} < {effective_min_delta:.6f}",
+                ),
             }
             self.db.upsert_window(row)
-            return {"window_start_ts": window_start_ts, "status": row["order_status"], "delta": delta}
+            return {
+                "window_start_ts": window_start_ts,
+                "status": row["order_status"],
+                "delta": delta,
+                "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
+            }
 
-        if self.cfg.max_abs_delta is not None and abs(delta) > self.cfg.max_abs_delta:
+        if effective_max_abs_delta is not None and abs(delta) > effective_max_abs_delta:
             row = {
                 "window_start_ts": window_start_ts,
                 "window_end_ts": window_end_ts,
@@ -1141,10 +1245,18 @@ class BTC5MinMakerBot:
                 "current_price": current_price,
                 "delta": delta,
                 "order_status": "skip_delta_too_large",
-                "reason": f"abs(delta)={abs(delta):.6f} > {self.cfg.max_abs_delta:.6f}",
+                "reason": _join_reasons(
+                    probe_reason,
+                    f"abs(delta)={abs(delta):.6f} > {effective_max_abs_delta:.6f}",
+                ),
             }
             self.db.upsert_window(row)
-            return {"window_start_ts": window_start_ts, "status": row["order_status"], "delta": delta}
+            return {
+                "window_start_ts": window_start_ts,
+                "status": row["order_status"],
+                "delta": delta,
+                "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
+            }
 
         market = await http.fetch_market_by_slug(slug)
         if not market:
@@ -1194,6 +1306,8 @@ class BTC5MinMakerBot:
 
         recent_regime = self._recent_direction_regime()
         quote_ticks = effective_quote_ticks(self.cfg, direction, recent_regime=recent_regime)
+        if probe_mode:
+            quote_ticks = min(int(quote_ticks), int(probe_mode["quote_ticks"]))
         regime_reason = None
         if recent_regime and recent_regime.get("triggered"):
             favored = recent_regime.get("favored_direction") or "n/a"
@@ -1202,12 +1316,19 @@ class BTC5MinMakerBot:
                 f"recent_regime favored={favored} weaker={weaker} "
                 f"{direction}_quote_ticks={quote_ticks}"
             )
+        mode_max_buy_price = (
+            float(probe_mode["up_max_buy_price"])
+            if probe_mode and direction == "UP"
+            else float(probe_mode["down_max_buy_price"])
+            if probe_mode and direction == "DOWN"
+            else effective_max_buy_price(self.cfg, direction)
+        )
 
         best_bid, best_ask = http.top_of_book(book)
         order_price = choose_maker_buy_price(
             best_bid=best_bid,
             best_ask=best_ask,
-            max_price=effective_max_buy_price(self.cfg, direction),
+            max_price=mode_max_buy_price,
             min_price=self.cfg.min_buy_price,
             tick_size=self.cfg.tick_size,
             aggression_ticks=quote_ticks,
@@ -1225,7 +1346,7 @@ class BTC5MinMakerBot:
                 "best_bid": best_bid,
                 "best_ask": best_ask,
                 "order_status": "skip_price_outside_guardrails",
-                "reason": regime_reason,
+                "reason": _join_reasons(probe_reason, regime_reason),
             }
             self.db.upsert_window(row)
             return {
@@ -1233,6 +1354,7 @@ class BTC5MinMakerBot:
                 "status": row["order_status"],
                 "quote_ticks": quote_ticks,
                 "regime_triggered": bool(recent_regime and recent_regime.get("triggered")),
+                "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
             }
 
         size_usd = calc_trade_size_usd(self.cfg.bankroll_usd, self.cfg.risk_fraction, self.cfg.max_trade_usd)
@@ -1292,6 +1414,7 @@ class BTC5MinMakerBot:
         filled: int | None = None
         order_status = "order_error"
         reason: str | None = regime_reason
+        reason = _join_reasons(probe_reason, reason)
         executed_shares = shares
 
         if self.cfg.paper_trading:
@@ -1305,7 +1428,7 @@ class BTC5MinMakerBot:
                 placement = self.clob.place_post_only_buy(token_id=token_id, price=order_price, shares=shares)
                 order_id = placement.order_id
                 order_status = f"live_{placement.status}" if placement.status else "live_order_placed"
-                reason = placement.error_msg or regime_reason
+                reason = _join_reasons(reason, placement.error_msg or regime_reason)
             except Exception as exc:
                 logger.error("Live order placement failed: %s", exc)
                 placement = PlacementResult(
@@ -1315,7 +1438,7 @@ class BTC5MinMakerBot:
                     error_msg=str(exc),
                 )
                 order_status = "live_order_failed"
-                reason = str(exc)
+                reason = _join_reasons(reason, str(exc))
 
             if order_id and placement.success:
                 order_status, filled, executed_shares, reconcile_reason = await self._reconcile_live_order(
@@ -1323,7 +1446,7 @@ class BTC5MinMakerBot:
                     requested_shares=shares,
                     window_end_ts=window_end_ts,
                 )
-                reason = reason or reconcile_reason
+                reason = _join_reasons(reason, reconcile_reason)
             else:
                 filled = 0
                 executed_shares = 0.0
@@ -1360,6 +1483,7 @@ class BTC5MinMakerBot:
             "reason": reason,
             "quote_ticks": quote_ticks,
             "regime_triggered": bool(recent_regime and recent_regime.get("triggered")),
+            "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
         }
 
     async def run_windows(self, *, count: int, continuous: bool) -> None:
@@ -1465,7 +1589,7 @@ async def _run(args: argparse.Namespace) -> None:
         raise SystemExit("--windows must be >= 1")
 
     logger.info(
-        "Starting BTC5 maker | mode=%s | bankroll=%.2f | risk_fraction=%.4f | max_trade=%.2f | max_abs_delta=%s | up_max=%.2f | down_max=%.2f | improve_ticks=%d | regime_skew=%s",
+        "Starting BTC5 maker | mode=%s | bankroll=%.2f | risk_fraction=%.4f | max_trade=%.2f | max_abs_delta=%s | up_max=%.2f | down_max=%.2f | improve_ticks=%d | regime_skew=%s | probe_daily_loss=%s | probe_recent=%s",
         "paper" if cfg.paper_trading else "live",
         cfg.bankroll_usd,
         cfg.risk_fraction,
@@ -1475,6 +1599,8 @@ async def _run(args: argparse.Namespace) -> None:
         effective_max_buy_price(cfg, "DOWN"),
         max(0, int(cfg.maker_improve_ticks)),
         "enabled" if cfg.enable_recent_regime_skew else "disabled",
+        "enabled" if cfg.enable_probe_after_daily_loss else "disabled",
+        "enabled" if cfg.enable_probe_after_recent_loss else "disabled",
     )
     await bot.run_windows(count=args.windows, continuous=args.continuous)
     bot.print_status()

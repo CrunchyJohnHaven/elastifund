@@ -23,6 +23,7 @@ Notes:
   - The VPS target defaults to $VPS_USER@$VPS_IP from .env or the shell environment.
   - The remote deploy target is a file copy, not a git checkout.
   - The remote .env is never uploaded from local; it is only edited in place with --clean-env.
+  - Runtime-affecting deploys refresh the checked-in status artifacts locally after the remote step.
 EOF
 }
 
@@ -168,6 +169,63 @@ sync_file() {
     "${SCP_CMD[@]}" -q "$local_path" "$VPS:$BOT_DIR/$relative_path"
 }
 
+capture_remote_service_status() {
+    local target="$PROJECT_DIR/reports/remote_service_status.json"
+    local systemctl_state="unknown"
+    local detail="unknown"
+
+    mkdir -p "$(dirname "$target")"
+    if detail=$("${SSH_CMD[@]}" "$VPS" "systemctl is-active $SERVICE_NAME 2>/dev/null || true" 2>&1); then
+        systemctl_state="$(printf '%s\n' "$detail" | tail -1 | tr -d '\r')"
+        detail="$systemctl_state"
+    else
+        detail="$(printf '%s\n' "$detail" | tail -1 | tr -d '\r')"
+        systemctl_state="unknown"
+    fi
+
+    python3 - "$target" "$VPS" "$SERVICE_NAME" "$systemctl_state" "$detail" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+target = Path(sys.argv[1])
+host = sys.argv[2]
+service_name = sys.argv[3]
+systemctl_state = (sys.argv[4] or "unknown").strip()
+detail = (sys.argv[5] or "unknown").strip()
+
+if systemctl_state == "active":
+    status = "running"
+elif systemctl_state in {"inactive", "failed", "deactivating"}:
+    status = "stopped"
+else:
+    status = "unknown"
+
+payload = {
+    "checked_at": datetime.now(timezone.utc).isoformat(),
+    "host": host,
+    "service_name": service_name,
+    "status": status,
+    "systemctl_state": systemctl_state,
+    "detail": detail,
+}
+target.write_text(json.dumps(payload, indent=2, sort_keys=True))
+print(json.dumps(payload, indent=2, sort_keys=True))
+PY
+}
+
+refresh_runtime_artifacts() {
+    echo
+    echo "  Refreshing local runtime artifacts..."
+    capture_remote_service_status
+    (
+        cd "$PROJECT_DIR"
+        python3 scripts/write_remote_cycle_status.py \
+            --service-status-json reports/remote_service_status.json
+    )
+}
+
 echo "  Creating remote directories..."
 "${SSH_CMD[@]}" "$VPS" "mkdir -p \
     $BOT_DIR/bot \
@@ -301,6 +359,13 @@ if [[ "$ENABLE_LOOP" == "true" ]]; then
 else
     echo
     echo "  Skipping improvement loop timer (--loop not set)."
+fi
+
+if [[ "$CLEAN_ENV" == "true" || "$RESTART_SERVICE" == "true" || "$ENABLE_BTC5" == "true" || "$ENABLE_KALSHI" == "true" || "$ENABLE_LOOP" == "true" ]]; then
+    refresh_runtime_artifacts
+else
+    echo
+    echo "  Skipping local runtime artifact refresh (no runtime-affecting flags set)."
 fi
 
 echo

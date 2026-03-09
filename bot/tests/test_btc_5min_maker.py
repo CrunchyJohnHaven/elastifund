@@ -588,3 +588,234 @@ async def test_process_window_respects_directional_price_cap(
     result = await bot._process_window(window_start_ts=window_start_ts, http=_DownBookHTTP())
 
     assert result["status"] == "skip_price_outside_guardrails"
+
+
+@pytest.mark.asyncio
+async def test_process_window_enters_probe_mode_after_recent_live_loss(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=False,
+        db_path=tmp_path / "btc5.db",
+        bankroll_usd=250.0,
+        risk_fraction=0.01,
+        max_trade_usd=2.50,
+        min_trade_usd=0.25,
+        min_delta=0.0,
+        max_buy_price=0.95,
+        up_max_buy_price=0.95,
+        down_max_buy_price=0.95,
+        min_buy_price=0.45,
+        tick_size=0.01,
+        cancel_seconds_before_close=2,
+        enable_probe_after_recent_loss=True,
+        probe_recent_fills=4,
+        probe_recent_min_pnl_usd=0.0,
+        probe_quote_ticks=0,
+        probe_up_max_buy_price=0.49,
+        probe_down_max_buy_price=0.51,
+    )
+    bot = BTC5MinMakerBot(cfg)
+
+    async def fake_resolve(http, through_window_start: int) -> None:
+        return None
+
+    async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
+        return 100.0, 100.05
+
+    class ProbeBookHTTP(_DummyHTTP):
+        async def fetch_book(self, token_id: str) -> dict:
+            assert token_id == "tok-up"
+            return {
+                "bids": [{"price": 0.48, "size": 50}],
+                "asks": [{"price": 0.49, "size": 50}],
+            }
+
+    class FakeCLOB:
+        def __init__(self) -> None:
+            self.states = [
+                LiveOrderState(
+                    order_id="ord-probe",
+                    status="cancelled",
+                    original_size=10.21,
+                    size_matched=0.0,
+                    price=0.49,
+                )
+            ]
+
+        def place_post_only_buy(self, token_id: str, price: float, shares: float) -> PlacementResult:
+            assert token_id == "tok-up"
+            assert price == pytest.approx(0.48)
+            return PlacementResult(order_id="ord-probe", success=True, status="live")
+
+        def get_order_state(self, order_id: str) -> LiveOrderState:
+            assert order_id == "ord-probe"
+            return self.states[0]
+
+        def cancel_order(self, order_id: str) -> bool:
+            assert order_id == "ord-probe"
+            return True
+
+    monkeypatch.setattr(bot, "_resolve_unsettled", fake_resolve)
+    monkeypatch.setattr(bot, "_get_open_and_current_price", fake_prices)
+    bot.clob = FakeCLOB()
+
+    start = current_window_start(time.time()) - (8 * 300)
+    for idx in range(4):
+        ws = start + (idx * 300)
+        bot.db.upsert_window(
+            {
+                "window_start_ts": ws,
+                "window_end_ts": ws + 300,
+                "slug": market_slug_for_window(ws),
+                "decision_ts": ws + 290,
+                "direction": "UP",
+                "open_price": 100.0,
+                "current_price": 100.05,
+                "delta": 0.0005,
+                "token_id": "tok-up",
+                    "best_bid": 0.48,
+                    "best_ask": 0.49,
+                "order_price": 0.50,
+                "trade_size_usd": 5.0,
+                "shares": 10.0,
+                "order_id": f"probe-seed-{idx}",
+                "order_status": "live_filled",
+                "filled": 1,
+                "reason": "seed_loss",
+                "resolved_side": "DOWN",
+                "won": 0,
+                "pnl_usd": -5.0,
+            }
+        )
+
+    window_start_ts = current_window_start(time.time()) - (2 * 300)
+    result = await bot._process_window(window_start_ts=window_start_ts, http=ProbeBookHTTP())
+
+    assert result["status"] == "live_cancelled_unfilled"
+    assert result["risk_mode"] == "probe"
+    assert result["price"] == pytest.approx(0.48)
+
+    with bot.db._connect() as conn:
+        row = conn.execute(
+            "SELECT order_price, reason, order_status FROM window_trades WHERE window_start_ts = ?",
+            (window_start_ts,),
+        ).fetchone()
+    assert row["order_price"] == pytest.approx(0.48)
+    assert "probe_recent_live_pnl" in (row["reason"] or "")
+    assert row["order_status"] == "live_cancelled_unfilled"
+
+
+@pytest.mark.asyncio
+async def test_process_window_uses_probe_mode_after_daily_loss(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=False,
+        db_path=tmp_path / "btc5.db",
+        bankroll_usd=250.0,
+        risk_fraction=0.01,
+        max_trade_usd=2.50,
+        min_trade_usd=0.25,
+        min_delta=0.0,
+        max_buy_price=0.95,
+        up_max_buy_price=0.95,
+        down_max_buy_price=0.95,
+        min_buy_price=0.45,
+        tick_size=0.01,
+        cancel_seconds_before_close=2,
+        daily_loss_limit_usd=5.0,
+        enable_probe_after_daily_loss=True,
+        enable_probe_after_recent_loss=False,
+        probe_quote_ticks=0,
+        probe_up_max_buy_price=0.49,
+        probe_down_max_buy_price=0.51,
+    )
+    bot = BTC5MinMakerBot(cfg)
+
+    async def fake_resolve(http, through_window_start: int) -> None:
+        return None
+
+    async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
+        return 100.0, 100.05
+
+    class ProbeBookHTTP(_DummyHTTP):
+        async def fetch_book(self, token_id: str) -> dict:
+            assert token_id == "tok-up"
+            return {
+                "bids": [{"price": 0.48, "size": 50}],
+                "asks": [{"price": 0.49, "size": 50}],
+            }
+
+    class FakeCLOB:
+        def __init__(self) -> None:
+            self.states = [
+                LiveOrderState(
+                    order_id="ord-daily-probe",
+                    status="cancelled",
+                    original_size=10.21,
+                    size_matched=0.0,
+                    price=0.49,
+                )
+            ]
+
+        def place_post_only_buy(self, token_id: str, price: float, shares: float) -> PlacementResult:
+            assert token_id == "tok-up"
+            assert price == pytest.approx(0.48)
+            return PlacementResult(order_id="ord-daily-probe", success=True, status="live")
+
+        def get_order_state(self, order_id: str) -> LiveOrderState:
+            assert order_id == "ord-daily-probe"
+            return self.states[0]
+
+        def cancel_order(self, order_id: str) -> bool:
+            assert order_id == "ord-daily-probe"
+            return True
+
+    monkeypatch.setattr(bot, "_resolve_unsettled", fake_resolve)
+    monkeypatch.setattr(bot, "_get_open_and_current_price", fake_prices)
+    bot.clob = FakeCLOB()
+
+    ws = current_window_start(time.time()) - (6 * 300)
+    bot.db.upsert_window(
+        {
+            "window_start_ts": ws,
+            "window_end_ts": ws + 300,
+            "slug": market_slug_for_window(ws),
+            "decision_ts": int(time.time()) - 60,
+            "direction": "UP",
+            "open_price": 100.0,
+            "current_price": 100.05,
+            "delta": 0.0005,
+            "token_id": "tok-up",
+            "best_bid": 0.48,
+            "best_ask": 0.49,
+            "order_price": 0.50,
+            "trade_size_usd": 5.0,
+            "shares": 10.0,
+            "order_id": "seed-daily-loss",
+            "order_status": "live_filled",
+            "filled": 1,
+            "reason": "seed_daily_loss",
+            "resolved_side": "DOWN",
+            "won": 0,
+            "pnl_usd": -6.0,
+        }
+    )
+
+    window_start_ts = current_window_start(time.time()) - (2 * 300)
+    result = await bot._process_window(window_start_ts=window_start_ts, http=ProbeBookHTTP())
+
+    assert result["status"] == "live_cancelled_unfilled"
+    assert result["risk_mode"] == "probe"
+
+    with bot.db._connect() as conn:
+        row = conn.execute(
+            "SELECT order_price, reason, order_status FROM window_trades WHERE window_start_ts = ?",
+            (window_start_ts,),
+        ).fetchone()
+    assert row["order_price"] == pytest.approx(0.48)
+    assert "probe_daily_loss" in (row["reason"] or "")
+    assert row["order_status"] == "live_cancelled_unfilled"
