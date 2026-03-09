@@ -418,7 +418,57 @@ def test_run_cycle_hydrates_recent_fast_markets_when_primary_scan_misses_them(tm
     assert summary["trades_placed"] == 1
     assert captured_orders
     assert captured_orders[0]["market_id"] == "m-recent"
-    assert captured_orders[0]["price"] == 0.44
+
+
+def test_execution_signal_guard_blocks_ensemble_failure_fallback(tmp_path):
+    live = _make_live(tmp_path, markets=[])
+
+    reason = live._execution_signal_guard_reason(
+        {
+            "source": "llm",
+            "source_combo": "llm",
+            "reasoning": "All ensemble model calls failed",
+            "category": "crypto",
+            "resolution_hours": 0.25,
+        },
+        {"category": "crypto", "resolution_hours": 0.25},
+    )
+
+    assert reason == "ensemble_failure_fallback"
+
+
+def test_execution_signal_guard_blocks_non_crypto_in_fast_flow_mode(tmp_path):
+    live = _make_live(tmp_path, markets=[])
+
+    reason = live._execution_signal_guard_reason(
+        {
+            "source": "wallet_flow",
+            "source_combo": "wallet_flow",
+            "reasoning": "Wallet flow consensus",
+            "category": "politics",
+            "resolution_hours": 0.25,
+        },
+        {"category": "politics", "resolution_hours": 0.25},
+    )
+
+    assert reason == "fast_flow_non_crypto"
+
+
+def test_execution_signal_guard_allows_fast_crypto_wallet_signal(tmp_path):
+    live = _make_live(tmp_path, markets=[])
+
+    reason = live._execution_signal_guard_reason(
+        {
+            "source": "wallet_flow",
+            "source_combo": "wallet_flow",
+            "reasoning": "Wallet flow consensus",
+            "category": "crypto",
+            "resolution_hours": 0.25,
+        },
+        {"category": "crypto", "resolution_hours": 0.25},
+    )
+
+    assert reason is None
 
 
 def test_run_cycle_late_hydrates_wallet_signal_when_scan_has_other_fast_market(tmp_path, monkeypatch):

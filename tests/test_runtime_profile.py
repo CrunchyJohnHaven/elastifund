@@ -90,25 +90,28 @@ def test_paper_aggressive_profile_matches_first_trade_collection_posture() -> No
     assert bundle.config["market_filters"]["category_priorities"]["sports"] == 1
 
 
-def test_maker_velocity_all_in_profile_enables_full_cap_multi_lane() -> None:
+def test_maker_velocity_all_in_profile_concentrates_on_fast_crypto() -> None:
     bundle = load_runtime_profile(env={"JJ_RUNTIME_PROFILE": "maker_velocity_all_in"})
 
     assert bundle.selected_profile == "maker_velocity_all_in"
     assert bundle.config["mode"]["effective_execution_mode"] == "shadow"
     assert bundle.config["mode"]["paper_trading"] is False
     assert bundle.config["mode"]["allow_order_submission"] is True
-    assert bundle.config["feature_flags"]["fast_flow_only"] is False
+    assert bundle.config["feature_flags"]["fast_flow_only"] is True
     assert bundle.config["feature_flags"]["enable_wallet_flow"] is True
     assert bundle.config["feature_flags"]["enable_lmsr"] is True
-    assert bundle.config["feature_flags"]["enable_llm_signals"] is True
+    assert bundle.config["feature_flags"]["enable_llm_signals"] is False
     assert bundle.config["risk_limits"]["max_exposure_pct"] == 1.0
     assert bundle.config["risk_limits"]["max_position_usd"] == 50.0
     assert bundle.config["risk_limits"]["max_open_positions"] == 10
     assert bundle.config["risk_limits"]["min_edge"] == 0.01
     assert bundle.config["risk_limits"]["hourly_notional_budget_usd"] == 247.51
-    assert bundle.config["market_filters"]["max_resolution_hours"] == 24.0
+    assert bundle.config["market_filters"]["max_resolution_hours"] == 1.0
+    assert bundle.config["market_filters"]["min_category_priority"] == 1
     assert bundle.config["market_filters"]["category_priorities"]["crypto"] == 3
-    assert bundle.effective_env["JJ_FAST_FLOW_ONLY"] == "false"
+    assert bundle.config["market_filters"]["category_priorities"]["financial_speculation"] == 0
+    assert bundle.effective_env["JJ_FAST_FLOW_ONLY"] == "true"
+    assert bundle.effective_env["ENABLE_LLM_SIGNALS"] == "false"
 
 
 def test_maker_velocity_live_profile_is_fast_turn_crypto_only() -> None:

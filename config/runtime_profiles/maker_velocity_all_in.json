@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "All-capital maker-velocity track (AGGRESSIVE). <=24h markets, live order submission enabled, LLM+wallet+lmsr lanes on. Full bankroll envelope with multi-position deployment.",
+  "description": "All-capital maker-velocity track (AGGRESSIVE FAST CRYPTO). Full bankroll envelope, but restricted to sub-1h crypto markets with wallet-flow and LMSR only. Narrative LLM lanes stay off.",
   "mode": {
     "execution_mode": "shadow",
     "paper_trading": false,
@@ -8,16 +8,16 @@
     "launch_gate": "none"
   },
   "feature_flags": {
-    "enable_llm_signals": true,
+    "enable_llm_signals": false,
     "enable_wallet_flow": true,
     "enable_lmsr": true,
     "enable_cross_platform_arb": false,
-    "fast_flow_only": false,
+    "fast_flow_only": true,
     "enable_a6_shadow": false,
     "enable_a6_live": false,
     "enable_b1_shadow": false,
     "enable_b1_live": false,
-    "enable_a6_embedded_shadow_scanner": true
+    "enable_a6_embedded_shadow_scanner": false
   },
   "risk_limits": {
     "max_position_usd": 50.0,
@@ -32,15 +32,15 @@
     "hourly_notional_budget_usd": 247.51
   },
   "market_filters": {
-    "max_resolution_hours": 24.0,
-    "min_category_priority": 0,
+    "max_resolution_hours": 1.0,
+    "min_category_priority": 1,
     "category_priorities": {
       "politics": 0,
       "weather": 0,
       "economic": 0,
       "crypto": 3,
       "sports": 0,
-      "financial_speculation": 1,
+      "financial_speculation": 0,
       "geopolitical": 0,
       "fed_rates": 0,
       "unknown": 0

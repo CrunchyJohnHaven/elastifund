@@ -3613,6 +3613,59 @@ class JJLive:
     def _combinatorial_lane_enabled(self) -> bool:
         return not bool(self.fast_flow_only)
 
+    def _execution_signal_guard_reason(
+        self,
+        signal: Mapping[str, Any],
+        market_metadata: Mapping[str, Any] | None = None,
+    ) -> str | None:
+        """Return a blocking reason when a signal is unsafe for execution."""
+        sources = set(extract_signal_source_components(signal))
+        if not sources:
+            fallback_source = canonical_source_key(str(signal.get("source", "") or ""))
+            if fallback_source and fallback_source != "unknown":
+                sources.add(fallback_source)
+
+        reasoning = str(signal.get("reasoning", "") or "").strip().lower()
+        fallback_mode = str(signal.get("fallback_mode", "") or "").strip().lower()
+        if (
+            "all ensemble model calls failed" in reasoning
+            or "no ensemble models available" in reasoning
+            or "failed to parse model response" in reasoning
+            or fallback_mode in {"all_models_failed", "parse_failure", "no_models_available"}
+        ):
+            return "ensemble_failure_fallback"
+
+        if not self.enable_llm_signals and sources == {"llm"}:
+            return "llm_lane_disabled"
+
+        if self.fast_flow_only:
+            if sources == {"llm"}:
+                return "fast_flow_llm_only"
+
+            metadata = market_metadata if isinstance(market_metadata, Mapping) else {}
+            question = str(signal.get("question") or metadata.get("question") or "")
+            slug = str(signal.get("slug") or metadata.get("slug") or "")
+            category = str(
+                signal.get("category")
+                or metadata.get("category")
+                or ""
+            ).strip().lower()
+            if re.search(r"\b(bitcoin|btc|ethereum|eth|solana|sol|xrp)\b", f"{question} {slug}".lower()):
+                category = "crypto"
+            if category and category != "crypto":
+                return "fast_flow_non_crypto"
+
+            resolution_hours = _safe_float(
+                signal.get("resolution_hours"),
+                _safe_float(metadata.get("resolution_hours"), None),
+            )
+            if resolution_hours is None:
+                return "fast_flow_unknown_resolution"
+            if resolution_hours > MAX_RESOLUTION_HOURS:
+                return "fast_flow_out_of_window"
+
+        return None
+
     def _has_llm_credentials(self) -> bool:
         return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY"))
 
@@ -7099,6 +7152,18 @@ class JJLive:
                     continue
                 signal["category"] = category
                 signal["resolution_hours"] = normalized_resolution
+
+            execution_guard_reason = self._execution_signal_guard_reason(signal, mdata)
+            if execution_guard_reason:
+                logger.info(
+                    "SKIP execution blocked by %s guard: sources=%s cat=%s res=%s | %s",
+                    execution_guard_reason,
+                    signal.get("source_combo", signal.get("source", "")),
+                    signal.get("category", mdata.get("category", "")),
+                    signal.get("resolution_hours", mdata.get("resolution_hours", "?")),
+                    signal.get("question", "")[:80],
+                )
+                continue
 
             # Position sizing
             base_size_usd = kelly_size(
