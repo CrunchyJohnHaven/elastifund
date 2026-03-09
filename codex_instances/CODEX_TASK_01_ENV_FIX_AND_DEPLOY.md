@@ -1,37 +1,39 @@
-# CODEX TASK 01: Create .env Cleanup Script for VPS Deploy
+# CODEX TASK 01: Build the `.env` Cleanup Helper
 
-## MACHINE TRUTH (2026-03-09)
-- VPS is NOT a git checkout — deployed via scp (scripts/deploy.sh)
-- .env on VPS has explicit JJ_* vars overriding runtime profile
-- Result: paper_aggressive profile loads but ALL values trampled by .env overrides
-- Logs show: YES=15%/NO=5% (should be 8%/3%), position=$0.50 (should be $5), paper=False
-- OVERRIDE_SPECS in config/runtime_profile.py lines 213-310 lists every overridable env var
+## Working Context
+- Repo: `/Users/johnbradley/Desktop/Elastifund`
+- Read first: `README.md`, `docs/REPO_MAP.md`, `PROJECT_INSTRUCTIONS.md`
+- Path ownership for this task: `scripts/clean_env_for_profile.sh` and any new focused test file
+- Do **not** edit `scripts/deploy.sh` here. Task 07 owns deploy-script integration.
 
-## TASK
-Create `scripts/clean_env_for_profile.sh` that:
-1. Takes optional argument: profile name (default: `live_aggressive`)
-2. Backs up `.env` to `.env.backup.<timestamp>`
-3. Reads the current `.env` line by line
-4. KEEPS lines containing: KEY, SECRET, TOKEN, PASSPHRASE, PK, ADDRESS, TELEGRAM, API_KEY, PRIVATE, FUNDER, SAFE_ADDRESS, PROXY
-5. REMOVES lines starting with: JJ_, PAPER_TRADING, ENABLE_, CLAUDE_MODEL
-6. Appends `JJ_RUNTIME_PROFILE=<profile_name>`
-7. Prints the cleaned .env for verification
-8. Runs a python verification: loads the profile and prints key values
+## Machine Truth (March 9, 2026)
+- `reports/deploy_20260309T013604Z.json` showed the remote VPS `.env` exposing only `PAPER_TRADING=false`; `JJ_RUNTIME_PROFILE` was absent.
+- `config/runtime_profile.py` uses `OVERRIDE_SPECS`, so stray `JJ_*` and related env keys can silently override the checked-in runtime profiles.
+- `scripts/deploy.sh` already syncs runtime profile JSON files, but there is no checked-in helper that sanitizes a remote `.env` for profile-based launches.
 
-Also update `scripts/deploy.sh`:
-- After syncing files, call clean_env_for_profile.sh on VPS if `--clean-env` flag is passed
-- Add a `--profile` flag to specify which profile (default: live_aggressive)
+## Goal
+Create a reusable shell helper that strips runtime overrides from an existing `.env`, preserves secrets, and appends a single `JJ_RUNTIME_PROFILE=<profile>` selector.
 
-## FILES
-- `scripts/clean_env_for_profile.sh` (CREATE)
-- `scripts/deploy.sh` (MODIFY — add --clean-env and --profile flags)
+## Required Work
+1. Create `scripts/clean_env_for_profile.sh`.
+2. Default the profile argument to `live_aggressive`; allow an explicit profile name as `$1`.
+3. Back up the input `.env` to `.env.backup.<timestamp>` before rewriting it.
+4. Preserve secrets and deploy identity keys such as `KEY`, `SECRET`, `TOKEN`, `PASSPHRASE`, `PK`, `ADDRESS`, `TELEGRAM`, `API_KEY`, `PRIVATE`, `FUNDER`, `SAFE_ADDRESS`, and `PROXY`.
+5. Remove runtime override keys such as `JJ_*`, `PAPER_TRADING`, `LIVE_TRADING`, `ENABLE_*`, `CLAUDE_MODEL`, and `ELASTIFUND_AGENT_RUN_MODE`.
+6. Append exactly one `JJ_RUNTIME_PROFILE=<profile>` line.
+7. Print the cleaned file contents and run a Python verification snippet that loads the selected runtime profile and prints the profile name plus a few key values.
 
-## TESTS
-- Run `make test` — must pass
-- Run `bash -n scripts/clean_env_for_profile.sh` — syntax check
-- Run `bash -n scripts/deploy.sh` — syntax check
+## Deliverables
+- `scripts/clean_env_for_profile.sh`
+- A focused regression test if you need one, for example `tests/test_clean_env_for_profile.py`
 
-## DO NOT
-- SSH to VPS
-- Modify runtime_profile.py loading logic
-- Change any profile JSON files
+## Verification
+- `bash -n scripts/clean_env_for_profile.sh`
+- `python -m pytest tests/test_runtime_profile.py`
+- If you add a new test file, run it explicitly
+
+## Constraints
+- Do not SSH to the VPS.
+- Do not modify `config/runtime_profile.py`.
+- Do not edit any profile JSON files in `config/runtime_profiles/`.
+- Keep the helper POSIX-shell friendly enough to run on the VPS with `bash`.

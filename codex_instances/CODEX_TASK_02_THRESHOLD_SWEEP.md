@@ -1,47 +1,42 @@
-# CODEX TASK 02: Programmatic Threshold Sensitivity Sweep
+# CODEX TASK 02: Check In a Real Threshold Sweep Script
 
-## MACHINE TRUTH (2026-03-09)
-- FAST_TRADE_EDGE_ANALYSIS.md shows: 0 markets at 0.15/0.05, 8 at 0.08/0.03, 8 at 0.05/0.02
-- All 8 tradeable markets are BTC crypto candles
-- The 0→8 jump at 0.08 needs programmatic validation
-- Pipeline uses polymarket-bot/src/scanner.py for market discovery
+## Working Context
+- Repo: `/Users/johnbradley/Desktop/Elastifund`
+- Read first: `README.md`, `docs/REPO_MAP.md`, `PROJECT_INSTRUCTIONS.md`
+- Path ownership for this task: `scripts/threshold_sweep.py`, `tests/test_threshold_sweep.py`, `reports/threshold_sensitivity_sweep.json`
+- Avoid editing `src/pipeline_refresh.py` unless a tiny helper extraction is unavoidable.
 
-## TASK
-Create `scripts/threshold_sweep.py` that:
-1. Calls the same market scanner used by jj_live.py (MarketScanner from polymarket_runtime)
-2. For each threshold pair from (0.20, 0.10) down to (0.02, 0.01) in 0.01 steps:
-   a. Count markets passing: price in 0.10-0.90, resolution < 48h, edge >= threshold
-   b. Record market IDs, questions, categories, prices, estimated edges
-3. Output a JSON report to `reports/threshold_sensitivity_sweep.json`:
-   ```json
-   {
-     "generated_at": "ISO timestamp",
-     "sweep_results": [
-       {"yes_threshold": 0.20, "no_threshold": 0.10, "markets_passing": 0, "market_ids": []},
-       {"yes_threshold": 0.19, "no_threshold": 0.09, "markets_passing": 0, "market_ids": []},
-       ...
-     ],
-     "breakpoints": [
-       {"threshold": 0.08, "markets_gained": 8, "categories": {"crypto": 8}}
-     ]
-   }
-   ```
-4. Also output a human-readable summary to stdout showing the step function
-5. Identify exact breakpoint(s) where market count jumps
+## Machine Truth (March 9, 2026)
+- `reports/pipeline_refresh_20260309T013209Z.json` at `2026-03-09T01:32:09Z` found `0` tradeable markets at current, aggressive, and wide-open thresholds when working from the flattened Gamma universe.
+- `reports/pipeline_refresh_20260309T015834Z.json` at `2026-03-09T01:58:34Z` used fast-market discovery and found `6` BTC candle windows with threshold reachability at `0.08/0.03` and `0.05/0.02`, while `0.15/0.05` still stayed at `0`.
+- `reports/threshold_sensitivity_sweep.json` already exists, but there is no checked-in script behind it, and the current report explicitly says it measures threshold reachability, not validated live model-pass rate.
 
-## CONSTRAINTS
-- Must work WITHOUT API keys (use cached market data if available, or mock the scanner)
-- If API keys needed, use ANTHROPIC_API_KEY from .env only for Claude calls
-- Script must be runnable as: `python3 scripts/threshold_sweep.py`
-- Add test: `tests/test_threshold_sweep.py` — test the sweep logic with mock data
+## Goal
+Create a reproducible script that regenerates the sweep report from repo code and makes the reachability-vs-pipeline distinction explicit.
 
-## FILES
-- `scripts/threshold_sweep.py` (CREATE)
-- `tests/test_threshold_sweep.py` (CREATE)
-- `reports/threshold_sensitivity_sweep.json` (GENERATED OUTPUT)
+## Required Work
+1. Create `scripts/threshold_sweep.py`.
+2. Reuse the existing `src.pipeline_refresh` logic instead of re-implementing threshold math from scratch.
+3. Support an offline path that can build from the latest checked-in `reports/pipeline_refresh_*.json` artifact.
+4. Emit a JSON report to `reports/threshold_sensitivity_sweep.json` with:
+   - the source artifact used
+   - threshold pairs tested
+   - counts for both `pipeline_tradeable` and `fast_market_reachability`
+   - breakpoint detection
+   - a plain-English conclusion explaining whether `0.08/0.03` unlocks only reachability or actual tradeable markets
+5. Print a concise step-function summary to stdout.
+6. Add `tests/test_threshold_sweep.py` with mocked inputs covering the current-vs-aggressive breakpoint behavior.
 
-## SUCCESS CRITERIA
-- Script runs without error
-- JSON report generated with complete sweep data
-- Breakpoint(s) identified programmatically
-- `make test` passes including new test
+## Deliverables
+- `scripts/threshold_sweep.py`
+- `tests/test_threshold_sweep.py`
+- Updated `reports/threshold_sensitivity_sweep.json`
+
+## Verification
+- `python3 scripts/threshold_sweep.py`
+- `python -m pytest tests/test_pipeline_refresh.py tests/test_threshold_sweep.py`
+
+## Constraints
+- Do not route this through `bot.polymarket_runtime.MarketScanner`; the checked-in March 9 logic lives in `src/pipeline_refresh.py`.
+- Do not claim “8 markets” unless the script actually observes 8 on the run you execute. Earlier March 8 prose said 8, but the latest checked-in fast-market artifact shows 6.
+- Keep the output explicit about the difference between threshold reachability and a real dispatchable trade set.

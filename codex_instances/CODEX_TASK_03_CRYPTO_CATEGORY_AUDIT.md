@@ -1,55 +1,47 @@
-# CODEX TASK 03: Crypto Market Category Audit
+# CODEX TASK 03: Check In the Crypto Category Audit
 
-## MACHINE TRUTH (2026-03-09)
-- paper_aggressive and live_aggressive profiles set crypto priority = 2
-- All 8 markets passing 0.08/0.03 threshold are BTC crypto
-- Category gate was blocking ALL tradeable markets (crypto priority was 0)
-- Risk: enabling crypto might expose system to meme coin / degenerate markets
-- Need to verify the 8 markets are legitimate BTC price candles
+## Working Context
+- Repo: `/Users/johnbradley/Desktop/Elastifund`
+- Read first: `README.md`, `docs/REPO_MAP.md`, `PROJECT_INSTRUCTIONS.md`
+- Path ownership for this task: `scripts/crypto_category_audit.py`, `tests/test_crypto_category_audit.py`, `reports/crypto_category_audit.json`
+- Avoid editing `src/pipeline_refresh.py` unless a small helper extraction is unavoidable.
 
-## TASK
-Create `scripts/crypto_category_audit.py` that:
-1. Pulls all active markets from Polymarket Gamma API (gamma-api.polymarket.com)
-2. Filters to category = "crypto" or tag contains "crypto", "bitcoin", "btc", "ethereum"
-3. For each crypto market, classify as:
-   - `btc_candle`: BTC price above/below X by specific datetime (clear resolution)
-   - `eth_candle`: ETH price above/below X by specific datetime
-   - `altcoin`: Any other specific coin price
-   - `meme_degenerate`: Meme coins, pump timing, vague resolution
-   - `crypto_other`: Regulatory, adoption, exchange-related
-4. Output `reports/crypto_category_audit.json`:
-   ```json
-   {
-     "generated_at": "ISO timestamp",
-     "total_crypto_markets": 110,
-     "classifications": {
-       "btc_candle": [...],
-       "eth_candle": [...],
-       "altcoin": [...],
-       "meme_degenerate": [...],
-       "crypto_other": [...]
-     },
-     "tradeable_at_008": [
-       {"market_id": "...", "question": "...", "class": "btc_candle", "price": 0.X, "resolution_hours": Y}
-     ],
-     "recommendation": "APPROVE" or "ADD_SUBCATEGORY_FILTER"
-   }
-   ```
-5. If any meme/degenerate markets pass the 0.08 threshold, recommend a sub-filter
+## Machine Truth (March 9, 2026)
+- Earlier March 8 notes referenced `8` BTC markets. The latest checked-in fast-market artifact at `2026-03-09T01:58:34Z` shows `6` reachable BTC candle windows instead.
+- `reports/crypto_category_audit.json` already exists as output, but there is no checked-in generator script.
+- That report shows a broad `crypto`-tagged open-event universe of `115` markets, mostly altcoin or airdrop noise, while the actual fast-market set came from series/slug discovery and resolved to `6` BTC candle markets.
 
-## CONSTRAINTS
-- Use Gamma API directly (no API key needed): GET https://gamma-api.polymarket.com/markets
-- Classification can use simple keyword matching (no LLM needed)
-- Keywords for btc_candle: "BTC", "Bitcoin", "above $", "below $", candle timeframes
-- Script must be runnable as: `python3 scripts/crypto_category_audit.py`
+## Goal
+Create a reproducible audit script that separates the noisy broad crypto universe from the actual fast BTC/ETH candle lanes the bot could trade.
 
-## FILES
-- `scripts/crypto_category_audit.py` (CREATE)
-- `reports/crypto_category_audit.json` (GENERATED OUTPUT)
-- `tests/test_crypto_audit.py` (CREATE — test classification logic with sample data)
+## Required Work
+1. Create `scripts/crypto_category_audit.py`.
+2. Pull the open Gamma events feed and classify crypto-tagged markets into:
+   - `btc_candle`
+   - `eth_candle`
+   - `altcoin_meme`
+   - `crypto_other`
+3. Also derive the fast-market set using the current repo logic, preferably via `src.pipeline_refresh.load_fast_markets(...)` or an equivalent shared helper.
+4. Write `reports/crypto_category_audit.json` with:
+   - counts for the broad crypto-tagged universe
+   - counts for the actual fast-market tradeable set
+   - sample markets for each class
+   - a recommendation
+5. Recommendation rules:
+   - `APPROVE_BTC_CANDLES_ONLY` if the fast-market set is only BTC/ETH candle contracts with clear resolution mechanics
+   - `ADD_SUBCATEGORY_FILTER` if any altcoin or meme markets enter the fast-market reachable set
+6. Add `tests/test_crypto_category_audit.py` for classification logic and report-shape coverage.
 
-## SUCCESS CRITERIA
-- Audit runs successfully against live Gamma API
-- All 8 tradeable markets classified
-- Recommendation generated: APPROVE if all btc_candle, ADD_SUBCATEGORY_FILTER if meme found
-- `make test` passes including new test
+## Deliverables
+- `scripts/crypto_category_audit.py`
+- `tests/test_crypto_category_audit.py`
+- Updated `reports/crypto_category_audit.json`
+
+## Verification
+- `python3 scripts/crypto_category_audit.py`
+- `python -m pytest tests/test_crypto_category_audit.py`
+
+## Constraints
+- Use concrete counts from the run you perform. Do not hardcode the earlier “8 markets” claim.
+- Keep the audit simple and deterministic. Keyword and pattern classification is fine.
+- Do not widen runtime category rules in this task; this task is evidence generation, not policy change.

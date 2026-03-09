@@ -1,42 +1,39 @@
-# CODEX TASK 08: Fix CLOB Minimum Order Size Logic
+# CODEX TASK 08: Prove the Low-Price CLOB Minimum-Order Behavior
 
-## MACHINE TRUTH (2026-03-09)
-- VPS log: "SKIP (3.85 shares / $0.50 below live min 38.47 shares / $5.00)"
-- The $0.50 position came from .env override (will be fixed by Task 01/07)
-- BUT: even with $5.00 position, at price=0.13, that's only 38.5 shares
-- CLOB minimum: 5 shares AND $5 notional (whichever is larger)
-- At low prices (crypto candle NO tokens at $0.13), $5 notional = 38.5 shares
-- Kelly sizing at $247.51 bankroll with 0.25 fraction on 37% edge = ~$23
-- But MAX_POSITION_USD caps at $5, so effective position = $5
-- $5 at $0.13 = 38.5 shares, which passes the 5-share minimum but needs $5 notional
+## Working Context
+- Repo: `/Users/johnbradley/Desktop/Elastifund`
+- Read first: `README.md`, `docs/REPO_MAP.md`, `PROJECT_INSTRUCTIONS.md`
+- Preferred path ownership: `tests/test_clob_min_order.py`
+- Touch `bot/jj_live.py` only if the tests prove a real logic bug.
 
-## TASK
-1. Read `bot/jj_live.py` around the SKIP logic (search for "SKIP.*below live min")
-2. Trace the full order sizing path:
-   - Kelly calculation → cap at MAX_POSITION_USD → convert to shares → check vs CLOB min
-3. Verify that with paper_aggressive/live_aggressive settings:
-   - MAX_POSITION_USD = $5.00
-   - For a BTC candle NO token at price $0.13: shares = $5.00 / $0.13 = 38.5
-   - CLOB min shares = 5.0, CLOB min notional = $5.00
-   - $5.00 / $0.13 = 38.5 shares → passes both minimums → SHOULD NOT SKIP
-4. If the logic is wrong (comparing against wrong minimum), fix it
-5. If the logic is right but the position was $0.50 (the .env bug), confirm that Task 01/07 fix resolves this
-6. Add a test specifically for low-price token order sizing:
-   - Test: price=$0.13, position=$5.00 → should NOT skip
-   - Test: price=$0.13, position=$0.50 → should skip (below $5 notional)
-   - Test: price=$0.90, position=$5.00 → should NOT skip (5.6 shares, $5 notional)
+## Machine Truth (March 9, 2026)
+- `bot/jj_live.py` already defines `_CLOB_HARD_MIN_SHARES = 5.0`, `_CLOB_HARD_MIN_NOTIONAL_USD = 5.0`, and `clob_min_order_size(price)` as `max(min_shares, 5 USD / price)`.
+- The live-order path around `bot/jj_live.py:3890` hard-skips orders below the live minimum.
+- The paper/shadow execution path around `bot/jj_live.py:6230` bumps undersized orders up to the minimum unless that bump would exceed `2x` `MAX_POSITION_USD`.
+- `reports/deploy_20260309T013604Z.json` recorded a skipped low-price order, but that same report also said the remote `.env` was still forcing `PAPER_TRADING=false` with stale override behavior. The first question is whether the skip was a real sizing bug or just the bad `$0.50` position cap from the remote env.
 
-## FILES
-- `bot/jj_live.py` (READ, possibly MODIFY if logic bug found)
-- `tests/test_clob_min_order.py` (CREATE)
+## Goal
+Write the missing edge-case tests first, then patch code only if the tests expose an actual mistake.
 
-## CONSTRAINTS
-- Do NOT change CLOB minimum constants (_CLOB_HARD_MIN_SHARES=5.0, _CLOB_HARD_MIN_NOTIONAL_USD=5.0)
-- Do NOT change Kelly sizing or MAX_POSITION_USD
-- `make test` must pass
+## Required Work
+1. Add a focused test file such as `tests/test_clob_min_order.py`.
+2. Cover at least these cases:
+   - `$5.00` at price `$0.13` should satisfy the `$5` notional minimum
+   - `$0.50` at price `$0.13` should fail
+   - `$5.00` at price `$0.90` should still satisfy the live minimum
+   - a bumped order that would exceed `2x MAX_POSITION_USD` should still be skipped in the paper/shadow path
+3. If the logic is already correct, leave production code alone and document through tests that the bad env override was the root cause.
+4. If you find a real bug, patch the smallest possible unit of logic in `bot/jj_live.py`.
 
-## SUCCESS CRITERIA
-- Clear documentation of the order sizing path for crypto candle tokens
-- Test cases cover edge cases at various price points
-- Confirmed: with live_aggressive profile ($5 position), orders will NOT skip
-- `make test` passes
+## Deliverables
+- `tests/test_clob_min_order.py`
+- A code change in `bot/jj_live.py` only if the tests prove one is needed
+
+## Verification
+- `python -m pytest tests/test_clob_min_order.py`
+
+## Constraints
+- Do not change `_CLOB_HARD_MIN_SHARES`.
+- Do not change `_CLOB_HARD_MIN_NOTIONAL_USD`.
+- Do not change Kelly sizing or `MAX_POSITION_USD`.
+- Prefer pure-function and small helper tests over a full end-to-end JJ cycle unless you truly need the larger harness.

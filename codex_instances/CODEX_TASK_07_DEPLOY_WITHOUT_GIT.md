@@ -1,80 +1,58 @@
-# CODEX TASK 07: Fix deploy.sh for Complete VPS Deployment
+# CODEX TASK 07: Upgrade `scripts/deploy.sh` for Real VPS-Without-Git Deploys
 
-## MACHINE TRUTH (2026-03-09)
-- VPS has NO git repo — deployed via scp only (scripts/deploy.sh)
-- deploy.sh syncs bot/*.py, config/, polymarket-bot/src/ to VPS
-- Missing from deploy manifest: live_aggressive.json, data/wallet_scores.db
-- deploy.sh needs --clean-env flag to strip .env overrides on VPS
-- deploy.sh needs --profile flag to set JJ_RUNTIME_PROFILE on VPS
-- VPS connection: ssh -i $LIGHTSAIL_KEY ubuntu@52.208.155.0
-- BOT_DIR on VPS: /home/ubuntu/polymarket-trading-bot
-- Systemd PYTHONPATH: /home/ubuntu/polymarket-trading-bot:/home/ubuntu/polymarket-trading-bot/bot:/home/ubuntu/polymarket-trading-bot/polymarket-bot
+## Working Context
+- Repo: `/Users/johnbradley/Desktop/Elastifund`
+- Read first: `README.md`, `docs/REPO_MAP.md`, `PROJECT_INSTRUCTIONS.md`
+- Path ownership for this task: `scripts/deploy.sh`, `tests/test_deploy_script.py`
+- This task owns deploy-script integration for Tasks 01, 05, and 06.
 
-## TASK
-Update `scripts/deploy.sh` to be a complete, one-command deployment:
+## Machine Truth (March 9, 2026)
+- The VPS deploy target is a file-copy install, not a git checkout.
+- `scripts/deploy.sh` currently syncs `bot/*.py`, runtime profile JSON files, and a thin slice of `polymarket-bot/src/`.
+- It does **not** support `--clean-env`, `--profile`, or `--restart`.
+- It does **not** currently sync wallet-flow bootstrap artifacts such as `data/smart_wallets.json` and `data/wallet_scores.db`.
+- It also does not sync the deeper `polymarket-bot/src/core/` files that `src.telegram` depends on.
+- `reports/deploy_20260309T013604Z.json` showed three concrete deploy-time problems:
+  - remote mode contract absent from `.env`
+  - wallet-flow bootstrap missing on the VPS
+  - cross-platform/Telegram-adjacent runtime issues visible only after deploy
 
-1. **Add --clean-env flag:**
-   When passed, after syncing files:
-   ```bash
-   ssh $VPS "cd $BOT_DIR && cp .env .env.backup.\$(date +%s) && \
-     grep -iE '(KEY|SECRET|TOKEN|PASSPHRASE|PK|ADDRESS|TELEGRAM|PRIVATE|FUNDER|PROXY|API_KEY)' .env > .env.clean && \
-     echo 'JJ_RUNTIME_PROFILE=${PROFILE_NAME}' >> .env.clean && \
-     mv .env.clean .env"
-   ```
+## Goal
+Turn `scripts/deploy.sh` into a complete, backward-compatible one-command deploy for the scp-only VPS.
 
-2. **Add --profile flag:**
-   Default: `live_aggressive`. Sets JJ_RUNTIME_PROFILE in the cleaned .env.
+## Required Work
+1. Add shell flag parsing for:
+   - `--clean-env`
+   - `--profile <name>` with default `live_aggressive`
+   - `--restart`
+   - keep the existing positional VPS target override working
+2. Integrate Task 01’s `scripts/clean_env_for_profile.sh` on the remote host when `--clean-env` is passed.
+3. Sync the full runtime-profile contract:
+   - prefer globbing `config/runtime_profiles/*.json` over a hardcoded list
+4. Sync all runtime files needed for Telegram and health monitoring:
+   - at minimum, the `polymarket-bot/src/core/` modules required by `src.telegram`
+5. Sync wallet-flow bootstrap artifacts if they exist locally:
+   - `data/smart_wallets.json`
+   - `data/wallet_scores.db`
+6. Never overwrite remote `jj_state.json`.
+7. Add post-deploy verification that prints:
+   - selected runtime profile
+   - YES/NO thresholds
+   - execution mode and paper/live flags
+   - crypto category priority
+   - wallet-flow bootstrap readiness if feasible
+8. If `--restart` is passed, restart `jj-live.service` and show recent log lines.
 
-3. **Add all runtime profiles to CONFIG_FILES:**
-   Currently missing: live_aggressive.json. Add it. Or better: glob all *.json in config/runtime_profiles/.
+## Deliverables
+- Updated `scripts/deploy.sh`
+- Updated `tests/test_deploy_script.py`
 
-4. **Add data file deployment:**
-   If `data/wallet_scores.db` exists locally, scp it to VPS.
-   If `data/jj_state.json` exists locally and is newer, offer to sync (but DON'T overwrite by default — VPS state is authoritative).
+## Verification
+- `bash -n scripts/deploy.sh`
+- `python -m pytest tests/test_deploy_script.py`
 
-5. **Add post-deploy verification:**
-   ```bash
-   ssh $VPS "cd $BOT_DIR && source venv/bin/activate && \
-     PYTHONPATH=$REMOTE_PYTHONPATH python3 -c \"
-       from config.runtime_profile import load_runtime_profile
-       p = load_runtime_profile()
-       print(f'Profile: {p.profile_name}')
-       print(f'YES threshold: {p.signal_thresholds.yes_threshold}')
-       print(f'NO threshold: {p.signal_thresholds.no_threshold}')
-       print(f'Paper: {p.mode.paper_trading}')
-       print(f'Order submission: {p.mode.allow_order_submission}')
-       print(f'Execution mode: {p.mode.execution_mode}')
-       print(f'Crypto priority: {p.market_filters.category_priorities.get(\"crypto\", \"MISSING\")}')
-     \""
-   ```
-
-6. **Add --restart flag:**
-   When passed, restart jj-live.service after deploy and show last 20 log lines.
-
-## USAGE AFTER FIX
-```bash
-# Full deploy + clean env + set live_aggressive + restart
-./scripts/deploy.sh --clean-env --profile live_aggressive --restart
-
-# Just sync code, don't touch env or restart
-./scripts/deploy.sh
-
-# Deploy with paper mode
-./scripts/deploy.sh --clean-env --profile paper_aggressive --restart
-```
-
-## FILES
-- `scripts/deploy.sh` (MODIFY)
-
-## CONSTRAINTS
-- Must remain backward compatible (no args = current behavior)
-- Must NOT deploy .env, only modify it on VPS via --clean-env
-- Must NOT overwrite jj_state.json on VPS (VPS state is authoritative)
-- Must handle SSH key at $LIGHTSAIL_KEY or ~/.ssh/lightsail.pem
-- `bash -n scripts/deploy.sh` must pass (syntax check)
-- `make test` must pass
-
-## SUCCESS CRITERIA
-- `./scripts/deploy.sh --clean-env --profile live_aggressive --restart` works end-to-end
-- Post-deploy verification shows correct profile values
-- Service restarts and logs show new profile active
+## Constraints
+- Backward compatibility matters: no-arg behavior should stay equivalent to today’s sync-only deploy.
+- Do not deploy `.env` from local disk.
+- Do not overwrite remote runtime state files like `jj_state.json`.
+- Do not SSH manually outside what the deploy script itself does.

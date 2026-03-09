@@ -1,55 +1,40 @@
-# CODEX TASK 05: Service Health Monitoring + Daily Summary
+# CODEX TASK 05: Finish the Health-Monitoring Runtime Surface
 
-## MACHINE TRUTH (2026-03-09)
-- Bot ran 314 cycles producing nothing — nobody noticed for hours
-- Telegram module exists but "not available" on VPS (import issue?)
-- Log: "Telegram module not available — notifications disabled"
-- No heartbeat check — service can silently fail
-- No daily summary of activity
+## Working Context
+- Repo: `/Users/johnbradley/Desktop/Elastifund`
+- Read first: `README.md`, `docs/REPO_MAP.md`, `PROJECT_INSTRUCTIONS.md`
+- Path ownership for this task: `bot/health_monitor.py`, `scripts/install_jj_health_cron.sh`, `bot/polymarket_runtime.py`, `polymarket-bot/src/telegram.py`, and health-monitor tests
+- Do **not** edit `scripts/deploy.sh` here. Task 07 owns deploy packaging.
 
-## TASK
-1. **Fix Telegram import on VPS path:**
-   - Read `bot/jj_live.py` Telegram initialization section
-   - Read `bot/polymarket_runtime.py` and `polymarket-bot/src/telegram.py`
-   - Identify why TelegramBot/TelegramNotifier import fails
-   - Fix the import chain so Telegram works when TELEGRAM_TOKEN is set
-   - If TELEGRAM_TOKEN is missing, gracefully degrade (current behavior, but log clearly)
+## Machine Truth (March 9, 2026)
+- Heartbeat writing, stale-service checks, auto-restart handling, and daily summaries already exist in `bot/health_monitor.py`.
+- `JJLive` already writes startup and cycle heartbeats, and `scripts/install_jj_health_cron.sh` already installs the cron entrypoint.
+- The remaining ops gap is runtime reliability: prior VPS logs reported `Telegram module not available — notifications disabled`.
+- `bot/polymarket_runtime.py` lazy-loads `src.telegram`, and `polymarket-bot/src/telegram.py` imports `src.core.time_utils`, so the import chain is more fragile than the older prompt assumed.
 
-2. **Add heartbeat file:**
-   - After each cycle completes in jj_live.py, write `data/heartbeat.json`:
-     ```json
-     {"last_cycle": 316, "timestamp": "ISO", "signals_found": 1, "trades_placed": 0}
-     ```
-   - This is a 3-line addition to the cycle completion handler
+## Goal
+Do not re-implement heartbeat logic. Validate the existing health-monitor path and fix the remaining runtime issues so Telegram alerts and daily summaries work when credentials are present.
 
-3. **Create health check script:**
-   - `scripts/health_check.sh`:
-     - Reads `data/heartbeat.json`
-     - If timestamp > 10 minutes old: send Telegram alert (if configured) and exit 1
-     - If timestamp fresh: exit 0
-     - Designed to run as cron job every 5 minutes
+## Required Work
+1. Audit the current `bot.health_monitor` and Telegram import path end to end.
+2. Fix any code-level issue that prevents:
+   - `python -m bot.health_monitor` from constructing a sender in a non-async CLI context
+   - graceful fallback when Telegram credentials are missing
+3. Keep `scripts/install_jj_health_cron.sh` aligned with the canonical `python -m bot.health_monitor` entrypoint.
+4. Add or extend tests to cover:
+   - sender construction success
+   - graceful fallback when Telegram is unavailable or unconfigured
+   - daily summary formatting still working
 
-4. **Create daily summary script:**
-   - `scripts/daily_summary.py`:
-     - Reads jj_state.json for today's trades
-     - Reads data/heartbeat.json for cycle count
-     - Formats a summary: cycles, signals, trades, errors, P&L
-     - Sends via Telegram (or prints to stdout if no token)
-     - Designed to run as cron job at 00:00 UTC
+## Deliverables
+- Only the minimal runtime hardening needed in the owned files
+- Additional focused tests if current coverage misses the Telegram path
 
-## FILES
-- `bot/jj_live.py` (MODIFY — add heartbeat write after each cycle, fix Telegram import)
-- `scripts/health_check.sh` (CREATE)
-- `scripts/daily_summary.py` (CREATE)
-- `tests/test_health_monitoring.py` (CREATE)
+## Verification
+- `python -m pytest tests/test_health_monitor.py`
+- Run any new targeted test file you add
 
-## CONSTRAINTS
-- Heartbeat write must be fast (<1ms) — don't slow the cycle
-- Health check must work without Python (pure bash + jq)
-- Daily summary must work without Telegram (fallback to stdout)
-- `make test` must pass
-
-## DO NOT
-- Install new monitoring frameworks (Prometheus, Grafana, etc.)
-- Create new systemd services — use cron
-- Change the main cycle timing or logic
+## Constraints
+- Do not create duplicate wrappers like `scripts/health_check.sh` or `scripts/daily_summary.py`; the canonical implementation is already in `bot/health_monitor.py`.
+- Do not add Prometheus, Grafana, or new services.
+- Keep the feature set bash/cron friendly and VPS friendly.

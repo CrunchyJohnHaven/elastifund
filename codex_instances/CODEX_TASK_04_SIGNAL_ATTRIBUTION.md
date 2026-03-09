@@ -1,41 +1,40 @@
-# CODEX TASK 04: Signal Source Attribution Tracking
+# CODEX TASK 04: Harden Signal Attribution and Fix Cross-Platform Async Reentrancy
 
-## MACHINE TRUTH (2026-03-09)
-- 6 signal sources: LLM (#1), wallet flow (#2), LMSR (#3), cross-platform arb (#4), VPIN/OFI (#5), lead-lag (#6)
-- Wallet flow: 80 scored wallets, ready but paused — will activate with crypto unlocked
-- VPS log showed: "No smart wallet scores found. Run --build-scores first."
-- Cross-platform arb crashed: "asyncio.run() cannot be called from a running event loop"
-- Need per-source tracking to evaluate which signals produce profitable trades
+## Working Context
+- Repo: `/Users/johnbradley/Desktop/Elastifund`
+- Read first: `README.md`, `docs/REPO_MAP.md`, `PROJECT_INSTRUCTIONS.md`
+- Preferred path ownership: `bot/cross_platform_arb.py`, `scripts/run_signal_source_audit.py`, `tests/test_signal_source_audit.py`, and a focused arb async regression test
+- Touch `bot/jj_live.py` only if a minimal call-site change is required.
 
-## TASK
-1. Read `bot/jj_live.py` signal collection section (search for "SIGNAL:" log entries, around lines 3600-4200)
-2. Verify that paper/live trade logs in `jj_state.json` include the signal source
-3. If signal source is NOT already tracked per trade, add it:
-   - Each trade entry in jj_state.json should include `"signal_sources": ["llm", "wallet_flow"]`
-   - Each trade should also include `"signal_metadata": {"llm_prob": 0.65, "wallet_consensus": 0.72}`
-4. Create `scripts/signal_attribution_report.py`:
-   - Reads jj_state.json (or jj_trades.db)
-   - Groups trades by signal source
-   - Calculates per-source: count, win rate, avg edge, total P&L
-   - Outputs `reports/signal_attribution.json`
-5. Fix the asyncio bug in cross-platform arb:
-   - `bot/jj_live.py` line ~4174: `asyncio.run()` called inside async context
-   - Fix: use `await` instead, or `asyncio.get_event_loop().run_until_complete()`
-   - Or: wrap in `nest_asyncio` if the loop is already running
+## Machine Truth (March 9, 2026)
+- Signal attribution is already partially landed. `bot/jj_live.py` persists `source`, `source_combo`, `source_components`, and `source_count`, and `scripts/run_signal_source_audit.py` plus `tests/test_signal_source_audit.py` already exist.
+- `reports/signal_source_audit.json` confirms the current attribution contract is present in both `jj_state.json` and `data/jj_trades.db`.
+- `reports/deploy_20260309T013604Z.json` captured a non-fatal cross-platform arb asyncio warning on the VPS.
+- The current `bot/cross_platform_arb.py:get_signals_for_engine()` still uses `run_until_complete()` with an `asyncio.run()` fallback, which is not safe when called from `JJLive.run_cycle()` inside an already-running event loop.
 
-## FILES
-- `bot/jj_live.py` (MODIFY — add signal_sources to trade records if missing, fix asyncio bug)
-- `scripts/signal_attribution_report.py` (CREATE)
-- `tests/test_signal_attribution.py` (CREATE)
+## Goal
+Preserve the existing attribution schema, then fix the cross-platform arb event-loop boundary so the lane can run cleanly inside the live bot.
 
-## CONSTRAINTS
-- Do NOT change signal logic — only add tracking metadata
-- Do NOT break existing jj_state.json format (add fields, don't rename/remove)
-- The asyncio fix must not break the main event loop
-- `make test` must pass
+## Required Work
+1. Audit the current attribution contract before changing anything.
+2. Do not invent a second schema such as `signal_sources` if the current `source` / `source_combo` / `source_components` contract is already sufficient.
+3. Fix the async boundary in `bot/cross_platform_arb.py`:
+   - provide an async-safe entrypoint for `JJLive`
+   - keep the synchronous CLI path working
+4. If needed, make the smallest possible `bot/jj_live.py` call-site change to use the async-safe entrypoint.
+5. Extend `scripts/run_signal_source_audit.py` only if a useful missing metric is obvious.
+6. Add a focused regression test that exercises cross-platform signal retrieval from inside a running event loop.
 
-## SUCCESS CRITERIA
-- Trade records include signal source attribution
-- Attribution report script works on sample data
-- asyncio error in cross-platform arb fixed
-- `make test` passes
+## Deliverables
+- Minimal code fix for the arb async boundary
+- Updated attribution audit only if needed
+- A regression test proving the nested-event-loop failure is gone
+
+## Verification
+- `python -m pytest tests/test_signal_source_audit.py`
+- `python -m pytest bot/tests/test_cross_platform_arb.py` or a new focused test file if you add one
+
+## Constraints
+- Do not change signal-generation logic or thresholds.
+- Do not rename or remove the existing attribution fields.
+- Keep the output format of `reports/signal_source_audit.json` backward compatible unless there is a strong reason not to.

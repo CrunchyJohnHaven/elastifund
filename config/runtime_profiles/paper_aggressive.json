@@ -4,7 +4,7 @@
   "mode": {
     "execution_mode": "shadow",
     "paper_trading": true,
-    "allow_order_submission": false,
+    "allow_order_submission": true,
     "launch_gate": "none"
   },
   "feature_flags": {
