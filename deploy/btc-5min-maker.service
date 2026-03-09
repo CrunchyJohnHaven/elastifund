@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/polymarket-trading-bot
-Environment="PYTHONPATH=/home/ubuntu/polymarket-trading-bot:/home/ubuntu/polymarket-trading-bot/bot:/home/ubuntu/polymarket-trading-bot/polymarket-bot" "BTC5_MAX_ABS_DELTA=0.00015" "BTC5_UP_MAX_BUY_PRICE=0.51" "BTC5_DOWN_MAX_BUY_PRICE=0.50"
+Environment="PYTHONPATH=/home/ubuntu/polymarket-trading-bot:/home/ubuntu/polymarket-trading-bot/bot:/home/ubuntu/polymarket-trading-bot/polymarket-bot" "BTC5_MAX_ABS_DELTA=0.00015" "BTC5_UP_MAX_BUY_PRICE=0.51" "BTC5_DOWN_MAX_BUY_PRICE=0.51"
 EnvironmentFile=/home/ubuntu/polymarket-trading-bot/.env
 ExecStart=/usr/bin/python3 bot/btc_5min_maker.py --continuous --live --verbose
 Restart=on-failure

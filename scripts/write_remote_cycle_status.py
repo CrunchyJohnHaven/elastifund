@@ -14,7 +14,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -748,6 +748,66 @@ def _merge_btc5_maker_observation(
     )
 
 
+def _refresh_remote_observation_cadence(
+    status: dict[str, Any],
+    *,
+    service: dict[str, Any],
+    polymarket_wallet: dict[str, Any],
+    btc5_maker: dict[str, Any],
+) -> None:
+    cadence = status.setdefault("data_cadence", {})
+    runtime = status.setdefault("runtime", {})
+
+    freshest_candidates: list[tuple[str, datetime]] = []
+    baseline = _parse_datetime_like(
+        runtime.get("last_remote_pull_at") or cadence.get("last_remote_pull_at")
+    )
+    if baseline is not None:
+        freshest_candidates.append(("intel_snapshot", baseline))
+
+    service_checked_at = _parse_datetime_like(service.get("checked_at"))
+    if service_checked_at is not None and service.get("status") in {"running", "stopped"}:
+        freshest_candidates.append(("service_probe", service_checked_at))
+
+    wallet_checked_at = _parse_datetime_like(polymarket_wallet.get("checked_at"))
+    if wallet_checked_at is not None and polymarket_wallet.get("status") == "ok":
+        freshest_candidates.append(("polymarket_wallet_probe", wallet_checked_at))
+
+    btc5_checked_at = _parse_datetime_like(btc5_maker.get("checked_at"))
+    if btc5_checked_at is not None and btc5_maker.get("status") == "ok":
+        freshest_candidates.append(("btc5_maker_probe", btc5_checked_at))
+
+    if not freshest_candidates:
+        return
+
+    freshest_timestamp = max(timestamp for _, timestamp in freshest_candidates)
+    freshest_sources = [
+        source for source, timestamp in freshest_candidates if timestamp == freshest_timestamp
+    ]
+
+    freshness_sla_minutes = int(cadence.get("freshness_sla_minutes") or 45)
+    pull_cadence_minutes = int(cadence.get("pull_cadence_minutes") or 30)
+    data_age_minutes = round(
+        max(0.0, (datetime.now(timezone.utc) - freshest_timestamp).total_seconds()) / 60.0,
+        1,
+    )
+    freshest_iso = freshest_timestamp.isoformat()
+
+    runtime["last_remote_pull_at"] = freshest_iso
+    cadence.update(
+        {
+            "last_remote_pull_at": freshest_iso,
+            "next_expected_pull_at": (
+                freshest_timestamp + timedelta(minutes=pull_cadence_minutes)
+            ).isoformat(),
+            "data_age_minutes": data_age_minutes,
+            "stale": bool(data_age_minutes > freshness_sla_minutes),
+            "freshness_basis": "remote_observation",
+            "freshness_sources": freshest_sources,
+        }
+    )
+
+
 def build_remote_cycle_status(
     root: Path,
     *,
@@ -779,6 +839,12 @@ def build_remote_cycle_status(
     btc5_maker = _load_btc5_maker_state(repo_root)
     _merge_polymarket_wallet_observation(status, polymarket_wallet)
     _merge_btc5_maker_observation(status, btc5_maker)
+    _refresh_remote_observation_cadence(
+        status,
+        service=service,
+        polymarket_wallet=polymarket_wallet,
+        btc5_maker=btc5_maker,
+    )
 
     arb_payload = _load_json(
         _resolve_path(repo_root, arb_status_path or DEFAULT_ARB_STATUS_PATH),

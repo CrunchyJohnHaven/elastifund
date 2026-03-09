@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import json
 import os
 import sqlite3
@@ -166,6 +167,98 @@ def test_build_remote_cycle_status_includes_btc5_maker_observation(tmp_path: Pat
     assert status["runtime"]["btc5_live_filled_rows"] == 2
     assert status["runtime"]["btc5_latest_order_status"] == "live_filled"
     assert status["runtime"]["btc5_latest_trade_pnl_usd"] == -5.0
+
+
+def test_build_remote_cycle_status_refreshes_data_cadence_from_live_observations(
+    tmp_path: Path,
+    monkeypatch,
+):
+    _write_base_remote_state(tmp_path)
+    fresh_now = datetime.now(timezone.utc).replace(microsecond=0)
+    _write_json(
+        tmp_path / "reports" / "remote_service_status.json",
+        {
+            "checked_at": (fresh_now - timedelta(minutes=1)).isoformat(),
+            "status": "stopped",
+            "systemctl_state": "inactive",
+            "detail": "inactive",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "root_test_status.json",
+        {
+            "checked_at": fresh_now.isoformat(),
+            "command": "make test",
+            "status": "passing",
+            "summary": "12 passed",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "arb_empirical_snapshot.json",
+        {
+            "gating_metrics": {
+                "all_gates_pass": False,
+                "fill_probability_gate": "insufficient_data",
+                "half_life_gate": "fail",
+                "half_life_seconds": 0.0,
+                "settlement_path_gate": "untested",
+            },
+            "b1": {},
+        },
+    )
+    _write_btc5_db(
+        tmp_path / "data" / "btc_5min_maker.db",
+        [
+            {
+                "window_start_ts": 1773061200,
+                "window_end_ts": 1773061500,
+                "slug": "btc-updown-5m-1773061200",
+                "decision_ts": 1773061499,
+                "direction": "UP",
+                "order_price": 0.49,
+                "trade_size_usd": 5.0,
+                "order_status": "live_filled",
+                "filled": 1,
+                "pnl_usd": 5.2071,
+                "created_at": fresh_now.isoformat(),
+                "updated_at": fresh_now.isoformat(),
+            },
+        ],
+    )
+
+    monkeypatch.setattr(
+        "scripts.write_remote_cycle_status._load_polymarket_wallet_state",
+        lambda root: {
+            "status": "ok",
+            "checked_at": fresh_now.isoformat(),
+            "maker_address": "0xabc",
+            "signature_type": 1,
+            "free_collateral_usd": 12.34,
+            "reserved_order_usd": 0.0,
+            "live_orders_count": 0,
+            "live_orders": [],
+            "open_positions_count": 1,
+            "positions_initial_value_usd": 5.0,
+            "positions_current_value_usd": 5.5,
+            "positions_unrealized_pnl_usd": 0.5,
+            "closed_positions_count": 1,
+            "closed_positions_realized_pnl_usd": 1.25,
+            "total_wallet_value_usd": 17.84,
+            "warnings": [],
+        },
+    )
+
+    status = build_remote_cycle_status(tmp_path)
+
+    refreshed_at = datetime.fromisoformat(status["runtime"]["last_remote_pull_at"])
+    assert refreshed_at >= fresh_now
+    assert status["data_cadence"]["last_remote_pull_at"] == status["runtime"]["last_remote_pull_at"]
+    assert status["data_cadence"]["stale"] is False
+    assert status["data_cadence"]["freshness_basis"] == "remote_observation"
+    assert any(
+        source in status["data_cadence"]["freshness_sources"]
+        for source in ("polymarket_wallet_probe", "btc5_maker_probe")
+    )
 
 
 def test_build_remote_cycle_status_prefers_remote_btc5_probe(tmp_path: Path, monkeypatch):
