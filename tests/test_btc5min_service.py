@@ -36,7 +36,7 @@ def test_execstart_targets_btc_5min_maker_entrypoint() -> None:
     parser = _load_service()
     exec_start = parser.get("Service", "ExecStart")
 
-    assert "venv/bin/python3" in exec_start
+    assert "/usr/bin/python3" in exec_start
     assert "bot/btc_5min_maker.py" in exec_start
     assert "--continuous" in exec_start
     assert "--live" in exec_start

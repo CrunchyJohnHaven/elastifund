@@ -155,6 +155,14 @@ class TestOFICalculator:
         assert result is not None
         assert calc.should_kill(result)
 
+    def test_default_skew_threshold_tolerates_rest_book_imbalance(self):
+        calc = OFICalculator()
+        calc.update("t1", self._make_book("t1", [(0.50, 1000), (0.49, 500)], [(0.52, 120), (0.53, 80)]))
+        result = calc.update("t1", self._make_book("t1", [(0.50, 1000), (0.49, 500)], [(0.52, 120), (0.53, 80)]))
+        assert result is not None
+        assert result.directional_skew > 0.85
+        assert not calc.should_kill(result)
+
     def test_no_kill_on_balanced_book(self):
         calc = OFICalculator()
         calc.update("t1", self._make_book("t1", [(0.50, 100)], [(0.52, 100)]))

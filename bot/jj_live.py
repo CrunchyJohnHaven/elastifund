@@ -349,6 +349,11 @@ except ImportError:
         OrderFillEvent = None
 
 try:
+    from execution.shadow_order_lifecycle import ShadowOrderLifecycle
+except Exception:
+    ShadowOrderLifecycle = None
+
+try:
     from bot.position_merger import (
         LivePositionMerger,
         NodePolyMergerExecutor,
@@ -2953,6 +2958,24 @@ class JJLive:
         self.pm_campaign_decision_log_path = PM_CAMPAIGN_DECISION_LOG_PATH
         self.pm_campaign_decision_log_path.parent.mkdir(parents=True, exist_ok=True)
         self._pm_campaign_recent_decisions: list[dict[str, Any]] = []
+        self.enforce_runtime_truth_guard = True
+        self.runtime_truth_guard = self._evaluate_runtime_truth_guard()
+        if not self.runtime_truth_guard.get("greenlight", False):
+            if self.allow_order_submission:
+                logger.warning(
+                    "Runtime truth guard blocked order submission: %s",
+                    self.runtime_truth_guard.get("reason", "runtime_truth_not_green"),
+                )
+            self.allow_order_submission = False
+        self.shadow_order_lifecycle = (
+            ShadowOrderLifecycle(
+                ttl_seconds=_float_env("JJ_SHADOW_ORDER_TTL_SECONDS", "120"),
+                expected_fill_window_seconds=_float_env("JJ_SHADOW_EXPECTED_FILL_WINDOW_SECONDS", "30"),
+                markout_windows_seconds=(5, 30, 120),
+            )
+            if ShadowOrderLifecycle is not None
+            else None
+        )
         self.state = JJState()
         self.heartbeat_writer = HeartbeatWriter()
         self.scanner = MarketScanner()
@@ -3106,6 +3129,8 @@ class JJLive:
                     vpin_window_size=int(os.environ.get("JJ_VPIN_WINDOW", "10")),
                     vpin_toxic_threshold=float(os.environ.get("JJ_VPIN_TOXIC_THRESHOLD", "0.75")),
                     vpin_safe_threshold=float(os.environ.get("JJ_VPIN_SAFE_THRESHOLD", "0.25")),
+                    ofi_skew_threshold=float(os.environ.get("JJ_OFI_SKEW_THRESHOLD", "0.90")),
+                    ofi_ratio_threshold=float(os.environ.get("JJ_OFI_ZSCORE_THRESHOLD", "3.0")),
                     on_regime_change=self._on_regime_change,
                     on_ofi_update=self._on_ofi_update,
                     on_ofi_alert=self._on_ofi_alert,
@@ -3394,6 +3419,135 @@ class JJLive:
 
     def _mode_tag(self) -> str:
         return str(getattr(self, "runtime_mode", "paper" if getattr(self, "paper_mode", True) else "live")).upper()
+
+    @staticmethod
+    def _read_json_file(path: Path) -> dict[str, Any]:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            return payload if isinstance(payload, dict) else {}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _extract_launch_posture(runtime_truth: Mapping[str, Any]) -> str:
+        summary = runtime_truth.get("summary")
+        if isinstance(summary, Mapping):
+            launch_posture = str(summary.get("launch_posture", "") or "").strip().lower()
+            if launch_posture:
+                return launch_posture
+        launch = runtime_truth.get("launch")
+        if isinstance(launch, Mapping):
+            launch_posture = str(launch.get("posture", "") or "").strip().lower()
+            if launch_posture:
+                return launch_posture
+        return str(runtime_truth.get("launch_posture", "") or "").strip().lower()
+
+    def _evaluate_runtime_truth_guard(self) -> dict[str, Any]:
+        runtime_truth_path = Path(
+            os.environ.get("JJ_RUNTIME_TRUTH_PATH", "reports/runtime_truth_latest.json")
+        ).expanduser()
+        runtime_profile_path = Path(
+            os.environ.get("JJ_RUNTIME_PROFILE_EFFECTIVE_PATH", "reports/runtime_profile_effective.json")
+        ).expanduser()
+        runtime_truth = self._read_json_file(runtime_truth_path)
+        runtime_profile = self._read_json_file(runtime_profile_path)
+        mode_payload = runtime_profile.get("mode") if isinstance(runtime_profile.get("mode"), Mapping) else {}
+
+        launch_posture = self._extract_launch_posture(runtime_truth)
+        paper_trading = mode_payload.get("paper_trading")
+        if paper_trading is None:
+            paper_trading = _bool_env("PAPER_TRADING", True)
+        else:
+            paper_trading = bool(paper_trading)
+
+        order_submit_enabled = mode_payload.get("allow_order_submission")
+        if order_submit_enabled is None:
+            order_submit_enabled = _bool_env("JJ_ALLOW_ORDER_SUBMISSION", False)
+        else:
+            order_submit_enabled = bool(order_submit_enabled)
+
+        agent_run_mode = str(
+            os.environ.get("ELASTIFUND_AGENT_RUN_MODE")
+            or runtime_truth.get("agent_run_mode")
+            or runtime_profile.get("agent_run_mode")
+            or ""
+        ).strip().lower()
+
+        posture_green = launch_posture in {"clear", "green", "unblocked"}
+        paper_green = paper_trading is False
+        mode_green = agent_run_mode in {"micro_live", "live"}
+        submit_green = order_submit_enabled is True
+        greenlight = posture_green and paper_green and mode_green and submit_green
+
+        reasons: list[str] = []
+        if not posture_green:
+            reasons.append(f"launch_posture={launch_posture or 'unknown'}")
+        if not paper_green:
+            reasons.append(f"paper_trading={paper_trading}")
+        if not mode_green:
+            reasons.append(f"agent_run_mode={agent_run_mode or 'unknown'}")
+        if not submit_green:
+            reasons.append(f"order_submit_enabled={order_submit_enabled}")
+
+        return {
+            "greenlight": greenlight,
+            "reason": ",".join(reasons) if reasons else "green",
+            "runtime_truth_path": str(runtime_truth_path),
+            "runtime_profile_path": str(runtime_profile_path),
+            "launch_posture": launch_posture or "unknown",
+            "paper_trading": paper_trading,
+            "agent_run_mode": agent_run_mode or "unknown",
+            "order_submit_enabled": order_submit_enabled,
+        }
+
+    def _refresh_runtime_truth_guard(self) -> None:
+        if not bool(getattr(self, "enforce_runtime_truth_guard", False)):
+            return
+        guard = self._evaluate_runtime_truth_guard()
+        self.runtime_truth_guard = guard
+        if not guard.get("greenlight", False):
+            self.allow_order_submission = False
+
+    def _log_shadow_order_only(
+        self,
+        *,
+        signal: Mapping[str, Any],
+        market_id: str,
+        side: str,
+        reference_price: float,
+        size_usd: float,
+        reason: str,
+    ) -> None:
+        shadow_lifecycle = getattr(self, "shadow_order_lifecycle", None)
+        if shadow_lifecycle is None:
+            return
+        order = shadow_lifecycle.place_synthetic_order(
+            market_id=market_id,
+            side=side,
+            reference_price=float(reference_price),
+            size_usd=float(size_usd),
+            expected_fill_probability=_safe_float(signal.get("expected_maker_fill_probability"), 0.5),
+            expected_fill_window_seconds=_safe_float(signal.get("expected_fill_window_seconds"), 30.0),
+            metadata={
+                "source": signal.get("source_combo", signal.get("source", "unknown")),
+                "question": str(signal.get("question", "") or "")[:200],
+                "reason": reason,
+                "edge": _safe_float(signal.get("edge"), 0.0),
+                "toxicity_state": signal.get("toxicity_state"),
+                "route_score": _safe_float(signal.get("route_score"), None),
+            },
+        )
+        if order is None:
+            return
+        logger.info(
+            "  SHADOW ORDER LOGGED: %s market=%s side=%s size=$%.2f ttl=%ss reason=%s",
+            order.order_id,
+            order.market_id[:16],
+            order.side,
+            order.size_usd,
+            int(order.ttl_seconds),
+            reason,
+        )
 
     def _llm_lane_enabled(self) -> bool:
         return bool(self.enable_llm_signals) and not bool(self.fast_flow_only)
@@ -4272,6 +4426,14 @@ class JJLive:
             },
         ):
             if not getattr(self, "allow_order_submission", True):
+                self._log_shadow_order_only(
+                    signal=signal,
+                    market_id=market_id,
+                    side=str(signal.get("direction", "") or "").lower(),
+                    reference_price=order_price,
+                    size_usd=size_usd,
+                    reason=str(getattr(self, "runtime_truth_guard", {}).get("reason", "runtime_blocked")),
+                )
                 logger.info(
                     "  SKIP order submission blocked by runtime mode (%s): %s",
                     getattr(self, "runtime_mode", "unknown"),
@@ -5532,6 +5694,10 @@ class JJLive:
             extra=ecs_extra(strategy="jj_live", cycle=cycle_num, paper_mode=self.paper_mode),
         )
         self._write_cycle_started_heartbeat(cycle_num)
+        self._refresh_runtime_truth_guard()
+        shadow_lifecycle = getattr(self, "shadow_order_lifecycle", None)
+        if shadow_lifecycle is not None:
+            shadow_lifecycle.expire()
 
         # Sync resolved positions: remove closed trades from state to free
         # position slots.  Without this, open_positions grows forever and
@@ -5864,6 +6030,14 @@ class JJLive:
             for token_id in metadata.get("token_ids", []):
                 if token_id:
                     self._elastic_token_market_index[str(token_id)] = str(market_id)
+        shadow_lifecycle = getattr(self, "shadow_order_lifecycle", None)
+        if shadow_lifecycle is not None and self._elastic_market_lookup:
+            shadow_lifecycle.record_markouts(
+                market_prices={
+                    str(market_id): _safe_float(metadata.get("yes_price"), 0.5)
+                    for market_id, metadata in self._elastic_market_lookup.items()
+                }
+            )
 
         # Register actionable market tokens with the trade stream
         if self.trade_stream:
@@ -6961,6 +7135,12 @@ class JJLive:
             "lane_health": lane_health,
             "elastic_ml": elastic_ml_snapshot,
             "combinatorial": combinatorial_cycle,
+            "runtime_truth_guard": dict(getattr(self, "runtime_truth_guard", {})),
+            "shadow_order_lifecycle": (
+                getattr(self, "shadow_order_lifecycle").to_report()
+                if getattr(self, "shadow_order_lifecycle", None) is not None
+                else {}
+            ),
             "elapsed_seconds": round(elapsed, 1),
         }
 
@@ -7674,6 +7854,9 @@ async def generate_daily_report():
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+TradingBot = JJLive
+
+
 def main():
     parser = argparse.ArgumentParser(description="JJ Live Trading System")
     parser.add_argument("--continuous", action="store_true",

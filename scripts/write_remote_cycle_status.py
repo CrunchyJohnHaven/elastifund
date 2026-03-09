@@ -17,6 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from bot.runtime_profile import load_runtime_profile as load_runtime_profile_bundle
+from bot.runtime_profile import write_effective_runtime_profile as write_runtime_profile_bundle
 from flywheel.status_report import build_remote_cycle_status as build_base_remote_cycle_status
 
 
@@ -30,6 +32,9 @@ DEFAULT_STATE_IMPROVEMENT_DIGEST_PATH = Path("reports/state_improvement_digest.m
 DEFAULT_SERVICE_STATUS_PATH = Path("reports/remote_service_status.json")
 DEFAULT_ROOT_TEST_STATUS_PATH = Path("reports/root_test_status.json")
 DEFAULT_ARB_STATUS_PATH = Path("reports/arb_empirical_snapshot.json")
+DEFAULT_ENV_PATH = Path(".env")
+DEFAULT_ENV_EXAMPLE_PATH = Path(".env.example")
+DEFAULT_RUNTIME_OPERATOR_OVERRIDES_PATH = Path("reports/runtime_operator_overrides.env")
 DEFAULT_RUNTIME_PROFILE_EFFECTIVE_PATH = Path("reports/runtime_profile_effective.json")
 DEFAULT_WALLET_SCORES_PATH = Path("data/smart_wallets.json")
 DEFAULT_WALLET_DB_PATH = Path("data/wallet_scores.db")
@@ -39,6 +44,26 @@ DEFAULT_ROOT_TEST_COMMAND = ("make", "test")
 RESULT_SUMMARY_RE = re.compile(
     r"\b\d+\s+(?:passed|failed|error|errors|skipped|xfailed|xpassed)\b",
     re.IGNORECASE,
+)
+RUNTIME_ENV_KEYS = (
+    "JJ_RUNTIME_PROFILE",
+    "ELASTIFUND_AGENT_RUN_MODE",
+    "PAPER_TRADING",
+    "JJ_ALLOW_ORDER_SUBMISSION",
+    "JJ_MAX_POSITION_USD",
+    "JJ_MAX_DAILY_LOSS_USD",
+    "JJ_MAX_OPEN_POSITIONS",
+    "JJ_KELLY_FRACTION",
+    "JJ_HOURLY_NOTIONAL_BUDGET_USD",
+    "JJ_MAX_RESOLUTION_HOURS",
+    "JJ_YES_THRESHOLD",
+    "JJ_NO_THRESHOLD",
+    "JJ_MIN_EDGE",
+    "ENABLE_LLM_SIGNALS",
+    "ENABLE_WALLET_FLOW",
+    "ENABLE_LMSR",
+    "ENABLE_CROSS_PLATFORM_ARB",
+    "JJ_FAST_FLOW_ONLY",
 )
 
 
@@ -382,6 +407,7 @@ def write_remote_cycle_status(
     """Write markdown and JSON status artifacts to disk."""
 
     repo_root = root.resolve()
+    runtime_profile_refresh = _prepare_local_runtime_profile_evidence(repo_root)
     root_test_status_target = _resolve_path(
         repo_root,
         root_test_status_path or DEFAULT_ROOT_TEST_STATUS_PATH,
@@ -422,6 +448,9 @@ def write_remote_cycle_status(
     )
     timestamp_suffix = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     runtime_truth_timestamped_target = repo_root / "reports" / f"runtime_truth_{timestamp_suffix}.json"
+    runtime_mode_reconciliation_target = (
+        repo_root / "reports" / f"runtime_mode_reconciliation_{timestamp_suffix}.md"
+    )
     state_improvement_timestamped_target = (
         repo_root / "reports" / f"state_improvement_{timestamp_suffix}.json"
     )
@@ -437,6 +466,7 @@ def write_remote_cycle_status(
             "state_improvement_latest_json": str(state_improvement_latest_target),
             "state_improvement_timestamped_json": str(state_improvement_timestamped_target),
             "state_improvement_digest_markdown": str(state_improvement_digest_target),
+            "runtime_mode_reconciliation_markdown": str(runtime_mode_reconciliation_target),
         }
     )
 
@@ -464,6 +494,18 @@ def write_remote_cycle_status(
             else {}
         ),
     )
+    runtime_mode_reconciliation = build_runtime_mode_reconciliation(
+        repo_root,
+        status=status,
+        runtime_truth_snapshot=runtime_truth_snapshot,
+        runtime_profile_refresh=runtime_profile_refresh,
+        runtime_mode_reconciliation_path=runtime_mode_reconciliation_target,
+    )
+    runtime_truth_snapshot = apply_runtime_mode_reconciliation(
+        runtime_truth_snapshot,
+        runtime_mode_reconciliation=runtime_mode_reconciliation,
+        runtime_mode_reconciliation_path=runtime_mode_reconciliation_target,
+    )
     public_runtime_snapshot = build_public_runtime_snapshot(runtime_truth_snapshot)
     state_improvement = dict(runtime_truth_snapshot.get("state_improvement") or {})
     state_improvement.setdefault("artifact", "state_improvement_report")
@@ -476,6 +518,7 @@ def write_remote_cycle_status(
     public_runtime_snapshot_target.parent.mkdir(parents=True, exist_ok=True)
     state_improvement_latest_target.parent.mkdir(parents=True, exist_ok=True)
     state_improvement_digest_target.parent.mkdir(parents=True, exist_ok=True)
+    runtime_mode_reconciliation_target.parent.mkdir(parents=True, exist_ok=True)
 
     markdown_target.write_text(render_remote_cycle_status_markdown(status))
     json_target.write_text(json.dumps(status, indent=2, sort_keys=True))
@@ -489,18 +532,504 @@ def write_remote_cycle_status(
     state_improvement_digest_target.write_text(
         _render_state_improvement_digest_markdown(state_improvement)
     )
+    runtime_mode_reconciliation_target.write_text(
+        render_runtime_mode_reconciliation_markdown(runtime_mode_reconciliation)
+    )
 
     return {
         "markdown": str(markdown_target),
         "json": str(json_target),
         "runtime_truth_latest": str(runtime_truth_latest_target),
         "runtime_truth_timestamped": str(runtime_truth_timestamped_target),
+        "runtime_mode_reconciliation_markdown": str(runtime_mode_reconciliation_target),
         "public_runtime_snapshot": str(public_runtime_snapshot_target),
         "state_improvement_latest": str(state_improvement_latest_target),
         "state_improvement_timestamped": str(state_improvement_timestamped_target),
         "state_improvement_digest": str(state_improvement_digest_target),
         "status": status,
     }
+
+
+def _prepare_local_runtime_profile_evidence(root: Path) -> dict[str, Any]:
+    local_env = _parse_env_file(root / DEFAULT_ENV_PATH)
+    env_example = _parse_env_file(root / DEFAULT_ENV_EXAMPLE_PATH)
+    operator_overrides = _parse_env_file(root / DEFAULT_RUNTIME_OPERATOR_OVERRIDES_PATH)
+    effective_path = root / DEFAULT_RUNTIME_PROFILE_EFFECTIVE_PATH
+    existing_effective = _load_json(effective_path, default={})
+
+    selected_profile = (
+        local_env.get("JJ_RUNTIME_PROFILE")
+        or env_example.get("JJ_RUNTIME_PROFILE")
+        or "blocked_safe"
+    )
+    merged_env = {"JJ_RUNTIME_PROFILE": selected_profile, **local_env, **operator_overrides}
+    bundle = load_runtime_profile_bundle(env=merged_env)
+
+    expected_payload = _profile_contract_payload(bundle.config)
+    existing_payload = _profile_contract_payload(existing_effective)
+    stale_fields = _mapping_diff(existing_payload, expected_payload)
+    refreshed = bool(local_env or operator_overrides)
+    if refreshed:
+        write_runtime_profile_bundle(
+            bundle,
+            output_path=effective_path,
+        )
+        existing_effective = _load_json(effective_path, default={})
+
+    return {
+        "bundle": bundle,
+        "effective_path": effective_path,
+        "existing_effective": existing_effective,
+        "env_example": env_example,
+        "local_env": local_env,
+        "operator_overrides": operator_overrides,
+        "merged_env": merged_env,
+        "refreshed": refreshed,
+        "stale_before_refresh": bool(stale_fields),
+        "stale_before_refresh_fields": stale_fields,
+    }
+
+
+def build_runtime_mode_reconciliation(
+    root: Path,
+    *,
+    status: dict[str, Any],
+    runtime_truth_snapshot: dict[str, Any],
+    runtime_profile_refresh: dict[str, Any],
+    runtime_mode_reconciliation_path: Path,
+) -> dict[str, Any]:
+    bundle = runtime_profile_refresh["bundle"]
+    effective_config = dict(bundle.config)
+    effective_mode = dict(effective_config.get("mode") or {})
+    effective_flags = dict(effective_config.get("feature_flags") or {})
+    risk_limits = dict(effective_config.get("risk_limits") or {})
+    signal_thresholds = dict(effective_config.get("signal_thresholds") or {})
+    market_filters = dict(effective_config.get("market_filters") or {})
+
+    deploy_evidence = _load_latest_deploy_evidence(root)
+    remote_values = dict(deploy_evidence.get("remote_values") or {})
+    remote_runtime_profile = (
+        remote_values.get("JJ_RUNTIME_PROFILE")
+        or deploy_evidence.get("remote_runtime_profile")
+        or bundle.selected_profile
+    )
+    agent_run_mode = (
+        remote_values.get("ELASTIFUND_AGENT_RUN_MODE")
+        or deploy_evidence.get("agent_run_mode")
+        or "unknown"
+    )
+    remote_paper_trading = _bool_or_none(
+        remote_values.get("PAPER_TRADING") or deploy_evidence.get("paper_trading")
+    )
+    paper_trading = (
+        remote_paper_trading
+        if remote_paper_trading is not None
+        else _bool_or_none(effective_mode.get("paper_trading"))
+    )
+    execution_mode = str(
+        effective_mode.get("effective_execution_mode")
+        or effective_mode.get("execution_mode")
+        or "unknown"
+    ).strip()
+    allow_order_submission = bool(effective_mode.get("allow_order_submission"))
+    service_state = str(
+        deploy_evidence.get("service_state")
+        or status.get("service", {}).get("status")
+        or "unknown"
+    ).strip()
+    process_state = str(deploy_evidence.get("process_state") or "unknown").strip()
+
+    launch_live_blocked = bool(status.get("launch", {}).get("live_launch_blocked"))
+    mode_ambiguity_fields: list[str] = []
+    if not remote_runtime_profile:
+        mode_ambiguity_fields.append("JJ_RUNTIME_PROFILE")
+    if not agent_run_mode or agent_run_mode == "unknown":
+        mode_ambiguity_fields.append("ELASTIFUND_AGENT_RUN_MODE")
+    if paper_trading is None:
+        mode_ambiguity_fields.append("PAPER_TRADING")
+    if not execution_mode or execution_mode == "unknown":
+        mode_ambiguity_fields.append("execution_mode")
+
+    mode_inconsistency_reasons: list[str] = []
+    if remote_runtime_profile and remote_runtime_profile != bundle.selected_profile:
+        mode_inconsistency_reasons.append(
+            f"remote JJ_RUNTIME_PROFILE={remote_runtime_profile} differs from local selected profile {bundle.selected_profile}"
+        )
+    if (
+        agent_run_mode
+        and agent_run_mode != "unknown"
+        and execution_mode
+        and execution_mode != "unknown"
+        and agent_run_mode != execution_mode
+    ):
+        mode_inconsistency_reasons.append(
+            f"remote ELASTIFUND_AGENT_RUN_MODE={agent_run_mode} differs from effective execution_mode={execution_mode}"
+        )
+    local_paper_trading = _bool_or_none(effective_mode.get("paper_trading"))
+    if (
+        remote_paper_trading is not None
+        and local_paper_trading is not None
+        and remote_paper_trading != local_paper_trading
+    ):
+        mode_inconsistency_reasons.append(
+            f"remote PAPER_TRADING={remote_paper_trading} differs from effective paper_trading={local_paper_trading}"
+        )
+    if service_state == "running" and launch_live_blocked and allow_order_submission:
+        mode_inconsistency_reasons.append(
+            "service_state=running while launch_posture=blocked and allow_order_submission=true"
+        )
+
+    launch_posture = (
+        "blocked"
+        if launch_live_blocked or mode_ambiguity_fields or mode_inconsistency_reasons
+        else "clear"
+    )
+    order_submit_enabled = bool(
+        allow_order_submission
+        and launch_posture != "blocked"
+        and not mode_ambiguity_fields
+        and not mode_inconsistency_reasons
+    )
+    restart_recommended = bool(
+        launch_posture != "blocked"
+        and status.get("launch", {}).get("fast_flow_restart_ready")
+        and service_state != "running"
+    )
+
+    jj_state = _load_json(root / "jj_state.json", default={})
+    remote_probe = dict(deploy_evidence.get("remote_probe") or {})
+    local_counts = {
+        "cycles_completed": int(status.get("runtime", {}).get("cycles_completed") or 0),
+        "total_trades": int(status.get("runtime", {}).get("total_trades") or 0),
+        "open_positions": int(status.get("runtime", {}).get("open_positions") or 0),
+        "deployed_capital_usd": float(status.get("capital", {}).get("deployed_capital_usd") or 0.0),
+    }
+    metric_drifts = {
+        "cycles_completed": _build_metric_drift(
+            {
+                "jj_state.json": _int_or_none(jj_state.get("cycles_completed")),
+                "data/intel_snapshot.json": _int_or_none(
+                    (_load_json(root / "data" / "intel_snapshot.json", default={}) or {}).get("total_cycles")
+                ),
+                "reports/remote_cycle_status.json": _int_or_none(status.get("runtime", {}).get("cycles_completed")),
+            }
+        ),
+        "total_trades": _build_metric_drift(
+            {
+                "jj_state.json": _int_or_none(jj_state.get("total_trades")),
+                "reports/remote_cycle_status.json": _int_or_none(status.get("runtime", {}).get("total_trades")),
+                "deploy_status_command": _int_or_none(remote_probe.get("last_trades")),
+            }
+        ),
+        "open_positions": _build_metric_drift(
+            {
+                "jj_state.json": len(jj_state.get("open_positions") or {}),
+                "reports/remote_cycle_status.json": _int_or_none(status.get("runtime", {}).get("open_positions")),
+                "deploy_status_command": _int_or_none(remote_probe.get("open_positions")),
+            }
+        ),
+        "deployed_capital_usd": _build_metric_drift(
+            {
+                "jj_state.json": _float_or_none(jj_state.get("total_deployed")),
+                "reports/runtime_truth_latest.json": _float_or_none(
+                    status.get("capital", {}).get("deployed_capital_usd")
+                ),
+            }
+        ),
+    }
+    count_drift_detected = any(item["drift_detected"] for item in metric_drifts.values())
+
+    profile_override_diff = _compare_profile_contract(
+        bundle.selected_profile,
+        effective_config,
+        applied_overrides=list(bundle.profile.applied_overrides),
+    )
+    caps_threshold_drift = any(
+        change["field"].startswith(("risk_limits.", "signal_thresholds.", "market_filters.max_resolution_hours"))
+        for change in profile_override_diff["changed_fields"]
+    )
+
+    docs_drift = _build_docs_runtime_drift(root, local_counts)
+    remote_probe_alignment = _build_remote_probe_alignment(
+        effective_flags=effective_flags,
+        local_counts=local_counts,
+        remote_probe=remote_probe,
+    )
+    local_remote_truth_mismatch = bool(
+        remote_probe_alignment["count_mismatches"] or remote_probe_alignment["feature_mismatches"]
+    )
+
+    drift_reasons = _dedupe_preserve_order(
+        [
+            *(
+                [f"{name} differs across local and synced sources" for name, item in metric_drifts.items() if item["drift_detected"]]
+            ),
+            "selected runtime profile differs from its effective override surface"
+            if profile_override_diff["changed_fields"]
+            else "",
+            "effective caps/thresholds differ from the checked-in profile defaults"
+            if caps_threshold_drift
+            else "",
+            "reports/runtime_profile_effective.json was stale before this reconciliation run"
+            if runtime_profile_refresh.get("stale_before_refresh")
+            else "",
+            "public/operator docs still describe the stale 314-cycle / zero-activity runtime"
+            if docs_drift["stale"]
+            else "",
+            "remote status probe does not match the recomputed local effective profile"
+            if local_remote_truth_mismatch
+            else "",
+            *list(remote_probe_alignment.get("feature_mismatches") or []),
+            *list(remote_probe_alignment.get("count_mismatches") or []),
+            "jj-live.service is running while launch posture remains blocked"
+            if service_state == "running" and launch_posture == "blocked"
+            else "",
+            *mode_inconsistency_reasons,
+            (
+                "mode fields are ambiguous: "
+                + ", ".join(mode_ambiguity_fields)
+                if mode_ambiguity_fields
+                else ""
+            ),
+        ]
+    )
+    drift_reasons = [reason for reason in drift_reasons if reason]
+
+    return {
+        "generated_at": runtime_truth_snapshot.get("generated_at"),
+        "service_state": service_state or "unknown",
+        "process_state": process_state or "unknown",
+        "remote_runtime_profile": remote_runtime_profile,
+        "agent_run_mode": agent_run_mode,
+        "execution_mode": execution_mode,
+        "paper_trading": paper_trading,
+        "allow_order_submission": allow_order_submission,
+        "order_submit_enabled": order_submit_enabled,
+        "effective_caps": _build_effective_caps(risk_limits),
+        "effective_thresholds": _build_effective_thresholds(
+            risk_limits=risk_limits,
+            signal_thresholds=signal_thresholds,
+            market_filters=market_filters,
+        ),
+        **local_counts,
+        "drift_flags": {
+            "count_drift": count_drift_detected,
+            "counts": metric_drifts,
+            "profile_override_drift": bool(profile_override_diff["changed_fields"]),
+            "caps_threshold_drift": caps_threshold_drift,
+            "docs_stale": docs_drift["stale"],
+            "local_remote_truth_mismatch": local_remote_truth_mismatch,
+            "mode_field_ambiguity": bool(mode_ambiguity_fields),
+            "mode_field_ambiguity_fields": mode_ambiguity_fields,
+            "mode_field_inconsistency": bool(mode_inconsistency_reasons),
+            "mode_field_inconsistency_reasons": mode_inconsistency_reasons,
+            "service_running_while_launch_blocked": service_state == "running"
+            and launch_posture == "blocked",
+            "runtime_profile_effective_stale_before_refresh": bool(
+                runtime_profile_refresh.get("stale_before_refresh")
+            ),
+            "drift_reasons": drift_reasons,
+        },
+        "launch_posture": launch_posture,
+        "restart_recommended": restart_recommended,
+        "mode_reconciliation": {
+            "sources": {
+                "local_env": _relative_path_text(root, root / DEFAULT_ENV_PATH),
+                "env_example": _relative_path_text(root, root / DEFAULT_ENV_EXAMPLE_PATH),
+                "runtime_operator_overrides": _relative_path_text(
+                    root,
+                    root / DEFAULT_RUNTIME_OPERATOR_OVERRIDES_PATH,
+                ),
+                "runtime_profile_effective": _relative_path_text(
+                    root,
+                    runtime_profile_refresh["effective_path"],
+                ),
+                "deploy_report": deploy_evidence.get("path"),
+                "remote_service_status": _relative_path_text(
+                    root,
+                    root / DEFAULT_SERVICE_STATUS_PATH,
+                ),
+                "remote_cycle_status": _relative_path_text(root, root / DEFAULT_JSON_PATH),
+                "runtime_mode_reconciliation_markdown": _relative_path_text(
+                    root,
+                    runtime_mode_reconciliation_path,
+                ),
+            },
+            "local_env": _sanitize_env_subset(runtime_profile_refresh.get("local_env") or {}),
+            "local_env_example": _sanitize_env_subset(runtime_profile_refresh.get("env_example") or {}),
+            "runtime_operator_overrides": _sanitize_env_subset(
+                runtime_profile_refresh.get("operator_overrides") or {}
+            ),
+            "runtime_profile_effective_refreshed": bool(runtime_profile_refresh.get("refreshed")),
+            "runtime_profile_effective_stale_before_refresh_fields": list(
+                runtime_profile_refresh.get("stale_before_refresh_fields") or []
+            ),
+            "selected_profile": bundle.selected_profile,
+            "profile_override_diff": profile_override_diff,
+            "remote_mode": {
+                "generated_at": deploy_evidence.get("generated_at"),
+                "remote_env_exists": deploy_evidence.get("remote_env_exists"),
+                "values": _sanitize_env_subset(remote_values),
+                "remote_runtime_profile": remote_runtime_profile,
+                "agent_run_mode": agent_run_mode,
+                "paper_trading": paper_trading,
+            },
+            "remote_probe": remote_probe,
+            "remote_probe_alignment": remote_probe_alignment,
+            "docs": docs_drift,
+        },
+    }
+
+
+def apply_runtime_mode_reconciliation(
+    runtime_truth_snapshot: dict[str, Any],
+    *,
+    runtime_mode_reconciliation: dict[str, Any],
+    runtime_mode_reconciliation_path: Path,
+) -> dict[str, Any]:
+    snapshot = dict(runtime_truth_snapshot)
+    snapshot.update(
+        {
+            "service_state": runtime_mode_reconciliation["service_state"],
+            "process_state": runtime_mode_reconciliation["process_state"],
+            "remote_runtime_profile": runtime_mode_reconciliation["remote_runtime_profile"],
+            "agent_run_mode": runtime_mode_reconciliation["agent_run_mode"],
+            "execution_mode": runtime_mode_reconciliation["execution_mode"],
+            "paper_trading": runtime_mode_reconciliation["paper_trading"],
+            "allow_order_submission": runtime_mode_reconciliation["allow_order_submission"],
+            "order_submit_enabled": runtime_mode_reconciliation["order_submit_enabled"],
+            "effective_caps": runtime_mode_reconciliation["effective_caps"],
+            "effective_thresholds": runtime_mode_reconciliation["effective_thresholds"],
+            "cycles_completed": runtime_mode_reconciliation["cycles_completed"],
+            "total_trades": runtime_mode_reconciliation["total_trades"],
+            "open_positions": runtime_mode_reconciliation["open_positions"],
+            "deployed_capital_usd": runtime_mode_reconciliation["deployed_capital_usd"],
+            "drift_flags": runtime_mode_reconciliation["drift_flags"],
+            "launch_posture": runtime_mode_reconciliation["launch_posture"],
+            "restart_recommended": runtime_mode_reconciliation["restart_recommended"],
+            "mode_reconciliation": runtime_mode_reconciliation["mode_reconciliation"],
+        }
+    )
+    snapshot.setdefault("summary", {}).update(
+        {
+            "remote_runtime_profile": runtime_mode_reconciliation["remote_runtime_profile"],
+            "agent_run_mode": runtime_mode_reconciliation["agent_run_mode"],
+            "execution_mode": runtime_mode_reconciliation["execution_mode"],
+            "paper_trading": runtime_mode_reconciliation["paper_trading"],
+            "allow_order_submission": runtime_mode_reconciliation["allow_order_submission"],
+            "order_submit_enabled": runtime_mode_reconciliation["order_submit_enabled"],
+        }
+    )
+    snapshot.setdefault("artifacts", {})[
+        "runtime_mode_reconciliation_markdown"
+    ] = _relative_path_text(ROOT, runtime_mode_reconciliation_path)
+    snapshot.setdefault("drift", {})["mode_contract"] = runtime_mode_reconciliation["drift_flags"]
+    return snapshot
+
+
+def render_runtime_mode_reconciliation_markdown(payload: dict[str, Any]) -> str:
+    drift_flags = payload["drift_flags"]
+    mode_reconciliation = payload["mode_reconciliation"]
+    docs = mode_reconciliation["docs"]
+    remote_probe = mode_reconciliation["remote_probe"]
+    lines = [
+        "# Runtime Mode Reconciliation",
+        "",
+        f"- Generated: {payload.get('generated_at') or 'unknown'}",
+        f"- Service state: {payload['service_state']}",
+        f"- Process state: {payload['process_state']}",
+        f"- Remote runtime profile: {payload.get('remote_runtime_profile') or 'unknown'}",
+        f"- Agent run mode: {payload.get('agent_run_mode') or 'unknown'}",
+        f"- Execution mode: {payload.get('execution_mode') or 'unknown'}",
+        f"- Paper trading: {payload.get('paper_trading')}",
+        f"- Allow order submission: {payload.get('allow_order_submission')}",
+        f"- Order submit enabled: {'yes' if payload.get('order_submit_enabled') else 'no'}",
+        f"- Launch posture: {payload['launch_posture']}",
+        f"- Restart recommended: {'yes' if payload.get('restart_recommended') else 'no'}",
+        "",
+        "## Runtime Counts",
+        "",
+        f"- Cycles completed: {payload['cycles_completed']}",
+        f"- Total trades: {payload['total_trades']}",
+        f"- Open positions: {payload['open_positions']}",
+        f"- Deployed capital: {_format_money(payload['deployed_capital_usd'])}",
+        "",
+        "## Effective Caps",
+        "",
+    ]
+    for key, value in payload["effective_caps"].items():
+        lines.append(f"- {key}: {value}")
+    lines.extend(
+        [
+            "",
+            "## Effective Thresholds",
+            "",
+        ]
+    )
+    for key, value in payload["effective_thresholds"].items():
+        lines.append(f"- {key}: {value}")
+    lines.extend(
+        [
+            "",
+            "## Drift Flags",
+            "",
+            f"- Count drift: {'yes' if drift_flags['count_drift'] else 'no'}",
+            f"- Profile override drift: {'yes' if drift_flags['profile_override_drift'] else 'no'}",
+            f"- Caps/threshold drift: {'yes' if drift_flags['caps_threshold_drift'] else 'no'}",
+            f"- Docs stale: {'yes' if drift_flags['docs_stale'] else 'no'}",
+            f"- Local/remote truth mismatch: {'yes' if drift_flags['local_remote_truth_mismatch'] else 'no'}",
+            f"- Mode field ambiguity: {'yes' if drift_flags['mode_field_ambiguity'] else 'no'}",
+            f"- Mode field inconsistency: {'yes' if drift_flags['mode_field_inconsistency'] else 'no'}",
+            f"- Service running while launch blocked: {'yes' if drift_flags['service_running_while_launch_blocked'] else 'no'}",
+            "",
+            "### Drift Reasons",
+            "",
+        ]
+    )
+    drift_reasons = drift_flags.get("drift_reasons") or ["none"]
+    lines.extend(f"- {reason}" for reason in drift_reasons)
+    lines.extend(
+        [
+            "",
+            "## Local / Remote / Docs",
+            "",
+            f"- Local selected profile: {mode_reconciliation['selected_profile']}",
+            f"- Local `.env` selector: {(mode_reconciliation['local_env'] or {}).get('JJ_RUNTIME_PROFILE') or 'unset'}",
+            f"- Remote selector: {(mode_reconciliation['remote_mode']['values'] or {}).get('JJ_RUNTIME_PROFILE') or 'unknown'}",
+            f"- Remote agent run mode: {(mode_reconciliation['remote_mode']['values'] or {}).get('ELASTIFUND_AGENT_RUN_MODE') or 'unknown'}",
+            f"- Remote paper trading: {(mode_reconciliation['remote_mode']['values'] or {}).get('PAPER_TRADING') or 'unknown'}",
+            f"- Remote status probe open positions: {remote_probe.get('open_positions', 'unknown')}",
+            f"- Remote status probe last trades: {remote_probe.get('last_trades', 'unknown')}",
+            "",
+            "### Remote Probe Mismatches",
+            "",
+        ]
+    )
+    mismatches = [
+        *list(mode_reconciliation["remote_probe_alignment"].get("feature_mismatches") or []),
+        *list(mode_reconciliation["remote_probe_alignment"].get("count_mismatches") or []),
+    ]
+    lines.extend(f"- {item}" for item in (mismatches or ["none"]))
+    lines.extend(
+        [
+            "",
+            "### Docs Drift",
+            "",
+        ]
+    )
+    stale_references = docs.get("stale_references") or ["none"]
+    if stale_references == ["none"]:
+        lines.append("- none")
+    else:
+        for reference in stale_references:
+            if isinstance(reference, str):
+                lines.append(f"- {reference}")
+                continue
+            lines.append(
+                f"- {reference['path']}:{reference['line']} -> {reference['excerpt']}"
+            )
+    lines.append("")
+    return "\n".join(lines)
 
 
 def build_runtime_truth_snapshot(
@@ -743,6 +1272,14 @@ def build_public_runtime_snapshot(runtime_truth_snapshot: dict[str, Any]) -> dic
             "open_positions": runtime["open_positions"],
             "daily_pnl_usd": runtime["daily_pnl_usd"],
             "total_pnl_usd": runtime["total_pnl_usd"],
+        },
+        "runtime_mode": {
+            "remote_runtime_profile": runtime_truth_snapshot.get("remote_runtime_profile"),
+            "agent_run_mode": runtime_truth_snapshot.get("agent_run_mode"),
+            "execution_mode": runtime_truth_snapshot.get("execution_mode"),
+            "paper_trading": runtime_truth_snapshot.get("paper_trading"),
+            "allow_order_submission": runtime_truth_snapshot.get("allow_order_submission"),
+            "order_submit_enabled": runtime_truth_snapshot.get("order_submit_enabled"),
         },
         "service": {
             "status": service["status"],
@@ -1783,6 +2320,362 @@ def _render_state_improvement_digest_markdown(report: dict[str, Any]) -> str:
         "",
     ]
     return "\n".join(lines)
+
+
+def _parse_env_file(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+
+    payload: dict[str, str] = {}
+    for raw_line in path.read_text().splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, raw_value = stripped.split("=", 1)
+        key = key.strip()
+        if not key:
+            continue
+        value = _strip_env_inline_comment(raw_value.strip())
+        if value.startswith(("'", '"')) and value.endswith(("'", '"')) and len(value) >= 2:
+            value = value[1:-1]
+        payload[key] = value
+    return payload
+
+
+def _strip_env_inline_comment(value: str) -> str:
+    if " #" not in value:
+        return value
+    return value.split(" #", 1)[0].rstrip()
+
+
+def _sanitize_env_subset(values: dict[str, Any]) -> dict[str, Any]:
+    return {key: values[key] for key in RUNTIME_ENV_KEYS if key in values}
+
+
+def _profile_contract_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        "selected_profile": payload.get("selected_profile") or payload.get("profile_name"),
+        "mode": dict(payload.get("mode") or {}),
+        "feature_flags": dict(payload.get("feature_flags") or {}),
+        "risk_limits": dict(payload.get("risk_limits") or {}),
+        "market_filters": dict(payload.get("market_filters") or {}),
+        "signal_thresholds": dict(payload.get("signal_thresholds") or {}),
+    }
+
+
+def _mapping_diff(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, Any]]:
+    before_flat = _flatten_mapping(before)
+    after_flat = _flatten_mapping(after)
+    diffs: list[dict[str, Any]] = []
+    for field in sorted(set(before_flat) | set(after_flat)):
+        if before_flat.get(field) == after_flat.get(field):
+            continue
+        diffs.append(
+            {
+                "field": field,
+                "before": before_flat.get(field),
+                "after": after_flat.get(field),
+            }
+        )
+    return diffs
+
+
+def _flatten_mapping(value: Any, *, prefix: str = "") -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {prefix: value} if prefix else {}
+
+    flattened: dict[str, Any] = {}
+    for key, inner in value.items():
+        path = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(inner, dict):
+            flattened.update(_flatten_mapping(inner, prefix=path))
+        else:
+            flattened[path] = inner
+    return flattened
+
+
+def _extract_nested_value(payload: dict[str, Any], field: str) -> Any:
+    current: Any = payload
+    for part in field.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return current
+
+
+def _build_metric_drift(candidates: dict[str, Any]) -> dict[str, Any]:
+    normalized = {key: value for key, value in candidates.items() if value is not None}
+    values = list(normalized.values())
+    drift_detected = len(set(values)) > 1
+    return {
+        "candidates": candidates,
+        "drift_detected": drift_detected,
+    }
+
+
+def _compare_profile_contract(
+    selected_profile: str,
+    effective_config: dict[str, Any],
+    *,
+    applied_overrides: list[Any],
+) -> dict[str, Any]:
+    base_bundle = load_runtime_profile_bundle(env={"JJ_RUNTIME_PROFILE": selected_profile})
+    base_payload = _profile_contract_payload(base_bundle.config)
+    effective_payload = _profile_contract_payload(effective_config)
+    override_env_by_field = {
+        f"{override.section}.{override.key}": override.env_var
+        for override in applied_overrides
+    }
+    changed_fields: list[dict[str, Any]] = []
+    for diff in _mapping_diff(base_payload, effective_payload):
+        diff["env_var"] = override_env_by_field.get(diff["field"])
+        changed_fields.append(diff)
+
+    return {
+        "selected_profile": selected_profile,
+        "base_profile_path": str(base_bundle.source_path),
+        "changed_fields": changed_fields,
+    }
+
+
+def _build_effective_caps(risk_limits: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "max_position_usd": _float_or_none(risk_limits.get("max_position_usd")),
+        "max_daily_loss_usd": _float_or_none(risk_limits.get("max_daily_loss_usd")),
+        "max_open_positions": _int_or_none(risk_limits.get("max_open_positions")),
+        "kelly_fraction": _float_or_none(risk_limits.get("kelly_fraction")),
+        "max_kelly_fraction": _float_or_none(risk_limits.get("max_kelly_fraction")),
+        "hourly_notional_budget_usd": _float_or_none(risk_limits.get("hourly_notional_budget_usd")),
+        "max_exposure_pct": _float_or_none(risk_limits.get("max_exposure_pct")),
+        "initial_bankroll": _float_or_none(risk_limits.get("initial_bankroll")),
+    }
+
+
+def _build_effective_thresholds(
+    *,
+    risk_limits: dict[str, Any],
+    signal_thresholds: dict[str, Any],
+    market_filters: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "yes_threshold": _float_or_none(signal_thresholds.get("yes_threshold")),
+        "no_threshold": _float_or_none(signal_thresholds.get("no_threshold")),
+        "lmsr_entry_threshold": _float_or_none(signal_thresholds.get("lmsr_entry_threshold")),
+        "min_edge": _float_or_none(risk_limits.get("min_edge")),
+        "max_resolution_hours": _float_or_none(market_filters.get("max_resolution_hours")),
+        "min_category_priority": _int_or_none(market_filters.get("min_category_priority")),
+    }
+
+
+def _load_latest_deploy_evidence(root: Path) -> dict[str, Any]:
+    reports_dir = root / "reports"
+    candidates = [path for path in reports_dir.glob("deploy*.json") if path.is_file()]
+    if not candidates:
+        return {
+            "path": None,
+            "generated_at": None,
+            "remote_env_exists": None,
+            "remote_values": {},
+            "remote_runtime_profile": None,
+            "agent_run_mode": None,
+            "paper_trading": None,
+            "service_state": None,
+            "process_state": "unknown",
+            "remote_probe": {},
+        }
+
+    latest_path = max(candidates, key=_artifact_sort_key)
+    payload = _load_json(latest_path, default={})
+    remote_mode = dict(payload.get("remote_mode") or {})
+    remote_values = dict(remote_mode.get("values") or {})
+    if not remote_values:
+        service_mode_confirmed = dict(payload.get("service_mode_confirmed") or {})
+        for line in service_mode_confirmed.get("remote_env_lines") or []:
+            if isinstance(line, str) and "=" in line:
+                key, value = line.split("=", 1)
+                remote_values[key.strip()] = value.strip()
+
+    pre_service = dict(payload.get("pre_service") or {})
+    post_service = dict(payload.get("post_service") or {})
+    service_state = str(
+        post_service.get("status")
+        or pre_service.get("status")
+        or ""
+    ).strip() or None
+    remote_probe = _summarize_deploy_status_probe(
+        dict((payload.get("validation") or {}).get("status_command") or {})
+    )
+    if remote_probe.get("ok"):
+        process_state = "status_probe_ok"
+    elif service_state == "running":
+        process_state = "service_running_unprobed"
+    elif service_state == "stopped":
+        process_state = "not_running"
+    else:
+        process_state = "unknown"
+
+    return {
+        "path": _relative_path_text(root, latest_path),
+        "generated_at": payload.get("generated_at"),
+        "remote_env_exists": remote_mode.get("remote_env_exists"),
+        "remote_values": remote_values,
+        "remote_runtime_profile": remote_mode.get("runtime_profile"),
+        "agent_run_mode": remote_mode.get("agent_run_mode"),
+        "paper_trading": remote_mode.get("paper_trading"),
+        "service_state": service_state,
+        "process_state": process_state,
+        "remote_probe": remote_probe,
+    }
+
+
+def _summarize_deploy_status_probe(payload: dict[str, Any]) -> dict[str, Any]:
+    lines = list(payload.get("stdout_tail") or [])
+    feature_status: dict[str, str] = {}
+    open_positions = None
+    last_trades = None
+
+    for index, line in enumerate(lines):
+        stripped = str(line).strip()
+        feature_match = re.match(
+            r"^(llm|wallet_flow|lmsr|cross_platform_arb|combinatorial):\s*([a-z_]+)",
+            stripped,
+        )
+        if feature_match:
+            feature_status[feature_match.group(1)] = feature_match.group(2)
+            continue
+
+        if stripped == "Open Positions:":
+            count = 0
+            for candidate in lines[index + 1:]:
+                candidate_text = str(candidate).strip()
+                if not candidate_text:
+                    break
+                count += 1
+            open_positions = count
+            continue
+
+        if stripped == "Last 5 trades:":
+            count = 0
+            for candidate in lines[index + 1:]:
+                candidate_text = str(candidate).strip()
+                if not candidate_text or candidate_text.startswith("="):
+                    break
+                if candidate_text.startswith("["):
+                    count += 1
+            last_trades = count
+
+    return {
+        "ok": payload.get("returncode") == 0,
+        "returncode": payload.get("returncode"),
+        "open_positions": open_positions,
+        "last_trades": last_trades,
+        "feature_status": feature_status,
+    }
+
+
+def _build_remote_probe_alignment(
+    *,
+    effective_flags: dict[str, Any],
+    local_counts: dict[str, Any],
+    remote_probe: dict[str, Any],
+) -> dict[str, Any]:
+    feature_expectations = {
+        "llm": bool(effective_flags.get("enable_llm_signals")),
+        "wallet_flow": bool(effective_flags.get("enable_wallet_flow")),
+        "lmsr": bool(effective_flags.get("enable_lmsr")),
+        "cross_platform_arb": bool(effective_flags.get("enable_cross_platform_arb")),
+    }
+    feature_mismatches: list[str] = []
+    for feature, enabled in feature_expectations.items():
+        observed = str((remote_probe.get("feature_status") or {}).get(feature) or "").strip()
+        expected = "active" if enabled else "disabled"
+        if observed and observed != expected:
+            feature_mismatches.append(
+                f"{feature}: expected {expected}, observed {observed}"
+            )
+
+    count_mismatches: list[str] = []
+    if remote_probe.get("open_positions") is not None and remote_probe.get("open_positions") != local_counts["open_positions"]:
+        count_mismatches.append(
+            f"open_positions: local={local_counts['open_positions']} remote_probe={remote_probe.get('open_positions')}"
+        )
+    if remote_probe.get("last_trades") is not None and remote_probe.get("last_trades") != local_counts["total_trades"]:
+        count_mismatches.append(
+            f"total_trades: local={local_counts['total_trades']} remote_probe={remote_probe.get('last_trades')}"
+        )
+
+    return {
+        "feature_mismatches": feature_mismatches,
+        "count_mismatches": count_mismatches,
+        "aligned": not feature_mismatches and not count_mismatches,
+    }
+
+
+def _build_docs_runtime_drift(root: Path, authoritative_counts: dict[str, Any]) -> dict[str, Any]:
+    zero_trade_re = re.compile(
+        r"\b0\s+(?:trades|live trades|total trades|closed trades)\b",
+        re.IGNORECASE,
+    )
+    zero_deployed_re = re.compile(r"\b0\s+deployed capital\b", re.IGNORECASE)
+    stale_references: list[dict[str, Any]] = []
+    for path in (root / "README.md", root / "PROJECT_INSTRUCTIONS.md"):
+        if not path.exists():
+            continue
+        for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+            lowered = line.lower()
+            if (
+                authoritative_counts["cycles_completed"] > 314
+                and "314" in line
+                and "cycle" in lowered
+            ):
+                stale_references.append(
+                    {
+                        "path": _relative_path_text(root, path),
+                        "line": line_number,
+                        "excerpt": line.strip(),
+                    }
+                )
+                continue
+            if authoritative_counts["total_trades"] > 0 and zero_trade_re.search(line):
+                stale_references.append(
+                    {
+                        "path": _relative_path_text(root, path),
+                        "line": line_number,
+                        "excerpt": line.strip(),
+                    }
+                )
+                continue
+            if authoritative_counts["deployed_capital_usd"] > 0 and (
+                zero_deployed_re.search(line)
+                or "no closed trades or deployed capital yet" in lowered
+            ):
+                stale_references.append(
+                    {
+                        "path": _relative_path_text(root, path),
+                        "line": line_number,
+                        "excerpt": line.strip(),
+                    }
+                )
+
+    return {
+        "stale": bool(stale_references),
+        "stale_references": stale_references,
+    }
+
+
+def _bool_or_none(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value in (None, ""):
+        return None
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return None
 
 
 def _build_public_headlines(

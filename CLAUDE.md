@@ -144,6 +144,46 @@ This is standard practice. Quantopian was open-source but nobody published their
 
 ---
 
+## Local Environment (Do Not Guess Paths)
+
+**Mac repo path:** `/Users/johnbradley/Desktop/Elastifund`
+**VPS path:** `/home/ubuntu/polymarket-trading-bot`
+**VPS host:** `ubuntu@52.208.155.0`
+**VPS internal hostname:** `ip-172-26-6-252.eu-west-1.compute.internal`
+**VPS SSH key:** configured via `LIGHTSAIL_KEY` in `.env` (do not hardcode absolute local paths)
+**VPS region:** AWS Lightsail `eu-west-1` (Dublin)
+**GitHub remote:** `git@github.com:CrunchyJohnHaven/elastifund.git`
+**GitHub username:** `CrunchyJohnHaven`
+**User email:** `johnhavenbradley@gmail.com`
+**User home dir:** `/Users/johnbradley`
+
+**Deploy command (always use this exact form):**
+```bash
+cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --profile maker_velocity_live --restart --btc5
+```
+
+**Operating context:** This is an autonomous trading experiment with no humans in the loop. Continuous execution. Maximize ARR. Do not ask to rotate keys or add unnecessary safety gates. The principal (John) has explicitly authorized full capital deployment and continuous autonomous operation.
+
+---
+
+## Sandbox / Cowork Limitations (For AI Sessions)
+
+**Critical:** Cowork mode (Claude desktop app) runs in a sandboxed Linux VM. This sandbox:
+- **Cannot SSH to external hosts** — outbound TCP to port 22 is blocked by proxy (`Connection not allowed by ruleset`)
+- **Cannot reach external HTTPS APIs** — the HTTP proxy returns `403 blocked-by-allowlist` for domains not on an allowlist (this includes `gamma-api.polymarket.com`, `clob.polymarket.com`, `52.208.155.0`, etc.)
+- **Has placeholder .env values** — the workspace `.env` contains dummy credentials (`0xYourPolymarketAddress`), NOT real keys. Real keys exist ONLY on the Dublin VPS `.env` file.
+- **Can read/write repo files** — all code changes, profile updates, and documentation work fine
+- **Can use Claude in Chrome** — browser tools run on the user's Mac with full network access, but cannot execute shell commands
+
+**Consequence:** To deploy code changes to the VPS, the AI must either:
+1. Ask John to run `scripts/deploy.sh` from his Mac terminal (the Mac has real SSH keys and network access), or
+2. Use Codex (which runs on John's Mac with full network/SSH access) to execute deployment tasks, or
+3. Prepare all code changes in the repo and let John push + restart manually
+
+**Never waste time trying** `ssh`, `curl`, `urllib`, or `aiohttp` to external hosts from within Cowork. It will always fail.
+
+---
+
 ## Current State (Update this section each cycle)
 
 **Date:** 2026-03-09 (hourly ops — updated by JJ automated check)

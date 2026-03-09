@@ -278,6 +278,198 @@ def test_write_remote_cycle_status_emits_runtime_truth_and_public_snapshot(tmp_p
     assert (tmp_path / "reports" / "state_improvement_digest.md").exists()
 
 
+def test_write_remote_cycle_status_emits_runtime_mode_reconciliation_artifact(tmp_path: Path):
+    _write_base_remote_state(tmp_path)
+    _write_json(
+        tmp_path / "jj_state.json",
+        {
+            "bankroll": 247.51,
+            "total_deployed": 25.0,
+            "daily_pnl": 0.0,
+            "total_pnl": 0.0,
+            "daily_pnl_date": "2026-03-09",
+            "trades_today": 5,
+            "total_trades": 5,
+            "open_positions": {
+                "m1": {},
+                "m2": {},
+                "m3": {},
+                "m4": {},
+            },
+            "cycles_completed": 565,
+            "b1_state": {"validation_accuracy": None},
+        },
+    )
+    _write_json(
+        tmp_path / "data" / "intel_snapshot.json",
+        {
+            "last_updated": "2026-03-09T11:25:12+00:00",
+            "total_cycles": 565,
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "remote_service_status.json",
+        {
+            "checked_at": "2026-03-09T11:25:24+00:00",
+            "status": "running",
+            "systemctl_state": "active",
+            "detail": "active",
+            "host": "ubuntu@example",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "root_test_status.json",
+        {
+            "checked_at": "2026-03-09T11:31:50+00:00",
+            "command": "make test",
+            "status": "passing",
+            "summary": "1096 passed in 22.67s; 25 passed in 3.59s",
+            "output_tail": [
+                "1096 passed in 22.67s",
+                "25 passed in 3.59s",
+            ],
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "arb_empirical_snapshot.json",
+        {
+            "gating_metrics": {
+                "all_gates_pass": False,
+                "fill_probability_gate": "insufficient_data",
+                "half_life_gate": "fail",
+                "half_life_seconds": 0.0,
+                "settlement_path_gate": "untested",
+            },
+            "b1": {},
+        },
+    )
+    _write_json(
+        tmp_path / "data" / "smart_wallets.json",
+        {
+            "wallets": [{"address": "0x1"}, {"address": "0x2"}],
+            "last_updated": "2026-03-09T11:24:53+00:00",
+        },
+    )
+    (tmp_path / "data" / "wallet_scores.db").write_bytes(b"sqlite-stub")
+    _write_trade_db(
+        tmp_path / "data" / "jj_trades.db",
+        [
+            {"market_id": "m1", "outcome": None},
+            {"market_id": "m2", "outcome": None},
+            {"market_id": "m3", "outcome": None},
+            {"market_id": "m4", "outcome": None},
+            {"market_id": "m5", "outcome": None},
+        ],
+    )
+    _write_text(tmp_path / ".env", "JJ_RUNTIME_PROFILE=maker_velocity_all_in\n")
+    _write_text(
+        tmp_path / ".env.example",
+        "\n".join(
+            [
+                "JJ_RUNTIME_PROFILE=blocked_safe",
+                "PAPER_TRADING=true",
+                "",
+            ]
+        ),
+    )
+    _write_text(
+        tmp_path / "reports" / "runtime_operator_overrides.env",
+        "\n".join(
+            [
+                "JJ_MAX_POSITION_USD=247.51",
+                "JJ_MAX_OPEN_POSITIONS=1",
+                "JJ_YES_THRESHOLD=0.05",
+                "JJ_NO_THRESHOLD=0.02",
+                "",
+            ]
+        ),
+    )
+    _write_text(tmp_path / "README.md", "| Runtime state | `0` trades after `314` cycles |\n")
+    _write_text(
+        tmp_path / "PROJECT_INSTRUCTIONS.md",
+        "Runtime remains `0` closed trades with `0` deployed capital after `314` cycles.\n",
+    )
+    _write_json(
+        tmp_path / "reports" / "deploy_20260309T112719Z.json",
+        {
+            "generated_at": "2026-03-09T11:28:02+00:00",
+            "remote_mode": {
+                "remote_env_exists": True,
+                "runtime_profile": "maker_velocity_all_in",
+                "agent_run_mode": "shadow",
+                "paper_trading": "false",
+                "values": {
+                    "ELASTIFUND_AGENT_RUN_MODE": "shadow",
+                    "JJ_RUNTIME_PROFILE": "maker_velocity_all_in",
+                    "PAPER_TRADING": "false",
+                },
+            },
+            "pre_service": {
+                "checked_at": "2026-03-09T11:27:23+00:00",
+                "status": "running",
+                "systemctl_state": "active",
+            },
+            "post_service": {
+                "checked_at": "2026-03-09T11:28:02+00:00",
+                "status": "running",
+                "systemctl_state": "active",
+            },
+            "validation": {
+                "status_command": {
+                    "returncode": 0,
+                    "stdout_tail": [
+                        "  llm: active",
+                        "  wallet_flow: active",
+                        "  lmsr: active",
+                        "  cross_platform_arb: disabled",
+                        "",
+                        "Open Positions:",
+                        "  buy_yes $5.00 one",
+                        "  buy_yes $5.00 two",
+                        "  buy_yes $5.00 three",
+                        "  buy_yes $10.00 four",
+                        "",
+                        "Last 5 trades:",
+                        "  [2026-03-09T02:40:50] buy_yes",
+                        "  [2026-03-09T02:40:51] buy_yes",
+                        "  [2026-03-09T02:40:52] buy_yes",
+                        "  [2026-03-09T02:40:53] buy_yes",
+                        "  [2026-03-09T03:42:40] buy_yes",
+                        "==================================================",
+                    ],
+                }
+            },
+        },
+    )
+
+    written = write_remote_cycle_status(tmp_path)
+
+    runtime_truth = json.loads((tmp_path / "reports" / "runtime_truth_latest.json").read_text())
+    public_snapshot = json.loads(
+        (tmp_path / "reports" / "public_runtime_snapshot.json").read_text()
+    )
+    note_path = Path(written["runtime_mode_reconciliation_markdown"])
+
+    assert note_path.exists()
+    assert runtime_truth["remote_runtime_profile"] == "maker_velocity_all_in"
+    assert runtime_truth["agent_run_mode"] == "shadow"
+    assert runtime_truth["execution_mode"] == "shadow"
+    assert runtime_truth["paper_trading"] is False
+    assert runtime_truth["allow_order_submission"] is True
+    assert runtime_truth["order_submit_enabled"] is False
+    assert runtime_truth["launch_posture"] == "blocked"
+    assert runtime_truth["restart_recommended"] is False
+    assert runtime_truth["effective_caps"]["max_position_usd"] == 247.51
+    assert runtime_truth["effective_thresholds"]["yes_threshold"] == 0.05
+    assert runtime_truth["drift_flags"]["profile_override_drift"] is True
+    assert runtime_truth["drift_flags"]["docs_stale"] is True
+    assert runtime_truth["drift_flags"]["service_running_while_launch_blocked"] is True
+    assert runtime_truth["mode_reconciliation"]["remote_probe"]["open_positions"] == 4
+    assert runtime_truth["mode_reconciliation"]["remote_probe"]["last_trades"] == 5
+    assert public_snapshot["runtime_mode"]["order_submit_enabled"] is False
+    assert "- Order submit enabled: no" in note_path.read_text()
+
+
 def test_write_remote_cycle_status_computes_state_improvement_deltas_from_previous_snapshot(
     tmp_path: Path,
 ):

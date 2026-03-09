@@ -72,6 +72,7 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/polymarket-trading-bot
 Environment=PYTHONPATH=/home/ubuntu/polymarket-trading-bot:/home/ubuntu/polymarket-trading-bot/bot:/home/ubuntu/polymarket-trading-bot/polymarket-bot
+EnvironmentFile=/home/ubuntu/polymarket-trading-bot/.env
 ExecStart=/usr/bin/python3 bot/jj_live.py --continuous
 Restart=always
 RestartSec=30

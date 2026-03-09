@@ -49,6 +49,36 @@ extract_env_key() {
     printf '%s' "$line"
 }
 
+normalize_assignment_line() {
+    local line="$1"
+    local key
+    local value
+    local escaped
+    local prefix=""
+
+    if [[ "$line" =~ ^[[:space:]]*export[[:space:]]+ ]]; then
+        prefix="export "
+    fi
+
+    key="$(extract_env_key "$line")"
+    value="${line#*=}"
+    value="$(trim_leading_space "$value")"
+    value="$(trim_trailing_space "$value")"
+
+    if [[ -z "$key" ]]; then
+        printf '%s' "$line"
+        return
+    fi
+
+    if [[ "$value" == *[[:space:]]* ]] && [[ ! "$value" =~ ^\".*\"$ ]] && [[ ! "$value" =~ ^\'.*\'$ ]]; then
+        escaped="${value//\"/\\\"}"
+        printf '%s%s="%s"' "$prefix" "$key" "$escaped"
+        return
+    fi
+
+    printf '%s%s=%s' "$prefix" "$key" "$value"
+}
+
 should_remove_key() {
     case "$1" in
         JJ_*|PAPER_TRADING|LIVE_TRADING|ENABLE_*|CLAUDE_MODEL|ELASTIFUND_AGENT_RUN_MODE)
@@ -76,7 +106,8 @@ while IFS= read -r line || [ -n "$line" ]; do
         continue
     fi
 
-    printf '%s\n' "$line" >>"$tmp_env"
+    normalize_assignment_line "$line" >>"$tmp_env"
+    printf '\n' >>"$tmp_env"
 done <"$ENV_FILE"
 
 printf '\nJJ_RUNTIME_PROFILE=%s\n' "$PROFILE_NAME" >>"$tmp_env"
@@ -89,7 +120,15 @@ echo "========================================"
 echo "  Backup:  $backup_path"
 echo "  Profile: $PROFILE_NAME"
 echo
-cat "$ENV_FILE"
+echo "  Updated keys:"
+grep -E '^(JJ_RUNTIME_PROFILE|HUB_APP_NAME|ANTHROPIC_API_KEY|TELEGRAM_BOT_TOKEN|TELEGRAM_CHAT_ID)=' "$ENV_FILE" \
+    | while IFS= read -r env_line; do
+        if [[ "$env_line" == JJ_RUNTIME_PROFILE=* ]]; then
+            printf '%s\n' "$env_line"
+        else
+            printf '%s\n' "${env_line%%=*}=<redacted>"
+        fi
+    done
 echo
 
 (

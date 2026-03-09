@@ -27,7 +27,13 @@ ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$VPS" "
   echo
   echo '=== SQLite Summary ==='
   cd $BOT_DIR
-  source venv/bin/activate
   export PYTHONPATH='$REMOTE_PYTHONPATH'
-  python3 bot/btc_5min_maker.py --status 2>/dev/null || echo 'status unavailable'
+  if [ -x venv/bin/python3 ]; then
+    PY_BIN='venv/bin/python3'
+  elif [ -x .venv/bin/python3 ]; then
+    PY_BIN='.venv/bin/python3'
+  else
+    PY_BIN='/usr/bin/python3'
+  fi
+  \"\$PY_BIN\" bot/btc_5min_maker.py --status 2>/dev/null || echo 'status unavailable'
 "

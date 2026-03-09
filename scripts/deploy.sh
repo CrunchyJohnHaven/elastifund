@@ -29,7 +29,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 if [ -f "$PROJECT_DIR/.env" ]; then
     set -a
-    # Load only deploy-relevant keys to avoid shell-breaking values in other vars.
+    # Load only deploy-relevant keys from .env.
     # shellcheck disable=SC1090
     source <(grep -E '^(LIGHTSAIL_KEY|VPS_USER|VPS_IP)=' "$PROJECT_DIR/.env" || true)
     set +a
@@ -120,6 +120,7 @@ SCRIPT_SUPPORT_FILES=(
 )
 
 DEPLOY_ASSET_FILES=(
+    "deploy/jj-live.service"
     "deploy/btc-5min-maker.service"
 )
 
@@ -180,25 +181,32 @@ if [ -f "$PROJECT_DIR/jj_state.json" ]; then
 fi
 
 echo "  Removing stale root jj_live.py if present..."
-"${SSH_CMD[@]}" "$VPS" "if [ -f $BOT_DIR/jj_live.py ]; then rm -f $BOT_DIR/jj_live.py && echo 'Removed stale root jj_live.py'; else echo 'No stale root jj_live.py'; fi"
+"${SSH_CMD[@]}" "$VPS" "rm -f $BOT_DIR/jj_live.py && echo 'Ensured stale root jj_live.py is removed'"
 
 echo
 echo "  Installing Python dependencies on VPS..."
-"${SSH_CMD[@]}" "$VPS" "cd $BOT_DIR && source venv/bin/activate && pip install -q anthropic openai duckduckgo-search httpx structlog 2>&1 | tail -3"
+"${SSH_CMD[@]}" "$VPS" "cd $BOT_DIR && PY_BIN=\$( [ -x venv/bin/python3 ] && echo venv/bin/python3 || [ -x .venv/bin/python3 ] && echo .venv/bin/python3 || echo /usr/bin/python3 ) && \$PY_BIN -m pip install -q anthropic openai duckduckgo-search httpx structlog --break-system-packages 2>&1 | tail -3"
 
-if $CLEAN_ENV; then
+if [[ "$CLEAN_ENV" == "true" ]]; then
     echo
     echo "  Cleaning remote .env for runtime profile..."
     "${SSH_CMD[@]}" "$VPS" "cd $BOT_DIR && chmod +x scripts/clean_env_for_profile.sh && ./scripts/clean_env_for_profile.sh '$PROFILE_NAME'"
 fi
 
 echo
+echo "  Installing systemd units..."
+"${SSH_CMD[@]}" "$VPS" "sudo install -m 644 $BOT_DIR/deploy/jj-live.service /etc/systemd/system/$SERVICE_NAME && sudo rm -f /etc/systemd/system/$SERVICE_NAME.d/override.conf && { sudo rmdir --ignore-fail-on-non-empty /etc/systemd/system/$SERVICE_NAME.d 2>/dev/null || true; } && sudo systemctl daemon-reload"
+
+echo
 echo "  Verifying runtime imports and profile contract..."
-"${SSH_CMD[@]}" "$VPS" "cd $BOT_DIR && source venv/bin/activate && export PYTHONPATH=\"$REMOTE_PYTHONPATH\" && python3 - <<'PY'
+"${SSH_CMD[@]}" "$VPS" "cd $BOT_DIR && ( [ -f venv/bin/activate ] && source venv/bin/activate || [ -f .venv/bin/activate ] && source .venv/bin/activate || true ) && export PYTHONPATH=\"$REMOTE_PYTHONPATH\" && python3 - <<'PY'
+import os
+from dotenv import load_dotenv
 from bot.polymarket_runtime import ClaudeAnalyzer, TelegramNotifier
 from bot.runtime_profile import load_runtime_profile
 
-bundle = load_runtime_profile()
+load_dotenv('.env', override=True)
+bundle = load_runtime_profile(profile_name=os.getenv('JJ_RUNTIME_PROFILE') or None)
 profile = bundle.profile
 print('bot.polymarket_runtime OK')
 print(f'Profile: {bundle.selected_profile}')
@@ -213,9 +221,9 @@ PY"
 
 echo
 echo "  Checking bot status surface..."
-"${SSH_CMD[@]}" "$VPS" "cd $BOT_DIR && source venv/bin/activate && export PYTHONPATH=\"$REMOTE_PYTHONPATH\" && timeout 120 python3 bot/jj_live.py --status >/tmp/jj-live-status.txt 2>&1 || true && tail -20 /tmp/jj-live-status.txt"
+"${SSH_CMD[@]}" "$VPS" "cd $BOT_DIR && PY_BIN=\$( [ -x venv/bin/python3 ] && echo venv/bin/python3 || [ -x .venv/bin/python3 ] && echo .venv/bin/python3 || echo /usr/bin/python3 ) && export PYTHONPATH=\"$REMOTE_PYTHONPATH\" && timeout 120 \$PY_BIN bot/jj_live.py --status >/tmp/jj-live-status.txt 2>&1 || true && tail -20 /tmp/jj-live-status.txt"
 
-if $RESTART_SERVICE; then
+if [[ "$RESTART_SERVICE" == "true" ]]; then
     echo
     echo "  Restarting $SERVICE_NAME..."
     "${SSH_CMD[@]}" "$VPS" "sudo systemctl restart $SERVICE_NAME && sleep 2 && sudo systemctl is-active $SERVICE_NAME && sudo journalctl -u $SERVICE_NAME -n 20 --no-pager"
@@ -224,10 +232,10 @@ else
     echo "  Skipping service restart (--restart not set)."
 fi
 
-if $ENABLE_BTC5; then
+if [[ "$ENABLE_BTC5" == "true" ]]; then
     echo
     echo "  Installing/restarting $BTC5_SERVICE_NAME..."
-    "${SSH_CMD[@]}" "$VPS" "cd $BOT_DIR && source venv/bin/activate && pip install -q aiohttp websockets python-dotenv 2>&1 | tail -3"
+    "${SSH_CMD[@]}" "$VPS" "cd $BOT_DIR && PY_BIN=\$( [ -x venv/bin/python3 ] && echo venv/bin/python3 || [ -x .venv/bin/python3 ] && echo .venv/bin/python3 || echo /usr/bin/python3 ) && \$PY_BIN -m pip install -q aiohttp websockets python-dotenv --break-system-packages 2>&1 | tail -3"
     "${SSH_CMD[@]}" "$VPS" "sudo install -m 644 $BOT_DIR/deploy/$BTC5_SERVICE_NAME /etc/systemd/system/$BTC5_SERVICE_NAME && sudo systemctl daemon-reload && sudo systemctl enable $BTC5_SERVICE_NAME && sudo systemctl restart $BTC5_SERVICE_NAME && sleep 2 && sudo systemctl is-active $BTC5_SERVICE_NAME && sudo journalctl -u $BTC5_SERVICE_NAME -n 20 --no-pager"
 else
     echo

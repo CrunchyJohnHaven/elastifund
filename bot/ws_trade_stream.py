@@ -194,13 +194,24 @@ class OFICalculator:
 
     LEVEL_WEIGHTS = [1.0, 0.5, 0.25, 0.125, 0.0625]
     MAX_LEVELS = 5
-    SKEW_THRESHOLD = 0.60
-    RATIO_THRESHOLD = 3.0
+    DEFAULT_SKEW_THRESHOLD = 0.90
+    DEFAULT_RATIO_THRESHOLD = 3.0
     Z_SCORE_WINDOW = 300.0
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        skew_threshold: float | None = None,
+        ratio_threshold: float | None = None,
+    ) -> None:
         self._prev_books: dict[str, OrderBookState] = {}
         self._ofi_history: dict[str, list[tuple[float, float]]] = {}
+        self.skew_threshold = float(
+            self.DEFAULT_SKEW_THRESHOLD if skew_threshold is None else skew_threshold
+        )
+        self.ratio_threshold = float(
+            self.DEFAULT_RATIO_THRESHOLD if ratio_threshold is None else ratio_threshold
+        )
 
     def update(self, token_id: str, book: OrderBookState) -> Optional[OFISnapshot]:
         prev = self._prev_books.get(token_id)
@@ -278,9 +289,9 @@ class OFICalculator:
         )
 
     def should_kill(self, snapshot: OFISnapshot) -> bool:
-        if snapshot.directional_skew > self.SKEW_THRESHOLD:
+        if snapshot.directional_skew > self.skew_threshold:
             return True
-        if abs(snapshot.normalized_ofi) > self.RATIO_THRESHOLD:
+        if abs(snapshot.normalized_ofi) > self.ratio_threshold:
             return True
         return False
 
@@ -311,6 +322,8 @@ class TradeStreamManager:
         max_subscriptions: int = MAX_SUBSCRIPTIONS,
         latency_log_interval: float = LATENCY_LOG_INTERVAL_SECONDS,
         latency_db_path: Optional[str] = None,
+        ofi_skew_threshold: float = OFICalculator.DEFAULT_SKEW_THRESHOLD,
+        ofi_ratio_threshold: float = OFICalculator.DEFAULT_RATIO_THRESHOLD,
     ) -> None:
         initial = list(dict.fromkeys(token_ids or []))
         self.max_subscriptions = max(1, int(max_subscriptions))
@@ -326,7 +339,10 @@ class TradeStreamManager:
             toxic_threshold=vpin_toxic_threshold,
             safe_threshold=vpin_safe_threshold,
         )
-        self.ofi = OFICalculator()
+        self.ofi = OFICalculator(
+            skew_threshold=ofi_skew_threshold,
+            ratio_threshold=ofi_ratio_threshold,
+        )
         self.on_regime_change = on_regime_change
         self.on_ofi_update = on_ofi_update
         self.on_ofi_alert = on_ofi_alert
@@ -695,7 +711,7 @@ class TradeStreamManager:
                             "signal_value": snapshot.normalized_ofi,
                             "confidence": max(
                                 0.0,
-                                min(1.0, abs(snapshot.normalized_ofi) / max(self.ofi.RATIO_THRESHOLD, 1e-9)),
+                                min(1.0, abs(snapshot.normalized_ofi) / max(self.ofi.ratio_threshold, 1e-9)),
                             ),
                             "acted_on": not self.ofi.should_kill(snapshot),
                             "raw_ofi": snapshot.raw_ofi,
@@ -736,7 +752,7 @@ class TradeStreamManager:
                         "signal_value": snapshot.normalized_ofi,
                         "confidence": max(
                             0.0,
-                            min(1.0, abs(snapshot.normalized_ofi) / max(self.ofi.RATIO_THRESHOLD, 1e-9)),
+                            min(1.0, abs(snapshot.normalized_ofi) / max(self.ofi.ratio_threshold, 1e-9)),
                         ),
                         "acted_on": not self.ofi.should_kill(snapshot),
                         "raw_ofi": snapshot.raw_ofi,
