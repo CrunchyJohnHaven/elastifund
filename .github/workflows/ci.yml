@@ -38,7 +38,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u scripts/run_root_tests.py 2>&1 | tee root-regression.log
+          export PYTEST_ADDOPTS="${PYTEST_ADDOPTS:-} -x --tb=short -ra"
+          if ! python3 -u scripts/run_root_tests.py 2>&1 | tee root-regression.log; then
+            python3 - <<'PY'
+            from pathlib import Path
+
+
+            def escape(value: str) -> str:
+                return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+            tail = Path("root-regression.log").read_text(encoding="utf-8", errors="ignore").splitlines()[-40:]
+            message = escape("\n".join(tail))
+            print(f"::error title=Root regression suite failed::{message}")
+            PY
+            exit 1
+          fi
       - name: Upload root regression log
         if: failure()
         uses: actions/upload-artifact@v4
