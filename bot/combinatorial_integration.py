@@ -12,6 +12,7 @@ import time
 from typing import Any, Mapping
 
 from signals.dep_graph.dep_graph_store import DepGraphStore
+from bot.runtime_profile import activate_runtime_profile_env, RuntimeProfileBundle
 
 
 DEFAULT_CONSTRAINT_DB_PATH = Path("data") / "constraint_arb.db"
@@ -178,7 +179,8 @@ class CombinatorialConfig:
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "CombinatorialConfig":
-        source = env or os.environ
+        bundle = activate_runtime_profile_env(env=env)
+        source = bundle.effective_env
         return cls(
             enable_a6_shadow=_env_bool("ENABLE_A6_SHADOW", False, env=source),
             enable_a6_live=_env_bool("ENABLE_A6_LIVE", False, env=source),
@@ -224,6 +226,10 @@ class CombinatorialConfig:
                 env=source,
             ),
         )
+
+    @classmethod
+    def from_runtime_profile(cls, profile: RuntimeProfileBundle) -> "CombinatorialConfig":
+        return cls.from_env(env=profile.effective_env)
 
     def any_enabled(self) -> bool:
         return any(

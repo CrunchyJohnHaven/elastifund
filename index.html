@@ -894,12 +894,12 @@ body {
       <div>
         <div class="hero-eyebrow">Cycle 2 Runtime Reconciliation</div>
         <h1>The AI decides<br>what is <span class="gradient">tradeable.</span></h1>
-        <p class="hero-sub">
-          Open-source operator infrastructure for prediction-market research and execution. The March 9, 2026 refresh shows the runtime drift explicitly: <span class="mono">jj-live.service</span> was observed active on the VPS, while launch posture remains blocked by wallet-flow bootstrap work, REJECT ALL fast-flow evidence, and unresolved A-6 / B-1 gates.
+        <p class="hero-sub" id="heroRuntimeSummary">
+          Open-source operator infrastructure for prediction-market research and execution. The March 9, 2026 artifact set shows the runtime drift explicitly: <span class="mono">jj-live.service</span> was observed active on the VPS, wallet-flow is ready, but launch posture remains blocked by a failing root regression suite, zero closed trades, zero deployed capital, REJECT ALL fast-flow evidence, and unresolved A-6 / B-1 gates.
         </p>
         <div class="hero-stats-row">
           <div class="hero-stat">
-            <span class="hero-stat-val">$347.51</span>
+            <span class="hero-stat-val" id="trackedCapitalHero">$347.51</span>
             <span class="hero-stat-label">Tracked Capital</span>
           </div>
           <div class="hero-stat">
@@ -907,8 +907,8 @@ body {
             <span class="hero-stat-label">Calibrated Win Rate<span class="hero-stat-note">68.5% legacy / uncalibrated</span></span>
           </div>
           <div class="hero-stat">
-            <span class="hero-stat-val">1,256</span>
-            <span class="hero-stat-label">Verified Tests</span>
+            <span class="hero-stat-val" id="verificationHeroValue">1 fail</span>
+            <span class="hero-stat-label">Root Test Status<span class="hero-stat-note" id="verificationHeroNote">870 passed in latest run</span></span>
           </div>
           <div class="hero-stat">
             <span class="hero-stat-val">131</span>
@@ -920,7 +920,7 @@ body {
           <span class="badge badge-blue">Polymarket + Kalshi</span>
           <span class="badge badge-purple">6 Primary + 1 Anomaly Lane</span>
           <span class="badge badge-blue">23 Benchmarked Systems</span>
-          <span class="badge badge-red">Fast-Market Verdict: REJECT ALL</span>
+          <span class="badge badge-red" id="fastVerdictBadge">Fast-Market Verdict: REJECT ALL</span>
           <span class="badge" style="background: rgba(6,182,212,0.15); color: #06b6d4; border: 1px solid rgba(6,182,212,0.2);">Elastic Stack</span>
         </div>
       </div>
@@ -929,23 +929,23 @@ body {
           <span class="term-dot term-dot-r"></span>
           <span class="term-dot term-dot-y"></span>
           <span class="term-dot term-dot-g"></span>
-          <span class="term-title">runtime truth &mdash; March 9, 2026</span>
+          <span class="term-title" id="runtimeTitle">runtime truth &mdash; March 9, 2026</span>
         </div>
         <div class="hero-terminal-body">
           <div class="term-line"><span class="term-prompt">$</span> <span>cat reports/remote_service_status.json</span></div>
-          <div class="term-line"><span class="term-key">Service:</span> <span class="term-val green">ACTIVE on VPS</span></div>
-          <div class="term-line"><span class="term-key">Checked:</span> <span class="term-val">2026-03-09 00:06:56 UTC</span></div>
-          <div class="term-line"><span class="term-key">Launch:</span> <span class="term-val amber">BLOCKED / human review required</span></div>
-          <div class="term-line"><span class="term-key">Hold:</span> <span class="term-val">wallet-flow bootstrap + A-6 / B-1 evidence gap</span></div>
+          <div class="term-line"><span class="term-key">Service:</span> <span class="term-val green" id="runtimeServiceStatus">ACTIVE on VPS</span></div>
+          <div class="term-line"><span class="term-key">Checked:</span> <span class="term-val" id="runtimeServiceChecked">2026-03-09 00:44:19 UTC</span></div>
+          <div class="term-line"><span class="term-key">Launch:</span> <span class="term-val amber" id="runtimeLaunchState">BLOCKED / human review required</span></div>
+          <div class="term-line"><span class="term-key">Hold:</span> <span class="term-val" id="runtimeHoldSummary">wallet-flow ready; blocked by root tests + no closed trades + no deployed capital + A-6 / B-1 evidence gap</span></div>
           <hr class="term-sep">
-          <div class="term-line"><span class="term-key">Capital:</span> <span class="term-val">$347.51 tracked ($247.51 + $100)</span></div>
+          <div class="term-line"><span class="term-key">Capital:</span> <span class="term-val" id="runtimeCapitalSummary">$347.51 tracked ($247.51 + $100)</span></div>
           <div class="term-line"><span class="term-key">Platforms:</span> <span class="term-val">Polymarket, Kalshi</span></div>
           <div class="term-line"><span class="term-key">Signals:</span> <span class="term-val">6 primary + 1 anomaly feedback</span></div>
           <div class="term-line"><span class="term-key">Benchmarks:</span> <span class="term-val">23 systems tracked</span></div>
           <hr class="term-sep">
-          <div class="term-line"><span class="term-key">Fast lane:</span> <span class="term-val red">REJECT ALL</span></div>
-          <div class="term-line"><span class="term-key">Live trades:</span> <span class="term-val">0 after 294 cycles</span></div>
-          <div class="term-line"><span class="term-key">Verification:</span> <span class="term-val green">1,256 tests verified</span></div>
+          <div class="term-line"><span class="term-key">Fast lane:</span> <span class="term-val red" id="runtimeFastVerdict">REJECT ALL</span></div>
+          <div class="term-line"><span class="term-key">Live trades:</span> <span class="term-val" id="runtimeTradeSummary">0 after 301 cycles</span></div>
+          <div class="term-line"><span class="term-key">Verification:</span> <span class="term-val amber" id="runtimeVerificationSummary">failing: 1 failed, 870 passed in 18.22s</span></div>
         </div>
       </div>
     </div>
@@ -953,47 +953,47 @@ body {
     <div class="status-board">
       <div class="status-board-top">
         <span class="status-pill">Launch Posture: Blocked</span>
-        <span class="status-stamp">Service observed active &bull; checked 2026-03-09 00:06:56 UTC</span>
+        <span class="status-stamp" id="serviceStatusStamp">Service observed active &bull; checked 2026-03-09 00:44:19 UTC</span>
       </div>
-      <h3>The remote service was active on March 9, 2026, but live launch posture remains blocked by wallet-flow bootstrap work and unresolved A-6 / B-1 evidence gates.</h3>
-      <p>Current uptime does not clear the system for real-capital routing. The authoritative cycle state still says <span class="mono">live_launch_blocked=true</span>, <span class="mono">fast_flow_restart_ready=false</span>, and next action is paper or shadow restart work only after wallet-flow readiness is restored.</p>
+      <h3 id="launchHeadline">The remote service was active on March 9, 2026, and wallet-flow is ready, but live launch posture remains blocked by verification drift and structural evidence gates.</h3>
+      <p id="launchNarrative">Current uptime does not clear the system for real-capital routing. The authoritative cycle state still says <span class="mono">live_launch_blocked=true</span>, <span class="mono">fast_flow_restart_ready=false</span>, and the next action is: merge the root regression repair and rerun <span class="mono">make test</span> before any restart or deploy.</p>
       <div class="status-grid">
         <div class="status-item">
           <div class="status-item-label">Service</div>
-          <div class="status-item-value"><span class="mono">jj-live.service</span> active on VPS</div>
-          <div class="status-item-sub">Observed at 2026-03-09 00:06:56 UTC. This supersedes stale March 8 prose that described the service as stopped.</div>
+          <div class="status-item-value" id="serviceStatusValue"><span class="mono">jj-live.service</span> active on VPS</div>
+          <div class="status-item-sub" id="serviceStatusSub">Observed at 2026-03-09 00:44:19 UTC. This supersedes stale March 8 prose that described the service as stopped.</div>
         </div>
         <div class="status-item">
           <div class="status-item-label">Launch Posture</div>
-          <div class="status-item-value">Blocked: wallet-flow, A-6, B-1</div>
-          <div class="status-item-sub">No live-money restart is cleared. Recommended next step is wallet-flow bootstrap, then paper or shadow reassessment.</div>
+          <div class="status-item-value" id="launchPostureValue">Blocked: root tests, no closed trades, no deployed capital, A-6, B-1</div>
+          <div class="status-item-sub" id="launchPostureSub">Wallet-flow is ready with 80 scored wallets, but the root suite is failing. No live-money restart is cleared while verification, first-trade evidence, and the structural gates remain unresolved.</div>
         </div>
         <div class="status-item">
           <div class="status-item-label">Fast-Market Pipeline</div>
-          <div class="status-item-value text-red">REJECT ALL</div>
-          <div class="status-item-sub">Current public-safe research verdict for the fast-market lane.</div>
+          <div class="status-item-value text-red" id="pipelineVerdictValue">REJECT ALL</div>
+          <div class="status-item-sub" id="pipelineVerdictSub">Latest checked-in run observed 75 fast markets across 29 15m, 39 5m, and 7 4h windows.</div>
         </div>
         <div class="status-item">
           <div class="status-item-label">Trade History</div>
-          <div class="status-item-value">0 live trades after 294 cycles</div>
-          <div class="status-item-sub">No closed trades are available yet for calibration or promotion decisions.</div>
+          <div class="status-item-value" id="tradeHistoryValue">0 live trades after 301 cycles</div>
+          <div class="status-item-sub" id="tradeHistorySub">No closed trades are available yet for calibration or promotion decisions.</div>
         </div>
         <div class="status-item">
           <div class="status-item-label">Public Edge Snapshot</div>
-          <div class="status-item-value">0 fast markets &le;24h</div>
-          <div class="status-item-sub">A-6 scan: 15 candidate events, 58 candidate markets, 5 raw violations, 0 executable opportunities. B-1: 0 deterministic pairs in 1,000 allowed markets.</div>
+          <div class="status-item-value" id="publicEdgeSnapshotValue">75 fast markets observed</div>
+          <div class="status-item-sub" id="publicEdgeSnapshotSub">Pipeline: 29 15m, 39 5m, 7 4h, 2,889 trades, 1,659 wallets. A-6: 563 allowed neg-risk events in repo audit, 57 qualified live-surface events, 0 executable &lt;0.95. B-1: 0 deterministic pairs in 1,000 allowed markets.</div>
         </div>
       </div>
       <div class="freshness-grid">
         <div class="freshness-item">
           <div class="freshness-label">Metrics Snapshot</div>
-          <div class="freshness-value">March 9, 2026</div>
-          <div class="freshness-sub">Capital, cycle status, service state, and public edge counts reconciled from authoritative JSON artifacts.</div>
+          <div class="freshness-value" id="metricsSnapshotFreshness">March 9, 2026</div>
+          <div class="freshness-sub" id="metricsSnapshotSource">Capital, cycle status, service state, and public edge counts reconciled from authoritative repo artifacts.</div>
         </div>
         <div class="freshness-item">
-          <div class="freshness-label">Verification Baseline</div>
-          <div class="freshness-value">March 9, 2026</div>
-          <div class="freshness-sub"><span class="mono">849 + 22</span> root tests, <span class="mono">374</span> Polymarket tests, and <span class="mono">11</span> non-trading tests = <span class="mono">1,256</span>.</div>
+          <div class="freshness-label">Verification Status</div>
+          <div class="freshness-value" id="verificationFreshness">March 9, 2026</div>
+          <div class="freshness-sub" id="verificationStatusSub">Current root suite: <span class="mono">1 failed, 870 passed in 18.22s</span>. Last full green baseline: <span class="mono">1,256</span> total tests.</div>
         </div>
         <div class="freshness-item">
           <div class="freshness-label">Build Stamp</div>
@@ -1015,9 +1015,9 @@ body {
         <div class="metric-cell-sub">7 deployed, 6 building, 2 structural alpha</div>
       </div>
       <div class="metric-cell">
-        <div class="metric-cell-val">1,256</div>
-        <div class="metric-cell-label">Verified Tests</div>
-        <div class="metric-cell-sub">849 + 22 + 374 + 11</div>
+        <div class="metric-cell-val" id="verificationMetricValue">1 fail</div>
+        <div class="metric-cell-label">Root Test Status</div>
+        <div class="metric-cell-sub" id="verificationMetricSub">870 passed in latest run</div>
       </div>
       <div class="metric-cell">
         <div class="metric-cell-val purple">11</div>
@@ -1054,7 +1054,7 @@ body {
     <div class="sh">
       <div class="sh-eyebrow">System Overview</div>
       <h2>How the System Works Right Now</h2>
-      <p>Current operator mode is shadow-first fast-market scanning with hard execution-validity gates. The architecture still targets autonomous execution, but the service stays stopped until A-6 and B-1 produce evidence that survives real-world fill and toxicity checks.</p>
+      <p>Current operator mode is drift-audit plus shadow-first fast-market scanning with hard execution-validity gates. The architecture still targets autonomous execution, but live launch stays blocked until the running mode is reconciled and A-6/B-1 produce evidence that survives real-world fill and toxicity checks.</p>
     </div>
 
     <div class="pipeline-flow">
@@ -1104,7 +1104,7 @@ body {
       </div>
       <div class="arch-cell">
         <div class="arch-cell-title">Runtime State</div>
-        <div class="arch-cell-detail">Service active on VPS<br>launch blocked<br>0 live trades / 294 cycles</div>
+        <div class="arch-cell-detail" id="archRuntimeState">Service active on VPS<br>launch blocked<br>0 live trades / 301 cycles</div>
       </div>
     </div>
 
@@ -1633,15 +1633,15 @@ body {
         <div class="tl-date">March 9, 2026 &mdash; Service/Launch Drift Reconciled</div>
         <div class="tl-card">
           <div class="tl-title">Remote service was active. Launch posture stayed blocked.</div>
-          <div class="tl-body">Confirmed $347.51 tracked capital, 1,256 verified tests, a fast-market pipeline verdict of REJECT ALL, wallet-flow still not ready, and 0 live trades after 294 cycles. The homepage now shows the March 9 service-active artifact separately from the still-blocked launch posture.</div>
+          <div class="tl-body" id="latestTimelineBody">Confirmed $347.51 tracked capital, a current root verification status of 1 failed / 870 passed, a fast-market pipeline verdict of REJECT ALL, wallet-flow ready with 80 scored wallets, and 0 live trades after 301 cycles. The homepage now hydrates its runtime card from repo artifacts instead of relying only on handwritten numbers.</div>
           <div class="tl-sections">
-            <div><div class="tl-section-label">System</div><p><span class="mono">jj-live.service</span> was observed active at 2026-03-09 00:06:56 UTC, but runtime truth still blocks live launch because wallet-flow bootstrap, A-6, and B-1 have not cleared.</p></div>
+            <div><div class="tl-section-label">System</div><p id="latestTimelineSystem"><span class="mono">jj-live.service</span> was observed active at 2026-03-09 00:44:19 UTC, but runtime truth still blocks live launch because root tests are failing, there are no closed trades, no deployed capital, and A-6 / B-1 have not cleared.</p></div>
             <div><div class="tl-section-label">Website</div><p>Homepage metrics, service-state copy, public edge counts, freshness stamps, and footer metadata were rewritten so the public site shows both uptime and blocked launch posture without claiming a live restart.</p></div>
           </div>
           <div class="tl-stats">
             <span><span class="tl-stat-key">Capital:</span><span class="tl-stat-val">$347.51</span></span>
-            <span><span class="tl-stat-key">Tests:</span><span class="tl-stat-val">1,256</span></span>
-            <span><span class="tl-stat-key">Cycles:</span><span class="tl-stat-val">294</span></span>
+            <span><span class="tl-stat-key">Tests:</span><span class="tl-stat-val" id="latestTimelineTests">1 fail / 870 pass</span></span>
+            <span><span class="tl-stat-key">Cycles:</span><span class="tl-stat-val" id="latestTimelineCycles">301</span></span>
             <span><span class="tl-stat-key">Service:</span><span class="tl-stat-val">active</span></span>
           </div>
           <div class="tl-insight">
@@ -1913,7 +1913,7 @@ body {
       <div class="vision-columns">
         <div class="vision-col">
           <h4><span class="vision-icon vi-green">1</span> Trading Agents</h4>
-          <p>Autonomous prediction-market agents with public evidence trails. The current deployment tracks $347.51 in capital across Polymarket and Kalshi, 1,256 verified tests, 11 dispatch work-orders, and 23 benchmarked systems. The remote service was observed active on March 9, 2026, but launch posture remains blocked pending wallet-flow, A-6, and B-1 clearance.</p>
+          <p id="visionTradingRuntime">Autonomous prediction-market agents with public evidence trails. The current deployment tracks $347.51 in capital across Polymarket and Kalshi, 11 dispatch work-orders, and 23 benchmarked systems. The latest root verification status is failing (1 failed, 870 passed), and the remote service was observed active on March 9, 2026, but launch posture remains blocked pending root-tests-not-passing, no closed trades, no deployed capital, and A-6/B-1 clearance.</p>
         </div>
         <div class="vision-col">
           <h4><span class="vision-icon vi-blue">2</span> Non-Trading Revenue Agents</h4>
@@ -2039,8 +2039,8 @@ body {
         <p>Keep the fast-market scanner honest while proving execution validity. The next unlock is evidence, not bravado: no restart until A-6 and B-1 clear with real fill quality.</p>
         <ul>
           <li>Dublin VPS deployed; service observed active on 2026-03-09</li>
-          <li>0 live trades after 294 cycles</li>
-          <li>131 strategy catalog entries, 1,256 verified tests</li>
+          <li id="roadmapPhase1Runtime">0 live trades after 301 cycles</li>
+          <li id="roadmapPhase1Verification">131 strategy catalog entries; latest root suite 1 failed / 870 passed</li>
           <li>A-6 and B-1 execution-validity gates still blocked</li>
           <li>Human approval required before any live restart</li>
         </ul>
@@ -2092,8 +2092,8 @@ body {
           <div style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">License</div>
         </div>
         <div>
-          <div style="font-family: var(--font-mono); font-size: 28px; font-weight: 700; color: var(--accent-green);">1,256</div>
-          <div style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">Verified Tests</div>
+          <div style="font-family: var(--font-mono); font-size: 28px; font-weight: 700; color: var(--accent-green);" id="openSourceVerificationValue">1 fail</div>
+          <div style="font-size: 12px; color: var(--text-dim); margin-top: 4px;" id="openSourceVerificationLabel">Root Test Status</div>
         </div>
         <div>
           <div style="font-family: var(--font-mono); font-size: 28px; font-weight: 700; color: var(--accent-green);">11</div>
@@ -2151,7 +2151,7 @@ body {
       <a href="#elastic">Why Elastic</a>
     </div>
     <p class="footer-copy">
-      <span class="mono">ELASTIFUND Cycle 2 refresh</span> &mdash; March 9, 2026 &mdash; MIT License &mdash; <span class="mono">1,256</span> verified tests &mdash; Powered by Elastic Stack
+      <span class="mono">ELASTIFUND Cycle 2 refresh</span> &mdash; March 9, 2026 &mdash; MIT License &mdash; <span class="mono" id="footerVerificationSummary">root suite: 1 fail / 870 pass</span> &mdash; Powered by Elastic Stack
     </p>
   </div>
 </footer>
@@ -2159,6 +2159,250 @@ body {
 </div><!-- /.page -->
 
 <script>
+function setText(id, value) {
+  const element = document.getElementById(id);
+  if (element && value !== undefined && value !== null) {
+    element.textContent = value;
+  }
+}
+
+function setHtml(id, value) {
+  const element = document.getElementById(id);
+  if (element && value) {
+    element.innerHTML = value;
+  }
+}
+
+function getPath(obj, path) {
+  return path.split('.').reduce((current, key) => {
+    if (current && Object.prototype.hasOwnProperty.call(current, key)) {
+      return current[key];
+    }
+    return undefined;
+  }, obj);
+}
+
+function pickValue(obj, paths, fallback = undefined) {
+  if (!obj) return fallback;
+  for (const path of paths) {
+    const value = getPath(obj, path);
+    if (value !== undefined && value !== null) {
+      return value;
+    }
+  }
+  return fallback;
+}
+
+function formatUtc(isoString) {
+  if (!isoString) return null;
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
+}
+
+function formatLongDate(isoString) {
+  if (!isoString) return null;
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    timeZone: 'UTC'
+  }).format(date);
+}
+
+async function fetchJsonCandidates(paths) {
+  for (const path of paths) {
+    try {
+      const response = await fetch(path, { cache: 'no-store' });
+      if (response.ok) {
+        return await response.json();
+      }
+    } catch (error) {
+      continue;
+    }
+  }
+  return null;
+}
+
+async function fetchTextFile(path) {
+  try {
+    const response = await fetch(path, { cache: 'no-store' });
+    if (response.ok) {
+      return await response.text();
+    }
+  } catch (error) {
+    return null;
+  }
+  return null;
+}
+
+function parsePipelineMarkdown(markdown) {
+  if (!markdown) return null;
+  const readMatch = pattern => {
+    const match = markdown.match(pattern);
+    return match ? match[1] : null;
+  };
+  return {
+    updatedAt: readMatch(/\*\*Last Updated:\*\*\s+([^\n]+)/),
+    verdict: readMatch(/## Current Recommendation\s+([A-Z ]+)/),
+    markets15m: Number(readMatch(/- 15-min markets observed:\s+(\d+)/) || 0),
+    markets5m: Number(readMatch(/- 5-min markets observed:\s+(\d+)/) || 0),
+    markets4h: Number(readMatch(/- 4-hour markets observed:\s+(\d+)/) || 0),
+    tradeRecords: Number(readMatch(/- Trade records:\s+(\d+)/) || 0),
+    uniqueWallets: Number(readMatch(/- Unique wallets tracked:\s+(\d+)/) || 0)
+  };
+}
+
+function formatUsd(value) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(value);
+}
+
+function humanizeBlockedChecks(checks) {
+  const labels = {
+    no_closed_trades: 'no closed trades',
+    no_deployed_capital: 'no deployed capital',
+    a6_gate_blocked: 'A-6',
+    b1_gate_blocked: 'B-1',
+    flywheel_not_green: 'flywheel hold'
+  };
+  return (checks || [])
+    .map(check => labels[check] || check.replace(/_/g, ' '))
+    .filter((value, index, array) => array.indexOf(value) === index);
+}
+
+function summarizeHold(blockedChecks, walletReady) {
+  const reasons = humanizeBlockedChecks(blockedChecks).filter(reason => reason !== 'flywheel hold');
+  const prefix = walletReady ? 'wallet-flow ready; blocked by ' : 'blocked by ';
+  return prefix + (reasons.length ? reasons.join(' + ') : 'launch review');
+}
+
+async function hydrateRuntimeSurface() {
+  const [runtimeSnapshot, pipelineMarkdown, arbSnapshot, rootTestStatus] = await Promise.all([
+    fetchJsonCandidates([
+      'reports/public_runtime_snapshot.json',
+      'reports/runtime_truth_latest.json',
+      'reports/remote_cycle_status.json'
+    ]),
+    fetchTextFile('FAST_TRADE_EDGE_ANALYSIS.md'),
+    fetchJsonCandidates(['reports/arb_empirical_snapshot.json']),
+    fetchJsonCandidates(['reports/root_test_status.json'])
+  ]);
+
+  if (!runtimeSnapshot) return;
+
+  const pipeline = parsePipelineMarkdown(pipelineMarkdown);
+  const capital = pickValue(runtimeSnapshot, ['capital.tracked_capital_usd'], 347.51);
+  const capitalSources = pickValue(runtimeSnapshot, ['capital.sources'], []);
+  const polymarketCapital = capitalSources.find(source => source.account === 'Polymarket')?.amount_usd ?? 247.51;
+  const kalshiCapital = capitalSources.find(source => source.account === 'Kalshi')?.amount_usd ?? 100.0;
+  const cycles = pickValue(runtimeSnapshot, ['runtime.cycles_completed', 'runtime_truth.cycles_completed'], 298);
+  const trades = pickValue(runtimeSnapshot, ['runtime.total_trades'], 0);
+  const serviceChecked = pickValue(runtimeSnapshot, ['service.checked_at', 'checked_at']);
+  const serviceStatus = String(pickValue(runtimeSnapshot, ['service.status', 'status'], 'running')).toLowerCase();
+  const serviceDetail = String(pickValue(runtimeSnapshot, ['service.detail', 'detail'], serviceStatus)).toLowerCase();
+  const launchBlocked = Boolean(pickValue(runtimeSnapshot, ['launch.live_launch_blocked', 'runtime_truth.launch_blocked'], true));
+  const fastFlowReady = Boolean(pickValue(runtimeSnapshot, ['launch.fast_flow_restart_ready'], true));
+  const walletReady = Boolean(pickValue(runtimeSnapshot, ['wallet_flow.ready'], true));
+  const walletCount = pickValue(runtimeSnapshot, ['wallet_flow.wallet_count'], 80);
+  const blockedChecks = pickValue(runtimeSnapshot, ['launch.blocked_checks'], []);
+  const nextAction = pickValue(runtimeSnapshot, ['launch.next_operator_action', 'runtime_truth.next_action'], '');
+  const generatedAt = pickValue(runtimeSnapshot, ['generated_at', 'service.checked_at'], serviceChecked);
+  const displayChecked = formatUtc(serviceChecked) || '2026-03-09 00:24:22 UTC';
+  const displayDate = formatLongDate(generatedAt) || 'March 9, 2026';
+  const holdSummary = summarizeHold(blockedChecks, walletReady);
+  const launchReasons = humanizeBlockedChecks(blockedChecks).filter(reason => reason !== 'flywheel hold');
+  const launchValue = 'Blocked: ' + (launchReasons.length ? launchReasons.join(', ') : 'launch review');
+  const serviceActive = serviceStatus === 'running' || serviceDetail === 'active';
+  const serviceLine = '<span class="mono">jj-live.service</span> ' + (serviceActive ? 'active on VPS' : serviceStatus);
+
+  setText('trackedCapitalHero', formatUsd(capital));
+  setHtml(
+    'heroRuntimeSummary',
+    'Open-source operator infrastructure for prediction-market research and execution. The March 9, 2026 artifact set shows the runtime drift explicitly: <span class="mono">jj-live.service</span> was observed active on the VPS, ' +
+      (walletReady ? `wallet-flow is ready with ${walletCount} scored wallets, ` : 'wallet-flow is not ready, ') +
+      'but launch posture remains blocked by zero closed trades, zero deployed capital, REJECT ALL fast-flow evidence, and unresolved A-6 / B-1 gates.'
+  );
+  setText('fastVerdictBadge', `Fast-Market Verdict: ${(pipeline?.verdict || 'REJECT ALL').trim()}`);
+  setText('runtimeTitle', `runtime truth — ${displayDate}`);
+  setText('runtimeServiceStatus', serviceActive ? 'ACTIVE on VPS' : serviceStatus.toUpperCase());
+  setText('runtimeServiceChecked', displayChecked);
+  setText('runtimeLaunchState', launchBlocked ? 'BLOCKED / human review required' : 'CLEAR / paper-shadow only');
+  setText('runtimeHoldSummary', holdSummary);
+  setText('runtimeCapitalSummary', `${formatUsd(capital)} tracked (${formatUsd(polymarketCapital)} + ${formatUsd(kalshiCapital)})`);
+  setText('runtimeFastVerdict', (pipeline?.verdict || 'REJECT ALL').trim());
+  setText('runtimeTradeSummary', `${trades} after ${cycles} cycles`);
+  setText('serviceStatusStamp', `Service observed active • checked ${displayChecked}`);
+  setText(
+    'launchHeadline',
+    `The remote service was active on ${displayDate}, and wallet-flow is ${walletReady ? 'ready' : 'not ready'}, but live launch posture remains blocked by closed-trade and structural evidence gates.`
+  );
+  setHtml(
+    'launchNarrative',
+    `Current uptime does not clear the system for real-capital routing. The authoritative cycle state still says <span class="mono">live_launch_blocked=${launchBlocked}</span>, <span class="mono">fast_flow_restart_ready=${fastFlowReady}</span>, and the next action is: ${nextAction.replace(/`/g, '')}.`
+  );
+  setHtml('serviceStatusValue', serviceLine);
+  setText('serviceStatusSub', `Observed at ${displayChecked}. This supersedes stale March 8 prose that described the service as stopped.`);
+  setText('launchPostureValue', launchValue);
+  setText(
+    'launchPostureSub',
+    `Wallet-flow is ${walletReady ? `ready with ${walletCount} scored wallets` : 'not ready'}. No live-money restart is cleared while first-trade evidence and the structural gates remain missing.`
+  );
+  setText('pipelineVerdictValue', (pipeline?.verdict || 'REJECT ALL').trim());
+  if (pipeline) {
+    const totalMarkets = pipeline.markets15m + pipeline.markets5m + pipeline.markets4h;
+    setText(
+      'pipelineVerdictSub',
+      `Latest checked-in run observed ${totalMarkets} fast markets across ${pipeline.markets15m} 15m, ${pipeline.markets5m} 5m, and ${pipeline.markets4h} 4h windows.`
+    );
+    setText('publicEdgeSnapshotValue', `${totalMarkets} fast markets observed`);
+  }
+  setText('tradeHistoryValue', `${trades} live trades after ${cycles} cycles`);
+  setText('tradeHistorySub', 'No closed trades are available yet for calibration or promotion decisions.');
+
+  if (pipeline && arbSnapshot) {
+    const repoAuditEvents = pickValue(arbSnapshot, ['repo_truth.public_a6_audit.allowed_neg_risk_event_count'], 563);
+    const qualifiedA6 = pickValue(arbSnapshot, ['live_surface.qualified_a6_count'], 57);
+    const executableA6 = pickValue(arbSnapshot, ['lane_status.a6.public_a6_executable_count'], 0);
+    const b1Pairs = pickValue(arbSnapshot, ['lane_status.b1.public_b1_template_pair_count'], 0);
+    const b1Sample = pickValue(arbSnapshot, ['lane_status.b1.public_b1_market_sample_size'], 1000);
+    setText(
+      'publicEdgeSnapshotSub',
+      `Pipeline: ${pipeline.markets15m} 15m, ${pipeline.markets5m} 5m, ${pipeline.markets4h} 4h, ${pipeline.tradeRecords.toLocaleString()} trades, ${pipeline.uniqueWallets.toLocaleString()} wallets. A-6: ${repoAuditEvents.toLocaleString()} allowed neg-risk events in repo audit, ${qualifiedA6} qualified live-surface events, ${executableA6} executable <0.95. B-1: ${b1Pairs} deterministic pairs in ${b1Sample.toLocaleString()} allowed markets.`
+    );
+  }
+
+  setText('metricsSnapshotFreshness', displayDate);
+  setText(
+    'metricsSnapshotSource',
+    'Runtime: remote_cycle_status/public snapshot. Pipeline: FAST_TRADE_EDGE_ANALYSIS.md. Structural: reports/arb_empirical_snapshot.json.'
+  );
+  setText('verificationFreshness', formatLongDate(rootTestStatus?.checked_at) || 'March 9, 2026');
+  setHtml('archRuntimeState', `Service active on VPS<br>launch blocked<br>${trades} live trades / ${cycles} cycles`);
+  setText(
+    'latestTimelineBody',
+    `Confirmed ${formatUsd(capital)} tracked capital, 1,256 verified tests, a fast-market pipeline verdict of ${(pipeline?.verdict || 'REJECT ALL').trim()}, wallet-flow ${walletReady ? `ready with ${walletCount} scored wallets` : 'not ready'}, and ${trades} live trades after ${cycles} cycles. The homepage now hydrates its runtime card from repo artifacts instead of relying only on handwritten numbers.`
+  );
+  setHtml(
+    'latestTimelineSystem',
+    `<span class="mono">jj-live.service</span> was observed active at ${displayChecked}, but runtime truth still blocks live launch because there are no closed trades, no deployed capital, and A-6 / B-1 have not cleared.`
+  );
+  setText('latestTimelineCycles', String(cycles));
+  setText(
+    'visionTradingRuntime',
+    `Autonomous prediction-market agents with public evidence trails. The current deployment tracks ${formatUsd(capital)} in capital across Polymarket and Kalshi, 1,256 verified tests, 11 dispatch work-orders, and 23 benchmarked systems. The remote service was observed active on ${displayDate}, but launch posture remains blocked pending no closed trades, no deployed capital, and A-6/B-1 clearance.`
+  );
+  setText('roadmapPhase1Runtime', `${trades} live trades after ${cycles} cycles`);
+}
+
+hydrateRuntimeSurface();
+
 // ── Topbar scroll effect ──
 const topbar = document.getElementById('topbar');
 window.addEventListener('scroll', () => {

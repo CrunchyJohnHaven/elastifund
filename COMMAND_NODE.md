@@ -1,6 +1,6 @@
 # COMMAND NODE — Predictive Alpha Fund
 
-**Version:** 2.4.0
+**Version:** 2.6.0
 **Last Updated:** 2026-03-09
 **Owner:** John Bradley (johnhavenbradley@gmail.com)
 **Purpose:** Single source of truth for all AI instances (ChatGPT, Cowork, Claude Code, Grok) to operate with full project context. Paste this document (or relevant sections) into any new session so the AI can write prompts, make decisions, and build on prior work without re-discovery.
@@ -12,8 +12,10 @@
 
 | Version | Date | Change Summary |
 |---------|------|----------------|
+| 2.6.0 | 2026-03-09 | Synced the stable public/runtime snapshot outputs: `301` runtime cycles, service checked at `00:44:19Z`, wallet-flow `ready` but `fast_flow_restart_ready=false`, and root verification currently failing. |
+| 2.5.0 | 2026-03-09 | Synced the canonical March 9 artifact set: `298` runtime cycles, wallet-flow `ready`, refreshed fast-market/structural counts, and new doc/site snapshot wiring guidance. |
 | 2.4.0 | 2026-03-09 | Integrated Elastic Vision Document and Platform Vision Document: added product definition (trading + non-trading workers on shared substrate), six-layer master architecture, non-trading five-engine architecture, numbered-docs governance plan, messaging system, opportunity scoring framework, JJ-N rollout plan, and vision-aligned Replit build priorities. |
-| 2.3.0 | 2026-03-09 | Reconciled March 9 machine truth against the March 8 hold-state prose: remote service artifact now shows `active`, runtime is `0` trades after `294` cycles, wallet-flow remains `not_ready`, and launch stays blocked with no strategy promotion. |
+| 2.3.0 | 2026-03-09 | Reconciled March 9 machine truth against the March 8 hold-state prose: the remote service artifact showed `active` while launch stayed blocked and no strategy promotion cleared. |
 | 2.2.0 | 2026-03-08 | Synced Cycle 2 repo truth: verified test counts, paused-service posture, REJECT ALL pipeline status, dispatch inventory, and explicit no-promotion language for A-6/B-1. |
 | 2.1.0 | 2026-03-08 | Added the Elastic observability lane: Kibana dashboards, APM instrumentation, ML anomaly feedback as signal source `#7`, and deployment notes for the new telemetry surface. |
 | 2.0.0 | 2026-03-08 | Adopted stable canonical entrypoint naming, synced context references, and refreshed status counts to match the ranked backlog. |
@@ -34,7 +36,7 @@ JJ is the principal execution layer of Elastifund: direct, evidence-driven, and 
 
 **Dual mission:** (1) Generate trading returns from validated edges. (2) Build the world's best public resource on agentic trading at johnbradleytrading.com.
 
-**Current status (machine truth reconciled on 2026-03-09):** Polymarket is funded ($247.51 USDC), Kalshi is connected ($100 USD), and the Dublin VPS remains the production host. `reports/remote_service_status.json` checked at `2026-03-09T00:06:56Z` shows `jj-live.service` `active`, which supersedes the older March 8 prose that said the service was intentionally stopped. That does not change launch posture: `jj_state.json` still shows `0` live trades after `294` cycles, `reports/remote_cycle_status.json` still marks launch `blocked`, wallet-flow is `not_ready`, the latest checked-in fast-trade artifact still says `REJECT ALL`, and A-6/B-1 remain blocked with `0` executable A-6 opportunities below `0.95` and `0` deterministic B-1 template pairs in the first `1,000` allowed markets. Elastic observability, APM, and anomaly feedback remain part of the target operator stack so we can debug faster without making the bot hard-dependent on Elasticsearch.
+**Current status (machine truth reconciled on 2026-03-09):** Polymarket is funded ($247.51 USDC), Kalshi is connected ($100 USD), and the Dublin VPS remains the production host. `reports/public_runtime_snapshot.json` and `reports/runtime_truth_latest.json` are now the stable handoff artifacts. `reports/remote_service_status.json` checked at `2026-03-09T00:44:19Z` shows `jj-live.service` `active`, which supersedes the older March 8 prose that said the service was intentionally stopped. That does not change launch posture: `jj_state.json` now shows `0` live trades after `301` cycles, wallet-flow is `ready` with `80` scored wallets, but `fast_flow_restart_ready=false` because the root regression suite is currently failing (`1 failed, 870 passed in 18.22s`), there are still no closed trades or deployed capital, the latest checked-in fast-trade artifact at `2026-03-09T00:42:18+00:00` still says `REJECT ALL`, and A-6/B-1 remain blocked with `0` executable A-6 opportunities below `0.95` and `0` deterministic B-1 template pairs in the first `1,000` allowed markets. Elastic observability, APM, and anomaly feedback remain part of the target operator stack so we can debug faster without making the bot hard-dependent on Elasticsearch.
 
 | Strategy Status | Count | Source |
 |-----------------|-------|--------|
@@ -47,16 +49,14 @@ JJ is the principal execution layer of Elastifund: direct, evidence-driven, and 
 | Research Pipeline | 97 | `research/edge_backlog_ranked.md` |
 | Total Tracked | 131 | `research/edge_backlog_ranked.md` |
 
-**Cycle 2 verification baseline (2026-03-09 source set):**
+**Cycle 2 verification status (2026-03-09 source set):**
 - `make hygiene` passed.
-- Root suite passed `849 + 22` tests.
-- `make test-polymarket` passed `374` tests.
-- `make test-nontrading` passed `11` tests.
-- Total verified tests across the current baseline: `1,256`.
+- Current root suite status is failing: `1 failed, 870 passed in 18.22s`.
+- The last full green baseline remains `1,256` total tests (`849 + 22` root, `374` polymarket, `11` non-trading).
 
 **Dispatch inventory:** `11` `DISPATCH_*` work-orders and `95` markdown files in `research/dispatches/`.
 
-**Promotion status:** No promotion this cycle. The March 9 service artifact supersedes the old stopped-state claim, but because wallet-flow is still `not_ready` and launch remains blocked, treat the running service as drift requiring follow-up before any paper/shadow restart.
+**Promotion status:** No promotion this cycle. The March 9 service artifact supersedes the old stopped-state claim, but a running service still counts as drift until the remote mode is reconciled because launch remains blocked by the failing root regression suite, no closed trades, no deployed capital, and the A-6/B-1 evidence gates.
 
 **The Flywheel:** Research -> Implement -> Test -> Record -> Publish -> Repeat in 3-5 day cycles.
 
@@ -159,7 +159,7 @@ These documents create narrative stability and make it possible for any agent or
 
 ```
 VPS: 52.208.155.0 (AWS Lightsail Dublin, eu-west-1)
-systemd: jj-live.service (remote artifact: `active` at `2026-03-09T00:06:56Z`; launch posture still blocked)
+systemd: jj-live.service (remote artifact: `active` at `2026-03-09T00:44:19Z`; launch posture still blocked)
 Bot file: bot/jj_live.py (local) → /home/ubuntu/polymarket-trading-bot/jj_live.py (VPS)
 
 SIGNAL SOURCE 1: Ensemble Estimator + Agentic RAG (bot/ensemble_estimator.py, every 5 min)
@@ -489,17 +489,18 @@ A systematic playbook for identifying markets where traders misread resolution c
 
 | Metric | Value |
 |--------|-------|
-| Runtime cycles completed | 294 |
+| Runtime cycles completed | 301 |
 | Live trades executed | 0 |
 | Open positions | 0 |
 | Deployed capital | $0.00 |
-| Service state | `reports/remote_service_status.json` shows `jj-live.service` `running` at `2026-03-09T00:06:56Z` |
-| Launch posture | `reports/remote_cycle_status.json` still marks launch `blocked`; treat the running service as drift until the remote mode is reconciled |
-| Wallet-flow readiness | `not_ready` (`missing_data/smart_wallets.json`, `missing_data/wallet_scores.db`, `no_scored_wallets`) |
-| Fast-market pipeline | Latest checked-in artifact is `FAST_TRADE_EDGE_ANALYSIS.md` at `2026-03-07T19:07:38+00:00`, still `REJECT ALL` |
+| Service state | `reports/remote_service_status.json` shows `jj-live.service` `running` at `2026-03-09T00:44:19Z` |
+| Launch posture | `reports/public_runtime_snapshot.json` still marks launch `blocked`; treat the running service as drift until the remote mode is reconciled |
+| Wallet-flow readiness | `ready` with `80` scored wallets, but `fast_flow_restart_ready=false` because root tests are failing and the structural gates are still blocked |
+| Fast-market pipeline | Latest checked-in artifact is `FAST_TRADE_EDGE_ANALYSIS.md` at `2026-03-09T00:42:18+00:00`, still `REJECT ALL` |
 | A-6 gate | March 9 edge scan found `0` executable opportunities below the `0.95` threshold |
 | B-1 gate | March 9 template audit found `0` deterministic template pairs in the first `1,000` allowed markets |
-| Promotion status | No promotion; next operator action is to bootstrap wallet-flow and restart only in paper/shadow fast-flow mode |
+| Verification status | Root suite currently failing: `1 failed, 870 passed in 18.22s`; last full green baseline remains `1,256` total verified |
+| Promotion status | No promotion; next operator action is to merge the root regression repair and rerun `make test` before any restart or deploy |
 
 ---
 
@@ -715,9 +716,9 @@ SOP: After completing this task, UPDATE COMMAND_NODE.md (increment version numbe
 | Strategy statuses | 7 deployed / 6 building / 2 structural alpha / 1 re-evaluating / 10 rejected / 8 pre-rejected / 97 research pipeline | `research/edge_backlog_ranked.md` |
 | Total tracked strategies | 131 | `research/edge_backlog_ranked.md` |
 | Current pipeline verdict | REJECT ALL (no validated edge yet) | `FAST_TRADE_EDGE_ANALYSIS.md` |
-| Data coverage (latest run) | 2,615 trade records, 1,513 wallets tracked | `FAST_TRADE_EDGE_ANALYSIS.md` |
-| Live trading state | Remote artifact shows service running; launch still blocked pending wallet-flow readiness and the A-6/B-1 gates | `PROJECT_INSTRUCTIONS.md` |
-| Tests verified | 1,256 total (`849 + 22` root, `374` polymarket, `11` non-trading) | `PROJECT_INSTRUCTIONS.md` |
+| Data coverage (latest run) | 2,889 trade records, 1,659 wallets tracked | `FAST_TRADE_EDGE_ANALYSIS.md` |
+| Live trading state | Remote artifact shows service running; launch still blocked pending root-tests-not-passing, no closed trades, no deployed capital, and the A-6/B-1 gates | `PROJECT_INSTRUCTIONS.md` |
+| Verification status | Root suite failing (`1 failed, 870 passed in 18.22s`); last full green baseline `1,256` total | `PROJECT_INSTRUCTIONS.md` |
 | Dispatch work-orders | 11 `DISPATCH_*` files | `research/dispatches/` |
 | Dispatch library | 95 markdown files | `research/dispatches/` |
 | Flywheel cycle speed | 3-5 days | `docs/strategy/flywheel_strategy.md` |
@@ -880,7 +881,7 @@ Elastifund/
 
 | Platform | Balance | Wallet/Key | Status |
 |----------|---------|------------|--------|
-| Polymarket | $247.51 USDC | Proxy 0xb2fef31cf185b75d0c9c77bd1f8fe9fd576f69a5 | Live wallet funded; remote service artifact is `running`, but launch posture remains blocked pending wallet-flow readiness and the A-6/B-1 gates |
+| Polymarket | $247.51 USDC | Proxy 0xb2fef31cf185b75d0c9c77bd1f8fe9fd576f69a5 | Live wallet funded; remote service artifact is `running`, but launch posture remains blocked pending root-tests-not-passing, no closed trades, no deployed capital, and the A-6/B-1 gates |
 | Kalshi | $100.00 USD | Key ID b20ab9fa-b387-4aac-b160-c22d58705935 | API connected, trading not built |
 
 ### VPS Access

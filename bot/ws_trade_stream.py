@@ -293,6 +293,8 @@ class TradeStreamManager:
         token_ids: Optional[list[str]] = None,
         vpin_bucket_size: float = 500.0,
         vpin_window_size: int = 10,
+        vpin_toxic_threshold: float = 0.75,
+        vpin_safe_threshold: float = 0.25,
         on_regime_change: Optional[Callable[[str, FlowRegime, FlowRegime], None]] = None,
         on_ofi_update: Optional[Callable[[str, OFISnapshot], None]] = None,
         on_ofi_alert: Optional[Callable[[str, OFISnapshot], None]] = None,
@@ -318,7 +320,12 @@ class TradeStreamManager:
                 "token list truncated from %d to max %d subscriptions",
                 len(initial), self.max_subscriptions,
             )
-        self.vpin = VPINManager(bucket_size=vpin_bucket_size, window_size=vpin_window_size)
+        self.vpin = VPINManager(
+            bucket_size=vpin_bucket_size,
+            window_size=vpin_window_size,
+            toxic_threshold=vpin_toxic_threshold,
+            safe_threshold=vpin_safe_threshold,
+        )
         self.ofi = OFICalculator()
         self.on_regime_change = on_regime_change
         self.on_ofi_update = on_ofi_update

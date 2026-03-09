@@ -167,6 +167,179 @@ def test_write_remote_cycle_status_refreshes_root_test_snapshot(
     assert payload["structural_gates"]["b1"]["status"] == "ready_for_shadow"
 
 
+def test_write_remote_cycle_status_emits_runtime_truth_and_public_snapshot(tmp_path: Path):
+    _write_base_remote_state(tmp_path)
+    _write_json(
+        tmp_path / "reports" / "remote_service_status.json",
+        {
+            "checked_at": "2026-03-09T00:24:22+00:00",
+            "status": "running",
+            "systemctl_state": "active",
+            "detail": "active",
+            "host": "ubuntu@example",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "root_test_status.json",
+        {
+            "checked_at": "2026-03-09T00:26:41+00:00",
+            "command": "make test",
+            "status": "passing",
+            "summary": "22 passed in 3.49s",
+            "output_tail": [
+                "849 passed in 18.53s",
+                "22 passed in 3.49s",
+            ],
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "arb_empirical_snapshot.json",
+        {
+            "gating_metrics": {
+                "all_gates_pass": False,
+                "fill_probability_gate": "insufficient_data",
+                "half_life_gate": "fail",
+                "half_life_seconds": 0.0,
+                "settlement_path_gate": "untested",
+            },
+            "b1": {},
+        },
+    )
+    _write_json(
+        tmp_path / "data" / "smart_wallets.json",
+        {
+            "wallets": [{"address": "0x1"}, {"address": "0x2"}],
+            "last_updated": "2026-03-09T00:24:53+00:00",
+        },
+    )
+    (tmp_path / "data" / "wallet_scores.db").write_bytes(b"sqlite-stub")
+    _write_json(
+        tmp_path / "reports" / "edge_scan_20260309T002925Z.json",
+        {
+            "generated_at": "2026-03-09T00:29:25+00:00",
+            "recommended_action": "human_review_required",
+            "action_reason": "Service is active while launch posture is still blocked.",
+            "purpose": "edge_scan_and_fast_flow_restart_readiness",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "pipeline_20260309T002002Z.json",
+        {
+            "report_generated_at": "2026-03-09T00:20:45+00:00",
+            "run_timestamp": "2026-03-09T00:20:02+00:00",
+            "pipeline_verdict": {
+                "recommendation": "REJECT ALL",
+                "reasoning": "All active hypotheses failed kill rules or expectancy tests.",
+            },
+            "verification": {
+                "integrated_entrypoint_status": "passed",
+                "make_test_status": "passed",
+                "root_suite": "849 passed in 18.53s",
+                "jj_live_import_boundary_suite": "22 passed in 3.49s",
+            },
+        },
+    )
+
+    written = write_remote_cycle_status(tmp_path)
+
+    runtime_truth = json.loads((tmp_path / "reports" / "runtime_truth_latest.json").read_text())
+    public_snapshot = json.loads(
+        (tmp_path / "reports" / "public_runtime_snapshot.json").read_text()
+    )
+    timestamped = [
+        path
+        for path in (tmp_path / "reports").glob("runtime_truth_*.json")
+        if path.name != "runtime_truth_latest.json"
+    ]
+
+    assert written["runtime_truth_latest"].endswith("reports/runtime_truth_latest.json")
+    assert written["public_runtime_snapshot"].endswith("reports/public_runtime_snapshot.json")
+    assert len(timestamped) == 1
+    assert runtime_truth["summary"]["wallet_flow_status"] == "ready"
+    assert runtime_truth["service"]["drift_detected"] is True
+    assert runtime_truth["verification"]["summary"] == "849 passed in 18.53s; 22 passed in 3.49s"
+    assert runtime_truth["latest_edge_scan"]["recommended_action"] == "human_review_required"
+    assert runtime_truth["latest_pipeline"]["recommendation"] == "REJECT ALL"
+    assert public_snapshot["snapshot_source"] == "reports/runtime_truth_latest.json"
+    assert public_snapshot["service"]["status"] == "running"
+    assert "host" not in public_snapshot["service"]
+    assert any(
+        "jj-live.service is running while launch posture remains blocked" in headline
+        for headline in public_snapshot["operator_headlines"]
+    )
+
+
+def test_write_remote_cycle_status_overwrites_stale_remote_summary_artifact(tmp_path: Path):
+    _write_base_remote_state(tmp_path)
+    _write_json(
+        tmp_path / "reports" / "remote_cycle_status.json",
+        {
+            "generated_at": "2026-03-08T08:00:00+00:00",
+            "runtime": {"cycles_completed": 3},
+            "wallet_flow": {
+                "status": "not_ready",
+                "ready": False,
+                "wallet_count": 0,
+                "reasons": ["stale_remote_snapshot"],
+            },
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "remote_service_status.json",
+        {
+            "checked_at": "2026-03-09T00:24:22+00:00",
+            "status": "running",
+            "systemctl_state": "active",
+            "detail": "active",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "root_test_status.json",
+        {
+            "checked_at": "2026-03-09T00:26:41+00:00",
+            "command": "make test",
+            "status": "passing",
+            "summary": "22 passed in 3.49s",
+            "output_tail": [
+                "849 passed in 18.53s",
+                "22 passed in 3.49s",
+            ],
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "arb_empirical_snapshot.json",
+        {
+            "gating_metrics": {
+                "all_gates_pass": False,
+                "fill_probability_gate": "insufficient_data",
+                "half_life_gate": "fail",
+                "half_life_seconds": 0.0,
+                "settlement_path_gate": "untested",
+            },
+            "b1": {},
+        },
+    )
+    _write_json(
+        tmp_path / "data" / "smart_wallets.json",
+        {
+            "wallets": [{"address": "0x1"}],
+            "last_updated": "2026-03-09T00:24:53+00:00",
+        },
+    )
+    (tmp_path / "data" / "wallet_scores.db").write_bytes(b"sqlite-stub")
+
+    written = write_remote_cycle_status(tmp_path)
+
+    refreshed = json.loads(Path(written["json"]).read_text())
+    runtime_truth = json.loads((tmp_path / "reports" / "runtime_truth_latest.json").read_text())
+
+    assert refreshed["runtime"]["cycles_completed"] == 16
+    assert refreshed["wallet_flow"]["status"] == "ready"
+    assert runtime_truth["reconciliation"]["cycles_completed"]["selected_value"] == 16
+    assert runtime_truth["reconciliation"]["cycles_completed"]["selected_source"] == "jj_state.json"
+    assert runtime_truth["wallet_flow"]["ready"] is True
+
+
 def test_render_remote_cycle_status_markdown_includes_operator_truth(tmp_path: Path):
     _write_base_remote_state(tmp_path)
     _write_json(

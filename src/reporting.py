@@ -82,12 +82,26 @@ class ReportWriter:
             recommendation=recommendation,
             reasoning=reasoning,
         )
+        pipeline_path = self._write_pipeline_summary(
+            run_ts=run_ts,
+            metrics_path=metrics_path,
+            summary_path=report_path,
+            chart_paths=chart_paths,
+            data_coverage=data_coverage,
+            evaluations=evaluations,
+            result_by_key=result_by_key,
+            hypothesis_exploration=hypothesis_exploration or {},
+            reality_check=reality_check,
+            recommendation=recommendation,
+            reasoning=reasoning,
+        )
 
         out = {
             "metrics": metrics_path,
             "summary": report_path,
             **chart_paths,
             "analysis": self.analysis_path,
+            "pipeline": pipeline_path,
         }
         return out
 
@@ -310,6 +324,78 @@ class ReportWriter:
 
         self.analysis_path.write_text("\n".join(lines))
 
+    def _write_pipeline_summary(
+        self,
+        run_ts: int,
+        metrics_path: Path,
+        summary_path: Path,
+        chart_paths: dict[str, Path],
+        data_coverage: dict[str, Any],
+        evaluations: list[HypothesisEvaluation],
+        result_by_key: dict[str, BacktestResult],
+        hypothesis_exploration: dict[str, Any],
+        reality_check: dict[str, Any],
+        recommendation: str,
+        reasoning: str,
+    ) -> Path:
+        pipeline_stamp = datetime.fromtimestamp(run_ts, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        pipeline_path = self.report_root / f"pipeline_{pipeline_stamp}.json"
+        top_item = evaluations[0] if evaluations else None
+        top_result = result_by_key.get(top_item.key) if top_item else None
+
+        fast_market_counts = {
+            "total_markets_observed": sum(
+                int(data_coverage.get(key, 0)) for key in ("markets_15m", "markets_5m", "markets_4h")
+            ),
+            "markets_15m": int(data_coverage.get("markets_15m", 0)),
+            "resolved_15m": int(data_coverage.get("resolved_15m", 0)),
+            "markets_5m": int(data_coverage.get("markets_5m", 0)),
+            "markets_4h": int(data_coverage.get("markets_4h", 0)),
+            "btc_points": int(data_coverage.get("btc_points", 0)),
+            "trade_records": int(data_coverage.get("trade_records", 0)),
+            "unique_wallets": int(data_coverage.get("unique_wallets", 0)),
+            "data_window_start": data_coverage.get("data_start"),
+            "data_window_end": data_coverage.get("data_end"),
+        }
+
+        pipeline_payload = {
+            "report_generated_at": datetime.now(timezone.utc).isoformat(),
+            "run_timestamp": datetime.fromtimestamp(run_ts, tz=timezone.utc).isoformat(),
+            "authoritative_artifacts": {
+                "analysis_markdown": str(self.analysis_path),
+                "metrics_json": str(metrics_path),
+                "summary_markdown": str(summary_path),
+                "score_chart": str(chart_paths["score_chart"]) if "score_chart" in chart_paths else None,
+                "expectancy_chart": (
+                    str(chart_paths["expectancy_chart"]) if "expectancy_chart" in chart_paths else None
+                ),
+                "charts_note": str(chart_paths["charts"]) if "charts" in chart_paths else None,
+                "log_path": self.config.system.log_path,
+            },
+            "public_safe_counts": {
+                "fast_markets": fast_market_counts,
+                "a6_b1": self._load_structural_public_counts(),
+            },
+            "pipeline_verdict": {
+                "recommendation": recommendation,
+                "reasoning": reasoning,
+                "top_ranked_hypothesis": self._serialize_hypothesis(top_item, top_result),
+            },
+            "edges_found": self._build_edge_summary(evaluations, result_by_key, hypothesis_exploration),
+            "calibration_drift": self._build_calibration_drift_summary(evaluations),
+            "new_viable_strategies": self._build_new_viable_strategies(evaluations, result_by_key),
+            "data_quality": {
+                "issues_from_metrics": list(reality_check.get("data_quality_issues", [])),
+                "maker_fill_model": reality_check.get("maker_fill_model", "constant"),
+                "maker_fill_assumption": reality_check.get("maker_fill_assumption"),
+                "confidence_calibration": reality_check.get("confidence_calibration", "none"),
+                "execution_delay_seconds": reality_check.get("execution_delay"),
+                "edge_fake_risks": list(reality_check.get("edge_fake_risks", [])),
+            },
+        }
+        pipeline_path.write_text(json.dumps(pipeline_payload, indent=2))
+        return pipeline_path
+
     @staticmethod
     def _render_hypothesis_exploration(exploration: dict[str, Any]) -> list[str]:
         lines: list[str] = []
@@ -398,3 +484,178 @@ class ReportWriter:
         lines.append(f"- **Last signal:** n/a — generated in latest cycle")
         lines.append("")
         return lines
+
+    def _build_edge_summary(
+        self,
+        evaluations: list[HypothesisEvaluation],
+        result_by_key: dict[str, BacktestResult],
+        exploration: dict[str, Any],
+    ) -> dict[str, Any]:
+        validated: list[dict[str, Any]] = []
+        candidates: list[dict[str, Any]] = []
+        rejected_count = 0
+
+        for item in evaluations:
+            result = result_by_key.get(item.key)
+            if result is None:
+                continue
+            if item.status == "rejected":
+                rejected_count += 1
+            if item.status == "promoted" and result.signals >= 300 and result.p_value < 0.01:
+                validated.append(self._serialize_hypothesis(item, result))
+            elif result.signals >= 100 and result.p_value < 0.05 and result.ev_taker > 0:
+                candidates.append(self._serialize_hypothesis(item, result))
+
+        watchlist: list[dict[str, Any]] = []
+        for variant in exploration.get("variants") or []:
+            if variant.get("gate_status") != "watch":
+                continue
+            metrics = variant.get("metrics", {})
+            raw_signals = int(metrics.get("raw_signals", 0))
+            resolved_signals = int(metrics.get("signals", 0))
+            watchlist.append(
+                {
+                    "name": variant.get("label", "n/a"),
+                    "family": exploration.get("hypothesis", "n/a"),
+                    "status": variant.get("gate_status"),
+                    "promotion_eligible": False,
+                    "raw_signals": raw_signals,
+                    "resolved_signals": resolved_signals,
+                    "open_signals": max(raw_signals - resolved_signals, 0),
+                    "fallback_ratio": float(metrics.get("fallback_ratio", 0.0)),
+                    "gate_failures": list(variant.get("gate_failures", [])),
+                }
+            )
+
+        return {
+            "validated": validated,
+            "candidates": candidates,
+            "watchlist": watchlist,
+            "rejected_hypotheses": rejected_count,
+        }
+
+    def _build_calibration_drift_summary(self, evaluations: list[HypothesisEvaluation]) -> dict[str, Any]:
+        flagged: list[dict[str, Any]] = []
+        for item in evaluations:
+            signals = int(item.metrics.get("signals", 0))
+            if signals <= 0:
+                continue
+            calibration_error = float(item.metrics.get("calibration_error", 0.0))
+            if "Probability calibration drift" not in item.failure_modes and calibration_error <= 0.15:
+                continue
+            flagged.append(
+                {
+                    "name": item.name,
+                    "calibration_error": calibration_error,
+                    "failure_mode": "Probability calibration drift",
+                }
+            )
+
+        flagged.sort(key=lambda row: row["calibration_error"], reverse=True)
+        return {
+            "warning_threshold": 0.15,
+            "hard_fail_threshold": 0.20,
+            "status": "drift_present" if flagged else "within_bounds",
+            "flagged_hypotheses": flagged,
+        }
+
+    def _build_new_viable_strategies(
+        self,
+        evaluations: list[HypothesisEvaluation],
+        result_by_key: dict[str, BacktestResult],
+    ) -> list[dict[str, Any]]:
+        viable: list[dict[str, Any]] = []
+        for item in evaluations:
+            result = result_by_key.get(item.key)
+            if result is None:
+                continue
+            if result.signals < self.config.research.min_signals_candidate:
+                continue
+            if result.p_value >= 0.05 or result.ev_taker <= 0:
+                continue
+            viable.append(self._serialize_hypothesis(item, result))
+        return viable
+
+    def _load_structural_public_counts(self) -> dict[str, Any]:
+        snapshot_path = self.report_root / "arb_empirical_snapshot.json"
+        b1_audit_path = self.report_root / "b1_template_audit.json"
+        payload: dict[str, Any] = {
+            "source_artifact": str(snapshot_path),
+            "source_generated_at": None,
+            "a6": {
+                "status": None,
+                "allowed_neg_risk_event_count": None,
+                "executable_constructions_below_threshold": None,
+                "execute_threshold": None,
+                "blocked_reasons": [],
+            },
+            "b1": {
+                "status": None,
+                "allowed_market_sample_size": None,
+                "deterministic_template_pair_count": None,
+                "template_market_counts": None,
+                "blocked_reasons": [],
+            },
+        }
+
+        snapshot = self._load_json(snapshot_path)
+        if snapshot:
+            repo_truth = snapshot.get("repo_truth", {})
+            lane_status = snapshot.get("lane_status", {})
+            a6_truth = repo_truth.get("public_a6_audit", {})
+            b1_truth = repo_truth.get("public_b1_audit", {})
+            a6_lane = lane_status.get("a6", {})
+            b1_lane = lane_status.get("b1", {})
+            payload["source_generated_at"] = snapshot.get("generated_at")
+            payload["a6"] = {
+                "status": a6_lane.get("status"),
+                "allowed_neg_risk_event_count": a6_truth.get("allowed_neg_risk_event_count"),
+                "executable_constructions_below_threshold": a6_truth.get("executable_constructions_below_threshold"),
+                "execute_threshold": a6_truth.get("execute_threshold"),
+                "blocked_reasons": list(a6_lane.get("blocked_reasons", [])),
+            }
+            payload["b1"] = {
+                "status": b1_lane.get("status"),
+                "allowed_market_sample_size": b1_truth.get("allowed_market_sample_size"),
+                "deterministic_template_pair_count": b1_truth.get("deterministic_template_pair_count"),
+                "template_market_counts": None,
+                "blocked_reasons": list(b1_lane.get("blocked_reasons", [])),
+            }
+
+        b1_audit = self._load_json(b1_audit_path)
+        if b1_audit:
+            payload["b1"]["template_market_counts"] = dict(b1_audit.get("template_markets", {}))
+            if payload["b1"]["deterministic_template_pair_count"] is None:
+                payload["b1"]["deterministic_template_pair_count"] = len(b1_audit.get("template_pairs", []))
+
+        return payload
+
+    @staticmethod
+    def _serialize_hypothesis(
+        item: HypothesisEvaluation | None,
+        result: BacktestResult | None,
+    ) -> dict[str, Any] | None:
+        if item is None or result is None:
+            return None
+        return {
+            "name": item.name,
+            "status": item.status,
+            "score": item.score,
+            "confidence": item.confidence,
+            "signals": result.signals,
+            "win_rate": result.win_rate,
+            "ev_maker": result.ev_maker,
+            "ev_taker": result.ev_taker,
+            "p_value": result.p_value,
+            "calibration_error": result.calibration_error,
+        }
+
+    @staticmethod
+    def _load_json(path: Path) -> dict[str, Any] | None:
+        if not path.exists():
+            return None
+        try:
+            loaded = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            return None
+        return loaded if isinstance(loaded, dict) else None

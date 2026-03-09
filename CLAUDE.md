@@ -149,25 +149,25 @@ This is standard practice. Quantopian was open-source but nobody published their
 **Date:** 2026-03-09
 **Cycle:** Flywheel Cycle 2 — Structural Alpha & Microstructure Defense
 **Capital:** $247.51 Polymarket (USDC) + $100 Kalshi (USD) = $347.51 total
-**Live trading:** BLOCKED — Dublin VPS deployed; `reports/remote_service_status.json` shows `jj-live.service` `running` at `2026-03-09T00:06:56Z`, but launch posture is still blocked and that active service state should be treated as drift until the remote mode is reconciled
-**Live trades executed:** 0 (jj_state.json: total_trades=0, cycles_completed=294)
+**Live trading:** BLOCKED — Dublin VPS deployed; `reports/remote_service_status.json` shows `jj-live.service` `running` at `2026-03-09T00:44:19Z`, but launch posture is still blocked and that active service state should be treated as drift until the remote mode is reconciled
+**Live trades executed:** 0 (jj_state.json: total_trades=0, cycles_completed=301)
 **Live config:** $5/position, 5 max open positions, $5 daily loss cap, 0.25 Kelly, 24h max resolution
 **Execution mode:** 100% Post-Only maker orders (Dispatch #75 pivot)
 **Data target:** 100 resolved trades in 7 days for live calibration data — NOT STARTED (0/100)
-**Fast-market pipeline:** Latest checked-in report still says `REJECT ALL`; no strategy promotion this cycle
+**Fast-market pipeline:** Latest checked-in report at `2026-03-09T00:42:18+00:00` still says `REJECT ALL`; no strategy promotion this cycle
 **Strategies in backlog:** 131 tracked total (7 deployed, 6 building, 2 structural alpha, 10 rejected, 8 pre-rejected, 1 re-evaluating, 97 research pipeline)
-**Structural gates:** March 9 edge scan found `0` executable A-6 opportunities below the `0.95` gate; March 9 template audit found `0` deterministic B-1 pairs in the first `1,000` allowed markets; wallet-flow remains `not_ready`
+**Structural gates:** March 9 edge scan found `0` executable A-6 opportunities below the `0.95` gate; March 9 template audit found `0` deterministic B-1 pairs in the first `1,000` allowed markets; wallet-flow is now `ready` with `80` scored wallets, but `fast_flow_restart_ready=false` because root tests are failing and no-closed-trades / no-deployed-capital gating still blocks launch
 **New modules (Cycle 2):**
   - bot/ws_trade_stream.py — WebSocket CLOB feed → VPIN + OFI (5-level weighted)
   - bot/lead_lag_engine.py — Semantic Lead-Lag Arbitrage (Granger causality + LLM semantic filter)
   - bot/kill_rules.py — Updated kill rules (semantic decay, toxicity survival, cost stress polynomial, calibration enforcement)
   - All wired into jj_live.py as signal sources #5 (VPIN/OFI) and #6 (LeadLag)
-**Verification baseline:** `make hygiene` passed; root suite `849 + 22`; `make test-polymarket` `374`; `make test-nontrading` `11`; `1,256` total verified
+**Verification status:** `make hygiene` passed, but the current root suite is failing (`1 failed, 870 passed in 18.22s`). The last full green baseline remains `1,256` total verified (`849 + 22` root, `374` polymarket, `11` non-trading).
 **Dispatch inventory:** `11` `DISPATCH_*` work-orders; `95` markdown files in `research/dispatches/`
 **Sprint plan:** 60-day, 4 cycles (VPIN → Debate → Conformal → Risk Parity)
 **Code health:** 45/45 bot/*.py pass syntax. Zero TODO/FIXME. All three LLM prompt templates now include temporal grounding (debate_pipeline.py, lead_lag_engine.py confirmed fixed).
-**Vision integration (March 9):** Elastic Vision Document and Platform Vision Document integrated into all admin files. Product definition expanded: trading + non-trading workers on a shared Elastic substrate. Six-layer master architecture, five-engine non-trading architecture (Account Intelligence, Outreach, Interaction, Proposal, Learning), numbered-docs governance plan, messaging system, opportunity scoring framework, and JJ-N 90-day rollout plan are now canonical across COMMAND_NODE v2.4.0, PROJECT_INSTRUCTIONS v3.4.0, REPLIT_NEXT_BUILD, and README. Non-trading revenue worker (JJ-N) is the first-class front door.
-**Next action:** Reconcile why the remote service is active despite blocked launch posture, keep real-money routing off, build wallet-flow bootstrap artifacts, then restart only in paper/shadow fast-flow mode if the remote mode is confirmed safe
+**Vision integration (March 9):** Elastic Vision Document and Platform Vision Document integrated into all admin files. Product definition expanded: trading + non-trading workers on a shared Elastic substrate. Six-layer master architecture, five-engine non-trading architecture (Account Intelligence, Outreach, Interaction, Proposal, Learning), numbered-docs governance plan, messaging system, opportunity scoring framework, and JJ-N 90-day rollout plan are now canonical across COMMAND_NODE v2.6.0, PROJECT_INSTRUCTIONS v3.6.0, REPLIT_NEXT_BUILD, and README. Non-trading revenue worker (JJ-N) is the first-class front door.
+**Next action:** Merge the root regression repair and rerun `make test` before any restart or deploy. Keep real-money routing off and leave A-6/B-1 blocked until first closed trades or structural samples exist.
 
 ---
 

@@ -39,6 +39,23 @@ ROOT_DEPLOYABLE_FILES = {
     "requirements.txt",
     "requirements-elastic.txt",
 }
+REQUIRED_RELEASE_REPORT_FILES = (
+    "reports/runtime_truth_latest.json",
+    "reports/public_runtime_snapshot.json",
+    "reports/runtime_profile_effective.json",
+)
+PROFILE_SELECTOR_ENV_KEY = "JJ_RUNTIME_PROFILE"
+REQUIRED_RUNTIME_PROFILE_NAMES = (
+    "blocked_safe",
+    "shadow_fast_flow",
+    "research_scan",
+)
+SAFE_REMOTE_MODES = {"paper", "shadow"}
+SAFE_REMOTE_RUNTIME_ENV_KEYS = (
+    "ELASTIFUND_AGENT_RUN_MODE",
+    "PAPER_TRADING",
+    PROFILE_SELECTOR_ENV_KEY,
+)
 DEPLOYABLE_PREFIXES = (
     "bot/",
     "config/",
@@ -126,6 +143,12 @@ def is_deployable_changed_file(path: str) -> bool:
     if path in ROOT_DEPLOYABLE_FILES:
         return True
     return any(path.startswith(prefix) for prefix in DEPLOYABLE_PREFIXES)
+
+
+def is_release_bundle_file(path: str) -> bool:
+    if path in REQUIRED_RELEASE_REPORT_FILES:
+        return True
+    return is_deployable_changed_file(path)
 
 
 def select_deployable_changed_files(changed_files: Sequence[str]) -> tuple[str, ...]:
@@ -234,6 +257,102 @@ def validate_env_key_alignment(repo_root: Path, deploy_files: Sequence[str]) -> 
     }
 
 
+def _discover_runtime_profile_files(repo_root: Path) -> dict[str, str]:
+    config_root = repo_root / "config"
+    if not config_root.exists():
+        return {}
+
+    discovered: dict[str, str] = {}
+    resolved_root = repo_root.resolve()
+    for path in sorted(candidate for candidate in config_root.rglob("*") if candidate.is_file()):
+        stem = path.stem
+        if stem not in REQUIRED_RUNTIME_PROFILE_NAMES or stem in discovered:
+            continue
+        discovered[stem] = path.resolve().relative_to(resolved_root).as_posix()
+    return discovered
+
+
+def _extract_selected_profile(payload: dict[str, Any]) -> str | None:
+    selection = payload.get("selection")
+    candidates: list[Any] = [
+        payload.get("selected_profile"),
+        payload.get("profile"),
+        payload.get("profile_name"),
+        payload.get("runtime_profile"),
+    ]
+    if isinstance(selection, dict):
+        candidates.extend([selection.get("profile"), selection.get("name")])
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return None
+
+
+def build_release_contract(repo_root: Path) -> dict[str, Any]:
+    profile_files_by_name = _discover_runtime_profile_files(repo_root)
+    missing_profile_names = sorted(
+        name for name in REQUIRED_RUNTIME_PROFILE_NAMES if name not in profile_files_by_name
+    )
+    documented_env_keys = set(read_documented_env_keys(repo_root / ".env.example"))
+    selector_documented = PROFILE_SELECTOR_ENV_KEY in documented_env_keys
+
+    snapshot_files = []
+    missing_bundle_files: list[str] = []
+    for relative in REQUIRED_RELEASE_REPORT_FILES:
+        exists = (repo_root / relative).exists()
+        snapshot_files.append({"path": relative, "exists": exists})
+        if not exists:
+            missing_bundle_files.append(relative)
+
+    selected_profile: str | None = None
+    runtime_profile_path = repo_root / "reports" / "runtime_profile_effective.json"
+    if runtime_profile_path.exists():
+        payload = read_json(runtime_profile_path)
+        selected_profile = _extract_selected_profile(payload)
+
+    issues: list[str] = []
+    if missing_bundle_files:
+        issues.append(
+            "missing required release artifacts: " + ", ".join(missing_bundle_files)
+        )
+    if missing_profile_names:
+        issues.append(
+            "missing runtime profile files: " + ", ".join(missing_profile_names)
+        )
+    if not selector_documented:
+        issues.append(f"{PROFILE_SELECTOR_ENV_KEY} is not documented in .env.example")
+    if not selected_profile:
+        issues.append("runtime profile selection is missing from reports/runtime_profile_effective.json")
+    elif selected_profile not in REQUIRED_RUNTIME_PROFILE_NAMES:
+        issues.append(
+            "runtime profile selection is invalid: "
+            f"{selected_profile!r} is not one of {', '.join(REQUIRED_RUNTIME_PROFILE_NAMES)}"
+        )
+
+    required_bundle_files = tuple(
+        sorted(
+            {
+                ".env.example",
+                *REQUIRED_RELEASE_REPORT_FILES,
+                *profile_files_by_name.values(),
+            }
+        )
+    )
+    return {
+        "valid": not issues,
+        "issues": issues,
+        "profile_selector_env_key": PROFILE_SELECTOR_ENV_KEY,
+        "selector_documented_in_env_example": selector_documented,
+        "selected_profile": selected_profile,
+        "required_profile_names": list(REQUIRED_RUNTIME_PROFILE_NAMES),
+        "profile_files": [profile_files_by_name[name] for name in sorted(profile_files_by_name)],
+        "missing_profile_names": missing_profile_names,
+        "snapshot_files": snapshot_files,
+        "missing_bundle_files": missing_bundle_files,
+        "required_bundle_files": list(required_bundle_files),
+    }
+
+
 def _derive_ci_status(repo_root: Path) -> tuple[str | None, dict[str, Any]]:
     root_status = read_json(repo_root / "reports" / "root_test_status.json")
     status = str(root_status.get("status") or "").strip().lower()
@@ -261,22 +380,113 @@ def _derive_ci_status(repo_root: Path) -> tuple[str | None, dict[str, Any]]:
 
 
 def _derive_restart_recommendation(repo_root: Path) -> tuple[bool, str]:
+    remote_cycle_status = read_json(repo_root / "reports" / "remote_cycle_status.json")
+    launch = remote_cycle_status.get("launch") if isinstance(remote_cycle_status, dict) else {}
+    runtime_truth = remote_cycle_status.get("runtime_truth") if isinstance(remote_cycle_status, dict) else {}
+    if bool((launch or {}).get("live_launch_blocked")):
+        return False, "reports/remote_cycle_status.json#launch.live_launch_blocked"
+    if bool((runtime_truth or {}).get("service_drift_detected")) or bool(
+        (runtime_truth or {}).get("drift_detected")
+    ):
+        return False, "reports/remote_cycle_status.json#runtime_truth.drift_detected"
+
     edge_scans = sorted((repo_root / "reports").glob("edge_scan_*.json"))
     for latest_edge_scan in reversed(edge_scans):
         payload = read_json(latest_edge_scan)
         if "restart_recommended" in payload:
             return bool(payload.get("restart_recommended")), str(latest_edge_scan.relative_to(repo_root))
 
-    remote_cycle_status = read_json(repo_root / "reports" / "remote_cycle_status.json")
-    launch = remote_cycle_status.get("launch") if isinstance(remote_cycle_status, dict) else {}
     return bool((launch or {}).get("fast_flow_restart_ready")), "reports/remote_cycle_status.json"
+
+
+def _read_seed_manifest_files(repo_root: Path) -> tuple[str, ...]:
+    manifest_path = repo_root / "reports" / "parallel" / "release_manifest.json"
+    payload = read_json(manifest_path)
+    raw_entries = payload.get("deploy_files") or payload.get("changed_files") or []
+    if not isinstance(raw_entries, list):
+        return ()
+    return tuple(
+        sorted(
+            {
+                str(entry)
+                for entry in raw_entries
+                if isinstance(entry, str) and is_release_bundle_file(str(entry))
+            }
+        )
+    )
+
+
+def validate_release_plan(
+    repo_root: Path,
+    manifest_path: Path,
+    release_plan: ReleasePlan,
+) -> dict[str, Any]:
+    payload = read_json(manifest_path)
+    release_contract = build_release_contract(repo_root)
+    issues = list(release_contract["issues"])
+
+    current_head = _get_git_head_sha(repo_root)
+    manifest_sha = str(payload.get("repo_sha") or "").strip() or None
+    repo_sha_matches_head = None
+    if manifest_sha and current_head:
+        repo_sha_matches_head = manifest_sha == current_head
+        if not repo_sha_matches_head:
+            issues.append(
+                f"release manifest repo_sha {manifest_sha} does not match HEAD {current_head}"
+            )
+    elif not manifest_sha:
+        issues.append("release manifest repo_sha is missing")
+
+    manifest_ci_status = str(payload.get("ci_status") or "").strip().lower()
+    if manifest_ci_status != "green":
+        issues.append(f"release manifest ci_status is {manifest_ci_status or 'missing'}, not green")
+
+    missing_from_manifest = sorted(
+        set(release_contract["required_bundle_files"]) - set(release_plan.deploy_files)
+    )
+    if missing_from_manifest:
+        issues.append(
+            "release bundle is missing required files: " + ", ".join(missing_from_manifest)
+        )
+
+    non_allowlisted = sorted(
+        relative for relative in release_plan.deploy_files if not is_release_bundle_file(relative)
+    )
+    if non_allowlisted:
+        issues.append(
+            "release bundle contains non-deployable files: " + ", ".join(non_allowlisted)
+        )
+
+    return {
+        "valid": not issues,
+        "issues": issues,
+        "manifest_repo_sha": manifest_sha,
+        "current_head_sha": current_head,
+        "repo_sha_matches_head": repo_sha_matches_head,
+        "manifest_ci_status": manifest_ci_status or None,
+        "missing_required_bundle_files": missing_from_manifest,
+        "non_allowlisted_files": non_allowlisted,
+        "release_contract": release_contract,
+    }
 
 
 def build_release_manifest(repo_root: Path) -> dict[str, Any]:
     changed_files = list_cycle_changed_files(repo_root)
-    deploy_files = select_deployable_changed_files(changed_files)
-    if not deploy_files:
+    cycle_deploy_files = select_deployable_changed_files(changed_files)
+    seed_deploy_files = _read_seed_manifest_files(repo_root)
+    if not cycle_deploy_files and not seed_deploy_files:
         raise DeployError("no deployable changed files found in the current cycle")
+    release_contract = build_release_contract(repo_root)
+    if not release_contract["valid"]:
+        raise DeployError("release contract validation failed; " + "; ".join(release_contract["issues"]))
+
+    deploy_files = tuple(
+        sorted(
+            set(cycle_deploy_files)
+            | set(seed_deploy_files)
+            | set(release_contract["required_bundle_files"])
+        )
+    )
 
     checksums = compute_checksums(repo_root, deploy_files)
     repo_sha = _get_git_head_sha(repo_root)
@@ -296,12 +506,14 @@ def build_release_manifest(repo_root: Path) -> dict[str, Any]:
         "restart_recommended": restart_recommended,
         "restart_source": restart_source,
         "changed_files_scanned": list(changed_files),
+        "seed_manifest_deploy_files": list(seed_deploy_files),
         "excluded_changed_files": [path for path in changed_files if path not in set(deploy_files)],
         "deploy_files": list(deploy_files),
         "checksums": checksums,
         "content_fingerprint": _compute_manifest_fingerprint(checksums),
         "env_key_diff": env_key_diff,
         "env_key_alignment": env_alignment,
+        "release_contract": release_contract,
     }
 
 
@@ -435,6 +647,11 @@ def load_release_plan(repo_root: Path, manifest_path: Path | None = None) -> Rel
         raise DeployError("release manifest is missing a non-empty deploy_files list")
 
     deploy_files = _collect_manifest_files(repo_root, [str(item) for item in raw_deploy_files])
+    non_allowlisted = sorted(relative for relative in deploy_files if not is_release_bundle_file(relative))
+    if non_allowlisted:
+        raise DeployError(
+            "release manifest contains non-deployable files: " + ", ".join(non_allowlisted)
+        )
     checksums = compute_checksums(repo_root, deploy_files)
     expected_checksums = payload.get("checksums")
     if expected_checksums is not None:
@@ -478,7 +695,7 @@ def build_remote_paper_commands(remote_dir: str) -> tuple[str, str]:
     pythonpath = f"{remote_dir}:{remote_dir}/bot:{remote_dir}/polymarket-bot"
     status_command = (
         f"env PAPER_TRADING=true PYTHONPATH={shlex.quote(pythonpath)} "
-        "python3 bot/jj_live.py --status"
+        "timeout 120 python3 bot/jj_live.py --status"
     )
     single_cycle_command = (
         f"env PAPER_TRADING=true PYTHONPATH={shlex.quote(pythonpath)} "
@@ -617,6 +834,60 @@ print(json.dumps({{"exists": path.exists(), "keys": sorted(keys)}}, sort_keys=Tr
     return json.loads(result.stdout)
 
 
+def get_remote_runtime_controls(host: str, key_path: Path, remote_dir: str) -> dict[str, Any]:
+    """Read non-secret runtime control values from the remote .env file."""
+
+    script = f"""
+import json
+from pathlib import Path
+
+root = Path({remote_dir!r})
+path = root / ".env"
+allowed = {list(SAFE_REMOTE_RUNTIME_ENV_KEYS)!r}
+values = {{}}
+if path.exists():
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key not in allowed:
+            continue
+        values[key] = value.strip().strip('"').strip("'")
+print(json.dumps({{"exists": path.exists(), "values": values}}, sort_keys=True))
+"""
+    command = (
+        f"cd {shlex.quote(remote_dir)} && "
+        "python3 - <<'PY'\n"
+        f"{script}"
+        "PY"
+    )
+    result = run_remote_command(host, key_path, command, check=True)
+    payload = json.loads(result.stdout)
+    values = payload.get("values") or {}
+    paper_value = str(values.get("PAPER_TRADING") or "").strip().lower()
+    profile_value = str(values.get(PROFILE_SELECTOR_ENV_KEY) or "").strip() or None
+    agent_run_mode = str(values.get("ELASTIFUND_AGENT_RUN_MODE") or "").strip().lower() or None
+
+    inferred_mode: str | None = None
+    if paper_value in {"1", "true", "yes"}:
+        inferred_mode = "paper"
+    elif agent_run_mode in SAFE_REMOTE_MODES:
+        inferred_mode = agent_run_mode
+    elif profile_value == "shadow_fast_flow":
+        inferred_mode = "shadow"
+
+    return {
+        "remote_env_exists": bool(payload.get("exists")),
+        "values": values,
+        "paper_trading": paper_value if paper_value else None,
+        "runtime_profile": profile_value,
+        "agent_run_mode": agent_run_mode,
+        "inferred_mode": inferred_mode,
+    }
+
+
 def extract_remote_bundle(
     host: str,
     key_path: Path,
@@ -737,15 +1008,24 @@ def build_deploy_artifact(
     manifest_path: Path,
     release_plan: ReleasePlan | None,
     deploy_status: str,
+    dry_run_only: bool,
     host: str,
     remote_dir: str,
     bridge_refresh_attempted: bool,
     pre_service: dict[str, Any] | None,
     post_service: dict[str, Any] | None,
     env_key_report: dict[str, Any] | None,
+    remote_runtime_controls: dict[str, Any] | None,
+    release_contract: dict[str, Any] | None,
+    plan_validation: dict[str, Any] | None,
     checksum_report: dict[str, Any] | None,
     validation_report: dict[str, Any] | None,
+    drift_detected: bool,
     stale_state: bool,
+    actions_taken: Sequence[str],
+    blocked_actions: Sequence[str],
+    next_action: str | None,
+    manifest_error: str | None,
     notes: Sequence[str],
 ) -> dict[str, Any]:
     """Build and persist the deploy artifact."""
@@ -753,9 +1033,12 @@ def build_deploy_artifact(
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "deploy_status": deploy_status,
+        "dry_run_only": dry_run_only,
+        "drift_detected": drift_detected,
         "stale_state": stale_state,
         "manifest_path": str(manifest_path),
         "manifest_exists": manifest_path.exists(),
+        "manifest_error": manifest_error,
         "bridge_refresh_attempted": bridge_refresh_attempted,
         "target": {
             "host": host,
@@ -770,8 +1053,14 @@ def build_deploy_artifact(
         "pre_service": pre_service,
         "post_service": post_service,
         "env_keys": env_key_report,
+        "remote_mode": remote_runtime_controls,
+        "release_contract": release_contract,
+        "plan_validation": plan_validation,
         "checksums": checksum_report,
         "validation": validation_report,
+        "actions_taken": list(actions_taken),
+        "blocked_actions": list(blocked_actions),
+        "next_action": next_action,
         "notes": list(notes),
     }
     _write_json(report_path, payload)
@@ -837,6 +1126,22 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Skip the required bridge pull-only refresh",
     )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Upload and extract the validated bundle. Default behavior is dry-run validation only.",
+    )
+    parser.add_argument(
+        "--confirmed-remote-mode",
+        choices=sorted(SAFE_REMOTE_MODES),
+        default=None,
+        help="Required with --apply. Explicit human confirmation that the remote runtime is in paper or shadow mode.",
+    )
+    parser.add_argument(
+        "--human-approved-money-adjacent",
+        action="store_true",
+        help="Required with --apply before any remote bundle upload.",
+    )
     return parser.parse_args(argv)
 
 
@@ -853,136 +1158,196 @@ def main(argv: Sequence[str] | None = None) -> int:
     if key_path is None:
         raise DeployError("SSH key not found; pass --key or configure LIGHTSAIL_KEY")
 
+    dry_run_only = not args.apply
     bridge_refresh_attempted = False
     notes: list[str] = []
+    actions_taken: list[str] = []
+    blocked_actions: list[str] = []
     if not args.skip_bridge_refresh:
         bridge_refresh_attempted = True
         bridge_result = _run_bridge_pull_only(key_path)
-        notes.append(
-            f"bridge_pull_only_returncode={bridge_result.returncode}"
-        )
+        notes.append(f"bridge_pull_only_returncode={bridge_result.returncode}")
         if bridge_result.returncode != 0:
             notes.append("bridge pull-only refresh failed before deploy")
+            blocked_actions.append("Bridge pull-only refresh failed before deploy validation.")
+        else:
+            actions_taken.append("Bridge pull-only refresh completed before deploy validation.")
 
     pre_service = get_remote_service_snapshot(args.host, key_path)
     post_service: dict[str, Any] | None = None
     env_key_report: dict[str, Any] | None = None
     checksum_report: dict[str, Any] | None = None
     validation_report: dict[str, Any] | None = None
+    remote_runtime_controls: dict[str, Any] | None = None
     release_plan: ReleasePlan | None = None
+    release_contract = build_release_contract(REPO_ROOT)
+    plan_validation: dict[str, Any] | None = None
+    manifest_error: str | None = None
+    next_action: str | None = None
 
     template_keys = read_env_keys(REPO_ROOT / ".env.example")
     remote_env = get_remote_env_keys(args.host, key_path, args.remote_dir)
+    remote_runtime_controls = get_remote_runtime_controls(args.host, key_path, args.remote_dir)
     env_key_report = {
         "template_key_count": len(template_keys),
         "remote_env_exists": bool(remote_env.get("exists")),
         "remote_key_count": len(remote_env.get("keys", [])),
         "missing_keys": compare_env_keys(template_keys, remote_env.get("keys", [])),
+        "profile_selector_env_key": PROFILE_SELECTOR_ENV_KEY,
+        "profile_selector_documented_in_env_example": release_contract["selector_documented_in_env_example"],
+        "remote_runtime_profile": remote_runtime_controls.get("runtime_profile"),
     }
 
-    if not manifest_path.exists():
-        notes.append("release manifest missing; deploy skipped with stale-state note")
-        validation_report = (
-            run_remote_paper_validation(args.host, key_path, args.remote_dir)
-            if pre_service["status"] == "stopped"
-            else None
-        )
-        build_deploy_artifact(
-            report_path=report_path,
-            manifest_path=manifest_path,
-            release_plan=None,
-            deploy_status="skipped_missing_manifest",
-            host=args.host,
-            remote_dir=args.remote_dir,
-            bridge_refresh_attempted=bridge_refresh_attempted,
-            pre_service=pre_service,
-            post_service=None,
-            env_key_report=env_key_report,
-            checksum_report=None,
-            validation_report=validation_report,
-            stale_state=True,
-            notes=notes,
-        )
-        print(report_path)
-        return 0
-
-    release_plan = load_release_plan(REPO_ROOT, manifest_path)
-    notes.append(
-        f"release manifest loaded for repo_sha={release_plan.repo_sha or 'unknown'}"
+    remote_cycle_status = read_json(REPO_ROOT / "reports" / "remote_cycle_status.json")
+    launch = remote_cycle_status.get("launch") if isinstance(remote_cycle_status, dict) else {}
+    runtime_truth = remote_cycle_status.get("runtime_truth") if isinstance(remote_cycle_status, dict) else {}
+    live_launch_blocked = bool((launch or {}).get("live_launch_blocked"))
+    drift_detected = bool((runtime_truth or {}).get("drift_detected")) or (
+        pre_service["status"] == "running" and live_launch_blocked
     )
+    if pre_service["status"] == "running" and live_launch_blocked:
+        blocked_actions.append(
+            "jj-live.service is running while launch remains blocked; treating this as drift, not as a restart signal."
+        )
+    if not manifest_path.exists():
+        manifest_error = "release manifest missing"
+        blocked_actions.append("Release manifest is missing.")
+    else:
+        try:
+            release_plan = load_release_plan(REPO_ROOT, manifest_path)
+            notes.append(f"release manifest loaded for repo_sha={release_plan.repo_sha or 'unknown'}")
+            plan_validation = validate_release_plan(REPO_ROOT, manifest_path, release_plan)
+            if not plan_validation["valid"]:
+                manifest_error = "; ".join(plan_validation["issues"])
+                blocked_actions.append("Release manifest failed validation against the merged repo state.")
+            else:
+                actions_taken.append("Release manifest validated against the merged repo state.")
+        except DeployError as exc:
+            manifest_error = str(exc)
+            blocked_actions.append("Release manifest could not be loaded.")
+
+    if args.apply and not args.confirmed_remote_mode:
+        blocked_actions.append("Remote bundle upload requires --confirmed-remote-mode paper|shadow.")
+    if args.apply and not args.human_approved_money_adjacent:
+        blocked_actions.append("Remote bundle upload requires --human-approved-money-adjacent.")
 
     with tempfile.TemporaryDirectory(prefix="elastifund-release-") as tmpdir:
         bundle_path = Path(tmpdir) / "release_bundle.tar.gz"
-        create_release_bundle(REPO_ROOT, release_plan, bundle_path)
-        remote_bundle = f"/tmp/elastifund-release-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.tar.gz"
-        upload_bundle(args.host, key_path, bundle_path, remote_bundle)
-        extract_remote_bundle(args.host, key_path, args.remote_dir, remote_bundle)
+        if release_plan is not None and manifest_error is None:
+            create_release_bundle(REPO_ROOT, release_plan, bundle_path)
+            with tarfile.open(bundle_path, "r:gz") as archive:
+                bundle_members = sorted(archive.getnames())
+            if plan_validation is None:
+                plan_validation = {"valid": True, "issues": [], "release_contract": release_contract}
+            missing_from_archive = sorted(
+                set(release_contract["required_bundle_files"]) - set(bundle_members)
+            )
+            plan_validation["bundle_members"] = bundle_members
+            plan_validation["missing_required_bundle_files_in_archive"] = missing_from_archive
+            if missing_from_archive:
+                manifest_error = (
+                    "release bundle archive is missing required files: "
+                    + ", ".join(missing_from_archive)
+                )
+                blocked_actions.append("Release bundle archive is missing required snapshot/profile files.")
 
-    checksum_report = verify_remote_checksums(
-        args.host,
-        key_path,
-        args.remote_dir,
-        release_plan.checksums,
+            if (
+                args.apply
+                and manifest_error is None
+                and args.confirmed_remote_mode in SAFE_REMOTE_MODES
+                and args.human_approved_money_adjacent
+            ):
+                remote_bundle = (
+                    f"/tmp/elastifund-release-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.tar.gz"
+                )
+                upload_bundle(args.host, key_path, bundle_path, remote_bundle)
+                extract_remote_bundle(args.host, key_path, args.remote_dir, remote_bundle)
+                actions_taken.append(
+                    "Release bundle uploaded and extracted on the VPS without restarting jj-live.service."
+                )
+                checksum_report = verify_remote_checksums(
+                    args.host,
+                    key_path,
+                    args.remote_dir,
+                    release_plan.checksums,
+                )
+                if not checksum_report.get("ok"):
+                    notes.append("remote checksum verification failed")
+                    blocked_actions.append("Remote checksum verification failed after bundle upload.")
+
+    validation_report = run_remote_paper_validation(args.host, key_path, args.remote_dir)
+    actions_taken.append("Remote paper-mode validation ran without restarting the live service.")
+    post_service = get_remote_service_snapshot(args.host, key_path)
+    status_ok = validation_report["status_command"]["returncode"] == 0
+    cycle = validation_report["single_cycle"]
+    cycle_ok = cycle["skipped"] or cycle["returncode"] == 0
+
+    apply_allowed = (
+        args.apply
+        and args.confirmed_remote_mode in SAFE_REMOTE_MODES
+        and args.human_approved_money_adjacent
     )
-    if not checksum_report.get("ok"):
-        notes.append("remote checksum verification failed")
-        post_service = get_remote_service_snapshot(args.host, key_path)
-        build_deploy_artifact(
-            report_path=report_path,
-            manifest_path=manifest_path,
-            release_plan=release_plan,
-            deploy_status="failed_checksum_mismatch",
-            host=args.host,
-            remote_dir=args.remote_dir,
-            bridge_refresh_attempted=bridge_refresh_attempted,
-            pre_service=pre_service,
-            post_service=post_service,
-            env_key_report=env_key_report,
-            checksum_report=checksum_report,
-            validation_report=None,
-            stale_state=False,
-            notes=notes,
-        )
-        print(report_path)
-        return 1
+    apply_gate_blocked = args.apply and not apply_allowed
+    stale_state = bool(manifest_error)
 
-    if pre_service["status"] == "running":
-        restart_result = restart_remote_service(args.host, key_path)
-        notes.append(f"service_restart_returncode={restart_result.returncode}")
-        post_service = get_remote_service_snapshot(args.host, key_path)
+    if checksum_report is not None and not checksum_report.get("ok"):
+        deploy_status = "apply_failed_checksum_mismatch"
+        next_action = "Fix the checksum mismatch before any further deploy attempt."
+    elif apply_allowed and manifest_error is None:
+        deploy_status = "apply_validated_no_restart" if status_ok and cycle_ok else "apply_validation_failed"
+        next_action = (
+            "Bundle upload completed without restarting jj-live.service. Reconcile drift separately before any restart."
+        )
+    elif apply_gate_blocked:
+        deploy_status = "apply_blocked"
+        next_action = (
+            "Re-run with explicit paper/shadow confirmation and human approval if a no-restart bundle upload is actually intended."
+        )
+    elif manifest_error is not None:
+        deploy_status = "dry_run_blocked"
+        next_action = (
+            "Publish the required runtime snapshot and runtime profile artifacts, regenerate the release manifest on the merged green branch, then rerun this dry-run."
+        )
+    elif drift_detected:
         deploy_status = (
-            "deployed"
-            if restart_result.returncode == 0 and post_service["status"] == "running"
-            else "failed_service_restart"
+            "dry_run_validated_with_drift" if status_ok and cycle_ok else "dry_run_validation_failed"
+        )
+        next_action = (
+            "Human review required: reconcile why jj-live.service is active while launch is blocked, confirm the remote mode, then decide whether a no-restart bundle upload is appropriate."
         )
     else:
-        if release_plan.restart_recommended:
-            notes.append("restart recommended upstream, but service was already stopped and remained stopped")
-        validation_report = run_remote_paper_validation(args.host, key_path, args.remote_dir)
-        post_service = get_remote_service_snapshot(args.host, key_path)
-        status_ok = validation_report["status_command"]["returncode"] == 0
-        cycle = validation_report["single_cycle"]
-        cycle_ok = cycle["skipped"] or cycle["returncode"] == 0
-        deploy_status = "deployed" if status_ok and cycle_ok else "deployed_validation_failed"
+        deploy_status = "dry_run_validated" if status_ok and cycle_ok else "dry_run_validation_failed"
+        next_action = (
+            "Dry-run passed. Use --apply with --confirmed-remote-mode paper|shadow and --human-approved-money-adjacent for a no-restart bundle upload."
+        )
 
     build_deploy_artifact(
         report_path=report_path,
         manifest_path=manifest_path,
         release_plan=release_plan,
         deploy_status=deploy_status,
+        dry_run_only=dry_run_only,
         host=args.host,
         remote_dir=args.remote_dir,
         bridge_refresh_attempted=bridge_refresh_attempted,
         pre_service=pre_service,
         post_service=post_service,
         env_key_report=env_key_report,
+        remote_runtime_controls=remote_runtime_controls,
+        release_contract=release_contract,
+        plan_validation=plan_validation,
         checksum_report=checksum_report,
         validation_report=validation_report,
-        stale_state=False,
+        drift_detected=drift_detected,
+        stale_state=stale_state,
+        actions_taken=actions_taken,
+        blocked_actions=blocked_actions,
+        next_action=next_action,
+        manifest_error=manifest_error,
         notes=notes,
     )
     print(report_path)
-    return 0
+    return 0 if deploy_status in {"dry_run_validated", "dry_run_validated_with_drift", "apply_validated_no_restart"} else 1
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ from bot.combinatorial_integration import (
     attach_signal_source_metadata,
     evaluate_combinatorial_risk,
 )
+from bot.runtime_profile import load_runtime_profile
 from signals.dep_graph.dep_graph_store import DepEdgeRecord, DepGraphStore, question_hash
 
 
@@ -248,6 +249,24 @@ class TestCombinatorialIntegration(unittest.TestCase):
         )
         self.assertFalse(slot_block.allow)
         self.assertEqual(slot_block.reason, "max_open_positions")
+
+    def test_from_runtime_profile_uses_profile_contract_and_env_overrides(self) -> None:
+        bundle = load_runtime_profile(
+            env={
+                "JJ_RUNTIME_PROFILE": "research_scan",
+                "JJ_A6_BUY_THRESHOLD": "0.94",
+                "JJ_B1_IMPLICATION_THRESHOLD": "0.06",
+            }
+        )
+
+        cfg = CombinatorialConfig.from_runtime_profile(bundle)
+
+        self.assertTrue(cfg.enable_a6_shadow)
+        self.assertFalse(cfg.enable_a6_live)
+        self.assertTrue(cfg.enable_b1_shadow)
+        self.assertFalse(cfg.enable_b1_live)
+        self.assertAlmostEqual(cfg.a6_buy_threshold, 0.94)
+        self.assertAlmostEqual(cfg.b1_implication_threshold, 0.06)
 
 
 if __name__ == "__main__":

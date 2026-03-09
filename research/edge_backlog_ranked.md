@@ -1,6 +1,6 @@
 # Edge Strategy Discovery System — Ranked Backlog
 
-**Version:** 3.2.0
+**Version:** 3.4.0
 **Date:** 2026-03-09
 **Flywheel Cycle:** 2 (Machine Truth Reconciliation)
 **Purpose:** Master list of every strategy evaluated, tested, or queued. Updated every flywheel cycle. Part of the Elastifund research flywheel — see `docs/strategy/flywheel_strategy.md`.
@@ -21,9 +21,9 @@
 
 **Parallel Execution Sprint (2026-03-07):** 7 instances running simultaneously. A-6 and B-1 moved to BUILDING. See `research/dispatches/DISPATCH_082_parallel_sprint.md` and `research/dispatches/DISPATCH_083_structural_alpha_gating_v7.md`. Full failure documentation: `research/what_doesnt_work_diary_v1.md`.
 
-**Cycle 2 gate status (2026-03-09):** No promotion. The latest checked-in fast-trade artifact remains `REJECT ALL` (`FAST_TRADE_EDGE_ANALYSIS.md`, `2026-03-07T19:07:38+00:00`). The March 9 edge scan still found `0` executable A-6 opportunities below `0.95`, and the March 9 B-1 audit still found `0` deterministic template pairs in the first `1,000` allowed markets.
+**Cycle 2 gate status (2026-03-09):** No promotion. The latest checked-in fast-trade artifact remains `REJECT ALL` (`FAST_TRADE_EDGE_ANALYSIS.md`, `2026-03-09T00:42:18+00:00`). The March 9 edge scan still found `0` executable A-6 opportunities below `0.95`, and the March 9 B-1 audit still found `0` deterministic template pairs in the first `1,000` allowed markets.
 
-**Remote posture note (2026-03-09):** `reports/remote_service_status.json` shows `jj-live.service` `active` at `2026-03-09T00:06:56Z`, but `reports/remote_cycle_status.json` still marks launch `blocked` and wallet-flow `not_ready`. Treat the running service as operational drift, not as promotion evidence.
+**Remote posture note (2026-03-09):** `reports/remote_service_status.json` shows `jj-live.service` `active` at `2026-03-09T00:44:19Z`, and `reports/remote_cycle_status.json` shows wallet-flow `ready`, but launch is still `blocked` because the root regression suite is failing, there are no closed trades, no deployed capital, and the A-6/B-1 gates remain unresolved. Treat the running service as operational drift, not as promotion evidence.
 
 ---
 
@@ -50,13 +50,13 @@
 | B5 | Confirmation Layer | Wired in jj_live.py | — | 8.5 |
 | B6 | HFT Shadow Validator (Chainlink Barrier + Tie-Band) | Core module built | 13 passing | 7.8 |
 
-**Fast-flow readiness note (2026-03-09):** wallet-flow remains `not_ready` in `reports/remote_cycle_status.json` because `data/smart_wallets.json` and `data/wallet_scores.db` are still missing and no scored wallets are available yet.
+**Fast-flow readiness note (2026-03-09):** wallet-flow is now `ready` in `reports/remote_cycle_status.json` with `80` scored wallets, but `fast_flow_restart_ready=false` because the root regression suite is failing and the structural gates are still unresolved.
 
 ## BUILDING — STRUCTURAL ALPHA (Parallel Sprint, 2026-03-07)
 
 | # | Strategy | Modules | Tests | Status |
 |---|----------|---------|-------|--------|
-| SA-1 | A-6 Guaranteed Dollar Scanner | constraint_arb_engine, sum_violation_scanner, a6_sum_scanner, a6_executor, neg_risk_inventory, resolution_normalizer, signals/sum_violation/guaranteed_dollar.py | 223 total | March 8 broad audit found 563 allowed neg-risk events with 0 executable-at-threshold constructions below the initial 0.95 cost gate. March 9 live scan then found 15 candidate events, 9 tradable events, and 0 executable opportunities. No promotion. |
+| SA-1 | A-6 Guaranteed Dollar Scanner | constraint_arb_engine, sum_violation_scanner, a6_sum_scanner, a6_executor, neg_risk_inventory, resolution_normalizer, signals/sum_violation/guaranteed_dollar.py | 223 total | March 8 broad audit found 563 allowed neg-risk events with 0 executable-at-threshold constructions below the initial 0.95 cost gate. The March 9 empirical snapshot then saw 149 active multi-outcome events, 57 qualified A-6 live-surface events, and 0 executable opportunities below the gate. No promotion. |
 | SA-2 | B-1 Templated Dependency Engine | dependency_graph, relation_classifier, b1_executor, b1_monitor, relation_cache, bot/b1_template_engine.py | See above | March 9 live-public-data template audit still found 0 deterministic pairs in the first 1,000 active allowed markets. No promotion. Keep scope narrow; do not widen graph yet. |
 
 ## RE-EVALUATING (Previously Rejected, New Evidence)

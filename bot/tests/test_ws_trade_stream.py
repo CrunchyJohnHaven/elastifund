@@ -191,6 +191,18 @@ class TestTradeStreamManager:
         assert manager.token_ids == []
         assert manager._running is False
 
+    def test_init_accepts_custom_vpin_thresholds(self):
+        manager = TradeStreamManager(
+            vpin_bucket_size=250.0,
+            vpin_window_size=6,
+            vpin_toxic_threshold=0.82,
+            vpin_safe_threshold=0.18,
+        )
+        assert manager.vpin.bucket_size == 250.0
+        assert manager.vpin.window_size == 6
+        assert manager.vpin.toxic_threshold == 0.82
+        assert manager.vpin.safe_threshold == 0.18
+
     def test_add_remove_token(self):
         manager = TradeStreamManager(token_ids=["t1", "t2"])
         manager.add_token("t3")

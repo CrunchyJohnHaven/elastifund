@@ -83,6 +83,12 @@ project_root = bot_root.parent
 sys.path.insert(0, str(bot_root))
 sys.path.insert(0, str(project_root))
 try:
+    from bot.runtime_profile import RuntimeProfileBundle, activate_runtime_profile_env
+except ImportError:
+    from runtime_profile import RuntimeProfileBundle, activate_runtime_profile_env  # type: ignore
+
+_ACTIVE_RUNTIME_PROFILE = activate_runtime_profile_env()
+try:
     from bot.apm_setup import apm_transaction, capture_span, get_apm_runtime, initialize_apm
     from bot.log_config import configure_logging, ecs_extra
     from bot.latency_tracker import track_latency
@@ -352,79 +358,62 @@ logger = logging.getLogger("JJ")
 # ---------------------------------------------------------------------------
 # JJ Configuration
 # ---------------------------------------------------------------------------
-MAX_POSITION_USD = float(os.environ.get("JJ_MAX_POSITION_USD", "5.00"))
 _CLOB_HARD_MIN_SHARES = 5.0  # Polymarket CLOB protocol minimum — not configurable
 _CLOB_HARD_MIN_NOTIONAL_USD = 5.0  # Polymarket live orders must also be at least $5 notional
-POLY_MIN_ORDER_SHARES = max(_CLOB_HARD_MIN_SHARES, float(os.environ.get("JJ_POLY_MIN_ORDER_SHARES", "5.0")))
-MAX_DAILY_LOSS_USD = float(os.environ.get("JJ_MAX_DAILY_LOSS_USD", "10"))
-MAX_EXPOSURE_PCT = float(os.environ.get("JJ_MAX_EXPOSURE_PCT", "0.90"))
-KELLY_FRACTION = float(os.environ.get("JJ_KELLY_FRACTION", "0.25"))
-MAX_KELLY_FRACTION = float(os.environ.get("JJ_MAX_KELLY_FRACTION", "0.25"))
-SCAN_INTERVAL = int(os.environ.get("JJ_SCAN_INTERVAL", "180"))
-ELASTIC_ORDERBOOK_SNAPSHOT_INTERVAL_SECONDS = float(
-    os.environ.get("JJ_ELASTIC_ORDERBOOK_SNAPSHOT_INTERVAL", "30")
-)
-MAX_OPEN_POSITIONS = int(os.environ.get("JJ_MAX_OPEN_POSITIONS", "30"))
-MIN_EDGE = float(os.environ.get("JJ_MIN_EDGE", "0.05"))
-INITIAL_BANKROLL = float(os.environ.get("JJ_INITIAL_BANKROLL", "247.51"))
 
-# Adaptive calibration and ensemble disagreement controls
-ADAPTIVE_PLATT_ENABLED = os.environ.get("JJ_ADAPTIVE_PLATT_ENABLED", "false").lower() in ("true", "1", "yes")
-ADAPTIVE_PLATT_MIN_SAMPLES = int(os.environ.get("JJ_ADAPTIVE_PLATT_MIN_SAMPLES", "30"))
-ADAPTIVE_PLATT_WINDOW = int(os.environ.get("JJ_ADAPTIVE_PLATT_WINDOW", "100"))
-ADAPTIVE_PLATT_REFIT_SECONDS = int(os.environ.get("JJ_ADAPTIVE_PLATT_REFIT_SECONDS", "300"))
-ADAPTIVE_PLATT_RUNTIME_VARIANT = os.environ.get("JJ_ADAPTIVE_PLATT_VARIANT", "auto").strip().lower()
-ADAPTIVE_PLATT_REPORT_PATH = os.environ.get("JJ_ADAPTIVE_PLATT_REPORT_PATH", "reports/platt_comparison.md")
-ADAPTIVE_PLATT_REPORT_JSON_PATH = os.environ.get("JJ_ADAPTIVE_PLATT_REPORT_JSON_PATH", "reports/platt_comparison.json")
-DISAGREEMENT_CONFIRMATION_STD = float(os.environ.get("JJ_DISAGREEMENT_CONFIRMATION_STD", "0.05"))
-DISAGREEMENT_SIGNAL_STD = float(os.environ.get("JJ_DISAGREEMENT_SIGNAL_STD", "0.10"))
-DISAGREEMENT_REDUCE_SIZE_STD = float(os.environ.get("JJ_DISAGREEMENT_REDUCE_SIZE_STD", "0.15"))
-DISAGREEMENT_WIDE_STD = float(os.environ.get("JJ_DISAGREEMENT_WIDE_STD", "0.20"))
-ENSEMBLE_DAILY_COST_CAP_USD = float(os.environ.get("JJ_ENSEMBLE_DAILY_COST_CAP_USD", "2.0"))
-ENSEMBLE_ENABLE_SECOND_CLAUDE = os.environ.get(
-    "JJ_ENSEMBLE_ENABLE_SECOND_CLAUDE",
-    "false",
-).lower() in ("true", "1", "yes")
+_DEFAULT_CATEGORY_PRIORITY = {
+    "politics": 3,
+    "weather": 3,
+    "economic": 2,
+    "crypto": 0,
+    "sports": 0,
+    "financial_speculation": 0,
+    "geopolitical": 1,
+    "fed_rates": 0,
+    "unknown": 0,
+}
 
-# Velocity filter — maximum hours until resolution (default: 48 = 2 days)
-# Slow-market edge: LLM ensemble + RAG on politics/weather/economics
-# Set to 0 to disable (allow all markets regardless of resolution time)
-MAX_RESOLUTION_HOURS = float(os.environ.get("JJ_MAX_RESOLUTION_HOURS", "48"))
+MAX_POSITION_USD = 5.0
+POLY_MIN_ORDER_SHARES = _CLOB_HARD_MIN_SHARES
+MAX_DAILY_LOSS_USD = 10.0
+MAX_EXPOSURE_PCT = 0.90
+KELLY_FRACTION = 0.25
+MAX_KELLY_FRACTION = 0.25
+SCAN_INTERVAL = 180
+ELASTIC_ORDERBOOK_SNAPSHOT_INTERVAL_SECONDS = 30.0
+MAX_OPEN_POSITIONS = 30
+MIN_EDGE = 0.05
+INITIAL_BANKROLL = 247.51
+MAX_RESOLUTION_HOURS = 48.0
+SIGNAL_DEDUP_TTL_SECONDS = 3600
+PAPER_TRADING = True
+MAX_ORDER_AGE_HOURS = 2.0
+FILL_REPORT_HOURS = 24
+AUTO_MERGE_POSITIONS = False
+MIN_MERGE_FREED_USDC = 0.50
+YES_THRESHOLD = 0.15
+NO_THRESHOLD = 0.05
+MIN_CATEGORY_PRIORITY = 1
+CATEGORY_PRIORITY: dict[str, int] = dict(_DEFAULT_CATEGORY_PRIORITY)
+RUNTIME_PROFILE: RuntimeProfileBundle | None = None
+RUNTIME_PROFILE_NAME = "blocked_safe"
+RUNTIME_EXECUTION_MODE = "blocked"
+ALLOW_ORDER_SUBMISSION = False
+ADAPTIVE_PLATT_ENABLED = False
+ADAPTIVE_PLATT_MIN_SAMPLES = 30
+ADAPTIVE_PLATT_WINDOW = 100
+ADAPTIVE_PLATT_REFIT_SECONDS = 300
+ADAPTIVE_PLATT_RUNTIME_VARIANT = "auto"
+ADAPTIVE_PLATT_REPORT_PATH = "reports/platt_comparison.md"
+ADAPTIVE_PLATT_REPORT_JSON_PATH = "reports/platt_comparison.json"
+DISAGREEMENT_CONFIRMATION_STD = 0.05
+DISAGREEMENT_SIGNAL_STD = 0.10
+DISAGREEMENT_REDUCE_SIZE_STD = 0.15
+DISAGREEMENT_WIDE_STD = 0.20
+ENSEMBLE_DAILY_COST_CAP_USD = 2.0
+ENSEMBLE_ENABLE_SECOND_CLAUDE = False
 
-# Telegram signal deduplication — prevents restart-spam flooding
-# Key: (market_id, direction) → timestamp of last notification
 
-
-def _round_up(value: float, decimals: int = 2) -> float:
-    scale = 10 ** max(0, int(decimals))
-    return math.ceil(max(0.0, float(value)) * scale - 1e-12) / scale
-
-
-def clob_min_order_size(price: float, *, min_shares: float = _CLOB_HARD_MIN_SHARES) -> float:
-    price = max(0.0, float(price))
-    required = max(float(min_shares), (_CLOB_HARD_MIN_NOTIONAL_USD / price) if price > 0.0 else float(min_shares))
-    return _round_up(required, decimals=2)
-
-SIGNAL_DEDUP_TTL_SECONDS = int(os.environ.get("JJ_SIGNAL_DEDUP_TTL", "3600"))  # 1 hour default
-
-# Paper trading mode — simulate trades without posting to CLOB
-PAPER_TRADING = os.environ.get("PAPER_TRADING", "false").lower() in ("true", "1", "yes")
-MAX_ORDER_AGE_HOURS = float(os.environ.get("JJ_MAX_ORDER_AGE_HOURS", "2"))
-FILL_REPORT_HOURS = int(os.environ.get("JJ_FILL_REPORT_HOURS", "24"))
-AUTO_MERGE_POSITIONS = os.environ.get("JJ_AUTO_MERGE_POSITIONS", "false").lower() in ("true", "1", "yes")
-MIN_MERGE_FREED_USDC = float(os.environ.get("JJ_MIN_MERGE_FREED_USDC", "0.50"))
-
-# Multi-bankroll simulation levels
-BANKROLL_LEVELS = [1_000, 10_000, 100_000]
-
-STATE_FILE = Path("jj_state.json")
-DB_FILE = Path("data/jj_trades.db")
-
-# ---------------------------------------------------------------------------
-# Platt Scaling Calibration (ported from local claude_analyzer.py)
-# Fitted on 70% of 532 resolved markets, validated on 30% test set
-# Test-set Brier: 0.286 (raw) → 0.245 (Platt) — improvement of +0.041
-# ---------------------------------------------------------------------------
 def _float_env(name: str, default: str) -> float:
     raw = os.environ.get(name)
     if raw in (None, ""):
@@ -442,6 +431,139 @@ def _bool_env(name: str, default: bool = False) -> bool:
     return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
+def _category_priority_from_env() -> dict[str, int]:
+    priorities = {
+        category: int(_float_env(f"JJ_CAT_PRIORITY_{category.upper()}", str(default)))
+        for category, default in _DEFAULT_CATEGORY_PRIORITY.items()
+    }
+    for env_name, raw in os.environ.items():
+        if not env_name.startswith("JJ_CAT_PRIORITY_") or raw in ("", None):
+            continue
+        category = env_name.removeprefix("JJ_CAT_PRIORITY_").strip().lower()
+        if not category:
+            continue
+        try:
+            priorities[category] = int(float(raw))
+        except ValueError:
+            continue
+    return priorities
+
+
+def _reload_runtime_settings(*, persist: bool = False) -> RuntimeProfileBundle:
+    global RUNTIME_PROFILE
+    global RUNTIME_PROFILE_NAME
+    global RUNTIME_EXECUTION_MODE
+    global ALLOW_ORDER_SUBMISSION
+    global MAX_POSITION_USD
+    global POLY_MIN_ORDER_SHARES
+    global MAX_DAILY_LOSS_USD
+    global MAX_EXPOSURE_PCT
+    global KELLY_FRACTION
+    global MAX_KELLY_FRACTION
+    global SCAN_INTERVAL
+    global ELASTIC_ORDERBOOK_SNAPSHOT_INTERVAL_SECONDS
+    global MAX_OPEN_POSITIONS
+    global MIN_EDGE
+    global INITIAL_BANKROLL
+    global MAX_RESOLUTION_HOURS
+    global SIGNAL_DEDUP_TTL_SECONDS
+    global PAPER_TRADING
+    global MAX_ORDER_AGE_HOURS
+    global FILL_REPORT_HOURS
+    global AUTO_MERGE_POSITIONS
+    global MIN_MERGE_FREED_USDC
+    global YES_THRESHOLD
+    global NO_THRESHOLD
+    global MIN_CATEGORY_PRIORITY
+    global CATEGORY_PRIORITY
+    global ADAPTIVE_PLATT_ENABLED
+    global ADAPTIVE_PLATT_MIN_SAMPLES
+    global ADAPTIVE_PLATT_WINDOW
+    global ADAPTIVE_PLATT_REFIT_SECONDS
+    global ADAPTIVE_PLATT_RUNTIME_VARIANT
+    global ADAPTIVE_PLATT_REPORT_PATH
+    global ADAPTIVE_PLATT_REPORT_JSON_PATH
+    global DISAGREEMENT_CONFIRMATION_STD
+    global DISAGREEMENT_SIGNAL_STD
+    global DISAGREEMENT_REDUCE_SIZE_STD
+    global DISAGREEMENT_WIDE_STD
+    global ENSEMBLE_DAILY_COST_CAP_USD
+    global ENSEMBLE_ENABLE_SECOND_CLAUDE
+
+    bundle = activate_runtime_profile_env(persist=persist)
+    RUNTIME_PROFILE = bundle
+    RUNTIME_PROFILE_NAME = bundle.selected_profile
+    RUNTIME_EXECUTION_MODE = str(os.environ.get("JJ_EFFECTIVE_EXECUTION_MODE", "paper")).strip().lower()
+    ALLOW_ORDER_SUBMISSION = _bool_env("JJ_ALLOW_ORDER_SUBMISSION", False)
+
+    MAX_POSITION_USD = float(os.environ.get("JJ_MAX_POSITION_USD", "5.00"))
+    POLY_MIN_ORDER_SHARES = max(_CLOB_HARD_MIN_SHARES, float(os.environ.get("JJ_POLY_MIN_ORDER_SHARES", "5.0")))
+    MAX_DAILY_LOSS_USD = float(os.environ.get("JJ_MAX_DAILY_LOSS_USD", "10"))
+    MAX_EXPOSURE_PCT = float(os.environ.get("JJ_MAX_EXPOSURE_PCT", "0.90"))
+    KELLY_FRACTION = float(os.environ.get("JJ_KELLY_FRACTION", "0.25"))
+    MAX_KELLY_FRACTION = float(os.environ.get("JJ_MAX_KELLY_FRACTION", "0.25"))
+    SCAN_INTERVAL = int(os.environ.get("JJ_SCAN_INTERVAL", "180"))
+    ELASTIC_ORDERBOOK_SNAPSHOT_INTERVAL_SECONDS = float(
+        os.environ.get("JJ_ELASTIC_ORDERBOOK_SNAPSHOT_INTERVAL", "30")
+    )
+    MAX_OPEN_POSITIONS = int(os.environ.get("JJ_MAX_OPEN_POSITIONS", "30"))
+    MIN_EDGE = float(os.environ.get("JJ_MIN_EDGE", "0.05"))
+    INITIAL_BANKROLL = float(os.environ.get("JJ_INITIAL_BANKROLL", "247.51"))
+    MAX_RESOLUTION_HOURS = float(os.environ.get("JJ_MAX_RESOLUTION_HOURS", "48"))
+    SIGNAL_DEDUP_TTL_SECONDS = int(os.environ.get("JJ_SIGNAL_DEDUP_TTL", "3600"))
+    PAPER_TRADING = _bool_env("PAPER_TRADING", True)
+    MAX_ORDER_AGE_HOURS = float(os.environ.get("JJ_MAX_ORDER_AGE_HOURS", "2"))
+    FILL_REPORT_HOURS = int(os.environ.get("JJ_FILL_REPORT_HOURS", "24"))
+    AUTO_MERGE_POSITIONS = _bool_env("JJ_AUTO_MERGE_POSITIONS", False)
+    MIN_MERGE_FREED_USDC = float(os.environ.get("JJ_MIN_MERGE_FREED_USDC", "0.50"))
+    YES_THRESHOLD = _float_env("JJ_YES_THRESHOLD", "0.15")
+    NO_THRESHOLD = _float_env("JJ_NO_THRESHOLD", "0.05")
+    MIN_CATEGORY_PRIORITY = int(_float_env("JJ_MIN_CATEGORY_PRIORITY", "1"))
+    CATEGORY_PRIORITY = _category_priority_from_env()
+    ADAPTIVE_PLATT_ENABLED = _bool_env("JJ_ADAPTIVE_PLATT_ENABLED", False)
+    ADAPTIVE_PLATT_MIN_SAMPLES = int(os.environ.get("JJ_ADAPTIVE_PLATT_MIN_SAMPLES", "30"))
+    ADAPTIVE_PLATT_WINDOW = int(os.environ.get("JJ_ADAPTIVE_PLATT_WINDOW", "100"))
+    ADAPTIVE_PLATT_REFIT_SECONDS = int(os.environ.get("JJ_ADAPTIVE_PLATT_REFIT_SECONDS", "300"))
+    ADAPTIVE_PLATT_RUNTIME_VARIANT = os.environ.get("JJ_ADAPTIVE_PLATT_VARIANT", "auto").strip().lower()
+    ADAPTIVE_PLATT_REPORT_PATH = os.environ.get("JJ_ADAPTIVE_PLATT_REPORT_PATH", "reports/platt_comparison.md")
+    ADAPTIVE_PLATT_REPORT_JSON_PATH = os.environ.get(
+        "JJ_ADAPTIVE_PLATT_REPORT_JSON_PATH",
+        "reports/platt_comparison.json",
+    )
+    DISAGREEMENT_CONFIRMATION_STD = float(os.environ.get("JJ_DISAGREEMENT_CONFIRMATION_STD", "0.05"))
+    DISAGREEMENT_SIGNAL_STD = float(os.environ.get("JJ_DISAGREEMENT_SIGNAL_STD", "0.10"))
+    DISAGREEMENT_REDUCE_SIZE_STD = float(os.environ.get("JJ_DISAGREEMENT_REDUCE_SIZE_STD", "0.15"))
+    DISAGREEMENT_WIDE_STD = float(os.environ.get("JJ_DISAGREEMENT_WIDE_STD", "0.20"))
+    ENSEMBLE_DAILY_COST_CAP_USD = float(os.environ.get("JJ_ENSEMBLE_DAILY_COST_CAP_USD", "2.0"))
+    ENSEMBLE_ENABLE_SECOND_CLAUDE = _bool_env("JJ_ENSEMBLE_ENABLE_SECOND_CLAUDE", False)
+
+    return bundle
+
+
+_reload_runtime_settings(persist=False)
+
+
+def _round_up(value: float, decimals: int = 2) -> float:
+    scale = 10 ** max(0, int(decimals))
+    return math.ceil(max(0.0, float(value)) * scale - 1e-12) / scale
+
+
+def clob_min_order_size(price: float, *, min_shares: float = _CLOB_HARD_MIN_SHARES) -> float:
+    price = max(0.0, float(price))
+    required = max(float(min_shares), (_CLOB_HARD_MIN_NOTIONAL_USD / price) if price > 0.0 else float(min_shares))
+    return _round_up(required, decimals=2)
+
+# Multi-bankroll simulation levels
+BANKROLL_LEVELS = [1_000, 10_000, 100_000]
+
+STATE_FILE = Path("jj_state.json")
+DB_FILE = Path("data/jj_trades.db")
+
+# ---------------------------------------------------------------------------
+# Platt Scaling Calibration (ported from local claude_analyzer.py)
+# Fitted on 70% of 532 resolved markets, validated on 30% test set
+# Test-set Brier: 0.286 (raw) → 0.245 (Platt) — improvement of +0.041
+# ---------------------------------------------------------------------------
 PLATT_A = _float_env("PLATT_A", "0.5914")
 PLATT_B = _float_env("PLATT_B", "-0.3977")
 
@@ -642,24 +764,8 @@ CATEGORY_KEYWORDS = {
                  "economic growth", "bls", "bureau of labor"],
 }
 
-# Category priority: higher = better expected LLM edge
-# Override any category via env: JJ_CAT_PRIORITY_<CATEGORY>=<int>
-# Example: export JJ_CAT_PRIORITY_CRYPTO=2  (unlocks crypto markets)
-_DEFAULT_CATEGORY_PRIORITY = {
-    "politics": 3,      # Best LLM category (Lu 2025)
-    "weather": 3,       # Structural arbitrage (NOAA/GFS data)
-    "economic": 2,      # Scheduled releases, consensus alignment
-    "crypto": 0,        # No LLM edge — skip
-    "sports": 0,        # No LLM edge — skip
-    "financial_speculation": 0,  # No LLM edge on precise price movements
-    "geopolitical": 1,  # ~30% worse than experts (RAND)
-    "fed_rates": 0,     # Worst category — systematic overconfidence
-    "unknown": 0,       # REJECT — unclassifiable markets have no structural LLM edge
-}
-CATEGORY_PRIORITY = {
-    cat: int(_float_env(f"JJ_CAT_PRIORITY_{cat.upper()}", str(default)))
-    for cat, default in _DEFAULT_CATEGORY_PRIORITY.items()
-}
+# Category priority values come from the active runtime profile, with
+# `JJ_CAT_PRIORITY_*` env overrides preserved for temporary compatibility.
 
 # Polymarket taker fee rates (introduced Feb 18, 2026)
 # NOTE: With universal post-only (Dispatch #75), these are only used for
@@ -677,15 +783,8 @@ MAKER_REBATE_RATES = {
     "default": 0.0,     # No fee = no rebate pool
 }
 
-# Asymmetric thresholds (from 532-market backtest)
-# Env-var configurable: JJ_YES_THRESHOLD, JJ_NO_THRESHOLD, JJ_MIN_CATEGORY_PRIORITY
-# To loosen gates: export JJ_YES_THRESHOLD=0.08 JJ_NO_THRESHOLD=0.03
-# To tighten gates: export JJ_YES_THRESHOLD=0.20 JJ_NO_THRESHOLD=0.08
-YES_THRESHOLD = _float_env("JJ_YES_THRESHOLD", "0.15")    # Default 15% — 56% historical win rate on YES
-NO_THRESHOLD = _float_env("JJ_NO_THRESHOLD", "0.05")      # Default 5% — 76% historical win rate on NO
-
-# Minimum category priority to analyze (0=skip, 1=cautious, 2+=analyze)
-MIN_CATEGORY_PRIORITY = int(_float_env("JJ_MIN_CATEGORY_PRIORITY", "1"))
+# Asymmetric thresholds also come from the active runtime profile, with the
+# legacy `JJ_*` env vars retained as override inputs.
 
 
 import re
@@ -2327,11 +2426,17 @@ class JJLive:
         # Early geoblock check — fail fast if in restricted region
         check_geoblock()
 
+        self.runtime_profile = _reload_runtime_settings(persist=True)
+        self.profile_name = self.runtime_profile.selected_profile
+        self.runtime_mode = str(self.runtime_profile.config.get("mode", {}).get("effective_execution_mode", "paper"))
+        self.launch_gate_reason = str(self.runtime_profile.config.get("mode", {}).get("launch_gate_reason", "") or "")
         self.paper_mode = PAPER_TRADING
+        self.allow_order_submission = ALLOW_ORDER_SUBMISSION
         self.enable_llm_signals = _bool_env("ENABLE_LLM_SIGNALS", True)
         self.enable_wallet_flow = _bool_env("ENABLE_WALLET_FLOW", True)
         self.enable_lmsr = _bool_env("ENABLE_LMSR", True)
         self.enable_cross_platform_arb = _bool_env("ENABLE_CROSS_PLATFORM_ARB", True)
+        self.enable_sum_violation = _bool_env("ENABLE_SUM_VIOLATION", True)
         self.fast_flow_only = _bool_env("JJ_FAST_FLOW_ONLY", False)
         self.wallet_flow_scores_file = Path(
             os.environ.get("JJ_WALLET_FLOW_SCORES_FILE", "data/smart_wallets.json")
@@ -2493,6 +2598,8 @@ class JJLive:
                 self.trade_stream = TradeStreamManager(
                     vpin_bucket_size=float(os.environ.get("JJ_VPIN_BUCKET_SIZE", "500")),
                     vpin_window_size=int(os.environ.get("JJ_VPIN_WINDOW", "10")),
+                    vpin_toxic_threshold=float(os.environ.get("JJ_VPIN_TOXIC_THRESHOLD", "0.75")),
+                    vpin_safe_threshold=float(os.environ.get("JJ_VPIN_SAFE_THRESHOLD", "0.25")),
                     on_regime_change=self._on_regime_change,
                     on_ofi_update=self._on_ofi_update,
                     on_ofi_alert=self._on_ofi_alert,
@@ -2541,7 +2648,9 @@ class JJLive:
         # Signal source #8: Multi-outcome sum-violation scanner
         self.sum_violation_scanner = None
         self.sum_violation_strategy = None
-        if self.fast_flow_only:
+        if not self.enable_sum_violation:
+            logger.info("Sum-violation lane disabled by config")
+        elif self.fast_flow_only:
             logger.info("Sum-violation lane disabled in fast-flow-only mode")
         elif SumViolationScanner is not None and SumViolationStrategy is not None:
             try:
@@ -2576,7 +2685,7 @@ class JJLive:
 
         # Signals 5/6: A-6 + B-1 structural alpha integration.
         self.combinatorial_cfg = (
-            CombinatorialConfig.from_env()
+            CombinatorialConfig.from_runtime_profile(self.runtime_profile)
             if (not self.fast_flow_only and CombinatorialConfig is not None)
             else None
         )
@@ -2660,10 +2769,18 @@ class JJLive:
                 logger.warning(f"A-6 executor init failed: {e}")
                 self.a6_executor = None
 
-        mode_str = "PAPER" if self.paper_mode else "LIVE"
+        mode_str = self.runtime_mode.upper()
         logger.info("=" * 60)
         logger.info(f"JJ {mode_str} TRADING SYSTEM — INITIALIZED")
         logger.info(f"  Mode: {mode_str}")
+        logger.info(
+            "  Runtime profile: %s | requested=%s | paper=%s | launch_gate=%s",
+            self.profile_name,
+            self.runtime_profile.config.get("mode", {}).get("requested_execution_mode", "unknown"),
+            self.paper_mode,
+            self.launch_gate_reason or "none",
+        )
+        logger.info("  Order submission: %s", self.allow_order_submission)
         logger.info(f"  Bankroll: ${self.state.state['bankroll']:.2f}")
         logger.info(f"  Multi-bankroll: {BANKROLL_LEVELS}")
         logger.info(
@@ -2681,11 +2798,12 @@ class JJLive:
             self.paper_mode,
         )
         logger.info(
-            "  Lane toggles: llm=%s wallet=%s lmsr=%s cross_platform=%s fast_flow_only=%s",
+            "  Lane toggles: llm=%s wallet=%s lmsr=%s cross_platform=%s sum_violation=%s fast_flow_only=%s",
             self.enable_llm_signals,
             self.enable_wallet_flow,
             self.enable_lmsr,
             self.enable_cross_platform_arb,
+            self.enable_sum_violation,
             self.fast_flow_only,
         )
         logger.info(f"  Max per trade: ${MAX_POSITION_USD}")
@@ -2759,6 +2877,9 @@ class JJLive:
         self._log_lane_health_summary("startup", self._startup_lane_health)
         logger.info(f"  Database: {DB_FILE}")
         logger.info("=" * 60)
+
+    def _mode_tag(self) -> str:
+        return str(getattr(self, "runtime_mode", "paper" if getattr(self, "paper_mode", True) else "live")).upper()
 
     def _llm_lane_enabled(self) -> bool:
         return bool(self.enable_llm_signals) and not bool(self.fast_flow_only)
@@ -3272,6 +3393,15 @@ class JJLive:
                 "paper_mode": self.paper_mode,
             },
         ):
+            if not getattr(self, "allow_order_submission", True):
+                logger.info(
+                    "  SKIP order submission blocked by runtime mode (%s): %s",
+                    getattr(self, "runtime_mode", "unknown"),
+                    signal.get("question", "")[:50],
+                    extra=ecs_extra(market_id=market_id, strategy=strategy),
+                )
+                return False
+
             if self.paper_mode:
                 paper_order_id = f"paper-{uuid.uuid4().hex[:8]}"
                 trade_record["order_id"] = paper_order_id
@@ -3744,6 +3874,12 @@ class JJLive:
         """Place maker orders for multi-leg sum-violation baskets."""
         if not signals:
             return 0, {}
+        if not getattr(self, "allow_order_submission", True):
+            return 0, {
+                str(signal.get("signal_id") or signal.get("violation_id") or ""): "blocked_mode"
+                for signal in signals
+                if signal.get("signal_id") or signal.get("violation_id")
+            }
         if not self.paper_mode and (self.clob is None or OrderArgs is None or OrderType is None or BUY is None):
             return 0, {
                 str(signal.get("signal_id") or signal.get("violation_id") or ""): "order_failed"
@@ -3938,7 +4074,7 @@ class JJLive:
                 try:
                     await self.notifier.send_message(
                         "SUM VIOLATION {mode}\n{event}\nSide: {side}\nViolation: {violation:.3f}\nOrders: {filled}/{total}".format(
-                            mode="PAPER" if self.paper_mode else "LIVE",
+                            mode=self._mode_tag(),
                             event=signal.get("question", "")[:100],
                             side=signal.get("trade_side", ""),
                             violation=_safe_float(signal.get("details", {}).get("violation_amount"), 0.0),
@@ -5675,7 +5811,7 @@ class JJLive:
             size_usd = round(order_size * order_price, 2)
 
             category = classify_market_category(signal.get("question", ""))
-            mode_tag = "PAPER" if self.paper_mode else "LIVE"
+            mode_tag = self._mode_tag()
 
             logger.info(
                 f"  [{mode_tag}] {signal['direction']} ${size_usd:.2f} "
@@ -5817,7 +5953,7 @@ class JJLive:
             combinatorial_signals=combinatorial_bypass_signals,
         )
 
-        mode_tag = "PAPER" if self.paper_mode else "LIVE"
+        mode_tag = self._mode_tag()
         logger.info(
             f"=== JJ [{mode_tag}] Cycle {cycle_num} complete in {elapsed:.1f}s | "
             f"scanned={len(markets)} cat_skip={skipped_category} "
@@ -5953,6 +6089,9 @@ class JJLive:
                     "disagreement_wide_std": DISAGREEMENT_WIDE_STD,
                     "ensemble_daily_cost_cap_usd": ENSEMBLE_DAILY_COST_CAP_USD,
                     "ensemble_enable_second_claude": ENSEMBLE_ENABLE_SECOND_CLAUDE,
+                    "runtime_profile": self.profile_name,
+                    "runtime_mode": self.runtime_mode,
+                    "launch_gate_reason": self.launch_gate_reason or None,
                     "paper_mode": self.paper_mode,
                 },
                 "combinatorial_params": {
@@ -5979,7 +6118,7 @@ class JJLive:
 
     async def run_continuous(self):
         """Run JJ continuously (daemon mode)."""
-        mode_tag = "PAPER" if self.paper_mode else "LIVE"
+        mode_tag = self._mode_tag()
         logger.info(f"JJ {mode_tag} — Starting continuous mode")
         try:
             try:
@@ -6010,6 +6149,7 @@ class JJLive:
                     sources.append("B1-Shadow")
                 await self.notifier.send_message(
                     f"JJ {mode_tag} TRADING ONLINE\n"
+                    f"Profile: {self.profile_name}\n"
                     f"Bankroll: ${self.state.state['bankroll']:.2f}\n"
                     f"Signal sources: {' + '.join(sources)}\n"
                     f"Lane health: {self._format_lane_health_summary(startup_lane_health)}\n"
@@ -6110,10 +6250,11 @@ class JJLive:
         combinatorial_summary = self.db.get_combinatorial_summary(hours=24 * 14)
         lane_health = self._last_lane_health or self._startup_lane_health or self._build_startup_lane_health()
 
-        mode_str = "PAPER" if self.paper_mode else "LIVE"
+        mode_str = self._mode_tag()
         print(f"\n{'='*50}")
         print(f"JJ {mode_str} TRADING STATUS")
         print(f"{'='*50}")
+        print(f"Profile:          {self.profile_name}")
         print(f"Bankroll:         ${s['bankroll']:.2f}")
         print(f"Total deployed:   ${s['total_deployed']:.2f}")
         print(f"Total P&L:        ${s['total_pnl']:.2f}")

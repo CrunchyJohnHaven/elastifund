@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sqlite3
 import subprocess
 import sys
@@ -22,6 +23,8 @@ from flywheel.status_report import build_remote_cycle_status as build_base_remot
 DEFAULT_CONFIG_PATH = Path("config/remote_cycle_status.json")
 DEFAULT_MARKDOWN_PATH = Path("reports/remote_cycle_status.md")
 DEFAULT_JSON_PATH = Path("reports/remote_cycle_status.json")
+DEFAULT_RUNTIME_TRUTH_LATEST_PATH = Path("reports/runtime_truth_latest.json")
+DEFAULT_PUBLIC_RUNTIME_SNAPSHOT_PATH = Path("reports/public_runtime_snapshot.json")
 DEFAULT_SERVICE_STATUS_PATH = Path("reports/remote_service_status.json")
 DEFAULT_ROOT_TEST_STATUS_PATH = Path("reports/root_test_status.json")
 DEFAULT_ARB_STATUS_PATH = Path("reports/arb_empirical_snapshot.json")
@@ -30,6 +33,10 @@ DEFAULT_WALLET_DB_PATH = Path("data/wallet_scores.db")
 DEFAULT_TRADES_DB_PATH = Path("data/jj_trades.db")
 DEFAULT_LAUNCH_CHECKLIST_PATH = Path("docs/ops/TRADING_LAUNCH_CHECKLIST.md")
 DEFAULT_ROOT_TEST_COMMAND = ("make", "test")
+RESULT_SUMMARY_RE = re.compile(
+    r"\b\d+\s+(?:passed|failed|error|errors|skipped|xfailed|xpassed)\b",
+    re.IGNORECASE,
+)
 
 
 def build_remote_cycle_status(
@@ -45,6 +52,7 @@ def build_remote_cycle_status(
     repo_root = root.resolve()
     status = build_base_remote_cycle_status(repo_root, config_path=config_path or DEFAULT_CONFIG_PATH)
     jj_state = _load_json(repo_root / "jj_state.json", default={})
+    intel_snapshot = _load_json(repo_root / "data" / "intel_snapshot.json", default={})
 
     trade_counts = _load_trade_counts(repo_root)
     status["runtime"]["closed_trades"] = trade_counts["closed_trades"]
@@ -77,6 +85,7 @@ def build_remote_cycle_status(
     runtime_truth = _build_runtime_truth(
         status=status,
         jj_state=jj_state,
+        intel_snapshot=intel_snapshot,
         service=service,
         launch=launch,
     )
@@ -172,7 +181,7 @@ def render_remote_cycle_status_markdown(status: dict[str, Any]) -> str:
             f"- Service checked at: {service.get('checked_at') or 'unknown'}",
             f"- Root regression status: {root_tests['status']}",
             f"- Root regression checked at: {root_tests.get('checked_at') or 'unknown'}",
-            f"- Root regression summary: {root_tests.get('summary') or 'n/a'}",
+            f"- Root regression summary: {root_tests.get('display_summary') or root_tests.get('summary') or 'n/a'}",
             f"- Wallet-flow readiness: {wallet_flow['status']}",
             f"- Wallet-flow wallet count: {wallet_flow['wallet_count']}",
             f"- Wallet-flow scores file exists: {'yes' if wallet_flow['scores_exists'] else 'no'}",
@@ -355,6 +364,8 @@ def write_remote_cycle_status(
     *,
     markdown_path: Path | None = None,
     json_path: Path | None = None,
+    runtime_truth_latest_path: Path | None = None,
+    public_runtime_snapshot_path: Path | None = None,
     config_path: Path | None = None,
     service_status_path: Path | None = None,
     root_test_status_path: Path | None = None,
@@ -388,17 +399,342 @@ def write_remote_cycle_status(
 
     markdown_target = _resolve_path(repo_root, markdown_path or DEFAULT_MARKDOWN_PATH)
     json_target = _resolve_path(repo_root, json_path or DEFAULT_JSON_PATH)
+    runtime_truth_latest_target = _resolve_path(
+        repo_root,
+        runtime_truth_latest_path or DEFAULT_RUNTIME_TRUTH_LATEST_PATH,
+    )
+    public_runtime_snapshot_target = _resolve_path(
+        repo_root,
+        public_runtime_snapshot_path or DEFAULT_PUBLIC_RUNTIME_SNAPSHOT_PATH,
+    )
+    timestamp_suffix = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    runtime_truth_timestamped_target = repo_root / "reports" / f"runtime_truth_{timestamp_suffix}.json"
+
+    status.setdefault("artifacts", {}).update(
+        {
+            "remote_cycle_status_markdown": str(markdown_target),
+            "remote_cycle_status_json": str(json_target),
+            "runtime_truth_latest_json": str(runtime_truth_latest_target),
+            "runtime_truth_timestamped_json": str(runtime_truth_timestamped_target),
+            "public_runtime_snapshot_json": str(public_runtime_snapshot_target),
+        }
+    )
+
+    latest_edge_scan_path = _find_latest_report_path(repo_root, "edge_scan_*.json")
+    latest_pipeline_path = _find_latest_report_path(repo_root, "pipeline_*.json")
+    if latest_edge_scan_path is not None:
+        status["artifacts"]["latest_edge_scan_json"] = str(latest_edge_scan_path)
+    if latest_pipeline_path is not None:
+        status["artifacts"]["latest_pipeline_json"] = str(latest_pipeline_path)
+
+    runtime_truth_snapshot = build_runtime_truth_snapshot(
+        repo_root,
+        status=status,
+        remote_cycle_status_path=json_target,
+        service_status_path=_resolve_path(repo_root, service_status_path or DEFAULT_SERVICE_STATUS_PATH),
+        root_test_status_path=root_test_status_target,
+        latest_edge_scan_path=latest_edge_scan_path,
+        latest_pipeline_path=latest_pipeline_path,
+        runtime_truth_latest_path=runtime_truth_latest_target,
+        runtime_truth_timestamped_path=runtime_truth_timestamped_target,
+        public_runtime_snapshot_path=public_runtime_snapshot_target,
+    )
+    public_runtime_snapshot = build_public_runtime_snapshot(runtime_truth_snapshot)
+
     markdown_target.parent.mkdir(parents=True, exist_ok=True)
     json_target.parent.mkdir(parents=True, exist_ok=True)
+    runtime_truth_latest_target.parent.mkdir(parents=True, exist_ok=True)
+    public_runtime_snapshot_target.parent.mkdir(parents=True, exist_ok=True)
 
     markdown_target.write_text(render_remote_cycle_status_markdown(status))
     json_target.write_text(json.dumps(status, indent=2, sort_keys=True))
+    runtime_truth_timestamped_target.write_text(json.dumps(runtime_truth_snapshot, indent=2, sort_keys=True))
+    runtime_truth_latest_target.write_text(json.dumps(runtime_truth_snapshot, indent=2, sort_keys=True))
+    public_runtime_snapshot_target.write_text(
+        json.dumps(public_runtime_snapshot, indent=2, sort_keys=True)
+    )
 
     return {
         "markdown": str(markdown_target),
         "json": str(json_target),
+        "runtime_truth_latest": str(runtime_truth_latest_target),
+        "runtime_truth_timestamped": str(runtime_truth_timestamped_target),
+        "public_runtime_snapshot": str(public_runtime_snapshot_target),
         "status": status,
     }
+
+
+def build_runtime_truth_snapshot(
+    root: Path,
+    *,
+    status: dict[str, Any],
+    remote_cycle_status_path: Path,
+    service_status_path: Path,
+    root_test_status_path: Path,
+    latest_edge_scan_path: Path | None,
+    latest_pipeline_path: Path | None,
+    runtime_truth_latest_path: Path,
+    runtime_truth_timestamped_path: Path,
+    public_runtime_snapshot_path: Path,
+) -> dict[str, Any]:
+    """Build the canonical machine-readable runtime truth snapshot."""
+
+    repo_root = root.resolve()
+    jj_state = _load_json(repo_root / "jj_state.json", default={})
+    intel_snapshot = _load_json(repo_root / "data" / "intel_snapshot.json", default={})
+
+    cycle_reconciliation = _reconcile_cycle_count(status=status, jj_state=jj_state, intel_snapshot=intel_snapshot)
+    root_tests = status["root_tests"]
+    verification_summary = root_tests.get("display_summary") or root_tests.get("summary")
+    launch = status["launch"]
+    wallet_flow = status["wallet_flow"]
+    service = status["service"]
+    runtime_truth = status["runtime_truth"]
+    service_drift_reason = next(
+        (
+            reason
+            for reason in runtime_truth.get("drift_reasons") or []
+            if "jj-live.service is running while launch posture remains blocked" in reason
+        ),
+        None,
+    )
+    launch_posture = "blocked" if launch["live_launch_blocked"] else "clear"
+
+    snapshot = {
+        "artifact": "runtime_truth_snapshot",
+        "schema_version": 1,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "summary": {
+            "cycles_completed": cycle_reconciliation["selected_value"],
+            "service_status": service["status"],
+            "wallet_flow_status": wallet_flow["status"],
+            "launch_posture": launch_posture,
+            "verification_status": root_tests["status"],
+            "drift_detected": bool(
+                cycle_reconciliation["drift_detected"] or runtime_truth.get("drift_detected")
+            ),
+        },
+        "source_precedence": {
+            "rule": (
+                "Prefer underlying synced/runtime artifacts over previously written summary outputs "
+                "when timestamps or content disagree."
+            ),
+            "fields": [
+                {
+                    "field": "cycles_completed",
+                    "selected_source": cycle_reconciliation["selected_source"],
+                    "fallback_sources": [
+                        "data/intel_snapshot.json",
+                        "reports/remote_cycle_status.json",
+                    ],
+                    "selected_value": cycle_reconciliation["selected_value"],
+                },
+                {
+                    "field": "wallet_flow_status",
+                    "selected_source": "data/smart_wallets.json + data/wallet_scores.db",
+                    "fallback_sources": ["reports/remote_cycle_status.json"],
+                    "selected_value": wallet_flow["status"],
+                },
+                {
+                    "field": "service_status",
+                    "selected_source": "reports/remote_service_status.json",
+                    "fallback_sources": ["reports/remote_cycle_status.json"],
+                    "selected_value": service["status"],
+                },
+                {
+                    "field": "launch_posture",
+                    "selected_source": "reports/remote_cycle_status.json",
+                    "fallback_sources": ["reports/edge_scan_*.json (advisory only)"],
+                    "selected_value": launch_posture,
+                },
+                {
+                    "field": "verification_status",
+                    "selected_source": "reports/root_test_status.json",
+                    "fallback_sources": ["reports/pipeline_*.json.verification"],
+                    "selected_value": root_tests["status"],
+                },
+            ],
+        },
+        "reconciliation": {
+            "cycles_completed": cycle_reconciliation,
+            "wallet_flow": {
+                "selected_source": "data/smart_wallets.json + data/wallet_scores.db",
+                "status": wallet_flow["status"],
+                "ready": wallet_flow["ready"],
+                "wallet_count": wallet_flow["wallet_count"],
+                "last_updated": wallet_flow.get("last_updated"),
+                "reasons": list(wallet_flow.get("reasons") or []),
+            },
+            "service": {
+                "selected_source": "reports/remote_service_status.json",
+                "status": service["status"],
+                "systemctl_state": service.get("systemctl_state"),
+                "checked_at": service.get("checked_at"),
+                "drift_detected": bool(runtime_truth.get("service_drift_detected")),
+                "drift_reason": service_drift_reason,
+            },
+            "launch": {
+                "selected_source": "reports/remote_cycle_status.json",
+                "posture": launch_posture,
+                "fast_flow_restart_ready": launch["fast_flow_restart_ready"],
+                "live_launch_blocked": launch["live_launch_blocked"],
+                "blocked_checks": list(launch.get("blocked_checks") or []),
+                "blocked_reasons": list(launch.get("blocked_reasons") or []),
+                "next_operator_action": launch["next_operator_action"],
+            },
+            "verification": {
+                "selected_source": "reports/root_test_status.json",
+                "status": root_tests["status"],
+                "summary": verification_summary,
+                "checked_at": root_tests.get("checked_at"),
+                "command": root_tests.get("command"),
+            },
+        },
+        "capital": status["capital"],
+        "runtime": status["runtime"],
+        "wallet_flow": status["wallet_flow"],
+        "service": {
+            "status": service["status"],
+            "systemctl_state": service.get("systemctl_state"),
+            "detail": service.get("detail"),
+            "checked_at": service.get("checked_at"),
+            "drift_detected": bool(runtime_truth.get("service_drift_detected")),
+            "drift_reason": service_drift_reason,
+        },
+        "launch": {
+            "posture": launch_posture,
+            **launch,
+        },
+        "structural_gates": status["structural_gates"],
+        "verification": {
+            "status": root_tests["status"],
+            "summary": verification_summary,
+            "checked_at": root_tests.get("checked_at"),
+            "command": root_tests.get("command"),
+        },
+        "latest_edge_scan": _summarize_edge_scan(repo_root, latest_edge_scan_path),
+        "latest_pipeline": _summarize_pipeline(repo_root, latest_pipeline_path),
+        "drift": {
+            "detected": bool(
+                cycle_reconciliation["drift_detected"] or runtime_truth.get("drift_detected")
+            ),
+            "reasons": _dedupe_preserve_order(
+                [
+                    *list(cycle_reconciliation.get("drift_reasons") or []),
+                    *list(runtime_truth.get("drift_reasons") or []),
+                ]
+            ),
+            "cycle_drift": cycle_reconciliation,
+            "service_running_while_launch_blocked": bool(runtime_truth.get("service_drift_detected")),
+        },
+        "artifacts": {
+            "remote_cycle_status_json": _relative_path_text(repo_root, remote_cycle_status_path),
+            "remote_service_status_json": _relative_path_text(repo_root, service_status_path),
+            "root_test_status_json": _relative_path_text(repo_root, root_test_status_path),
+            "runtime_truth_latest_json": _relative_path_text(repo_root, runtime_truth_latest_path),
+            "runtime_truth_timestamped_json": _relative_path_text(
+                repo_root,
+                runtime_truth_timestamped_path,
+            ),
+            "public_runtime_snapshot_json": _relative_path_text(
+                repo_root,
+                public_runtime_snapshot_path,
+            ),
+            "latest_edge_scan_json": _relative_path_text(repo_root, latest_edge_scan_path),
+            "latest_pipeline_json": _relative_path_text(repo_root, latest_pipeline_path),
+        },
+    }
+    return snapshot
+
+
+def build_public_runtime_snapshot(runtime_truth_snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Build a sanitized snapshot for docs and the website."""
+
+    capital = runtime_truth_snapshot["capital"]
+    runtime = runtime_truth_snapshot["runtime"]
+    launch = runtime_truth_snapshot["launch"]
+    wallet_flow = runtime_truth_snapshot["wallet_flow"]
+    service = runtime_truth_snapshot["service"]
+    verification = runtime_truth_snapshot["verification"]
+    structural_gates = runtime_truth_snapshot["structural_gates"]
+    latest_edge_scan = runtime_truth_snapshot["latest_edge_scan"]
+    latest_pipeline = runtime_truth_snapshot["latest_pipeline"]
+    drift = runtime_truth_snapshot["drift"]
+
+    public_snapshot = {
+        "artifact": "public_runtime_snapshot",
+        "schema_version": 1,
+        "generated_at": runtime_truth_snapshot["generated_at"],
+        "snapshot_source": runtime_truth_snapshot["artifacts"]["runtime_truth_latest_json"],
+        "capital": {
+            "tracked_capital_usd": capital["tracked_capital_usd"],
+            "deployed_capital_usd": capital["deployed_capital_usd"],
+            "undeployed_capital_usd": capital["undeployed_capital_usd"],
+            "bankroll_usd": runtime["bankroll_usd"],
+        },
+        "runtime": {
+            "cycles_completed": runtime["cycles_completed"],
+            "total_trades": runtime["total_trades"],
+            "closed_trades": runtime["closed_trades"],
+            "open_positions": runtime["open_positions"],
+            "daily_pnl_usd": runtime["daily_pnl_usd"],
+            "total_pnl_usd": runtime["total_pnl_usd"],
+        },
+        "service": {
+            "status": service["status"],
+            "checked_at": service.get("checked_at"),
+            "drift_detected": service.get("drift_detected", False),
+            "drift_reason": service.get("drift_reason"),
+        },
+        "launch": {
+            "posture": launch["posture"],
+            "fast_flow_restart_ready": launch["fast_flow_restart_ready"],
+            "live_launch_blocked": launch["live_launch_blocked"],
+            "blocked_reasons": list(launch.get("blocked_reasons") or []),
+            "next_operator_action": launch["next_operator_action"],
+        },
+        "wallet_flow": {
+            "status": wallet_flow["status"],
+            "ready": wallet_flow["ready"],
+            "wallet_count": wallet_flow["wallet_count"],
+            "last_updated": wallet_flow.get("last_updated"),
+        },
+        "structural_gates": {
+            "a6": {
+                "status": structural_gates["a6"]["status"],
+                "summary": structural_gates["a6"]["summary"],
+            },
+            "b1": {
+                "status": structural_gates["b1"]["status"],
+                "summary": structural_gates["b1"]["summary"],
+            },
+        },
+        "verification": {
+            "status": verification["status"],
+            "summary": verification["summary"],
+            "checked_at": verification.get("checked_at"),
+        },
+        "latest_edge_scan": {
+            "path": latest_edge_scan.get("path"),
+            "generated_at": latest_edge_scan.get("generated_at"),
+            "recommended_action": latest_edge_scan.get("recommended_action"),
+            "action_reason": latest_edge_scan.get("action_reason"),
+        },
+        "latest_pipeline": {
+            "path": latest_pipeline.get("path"),
+            "report_generated_at": latest_pipeline.get("report_generated_at"),
+            "recommendation": latest_pipeline.get("recommendation"),
+            "reasoning": latest_pipeline.get("reasoning"),
+        },
+        "operator_headlines": _build_public_headlines(
+            launch=launch,
+            wallet_flow=wallet_flow,
+            service=service,
+            verification=verification,
+            drift=drift,
+        ),
+    }
+    return public_snapshot
 
 
 def refresh_root_test_status(
@@ -430,7 +766,7 @@ def refresh_root_test_status(
             "command": command_text,
             "status": status,
             "returncode": int(result.returncode),
-            "summary": _summarize_command_output(output, success=result.returncode == 0),
+            "summary": _summarize_test_output(output, success=result.returncode == 0),
             "output_tail": _tail_lines(output, limit=12),
         }
     except subprocess.TimeoutExpired as exc:
@@ -520,13 +856,20 @@ def _load_service_status(path: Path) -> dict[str, Any]:
 
 def _load_root_test_status(path: Path) -> dict[str, Any]:
     raw = _load_json(path, default={})
+    output_tail = list(raw.get("output_tail") or [])
+    summary = raw.get("summary") or "Root regression status has not been refreshed yet."
     return {
         "status": str(raw.get("status") or "unknown"),
         "checked_at": raw.get("checked_at"),
         "command": raw.get("command") or "make test",
-        "summary": raw.get("summary") or "Root regression status has not been refreshed yet.",
+        "summary": summary,
+        "display_summary": _summarize_test_output(
+            "\n".join(output_tail),
+            success=str(raw.get("status") or "unknown") == "passing",
+            default=summary,
+        ),
         "returncode": raw.get("returncode"),
-        "output_tail": list(raw.get("output_tail") or []),
+        "output_tail": output_tail,
     }
 
 
@@ -805,6 +1148,7 @@ def _build_runtime_truth(
     *,
     status: dict[str, Any],
     jj_state: dict[str, Any],
+    intel_snapshot: dict[str, Any],
     service: dict[str, Any],
     launch: dict[str, Any],
 ) -> dict[str, Any]:
@@ -812,6 +1156,7 @@ def _build_runtime_truth(
 
     cycles_completed = int(runtime.get("cycles_completed") or 0)
     jj_state_cycles_completed = int(jj_state.get("cycles_completed") or 0)
+    intel_snapshot_cycles_completed = int(intel_snapshot.get("total_cycles") or 0)
     total_trades = int(runtime.get("total_trades") or 0)
     jj_state_total_trades = int(jj_state.get("total_trades") or 0)
     bankroll_usd = _float_or_none(runtime.get("bankroll_usd"))
@@ -825,6 +1170,12 @@ def _build_runtime_truth(
         drift_reasons.append(
             "cycles_completed mismatch between refreshed status and jj_state.json "
             f"({cycles_completed} vs {jj_state_cycles_completed})"
+        )
+    if intel_snapshot_cycles_completed and cycles_completed != intel_snapshot_cycles_completed:
+        jj_state_drift_detected = True
+        drift_reasons.append(
+            "cycles_completed mismatch between refreshed status and data/intel_snapshot.json "
+            f"({cycles_completed} vs {intel_snapshot_cycles_completed})"
         )
     if total_trades != jj_state_total_trades:
         jj_state_drift_detected = True
@@ -889,6 +1240,112 @@ def _reconcile_deployment_finish(
     return payload
 
 
+def _reconcile_cycle_count(
+    *,
+    status: dict[str, Any],
+    jj_state: dict[str, Any],
+    intel_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    remote_value = _int_or_none(status.get("runtime", {}).get("cycles_completed"))
+    jj_state_value = _int_or_none(jj_state.get("cycles_completed"))
+    intel_snapshot_value = _int_or_none(intel_snapshot.get("total_cycles"))
+    selected_value = remote_value
+    selected_source = "reports/remote_cycle_status.json"
+    if selected_value is None:
+        if jj_state_value is not None:
+            selected_value = jj_state_value
+            selected_source = "jj_state.json"
+        else:
+            selected_value = intel_snapshot_value
+            selected_source = "data/intel_snapshot.json"
+    elif jj_state_value is not None and selected_value == jj_state_value:
+        selected_source = "jj_state.json"
+    elif intel_snapshot_value is not None and selected_value == intel_snapshot_value:
+        selected_source = "data/intel_snapshot.json"
+
+    candidate_values = {
+        "jj_state.json": jj_state_value,
+        "data/intel_snapshot.json": intel_snapshot_value,
+        "reports/remote_cycle_status.json": remote_value,
+    }
+    nonempty_values = [value for value in candidate_values.values() if value is not None]
+    distinct_values = sorted(set(nonempty_values))
+    drift_detected = len(distinct_values) > 1
+    drift_reasons: list[str] = []
+    if drift_detected:
+        drift_reasons.append(
+            "cycles_completed differs across jj_state.json, data/intel_snapshot.json, and reports/remote_cycle_status.json"
+        )
+
+    return {
+        "selected_source": selected_source,
+        "selected_value": selected_value,
+        "candidates": candidate_values,
+        "drift_detected": drift_detected,
+        "drift_reasons": drift_reasons,
+    }
+
+
+def _summarize_edge_scan(root: Path, path: Path | None) -> dict[str, Any]:
+    payload = _load_json(path, default={}) if path is not None else {}
+    return {
+        "path": _relative_path_text(root, path),
+        "generated_at": payload.get("generated_at"),
+        "recommended_action": payload.get("recommended_action"),
+        "action_reason": payload.get("action_reason"),
+        "purpose": payload.get("purpose"),
+    }
+
+
+def _summarize_pipeline(root: Path, path: Path | None) -> dict[str, Any]:
+    payload = _load_json(path, default={}) if path is not None else {}
+    verdict = payload.get("pipeline_verdict") or {}
+    verification = payload.get("verification") or {}
+    return {
+        "path": _relative_path_text(root, path),
+        "report_generated_at": payload.get("report_generated_at"),
+        "run_timestamp": payload.get("run_timestamp"),
+        "recommendation": verdict.get("recommendation"),
+        "reasoning": verdict.get("reasoning"),
+        "verification": {
+            "integrated_entrypoint_status": verification.get("integrated_entrypoint_status"),
+            "make_test_status": verification.get("make_test_status"),
+            "root_suite": verification.get("root_suite"),
+            "jj_live_import_boundary_suite": verification.get("jj_live_import_boundary_suite"),
+        },
+    }
+
+
+def _build_public_headlines(
+    *,
+    launch: dict[str, Any],
+    wallet_flow: dict[str, Any],
+    service: dict[str, Any],
+    verification: dict[str, Any],
+    drift: dict[str, Any],
+) -> list[str]:
+    headlines: list[str] = []
+    if drift.get("service_running_while_launch_blocked"):
+        headlines.append(
+            "jj-live.service is running while launch posture remains blocked; treat this as drift until the remote mode is reconciled."
+        )
+    if wallet_flow.get("ready"):
+        headlines.append("Wallet-flow bootstrap is ready.")
+    else:
+        headlines.append(
+            "Wallet-flow bootstrap is not ready: "
+            + ", ".join(wallet_flow.get("reasons") or ["unknown"])
+        )
+    headlines.append(
+        f"Latest root verification status is {verification['status']} ({verification['summary']})."
+    )
+    if launch.get("live_launch_blocked"):
+        headlines.append("Launch posture remains blocked.")
+    elif service.get("status") == "running":
+        headlines.append("Runtime is unblocked and the service is running.")
+    return headlines
+
+
 def _extract_lane_payload(payload: dict[str, Any], *, lane_key: str) -> dict[str, Any]:
     candidates = [
         payload.get("lanes", {}).get(lane_key),
@@ -929,6 +1386,21 @@ def _extract_wallet_last_updated(payload: Any) -> str | None:
     return None
 
 
+def _summarize_test_output(output: str, *, success: bool, default: str | None = None) -> str:
+    result_lines = _dedupe_preserve_order(
+        [
+            line.strip()
+            for line in output.splitlines()
+            if line.strip() and RESULT_SUMMARY_RE.search(line)
+        ]
+    )
+    if result_lines:
+        return "; ".join(result_lines)
+    if default is not None:
+        return default
+    return _summarize_command_output(output, success=success)
+
+
 def _summarize_command_output(output: str, *, success: bool) -> str:
     if not output:
         return "Command passed cleanly." if success else "Command failed without output."
@@ -943,6 +1415,37 @@ def _summarize_command_output(output: str, *, success: bool) -> str:
 def _tail_lines(output: str, *, limit: int) -> list[str]:
     lines = [line for line in output.splitlines() if line.strip()]
     return lines[-limit:]
+
+
+def _find_latest_report_path(root: Path, pattern: str) -> Path | None:
+    reports_dir = root / "reports"
+    candidates = [path for path in reports_dir.glob(pattern) if path.is_file()]
+    if not candidates:
+        return None
+    return max(candidates, key=_artifact_sort_key)
+
+
+def _artifact_sort_key(path: Path) -> tuple[float, str]:
+    payload = _load_json(path, default={})
+    embedded_timestamps = []
+    if isinstance(payload, dict):
+        embedded_timestamps.extend(
+            [
+                payload.get("generated_at"),
+                payload.get("report_generated_at"),
+                payload.get("run_timestamp"),
+                payload.get("checked_at"),
+            ]
+        )
+    for candidate in embedded_timestamps:
+        parsed = _parse_datetime_like(candidate)
+        if parsed is not None:
+            return (parsed.timestamp(), path.name)
+
+    filename_timestamp = _parse_datetime_like(_extract_timestamp_from_filename(path.name))
+    if filename_timestamp is not None:
+        return (filename_timestamp.timestamp(), path.name)
+    return (path.stat().st_mtime, path.name)
 
 
 def _dedupe_preserve_order(values: Sequence[str]) -> list[str]:
@@ -960,6 +1463,15 @@ def _load_json(path: Path, *, default: Any) -> Any:
     if not path.exists():
         return default
     return json.loads(path.read_text())
+
+
+def _relative_path_text(root: Path, path: Path | None) -> str | None:
+    if path is None:
+        return None
+    try:
+        return str(path.resolve().relative_to(root.resolve()))
+    except ValueError:
+        return str(path)
 
 
 def _resolve_path(root: Path, path: Path) -> Path:
@@ -988,11 +1500,47 @@ def _float_or_none(value: Any) -> float | None:
     return float(value)
 
 
+def _int_or_none(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    return int(value)
+
+
 def _first_nonempty(*values: Any) -> Any:
     for value in values:
         if value not in (None, "", []):
             return value
     return None
+
+
+def _extract_timestamp_from_filename(name: str) -> str | None:
+    match = re.search(r"(\d{8}T\d{6}Z)", name)
+    if match is None:
+        return None
+    return match.group(1)
+
+
+def _parse_datetime_like(value: Any) -> datetime | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    compact = _extract_timestamp_from_filename(text)
+    if compact:
+        try:
+            return datetime.strptime(compact, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _safe_iso_mtime(path: Path) -> str | None:
@@ -1007,6 +1555,14 @@ def main() -> None:
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
     parser.add_argument("--output-md", default=str(DEFAULT_MARKDOWN_PATH))
     parser.add_argument("--output-json", default=str(DEFAULT_JSON_PATH))
+    parser.add_argument(
+        "--runtime-truth-latest-json",
+        default=str(DEFAULT_RUNTIME_TRUTH_LATEST_PATH),
+    )
+    parser.add_argument(
+        "--public-runtime-snapshot-json",
+        default=str(DEFAULT_PUBLIC_RUNTIME_SNAPSHOT_PATH),
+    )
     parser.add_argument("--service-status-json", default=str(DEFAULT_SERVICE_STATUS_PATH))
     parser.add_argument("--root-test-status-json", default=str(DEFAULT_ROOT_TEST_STATUS_PATH))
     parser.add_argument("--arb-status-json", default=str(DEFAULT_ARB_STATUS_PATH))
@@ -1018,6 +1574,8 @@ def main() -> None:
         ROOT,
         markdown_path=Path(args.output_md),
         json_path=Path(args.output_json),
+        runtime_truth_latest_path=Path(args.runtime_truth_latest_json),
+        public_runtime_snapshot_path=Path(args.public_runtime_snapshot_json),
         config_path=Path(args.config),
         service_status_path=Path(args.service_status_json),
         root_test_status_path=Path(args.root_test_status_json),

@@ -16,19 +16,20 @@ This cycle did not migrate the site to `site/`. The live repo source is still th
 
 Delivered in the March 9, 2026 refresh:
 
-- dual-state system-status card: remote service observed active at `2026-03-09T00:06:56Z`, launch posture still blocked
+- dual-state system-status card: remote service observed active at `2026-03-09T00:44:19Z`, launch posture still blocked
 - public-safe fast-market verdict note: `REJECT ALL`
-- public-safe edge snapshot counts: `0` fast Gamma markets <=24h, `15` A-6 candidate events, `58` A-6 candidate markets, `0` executable opportunities, `0` B-1 deterministic pairs in `1,000` allowed markets
+- public-safe edge snapshot counts: `75` fast markets observed (`29` 15m, `39` 5m, `7` 4h), `563` allowed neg-risk events in the repo audit, `57` qualified A-6 live-surface events, `0` executable opportunities, `0` B-1 deterministic pairs in `1,000` allowed markets
 - freshness stamps for metrics, verification baseline, service-state check time, and build date
-- current metrics: `$347.51` tracked capital, `71.2%` calibrated win rate with `68.5%` legacy label, `1,256` verified tests, `131` strategy catalog, `11` dispatch work-orders, `23` benchmarked systems, `6` primary + `1` anomaly signal lane
+- current metrics: `$347.51` tracked capital, `71.2%` calibrated win rate with `68.5%` legacy label, current root verification `failing` (`1 failed, 870 passed`), `131` strategy catalog, `11` dispatch work-orders, `23` benchmarked systems, `6` primary + `1` anomaly signal lane
 - a new March 9 build-diary entry recording the service/launch drift reconciliation and why uptime did not clear trading
 - a strategy-section note clarifying that the published cards are a public subset, not the full canonical ledger
+- homepage runtime/status surfaces now hydrate from `reports/public_runtime_snapshot.json` and the latest pipeline/scan artifacts instead of relying only on handwritten numbers
 
 Still not delivered this cycle:
 
 - no `site/` directory or Next.js scaffold yet
 - no Elastic-backed `/live` page
-- no automated public snapshot exporter
+- the broader scorecard still is not fully sourced from the public snapshot; only the runtime/status surfaces are artifact-driven today
 
 ---
 
@@ -37,8 +38,8 @@ Still not delivered this cycle:
 The live site is still a single `index.html` with a dark terminal aesthetic. After the March 9, 2026 refresh it contains:
 
 - Hero with a launch-blocked banner, GitHub link, MIT license, and refreshed Cycle 2 metrics
-- System-status card: service observed active on March 9, 2026, launch posture still blocked, `REJECT ALL` fast-market note, public-safe edge counts, and freshness stamps
-- Scorecard: 131 strategies tracked, 1,256 verified tests, 11 dispatch work-orders, 71.2% calibrated win rate with 68.5% legacy label, 23 benchmarked systems, 6 primary + 1 anomaly signal lane, $347.51 tracked capital
+- System-status card: service observed active on March 9, 2026, launch posture still blocked, `REJECT ALL` fast-market note, public-safe edge counts, freshness stamps, and repo-artifact hydration
+- Scorecard: 131 strategies tracked, current root verification status, 11 dispatch work-orders, 71.2% calibrated win rate with 68.5% legacy label, 23 benchmarked systems, 6 primary + 1 anomaly signal lane, $347.51 tracked capital
 - "What Is Elastifund" explainer with agent-run company model comparison table
 - "How It Works Right Now" pipeline: SCAN → RANK → FILTER → SIZE → RESTART
 - System architecture updated around current signal lanes, execution gates, and the active-service / blocked-launch split
@@ -59,11 +60,11 @@ The live site is still a single `index.html` with a dark terminal aesthetic. Aft
 
 ## What the current site lacks
 
-- No live data anywhere — every number is still a static repo-backed snapshot
+- Only the runtime/status surface hydrates from repo artifacts; the broader scorecard is still static repo-backed content
 - No Elastic-backed public `/live` surface yet
 - No search — 57 pages of content with no way to find anything
 - Elastic Stack visibility is still descriptive, not wired to real public telemetry reads
-- Single-file HTML — no component reuse, no build pipeline, manual updates only
+- Single-file HTML — no component reuse, no build pipeline, and too much manual content maintenance
 
 ---
 
@@ -136,7 +137,7 @@ The site must answer four questions immediately on every surface: (1) what is th
 - "run in paper mode by default" as trust-building phrase everywhere
 
 ### Priority 1: Automate the refreshed homepage metrics
-Cycle 2 fixed the public numbers by hand inside `index.html`. The next build should make those values generated instead of manual:
+Cycle 2 now hydrates the runtime/status surface from repo artifacts, but the snapshot contract is still incomplete. The next build should finish the job and remove the fallback chain:
 - Export repo-backed public metrics into a snapshot artifact
 - Keep service state and launch posture synchronized as separate fields
 - Keep pipeline verdict and A-6 / B-1 gate status synchronized

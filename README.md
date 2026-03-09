@@ -73,16 +73,16 @@ The non-Docker path was verified directly. Docker still requires Docker Desktop 
 
 | Area | Current state |
 |---|---|
-| Runtime truth | prefer `jj_state.json`, `reports/remote_cycle_status.json`, `reports/remote_service_status.json`, and `research/edge_backlog_ranked.md` when prose drifts |
+| Runtime truth | prefer `reports/public_runtime_snapshot.json` and `reports/runtime_truth_latest.json`; use `reports/remote_cycle_status.json`, `reports/remote_service_status.json`, `FAST_TRADE_EDGE_ANALYSIS.md`, and `reports/arb_empirical_snapshot.json` for the underlying detail |
 | Capital tracked in docs | `$347.51` total (`$247.51` Polymarket + `$100` Kalshi) |
-| Runtime state | `0` trades after `294` cycles; `reports/remote_service_status.json` shows `jj-live.service` `running` at `2026-03-09T00:06:56Z`, while launch posture remains blocked |
-| Fast-flow launch posture | wallet-flow is `not_ready`; the latest checked-in fast-trade report still says `REJECT ALL`; A-6 and B-1 remain blocked with no promotion |
+| Runtime state | `0` trades after `301` cycles; `reports/remote_service_status.json` shows `jj-live.service` `running` at `2026-03-09T00:44:19Z`, while launch posture remains blocked |
+| Fast-flow launch posture | wallet-flow is `ready` with `80` scored wallets, but `fast_flow_restart_ready=false`; the current blockers are a failing root regression suite, no closed trades, no deployed capital, and the A-6/B-1 gates; the latest checked-in fast-trade report still says `REJECT ALL` |
 | Trading strategy catalog | `131` tracked (`7` deployed, `6` building, `2` structural alpha, `1` re-evaluating, `10` rejected, `8` pre-rejected, `97` pipeline) |
 | Non-trading lane | compliance-first revenue harness plus digital-product niche discovery are in repo; first revenue product is not yet launched |
-| Verified tests | `1,256` total (`849 + 22` root, `374` polymarket, `11` non-trading) |
+| Verification status | current root suite is failing (`1 failed, 870 passed in 18.22s`); the last full green baseline remains `1,256` total tests (`849 + 22` root, `374` polymarket, `11` non-trading) |
 | Live validated P&L | still effectively pre-revenue; no inflated claims here |
 
-The March 9 remote running artifact supersedes older prose that said the service was stopped, but it does not change the launch decision. Live launch is still blocked, so a running `jj-live.service` should be treated as operational drift until the remote mode is reconciled.
+The March 9 runtime snapshot supersedes older prose that said the service was stopped and wallet-flow was not ready, but it does not clear launch. The stable public snapshot now shows wallet-flow ready, service running, and launch still blocked because the root regression suite is failing, there are no closed trades, no deployed capital, and A-6/B-1 remain unresolved. Treat a running `jj-live.service` as operational drift until the remote mode is reconciled and `make test` is green again.
 
 ## Velocity Charts
 
