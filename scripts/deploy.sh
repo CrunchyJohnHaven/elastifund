@@ -33,6 +33,16 @@ if [ -f "$PROJECT_DIR/.env" ]; then
     # shellcheck disable=SC1090
     source <(grep -E '^(LIGHTSAIL_KEY|VPS_USER|VPS_IP)=' "$PROJECT_DIR/.env" || true)
     set +a
+    # Some shells/sandboxes do not persist assignments from process substitution.
+    if [ -z "${VPS_IP:-}" ] || [ -z "${VPS_USER:-}" ] || [ -z "${LIGHTSAIL_KEY:-}" ]; then
+        while IFS='=' read -r key value; do
+            case "$key" in
+                LIGHTSAIL_KEY|VPS_USER|VPS_IP)
+                    export "$key=$value"
+                    ;;
+            esac
+        done < <(grep -E '^(LIGHTSAIL_KEY|VPS_USER|VPS_IP)=' "$PROJECT_DIR/.env" || true)
+    fi
 fi
 
 CLEAN_ENV=false

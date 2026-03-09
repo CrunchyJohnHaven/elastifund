@@ -81,6 +81,9 @@ normalize_assignment_line() {
 
 should_remove_key() {
     case "$1" in
+        JJ_CLOB_SIGNATURE_TYPE)
+            return 1
+            ;;
         JJ_*|PAPER_TRADING|LIVE_TRADING|ENABLE_*|CLAUDE_MODEL|ELASTIFUND_AGENT_RUN_MODE)
             return 0
             ;;
