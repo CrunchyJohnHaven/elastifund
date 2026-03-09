@@ -144,6 +144,8 @@ SCRIPT_SUPPORT_FILES=(
     "scripts/clean_env_for_profile.sh"
     "scripts/btc5_status.sh"
     "scripts/run_kalshi_weather_auto.sh"
+    "scripts/run_flywheel_cycle.py"
+    "scripts/write_remote_cycle_status.py"
 )
 
 DEPLOY_ASSET_FILES=(
@@ -189,6 +191,9 @@ done
 
 sync_file "config/__init__.py"
 sync_file "config/runtime_profile.py"
+if [ -f "$PROJECT_DIR/config/flywheel_runtime.local.json" ]; then
+    sync_file "config/flywheel_runtime.local.json"
+fi
 for local_path in "$PROJECT_DIR"/config/runtime_profiles/*.json; do
     relative_path="config/runtime_profiles/$(basename "$local_path")"
     sync_file "$relative_path"

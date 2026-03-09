@@ -806,7 +806,7 @@ class RelayerMergeExecutor:
 
         try:
             from py_builder_relayer_client.client import RelayClient
-            from py_builder_relayer_client.models import RelayerTxType, Transaction
+            from py_builder_relayer_client.models import OperationType, SafeTransaction
             from py_builder_signing_sdk.config import BuilderApiKeyCreds, BuilderConfig
         except ImportError as exc:  # pragma: no cover - import path is environment-specific
             raise RuntimeError(
@@ -820,16 +820,19 @@ class RelayerMergeExecutor:
                 passphrase=self.builder_api_passphrase,
             )
         )
-        relay_tx_type = getattr(RelayerTxType, self.relay_tx_type, RelayerTxType.SAFE)
         client = RelayClient(
             self.relayer_url,
             self.chain_id,
             self.private_key,
             builder_config,
-            relay_tx_type=relay_tx_type,
         )
         transactions = [
-            Transaction(to=prepared_txn.to, data=prepared_txn.data, value=prepared_txn.value)
+            SafeTransaction(
+                to=prepared_txn.to,
+                operation=OperationType.Call,
+                data=prepared_txn.data,
+                value=prepared_txn.value,
+            )
             for _, prepared_txn in prepared
         ]
         response = client.execute(transactions, metadata=f"merge {len(transactions)} polymarket positions")

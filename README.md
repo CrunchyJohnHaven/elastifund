@@ -18,6 +18,7 @@ The repo is built to be usable by humans and by coding agents. Fork it, run one 
 | I want to... | Start here |
 |---|---|
 | Boot the repo with the least friction | [docs/FORK_AND_RUN.md](docs/FORK_AND_RUN.md) |
+| Hand one root packet to Deep Research | [COMMAND_NODE.md](COMMAND_NODE.md) |
 | Understand the Elastic observability layer | [docs/ELASTIC_INTEGRATION.md](docs/ELASTIC_INTEGRATION.md) |
 | Run the observability demo on Replit | [docs/REPLIT_BUILD_GUIDE.md](docs/REPLIT_BUILD_GUIDE.md) |
 | Use Codex and Claude Code in parallel | [AGENTS.md](AGENTS.md) + [docs/PARALLEL_AGENT_WORKFLOW.md](docs/PARALLEL_AGENT_WORKFLOW.md) |
@@ -75,14 +76,16 @@ The non-Docker path was verified directly. Docker still requires Docker Desktop 
 |---|---|
 | Runtime truth | prefer `reports/public_runtime_snapshot.json` and `reports/runtime_truth_latest.json`; use `reports/remote_cycle_status.json`, `reports/remote_service_status.json`, `FAST_TRADE_EDGE_ANALYSIS.md`, and `reports/arb_empirical_snapshot.json` for the underlying detail |
 | Capital tracked in docs | `$347.51` total (`$247.51` Polymarket + `$100` Kalshi) |
-| Runtime state | `0` trades after `314` cycles; `reports/remote_service_status.json` shows `jj-live.service` `running` at `2026-03-09T02:23:11Z`, while launch posture remains blocked |
-| Fast-flow launch posture | wallet-flow is `ready` with `80` scored wallets and `fast_flow_restart_ready=true`, but launch is still blocked and drift is present (service running while blocked); threshold-sensitivity refresh still found `0` tradeable markets at YES `0.15`, NO `0.05`; YES `0.08`, NO `0.03`; and YES `0.05`, NO `0.02` |
+| Runtime state | `reports/runtime_truth_latest.json` generated at `2026-03-09T16:19:45Z` shows `565` cycles, `5` local trade-db trades, `4` local open positions, and `jj-live.service` `stopped`; the remote wallet surface simultaneously shows `28` open positions and `9` closed positions, so local-ledger vs wallet reconciliation is still open |
+| Fast-flow launch posture | selected profile is `maker_velocity_all_in`; `jj-live` is now intentionally stopped while the dedicated BTC 5-minute maker remains live under tighter guardrails; `fast_flow_restart_ready=true`, but the latest candidate counts are still `0` and the latest pipeline verdict is still `REJECT ALL` |
 | Trading strategy catalog | `131` tracked (`7` deployed, `6` building, `2` structural alpha, `1` re-evaluating, `10` rejected, `8` pre-rejected, `97` pipeline) |
-| Non-trading lane | compliance-first revenue harness, digital-product niche discovery, and JJ-N Phase 0 foundations (CRM, opportunity registry, approval/compliance, telemetry, engine stubs) are in repo; first revenue product is not yet launched |
-| Verification status | latest root verification artifact shows passing (`1016 passed in 21.25s; 23 passed in 2.89s`); JJ-N surfaces are currently green in this worktree (`61` package, `49` repo-root) |
-| Live validated P&L / ARR | still effectively pre-revenue (`0` closed trades, `0` deployed capital, realized ARR `0%`); theoretical maker-velocity ARR remains a backtest reference only |
+| Non-trading lane | compliance-first revenue harness, a runnable `RevenuePipeline`, digital-product niche discovery, and the Website Growth Audit offer are in repo; the lane is implemented and safety-gated, but not revenue-live |
+| Verification status | latest root verification artifact shows passing (`1140 passed in 25.88s; 25 passed in 4.47s`); JJ-N surfaces are green in this worktree (`64` package, `49` repo-root) |
+| Live validated P&L / ARR | local trade-db truth still shows `0` closed trades, but the remote Polymarket wallet reports `9` closed positions with realized PnL `$26.8256` and the BTC 5-minute maker DB reports `32` live-filled rows with cumulative filled PnL `$34.4628`; treat this as promising but not claim-ready until runtime truth is reconciled |
 
-The March 9 runtime snapshot supersedes older prose that said the service was stopped. Current machine truth shows service running while launch remains blocked, which is explicit drift to reconcile before any further trade-path changes. There are still no closed trades, no deployed capital, and A-6/B-1 remain unresolved.
+The March 9 runtime snapshot supersedes older prose that said the system still had `314` cycles and `0` trades. Current machine truth shows `jj-live` intentionally stopped, the BTC 5-minute sleeve live, and a remaining split between local runtime accounting and remote wallet evidence that still needs reconciliation before any stronger trading claims.
+
+For a single root handoff into Deep Research, use [COMMAND_NODE.md](COMMAND_NODE.md).
 
 ## Velocity Charts
 
@@ -161,6 +164,8 @@ JJ-N v1 is a revenue-operations worker with five engines: Account Intelligence, 
 What is already real:
 
 - a compliance-first revenue-agent harness in [nontrading/main.py](nontrading/main.py)
+- a runnable five-engine [RevenuePipeline](nontrading/pipeline.py)
+- the first service offer in [nontrading/offers/website_growth_audit.py](nontrading/offers/website_growth_audit.py)
 - a digital-product niche discovery pipeline in [nontrading/digital_products/main.py](nontrading/digital_products/main.py)
 - a Phase 0 CRM schema in [nontrading/models.py](nontrading/models.py) and [nontrading/store.py](nontrading/store.py)
 - an opportunity registry in [nontrading/opportunity_registry.py](nontrading/opportunity_registry.py)
@@ -171,7 +176,7 @@ What is already real:
 
 What is not built yet:
 
-- the recommended phase-1 production wedge from the design doc: a self-serve website growth audit plus recurring monitor
+- the fully launched production path for the Website Growth Audit plus recurring monitor
 - a production KPI dashboard and live reply / meeting workflow
 - checkout, billing webhooks, provisioning, and fulfillment reporting
 
@@ -200,6 +205,7 @@ If you want the deeper map, use [docs/REPO_MAP.md](docs/REPO_MAP.md).
 |---|---|
 | [docs/FORK_AND_RUN.md](docs/FORK_AND_RUN.md) | easiest bootstrap and host/spoke onboarding flow |
 | [AGENTS.md](AGENTS.md) | machine-first entrypoint and core commands |
+| [COMMAND_NODE.md](COMMAND_NODE.md) | single root deep-research handoff for current machine truth, implementation map, and improvement guidance |
 | [docs/ELASTIC_INTEGRATION.md](docs/ELASTIC_INTEGRATION.md) | master Elastic Stack integration guide |
 | [docs/REPLIT_BUILD_GUIDE.md](docs/REPLIT_BUILD_GUIDE.md) | Replit deployment path for the observability stack |
 | [docs/ELASTIC_LESSONS_LEARNED.md](docs/ELASTIC_LESSONS_LEARNED.md) | public log of what the Elastic layer actually teaches us |

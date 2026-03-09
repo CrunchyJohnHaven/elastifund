@@ -191,6 +191,18 @@ recent_live_filled = conn.execute(
     LIMIT 5
     \"\"\"
 ).fetchall()
+
+all_live_filled = [dict(row) for row in conn.execute(
+    \"\"\"
+    SELECT
+        direction,
+        ABS(delta) AS abs_delta,
+        order_price,
+        pnl_usd
+    FROM window_trades
+    WHERE order_status = 'live_filled'
+    \"\"\"
+).fetchall()]
 conn.close()
 
 def f(value):
@@ -198,6 +210,51 @@ def f(value):
         return float(value or 0.0)
     except (TypeError, ValueError):
         return 0.0
+
+def recommend_guardrails(rows):
+    if len(rows) < 10:
+        return None
+    max_abs_delta_candidates = [0.00002, 0.00005, 0.0001, 0.00015]
+    down_caps = [0.48, 0.49, 0.50, 0.51]
+    up_caps = [0.47, 0.48, 0.49, 0.50, 0.51]
+    best = None
+    baseline_pnl = round(sum(f(row.get("pnl_usd")) for row in rows), 4)
+    for max_abs_delta in max_abs_delta_candidates:
+        for down_cap in down_caps:
+            for up_cap in up_caps:
+                subset = [
+                    row for row in rows
+                    if f(row.get("abs_delta")) <= max_abs_delta
+                    and (
+                        (str(row.get("direction") or "").upper() == "DOWN" and f(row.get("order_price")) <= down_cap)
+                        or (str(row.get("direction") or "").upper() == "UP" and f(row.get("order_price")) <= up_cap)
+                    )
+                ]
+                if not subset:
+                    continue
+                pnl = round(sum(f(row.get("pnl_usd")) for row in subset), 4)
+                candidate = {
+                    "max_abs_delta": max_abs_delta,
+                    "down_max_buy_price": down_cap,
+                    "up_max_buy_price": up_cap,
+                    "replay_live_filled_rows": len(subset),
+                    "replay_live_filled_pnl_usd": pnl,
+                }
+                score = (
+                    pnl,
+                    len(subset),
+                    -abs(down_cap - 0.50),
+                    -abs(up_cap - 0.51),
+                )
+                if best is None or score > best["score"]:
+                    best = {"score": score, "candidate": candidate}
+    if best is None:
+        return None
+    return {
+        **best["candidate"],
+        "baseline_live_filled_rows": len(rows),
+        "baseline_live_filled_pnl_usd": baseline_pnl,
+    }
 
 print(json.dumps({
     "status": "ok",
@@ -210,6 +267,7 @@ print(json.dumps({
     "latest_live_filled_at": summary_row["latest_live_filled_at"],
     "latest_trade": dict(latest_row) if latest_row is not None else {},
     "recent_live_filled": [dict(row) for row in recent_live_filled],
+    "guardrail_recommendation": recommend_guardrails(all_live_filled),
 }, sort_keys=True))
 """
 
@@ -545,6 +603,17 @@ def _load_btc5_maker_state_from_db(
             LIMIT 5
             """
         ).fetchall()
+        all_live_filled = conn.execute(
+            """
+            SELECT
+                direction,
+                ABS(delta) AS abs_delta,
+                order_price,
+                pnl_usd
+            FROM window_trades
+            WHERE order_status = 'live_filled'
+            """
+        ).fetchall()
     except sqlite3.DatabaseError as exc:
         return {
             "status": "unavailable",
@@ -560,6 +629,9 @@ def _load_btc5_maker_state_from_db(
 
     latest_summary = dict(latest_row) if latest_row is not None else {}
     recent_rows = [dict(row) for row in recent_live_filled]
+    guardrail_recommendation = _recommend_btc5_guardrails(
+        [dict(row) for row in all_live_filled]
+    )
     return {
         "status": "ok",
         "checked_at": checked_at,
@@ -584,6 +656,64 @@ def _load_btc5_maker_state_from_db(
         ),
         "latest_trade": latest_summary,
         "recent_live_filled": recent_rows,
+        "guardrail_recommendation": guardrail_recommendation,
+    }
+
+
+def _recommend_btc5_guardrails(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if len(rows) < 10:
+        return None
+
+    max_abs_delta_candidates = [0.00002, 0.00005, 0.00010, 0.00015]
+    down_caps = [0.48, 0.49, 0.50, 0.51]
+    up_caps = [0.47, 0.48, 0.49, 0.50, 0.51]
+    baseline_pnl = round(sum(_safe_float(row.get("pnl_usd"), 0.0) for row in rows), 4)
+    best: tuple[tuple[float, int, float, float], dict[str, Any]] | None = None
+
+    for max_abs_delta in max_abs_delta_candidates:
+        for down_cap in down_caps:
+            for up_cap in up_caps:
+                subset = [
+                    row
+                    for row in rows
+                    if _safe_float(row.get("abs_delta"), 0.0) <= max_abs_delta
+                    and (
+                        (
+                            str(row.get("direction") or "").strip().upper() == "DOWN"
+                            and _safe_float(row.get("order_price"), 0.0) <= down_cap
+                        )
+                        or (
+                            str(row.get("direction") or "").strip().upper() == "UP"
+                            and _safe_float(row.get("order_price"), 0.0) <= up_cap
+                        )
+                    )
+                ]
+                if not subset:
+                    continue
+                pnl = round(sum(_safe_float(row.get("pnl_usd"), 0.0) for row in subset), 4)
+                candidate = {
+                    "max_abs_delta": max_abs_delta,
+                    "down_max_buy_price": down_cap,
+                    "up_max_buy_price": up_cap,
+                    "replay_live_filled_rows": len(subset),
+                    "replay_live_filled_pnl_usd": pnl,
+                }
+                score = (
+                    pnl,
+                    len(subset),
+                    -abs(down_cap - 0.50),
+                    -abs(up_cap - 0.51),
+                )
+                if best is None or score > best[0]:
+                    best = (score, candidate)
+
+    if best is None:
+        return None
+
+    return {
+        **best[1],
+        "baseline_live_filled_rows": len(rows),
+        "baseline_live_filled_pnl_usd": baseline_pnl,
     }
 
 
@@ -613,6 +743,7 @@ def _merge_btc5_maker_observation(
             "btc5_latest_order_status": latest_trade.get("order_status"),
             "btc5_latest_window_start_ts": _int_or_none(latest_trade.get("window_start_ts")),
             "btc5_latest_trade_pnl_usd": _float_or_none(latest_trade.get("pnl_usd")),
+            "btc5_guardrail_recommendation": btc5_maker.get("guardrail_recommendation"),
         }
     )
 
@@ -1733,6 +1864,7 @@ def build_runtime_truth_snapshot(
         root=repo_root,
         generated_at=datetime.now(timezone.utc),
         runtime=status["runtime"],
+        btc5_maker=status.get("btc_5min_maker") or {},
         launch=launch,
         latest_edge_scan=latest_edge_scan,
         latest_pipeline=latest_pipeline,
@@ -2972,6 +3104,7 @@ def _build_state_improvement_report(
     root: Path,
     generated_at: datetime,
     runtime: dict[str, Any],
+    btc5_maker: dict[str, Any],
     launch: dict[str, Any],
     latest_edge_scan: dict[str, Any],
     latest_pipeline: dict[str, Any],
@@ -3093,6 +3226,9 @@ def _build_state_improvement_report(
             "previous_snapshot_generated_at": previous_runtime_truth_snapshot.get("generated_at")
             if isinstance(previous_runtime_truth_snapshot, dict)
             else None,
+        },
+        "strategy_recommendations": {
+            "btc5_guardrails": btc5_maker.get("guardrail_recommendation"),
         },
         "metrics": current_metrics,
     }

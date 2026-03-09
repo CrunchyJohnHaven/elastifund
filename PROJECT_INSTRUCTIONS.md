@@ -2,6 +2,7 @@
 **Version:** 3.9.3 | **Updated:** 2026-03-09 | **Owner:** John Bradley
 **Paste this into any new ChatGPT, Claude web, Claude Code, or Cowork session.**
 **Canonical filename:** `PROJECT_INSTRUCTIONS.md`. Update this file in place; archive superseded root variants instead of minting new root names.
+**For one root-level Deep Research handoff, prefer `COMMAND_NODE.md`; this file is the operator-policy surface.**
 
 ---
 
@@ -21,7 +22,7 @@ For everything else — writing code, running tests, deploying to VPS, researchi
 
 **Elastifund** is an open, self-improving agentic operating system for real economic work. AI persona: **JJ**. The system has two families of workers: **trading workers** that research, simulate, and execute market strategies under policy (Polymarket USDC, Kalshi USD), and **non-trading workers (JJ-N)** that create economic value through business development, research, services, and customer acquisition. 20% of net profits fund veteran suicide prevention. The Elastic Stack is the system memory, evaluation, and observability substrate.
 
-**Status (machine truth reconciled on March 9, 2026):** Bot remains deployed to the Dublin VPS. `reports/public_runtime_snapshot.json` and `reports/runtime_truth_latest.json` are the canonical runtime handoff. `reports/remote_service_status.json` checked at `2026-03-09T02:23:11Z` shows `jj-live.service` `running`/`active` while launch posture is still `blocked`; this is operational drift and must be reconciled before any trade-path changes. Runtime remains `0` closed trades with `0` deployed capital after `314` cycles. A-6 remains blocked (`0` executable constructions below `0.95`) and B-1 remains blocked (`0` deterministic template pairs in first `1,000` allowed markets). Latest root verification artifact is passing (`1016 passed in 21.25s; 23 passed in 2.89s`). JJ-N verification is green in this worktree (`61` package tests, `49` repo-root tests), `nontrading/main.py` runs `RevenuePipeline`, and startup now hard-blocks live providers when sender domain/auth is placeholder or unverified.
+**Status (machine truth reconciled on March 9, 2026):** Bot remains deployed to the Dublin VPS. `reports/public_runtime_snapshot.json` and `reports/runtime_truth_latest.json` are the canonical runtime handoff. `reports/runtime_truth_latest.json` generated at `2026-03-09T16:19:45Z` shows `jj-live.service` now `stopped`, so service-state drift is cleared and the only intended live lane is the dedicated BTC 5-minute maker. Current local runtime accounting still shows `565` cycles, `5` trade-db trades, `4` local open positions, and `0` local closed trades, while the remote Polymarket wallet shows `28` open positions, `9` closed positions, total wallet value `$287.3204`, free collateral `$111.21323`, and realized PnL `$26.8256`; that accounting split remains a first-class problem. The remote BTC 5-minute maker database now shows `51` rows, `32` `live_filled`, cumulative `live_filled_pnl_usd=34.4628`, and a current guardrail recommendation of `max_abs_delta=0.00015`, `UP max=0.51`, `DOWN max=0.51`. A-6 remains blocked (`0` executable constructions below `0.95`) and B-1 remains blocked (`0` deterministic template pairs in first `1,000` allowed markets). Latest root verification artifact is passing (`1140 passed in 25.88s; 25 passed in 4.47s`). JJ-N verification is green in this worktree (`64` package tests, `49` repo-root tests), `nontrading/main.py` runs `RevenuePipeline`, and startup hard-blocks live providers when sender domain/auth is placeholder or unverified.
 
 **Primary goal: Make the first dollar.** Fast feedback loops. Trading: markets that resolve within hours, not months. Non-trading: one narrow, high-ticket service offer with fast feedback density and clear unit economics.
 
@@ -35,7 +36,7 @@ For everything else — writing code, running tests, deploying to VPS, researchi
 
 | Platform | Balance | Status | API |
 |----------|---------|--------|-----|
-| **Polymarket** | USDC | Live wallet funded; March 9 remote artifact shows service running while launch posture remains blocked (drift to reconcile); no closed trades or deployed capital yet | py_clob_client, Gamma API |
+| **Polymarket** | USDC | Live wallet funded; `jj-live` is now stopped and the bounded BTC 5-minute maker is the only intended live sleeve, but local trade-db vs remote-wallet accounting drift still must be reconciled before stronger claims | py_clob_client, Gamma API |
 | **Kalshi** | USD | API connected, trading not built | kalshi-python SDK, RSA auth |
 
 Polymarket proxy wallet: [redacted from repo; stored in runtime config]
@@ -46,27 +47,23 @@ Kalshi API Key ID: [stored in .env — see .env.example]
 | Metric | Value |
 |---|---|
 | Tracked capital | `$347.51` (`$247.51` Polymarket + `$100` Kalshi) |
-| Runtime state | `reports/remote_service_status.json` shows `jj-live.service` `running` at `2026-03-09T02:23:11Z`; `jj_state.json` still shows `0` live trades after `314` cycles |
-| Launch posture | `reports/public_runtime_snapshot.json` and `reports/remote_cycle_status.json` still mark launch `blocked`; blocked checks include no closed trades, no deployed capital, A-6, B-1, and flywheel hold |
-| Wallet-flow readiness | `ready` with `80` scored wallets; `fast_flow_restart_ready=true`, but the latest edge scan still returned `stay_paused` and launch remains blocked |
-| Fast-market pipeline | Latest checked-in artifact is `FAST_TRADE_EDGE_ANALYSIS.md` at `2026-03-09T01:23:49+00:00`, still `REJECT ALL` across `75` observed markets (`29` 15m, `39` 5m, `7` 4h), `3,047` trade records, and `1,715` tracked wallets; the broader threshold refresh still found `0` tradeable markets at YES `0.15`, NO `0.05`; YES `0.08`, NO `0.03`; and YES `0.05`, NO `0.02` |
-| Structural-alpha gate | `reports/arb_empirical_snapshot.json` (`2026-03-09T00:32:34+00:00`) still found `0` executable A-6 opportunities below `0.95` and `0` deterministic B-1 template pairs in the first `1,000` allowed markets; no promotion |
-| Verification status | Latest root verification artifact is passing (`1016 passed in 21.25s; 23 passed in 2.89s`); JJ-N surfaces are currently green (`61` package tests, `49` repo-root tests) |
+| Runtime state | `reports/runtime_truth_latest.json` at `2026-03-09T16:19:45Z` shows `565` cycles, `5` local trade-db trades, `4` local open positions, `0` local closed trades, and `jj-live.service` `stopped`; the remote Polymarket wallet simultaneously shows `28` open positions and `9` closed positions |
+| Launch posture | `reports/public_runtime_snapshot.json` and `reports/remote_cycle_status.json` still mark launch `blocked`; blocked checks are now `service_not_running`, `no_closed_trades`, `a6_gate_blocked`, `b1_gate_blocked`, and `flywheel_not_green` |
+| Wallet-flow readiness | `fast_flow_restart_ready=true`; selected profile is `maker_velocity_all_in`, but current candidate counts are still `0` and the operator-approved posture is BTC5 live plus `jj-live` stopped |
+| Fast-market pipeline | Latest pipeline verdict is still `REJECT ALL`, but the remote BTC 5-minute maker database now shows `51` rows, `32` `live_filled`, cumulative `live_filled_pnl_usd=34.4628`, and a best replay guardrail of `max_abs_delta=0.00015`, `UP max=0.51`, `DOWN max=0.51`; reconciling scan truth with fill truth is now a core task |
+| Structural-alpha gate | `reports/arb_empirical_snapshot.json` (`2026-03-09T11:55:20+00:00`) still shows A-6 `blocked` with `53` qualified live-surface events but `0` executable constructions below `0.95`, and B-1 `blocked` with `0` deterministic template pairs in the first `1,000` allowed markets |
+| Verification status | Latest root verification artifact is passing (`1140 passed in 25.88s; 25 passed in 4.47s`); JJ-N surfaces are currently green (`64` package tests, `49` repo-root tests) |
 | Dispatch inventory | `11` `DISPATCH_*` work-orders; `95` markdown files in `research/dispatches/` |
-| Next operator action | Confirm the remote mode as paper or shadow; if `--apply` is approved, keep it paper/shadow only because the latest edge scan still says `stay_paused` and the threshold refresh still found `0` tradeable markets even at YES `0.05`, NO `0.02` |
+| Next operator action | Keep `jj-live` stopped, let the BTC 5-minute sleeve run under the tighter guardrails, and reconcile local trade-db truth with remote wallet truth before any broader strategy promotion |
 
-March 9 handoffs on top of the machine snapshot:
+March 9 artifact set to use:
 
-- `reports/public_runtime_snapshot.json` and `reports/runtime_truth_latest.json` are now the stable runtime handoff: `313` cycles, service `stopped`, wallet-flow `ready`, launch `blocked`, verification `passing`.
-- `reports/pipeline_20260309T012500Z.json` refreshed the fast-market counts to `75` observed markets (`29` 15m, `39` 5m, `7` 4h), `3,047` trade records, `1,715` wallets, and a verdict of `REJECT ALL`.
-- `reports/pipeline_refresh_20260309T013209Z.json` answered the threshold-sensitivity question directly: `0` tradeable markets at current (YES `0.15`, NO `0.05`), aggressive (YES `0.08`, NO `0.03`), and wide-open (YES `0.05`, NO `0.02`) thresholds.
-- `reports/edge_scan_20260309T012604Z.json` kept restart posture at `stay_paused`; it still found `0` executable A-6 constructions below `0.95`, `0` B-1 template pairs, and `0` viable markets even under the wide-open threshold profile.
-- `reports/arb_empirical_snapshot.json` refreshed the structural-alpha counts to `563` allowed neg-risk events in the repo audit, `57` qualified A-6 live-surface events, `0` executable A-6 constructions below `0.95`, and `0` deterministic B-1 pairs in the first `1,000` allowed markets.
-- `reports/deploy_20260309T013155Z.json` summarized the manifest fix and passing dry-run. The detailed validation evidence remains in `reports/deploy_20260309T012910Z.json`; both agree that the service stayed stopped and remote mode remains unknown.
-- `reports/jjn_phase0_20260309T013032Z.json` recorded JJ-N Phase 0 foundations: `9` modules created, `38` tests added, and `39` non-trading tests green.
-- `reports/jjn_phase0_20260309T013819Z.json` recorded the hardening pass: the nontrading Elastic index template landed and `41` repo-root JJ-N tests passed, but the dashboard, service-offer module, unified approval path, SQLite registry backing, and five-engine pipeline still remain open.
-- `reports/jjn_phase1_readiness_20260309T021034Z.json` records the current JJ-N state in this worktree: Website Growth Audit offer/templates, dashboard, unified approval gate, and `RevenuePipeline` are present; `make test-nontrading` is green at `53` tests; the repo-root JJ-N surface is failing one persisted-registry ranking test; `nontrading/main.py` still runs the legacy harness; domain auth and live-send approval remain open.
-- `reports/governance_scaffold_20260309T013013Z.json` recorded the `13`-document governance scaffold and a passing messaging lint.
+- `reports/runtime_truth_latest.json` and `reports/public_runtime_snapshot.json` for canonical runtime truth
+- `reports/remote_cycle_status.json` and `reports/remote_service_status.json` for operator posture
+- `reports/state_improvement_latest.json` for current thresholds, candidate counts, and execution-notional summaries
+- `reports/arb_empirical_snapshot.json` for A-6/B-1 gating truth
+- `reports/root_test_status.json` for the latest checked-in root verification summary
+- `docs/NON_TRADING_STATUS.md` plus `nontrading/main.py` and `nontrading/pipeline.py` for JJ-N implementation truth
 
 ---
 
@@ -373,4 +370,4 @@ See `research/dispatches/DISPATCH_097_competitive_inventory_benchmark_blueprint.
 
 ---
 
-*v3.9.3 — Updated 2026-03-09. Reconciled drift using latest runtime artifacts and direct VPS probe: service is currently running while launch posture remains blocked. Runtime still has `0` closed trades and `0` deployed capital. A-6/B-1 remain blocked. Root verification artifact is passing (`1016 + 23`), JJ-N test surfaces are green in this worktree (`61` and `49`), pipeline wiring is active in `nontrading/main.py`, and live-provider startup now blocks placeholder/unverified sender identity.*
+*v3.9.3 — Updated 2026-03-09. Reconciled the latest runtime artifacts after stopping `jj-live`: service is now `stopped`, launch posture remains blocked, the local runtime ledger still shows `565` cycles / `5` trade-db trades / `4` local open positions, the remote Polymarket wallet shows `28` open positions and `9` closed positions with realized PnL `$26.8256`, BTC 5-minute maker evidence has advanced to `32` live-filled rows and `$34.4628` cumulative filled PnL, A-6/B-1 remain blocked, root verification artifact is passing (`1140 + 25`), JJ-N test surfaces are green in this worktree (`64` and `49`), pipeline wiring is active in `nontrading/main.py`, and live-provider startup now blocks placeholder/unverified sender identity.*

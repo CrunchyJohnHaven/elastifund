@@ -69,6 +69,16 @@ def _safe_float(value: Any, default: float | None = None) -> float | None:
         return default
 
 
+def _optional_env_float(name: str) -> float | None:
+    raw = os.environ.get(name)
+    if raw in (None, ""):
+        return None
+    parsed = _safe_float(raw, None)
+    if parsed is None or parsed <= 0:
+        return None
+    return float(parsed)
+
+
 def parse_json_list(value: Any) -> list[Any]:
     if isinstance(value, list):
         return value
@@ -162,6 +172,15 @@ def choose_maker_buy_price(
     return price
 
 
+def effective_max_buy_price(cfg: "MakerConfig", direction: str) -> float:
+    normalized = str(direction or "").strip().upper()
+    if normalized == "UP" and cfg.up_max_buy_price is not None:
+        return float(cfg.up_max_buy_price)
+    if normalized == "DOWN" and cfg.down_max_buy_price is not None:
+        return float(cfg.down_max_buy_price)
+    return float(cfg.max_buy_price)
+
+
 def calc_trade_size_usd(bankroll_usd: float, risk_fraction: float, max_trade_usd: float) -> float:
     if bankroll_usd <= 0 or risk_fraction <= 0 or max_trade_usd <= 0:
         return 0.0
@@ -226,7 +245,10 @@ class MakerConfig:
     max_trade_usd: float = float(os.environ.get("BTC5_MAX_TRADE_USD", "5.00"))
     min_trade_usd: float = float(os.environ.get("BTC5_MIN_TRADE_USD", "5.00"))
     min_delta: float = float(os.environ.get("BTC5_MIN_DELTA", "0.0003"))
+    max_abs_delta: float | None = _optional_env_float("BTC5_MAX_ABS_DELTA")
     max_buy_price: float = float(os.environ.get("BTC5_MAX_BUY_PRICE", "0.95"))
+    up_max_buy_price: float | None = _optional_env_float("BTC5_UP_MAX_BUY_PRICE")
+    down_max_buy_price: float | None = _optional_env_float("BTC5_DOWN_MAX_BUY_PRICE")
     min_buy_price: float = float(os.environ.get("BTC5_MIN_BUY_PRICE", "0.90"))
     tick_size: float = float(os.environ.get("BTC5_TICK_SIZE", "0.01"))
     entry_seconds_before_close: int = int(os.environ.get("BTC5_ENTRY_SECONDS_BEFORE_CLOSE", "10"))
@@ -960,6 +982,21 @@ class BTC5MinMakerBot:
             self.db.upsert_window(row)
             return {"window_start_ts": window_start_ts, "status": row["order_status"], "delta": delta}
 
+        if self.cfg.max_abs_delta is not None and abs(delta) > self.cfg.max_abs_delta:
+            row = {
+                "window_start_ts": window_start_ts,
+                "window_end_ts": window_end_ts,
+                "slug": slug,
+                "direction": direction,
+                "open_price": open_price,
+                "current_price": current_price,
+                "delta": delta,
+                "order_status": "skip_delta_too_large",
+                "reason": f"abs(delta)={abs(delta):.6f} > {self.cfg.max_abs_delta:.6f}",
+            }
+            self.db.upsert_window(row)
+            return {"window_start_ts": window_start_ts, "status": row["order_status"], "delta": delta}
+
         market = await http.fetch_market_by_slug(slug)
         if not market:
             row = {
@@ -1010,7 +1047,7 @@ class BTC5MinMakerBot:
         order_price = choose_maker_buy_price(
             best_bid=best_bid,
             best_ask=best_ask,
-            max_price=self.cfg.max_buy_price,
+            max_price=effective_max_buy_price(self.cfg, direction),
             min_price=self.cfg.min_buy_price,
             tick_size=self.cfg.tick_size,
         )
@@ -1259,11 +1296,14 @@ async def _run(args: argparse.Namespace) -> None:
         raise SystemExit("--windows must be >= 1")
 
     logger.info(
-        "Starting BTC5 maker | mode=%s | bankroll=%.2f | risk_fraction=%.4f | max_trade=%.2f",
+        "Starting BTC5 maker | mode=%s | bankroll=%.2f | risk_fraction=%.4f | max_trade=%.2f | max_abs_delta=%s | up_max=%.2f | down_max=%.2f",
         "paper" if cfg.paper_trading else "live",
         cfg.bankroll_usd,
         cfg.risk_fraction,
         cfg.max_trade_usd,
+        "disabled" if cfg.max_abs_delta is None else f"{cfg.max_abs_delta:.6f}",
+        effective_max_buy_price(cfg, "UP"),
+        effective_max_buy_price(cfg, "DOWN"),
     )
     await bot.run_windows(count=args.windows, continuous=args.continuous)
     bot.print_status()
