@@ -81,6 +81,7 @@ class _ECSFormatter(logging.Formatter):
 class ECSJsonFormatter(_ECSFormatter if jsonlogger is None else jsonlogger.JsonFormatter):
     def __init__(self) -> None:
         super().__init__()
+        self.service_name = os.environ.get("ELASTIFUND_SERVICE_NAME", "elastifund-bot")
 
     def format(self, record: logging.LogRecord) -> str:
         return _ECSFormatter.format(self, record)

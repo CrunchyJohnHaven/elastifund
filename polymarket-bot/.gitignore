@@ -62,7 +62,7 @@ dmypy.json
 *.sqlite
 *.sqlite3
 postgres_data/
-data/
+/data/
 
 # Logs
 *.log

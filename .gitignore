@@ -136,11 +136,16 @@ backtest/charts/*.png
 polymarket-bot/backtest_output/
 research/dispatches/*
 !research/dispatches/README.md
+!research/dispatches/DISPATCH_097_competitive_inventory_benchmark_blueprint.md
 research/prompts/
 
 # Logs and runtime data
 logs/
 reports/
 data/
+!polymarket-bot/src/data/
+!polymarket-bot/src/data/*.py
+!polymarket-bot/src/data/ingest/
+!polymarket-bot/src/data/ingest/*.py
 state/elastifund/
 state/local/

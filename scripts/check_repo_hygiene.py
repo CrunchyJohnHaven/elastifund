@@ -69,6 +69,8 @@ CANONICAL_REFERENCE_FILES = (
 MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 BACKTICK_PATH_RE = re.compile(r"`([A-Za-z0-9_./-]+\.[A-Za-z0-9]+)`")
 BACKTICK_REFERENCE_SUFFIXES = (".md", ".json", ".toml", ".yml", ".yaml", ".txt", ".sh")
+GENERATED_REFERENCE_PATHS = ("jj_state.json",)
+GENERATED_REFERENCE_PREFIXES = ("reports/",)
 
 PLACEHOLDER_MARKERS = (
     "...",
@@ -149,6 +151,12 @@ def is_absolute_filesystem_reference(target: str) -> bool:
     return bool(WINDOWS_ABSOLUTE_PATH_RE.match(target))
 
 
+def is_generated_reference(target: str) -> bool:
+    if target in GENERATED_REFERENCE_PATHS:
+        return True
+    return target.startswith(GENERATED_REFERENCE_PREFIXES)
+
+
 def reference_exists(source: Path, target: str) -> bool:
     candidate = (source.parent / target).resolve()
     try:
@@ -199,6 +207,8 @@ def main() -> int:
                 issues.append(f"{rel_path}: absolute filesystem reference is not portable: {target}")
                 continue
             if not is_local_reference(target):
+                continue
+            if is_generated_reference(target):
                 continue
             key = (rel_path, target)
             if key in seen_reference_issues:
