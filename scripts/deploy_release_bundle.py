@@ -49,6 +49,7 @@ REQUIRED_RUNTIME_PROFILE_NAMES = (
     "blocked_safe",
     "shadow_fast_flow",
     "research_scan",
+    "maker_velocity_all_in",
 )
 SAFE_REMOTE_MODES = {"paper", "shadow"}
 SAFE_REMOTE_RUNTIME_ENV_KEYS = (

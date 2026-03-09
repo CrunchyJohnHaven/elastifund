@@ -20,6 +20,7 @@ Delivered in the March 9, 2026 refresh:
 - the public website snapshot now pins the approved March 9 headline metrics: `1,397` verified tests, `314` cycles, `131` strategies, `7` signal sources, and `$347.51` tracked capital (NOTE: index.html still shows the stale `1,278` / `311` values — next site deploy must update these)
 - dual-state system-status card: the website now distinguishes service state from launch posture; the latest checked-in runtime snapshot at `2026-03-09T02:23:11Z` reports the service `running`/`active` while launch remains blocked (drift flag: service running while launch blocked — remote mode unconfirmed as paper or shadow)
 - public-safe fast-market verdict note: `REJECT ALL`
+- ARR framing now must stay split across three lines: realized (`0%` until closed trades), operator target, and theoretical backtest reference (non-realized)
 - homepage system status now foregrounds `314` cycles, `0` trades, `REJECT ALL`, and wallet-flow `ready` before the deeper operator context
 - public-safe edge snapshot counts now follow the latest detailed pipeline and edge-scan artifacts for fast-market totals, A-6/B-1 gate counts, categories, and public-safe opportunity summaries
 - verification surface now keeps the public test-count headline pinned to `1,397` while still exposing the current root-suite detail separately (index.html still shows stale `1,278` — needs deploy)

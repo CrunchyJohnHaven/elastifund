@@ -10,7 +10,7 @@ from pathlib import Path
 
 from nontrading.approval import ApprovalGate
 from nontrading.compliance import ComplianceGuard
-from nontrading.config import RevenueAgentSettings
+from nontrading.config import RevenueAgentSettings, is_placeholder_domain, normalize_domain_for_checks
 from nontrading.email.sender import DryRunSender, NotConfiguredError, build_sender
 from nontrading.importers.csv_import import import_csv
 from nontrading.pipeline import CycleReport, RevenuePipeline
@@ -19,6 +19,10 @@ from nontrading.store import RevenueStore
 from nontrading.telemetry import NonTradingTelemetry
 
 logger = logging.getLogger("nontrading.main")
+
+
+class RuntimeSafetyError(RuntimeError):
+    """Raised when runtime safety gates fail before the pipeline starts."""
 
 
 def configure_logging(level_name: str) -> None:
@@ -48,7 +52,24 @@ def build_runtime(
     sender = DryRunSender(settings, store) if dry_run else build_sender(settings, store)
     risk_manager = RevenueRiskManager(store, settings)
     approval_gate = ApprovalGate(store, paper_mode=sender.provider_name != "dry_run")
-    verified_domain = settings.from_email.partition("@")[2].strip().lower()
+    verified_domain = normalize_domain_for_checks(settings.from_email)
+    if sender.provider_name != "dry_run":
+        if is_placeholder_domain(verified_domain):
+            raise RuntimeSafetyError(
+                "live_sender_blocked: from_email domain is placeholder or unverified; "
+                "set JJ_REVENUE_FROM_EMAIL to a verified sender domain"
+            )
+        if settings.provider == "mailgun" and not settings.mailgun_domain:
+            raise RuntimeSafetyError(
+                "live_sender_blocked: MAILGUN_DOMAIN is required when JJ_REVENUE_PROVIDER=mailgun"
+            )
+    logger.info(
+        "runtime_start mode=%s provider=%s approval_paper_mode=%s sender_domain=%s",
+        "dry_run" if sender.provider_name == "dry_run" else "live",
+        sender.provider_name,
+        approval_gate.paper_mode,
+        verified_domain or "unset",
+    )
     compliance_guard = ComplianceGuard(
         store,
         verified_domains={verified_domain},
@@ -131,8 +152,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         store, pipeline = build_runtime(settings, args.import_csv, dry_run=args.dry_run)
-    except NotConfiguredError:
-        logger.exception("email_provider_not_configured")
+    except (NotConfiguredError, RuntimeSafetyError):
+        logger.exception("runtime_start_blocked")
         return 2
 
     if args.run_once:

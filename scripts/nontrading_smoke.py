@@ -20,6 +20,7 @@ from nontrading.digital_products.research import NicheDiscoveryAgent, StaticMark
 from nontrading.digital_products.store import DigitalProductStore
 from nontrading.email.sender import DryRunSender
 from nontrading.importers.csv_import import import_csv
+from nontrading.main import build_runtime
 from nontrading.risk import RevenueRiskManager
 from nontrading.store import RevenueStore
 
@@ -57,6 +58,8 @@ def format_smoke_summary(result: dict[str, Any]) -> str:
                 f"leads={revenue['leads']} "
                 f"sent={revenue['sent']} "
                 f"filtered={revenue['filtered']} "
+                f"pipeline_status={revenue['pipeline_status']} "
+                f"pipeline_outreach_sent={revenue['pipeline_outreach_sent']} "
                 f"deliverability={revenue['deliverability_status']} "
                 f"recipients={','.join(revenue['recipients'])}"
             ),
@@ -99,6 +102,8 @@ def _run_revenue_smoke(tmp: Path) -> dict[str, Any]:
         for message in store.list_outbox_messages()
         if message.status == "dry_run"
     )
+    pipeline_store, pipeline = build_runtime(settings, import_csv_path=str(LEADS_FIXTURE), dry_run=True)
+    pipeline_report = pipeline.run_cycle()
 
     return {
         "campaigns": int(snapshot["campaigns"]),
@@ -108,6 +113,9 @@ def _run_revenue_smoke(tmp: Path) -> dict[str, Any]:
         "filtered": int(summary.filtered),
         "suppressed": int(summary.suppressed),
         "recipients": recipients,
+        "pipeline_status": str(pipeline_report.status),
+        "pipeline_outreach_sent": int(pipeline_report.outreach_sent),
+        "pipeline_messages": len(pipeline_store.list_outbox_messages()),
     }
 
 

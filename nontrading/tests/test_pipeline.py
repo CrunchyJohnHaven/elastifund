@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from nontrading.config import RevenueAgentSettings
 from nontrading.importers.csv_import import import_csv
-from nontrading.main import build_runtime, main, run_daemon
+from nontrading.main import RuntimeSafetyError, build_runtime, main, run_daemon
 from nontrading.models import Lead
 from nontrading.store import RevenueStore
 
@@ -138,3 +140,29 @@ def test_main_run_once_dry_run_prints_cycle_report(tmp_path: Path, capsys) -> No
     assert exit_code == 0
     assert "revenue-pipeline status" in captured.out
     assert "status=completed" in captured.out
+
+
+def test_build_runtime_blocks_live_provider_with_placeholder_sender_domain(tmp_path: Path) -> None:
+    settings = RevenueAgentSettings(
+        db_path=tmp_path / "revenue_agent.db",
+        outbox_dir=tmp_path / "outbox",
+        provider="sendgrid",
+        sendgrid_api_key="test-key",
+        from_email="ops@example.invalid",
+    )
+
+    with pytest.raises(RuntimeSafetyError) as exc:
+        build_runtime(settings, dry_run=False)
+    assert "placeholder or unverified" in str(exc.value)
+
+
+def test_build_runtime_allows_dry_run_with_placeholder_sender_domain(tmp_path: Path) -> None:
+    settings = RevenueAgentSettings(
+        db_path=tmp_path / "revenue_agent.db",
+        outbox_dir=tmp_path / "outbox",
+        from_email="ops@example.invalid",
+    )
+    store, pipeline = build_runtime(settings, dry_run=True)
+
+    assert store is not None
+    assert pipeline.run_mode == "sim"

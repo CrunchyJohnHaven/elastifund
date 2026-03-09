@@ -95,6 +95,48 @@ def test_build_temp_signal_no_side():
     assert sig.order_probability == 0.31
 
 
+def test_build_temp_signal_skips_no_on_tight_range_when_point_forecast_in_range():
+    snapshot = ForecastSnapshot(
+        city="MIA",
+        target_date="2026-03-08",
+        high_temp_f=85.0,
+        pop_probability=0.2,
+        source_period="Sunday",
+    )
+    market = {
+        "ticker": "KXHIGHMIA-TEST",
+        "event_ticker": "KXHIGHMIA-26MAR08",
+        "title": "Will the high temperature in Miami be between 84 and 85 degrees?",
+        "yes_ask": 67,
+        "yes_bid": 65,
+        "no_ask": 35,
+        "no_bid": 33,
+    }
+    assert build_weather_signal("MIA", snapshot, market, edge_threshold=0.10, max_spread=0.20) is None
+
+
+def test_build_temp_signal_allows_no_on_tight_range_when_point_forecast_outside_range():
+    snapshot = ForecastSnapshot(
+        city="MIA",
+        target_date="2026-03-08",
+        high_temp_f=88.0,
+        pop_probability=0.2,
+        source_period="Sunday",
+    )
+    market = {
+        "ticker": "KXHIGHMIA-TEST",
+        "event_ticker": "KXHIGHMIA-26MAR08",
+        "title": "Will the high temperature in Miami be between 84 and 85 degrees?",
+        "yes_ask": 67,
+        "yes_bid": 65,
+        "no_ask": 35,
+        "no_bid": 33,
+    }
+    sig = build_weather_signal("MIA", snapshot, market, edge_threshold=0.10, max_spread=0.20)
+    assert sig is not None
+    assert sig.side == "no"
+
+
 def test_extract_market_target_date_from_event_ticker():
     market = {
         "ticker": "KXRAINNYC-26MAR08-T0",

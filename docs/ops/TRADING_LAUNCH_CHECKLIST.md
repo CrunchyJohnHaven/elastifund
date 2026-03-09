@@ -4,6 +4,9 @@
 
 This is the operator checklist for moving `jj_live` from research posture into a staged trading rollout.
 
+Related execution package:
+- `docs/ops/MAKER_VELOCITY_BLITZ_PLAYBOOK.md` for the single-lane maker-velocity full-capital runbook and machine contracts.
+
 Machine-truth reconciliation:
 
 - The March 8 prose that said the service was intentionally stopped is no longer the authoritative service-state fact.

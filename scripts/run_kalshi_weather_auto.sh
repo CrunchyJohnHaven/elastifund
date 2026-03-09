@@ -4,6 +4,25 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
+get_env_or_dotenv() {
+  local key="$1"
+  local fallback="${2:-}"
+  local cur="${!key:-}"
+  if [ -n "$cur" ]; then
+    printf '%s' "$cur"
+    return 0
+  fi
+  if [ -f "$ROOT_DIR/.env" ]; then
+    local val
+    val="$(awk -F= -v k="$key" '$1==k{print substr($0,index($0,"=")+1)}' "$ROOT_DIR/.env" | tail -1 | tr -d '"' | tr -d "'")"
+    if [ -n "$val" ]; then
+      printf '%s' "$val"
+      return 0
+    fi
+  fi
+  printf '%s' "$fallback"
+}
+
 is_placeholder() {
   local v="${1:-}"
   local lc
@@ -24,51 +43,31 @@ if [ -f "$ROOT_DIR/.venv_kalshi/bin/python" ]; then
   PYTHON_BIN="$ROOT_DIR/.venv_kalshi/bin/python"
 fi
 
-ENV_KEY_ID="${KALSHI_API_KEY_ID:-}"
-ENV_KEY_PATH="${KALSHI_RSA_KEY_PATH:-}"
-if [ -f "$ROOT_DIR/.env" ]; then
-  if [ -z "$ENV_KEY_ID" ]; then
-    ENV_KEY_ID="$(awk -F= '/^KALSHI_API_KEY_ID=/{print substr($0,index($0,"=")+1)}' "$ROOT_DIR/.env" | tail -1 | tr -d '"' | tr -d "'")"
-  fi
-  if [ -z "$ENV_KEY_PATH" ]; then
-    ENV_KEY_PATH="$(awk -F= '/^KALSHI_RSA_KEY_PATH=/{print substr($0,index($0,"=")+1)}' "$ROOT_DIR/.env" | tail -1 | tr -d '"' | tr -d "'")"
-  fi
-fi
+ENV_KEY_ID="$(get_env_or_dotenv KALSHI_API_KEY_ID '')"
+ENV_KEY_PATH="$(get_env_or_dotenv KALSHI_RSA_KEY_PATH 'bot/kalshi/kalshi_rsa_private.pem')"
+ENV_MAX_PAGES="$(get_env_or_dotenv KALSHI_WEATHER_MAX_PAGES '2')"
+ENV_MAX_SIGNALS="$(get_env_or_dotenv KALSHI_WEATHER_MAX_SIGNALS '20')"
+ENV_MAX_ORDERS="$(get_env_or_dotenv KALSHI_WEATHER_MAX_ORDERS '1')"
+ENV_MAX_ORDER_USD="$(get_env_or_dotenv KALSHI_WEATHER_MAX_ORDER_USD '3')"
+ENV_BANKROLL_USD="$(get_env_or_dotenv KALSHI_WEATHER_BANKROLL_USD '81')"
+ENV_KELLY_FRACTION="$(get_env_or_dotenv KALSHI_WEATHER_KELLY_FRACTION '0.25')"
+ENV_EDGE_THRESHOLD="$(get_env_or_dotenv KALSHI_WEATHER_EDGE_THRESHOLD '0.12')"
+ENV_MAX_SPREAD="$(get_env_or_dotenv KALSHI_WEATHER_MAX_SPREAD '0.12')"
 
-MODE="${1:-${KALSHI_WEATHER_MODE:-paper}}"
-MODE="$(printf '%s' "$MODE" | tr '[:upper:]' '[:lower:]')"
-if [ "$MODE" != "paper" ] && [ "$MODE" != "live" ]; then
-  echo "Invalid mode '$MODE'. Use: paper or live." >&2
-  exit 2
-fi
-
-if [ "$MODE" = "live" ]; then
-  if is_placeholder "$ENV_KEY_ID"; then
-    echo "KALSHI_API_KEY_ID missing/placeholder; refusing live mode." >&2
-    exit 2
-  fi
-  KEY_PATH="${ENV_KEY_PATH:-bot/kalshi/kalshi_rsa_private.pem}"
-  if [ ! -f "$KEY_PATH" ]; then
-    echo "Kalshi RSA private key not found at '$KEY_PATH'; refusing live mode." >&2
-    exit 2
-  fi
-  if ! "$PYTHON_BIN" -c "import kalshi_python" >/dev/null 2>&1; then
-    echo "kalshi_python not installed; refusing live mode." >&2
-    exit 2
+EXECUTE_FLAG=""
+if ! is_placeholder "$ENV_KEY_ID"; then
+  if [ -f "$ENV_KEY_PATH" ] && "$PYTHON_BIN" -c "import kalshi_python" >/dev/null 2>&1; then
+    EXECUTE_FLAG="--execute"
   fi
 fi
 
 exec "$PYTHON_BIN" kalshi/weather_arb.py \
-  --mode "$MODE" \
-  ${KALSHI_WEATHER_LOOP:+--loop} \
-  --interval-seconds "${KALSHI_WEATHER_LOOP_INTERVAL_SECONDS:-300}" \
-  --max-pages "${KALSHI_WEATHER_MAX_PAGES:-2}" \
-  --max-signals "${KALSHI_WEATHER_MAX_SIGNALS:-20}" \
-  --max-orders "${KALSHI_WEATHER_MAX_ORDERS:-1}" \
-  --max-orders-per-hour "${KALSHI_WEATHER_MAX_ORDERS_PER_HOUR:-1}" \
-  --hourly-budget-usd "${KALSHI_WEATHER_HOURLY_BUDGET_USD:-${JJ_HOURLY_NOTIONAL_BUDGET_USD:-50}}" \
-  --max-order-usd "${KALSHI_WEATHER_MAX_ORDER_USD:-50}" \
-  --bankroll-usd "${KALSHI_WEATHER_BANKROLL_USD:-247}" \
-  --kelly-fraction "${KALSHI_WEATHER_KELLY_FRACTION:-0.25}" \
-  --edge-threshold "${KALSHI_WEATHER_EDGE_THRESHOLD:-0.12}" \
-  --max-spread "${KALSHI_WEATHER_MAX_SPREAD:-0.12}"
+  ${EXECUTE_FLAG} \
+  --max-pages "${ENV_MAX_PAGES}" \
+  --max-signals "${ENV_MAX_SIGNALS}" \
+  --max-orders "${ENV_MAX_ORDERS}" \
+  --max-order-usd "${ENV_MAX_ORDER_USD}" \
+  --bankroll-usd "${ENV_BANKROLL_USD}" \
+  --kelly-fraction "${ENV_KELLY_FRACTION}" \
+  --edge-threshold "${ENV_EDGE_THRESHOLD}" \
+  --max-spread "${ENV_MAX_SPREAD}"

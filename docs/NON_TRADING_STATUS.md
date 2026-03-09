@@ -1,145 +1,59 @@
 # Non-Trading Status
 
-**Status Date:** 2026-03-08
+**Status Date:** 2026-03-09
 
 ## Executive Read
 
-The non-trading lane is ahead of the public repo narrative but behind the monetization plan.
+JJ-N is implemented as a safe, testable subsystem but is not revenue-live.
 
-Current reality:
+Current truth in this worktree:
 
-- the codebase already contains a working compliance-first revenue-agent harness
-- the codebase already contains a working digital-product niche discovery lane
-- both lanes have passing local tests and deterministic smoke coverage
-- the recommended first production wedge, a self-serve website growth audit plus recurring monitor, is still design-only
+- `nontrading/main.py` builds and runs `RevenuePipeline`
+- package-local tests are green: `make test-nontrading` (`61 passed`)
+- repo-root JJ-N tests are green: `pytest -q tests/nontrading` (`49 passed`)
+- deterministic smoke path exists: `make smoke-nontrading`
+- live-provider startup is blocked if sender identity is placeholder/unverified
+- Website Growth Audit wedge exists in code but is not production-launched
 
-That means the project is not stalled, but it is not revenue-ready either.
+## What Exists
 
-## What Exists Today
+### Revenue Agent Path
 
-### Revenue-Agent Harness
+- CLI/runtime: `nontrading/main.py`
+- pipeline: `nontrading/pipeline.py`
+- compliance/approval: `nontrading/compliance.py`, `nontrading/approval.py`
+- storage/CRM: `nontrading/store.py`, `nontrading/models.py`
+- templates/offer assets: `nontrading/email/templates/`, `nontrading/offers/website_growth_audit.py`
 
-Path:
+Implemented behavior:
 
-- `nontrading/main.py`
-- `nontrading/campaigns/`
-- `nontrading/email/`
-- `nontrading/store.py`
+- CSV lead import and suppression handling
+- approval-gated outreach routing
+- dry-run sender and provider adapters
+- telemetry/event emission and status snapshots
+- deterministic pipeline cycle execution
 
-Implemented:
+### Digital Product Research Lane
 
-- CSV lead import
-- per-campaign send loop
-- role-address and geo-policy gating
-- suppression and unsubscribe handling
-- dry-run sender plus provider adapter scaffolding
-- deliverability and kill-switch rails
-- SQLite audit store
+- path: `nontrading/digital_products/`
+- deterministic ranking and persistence
+- export path for Elastic-ready knowledge docs
 
-Current mode:
-
-- locally runnable
-- safe by default
-- not a launched revenue engine
-
-### Digital-Product Discovery Lane
-
-Path:
-
-- `nontrading/digital_products/`
-
-Implemented:
-
-- normalized niche candidate ingestion
-- deterministic ranking formula
-- embedding generation
-- SQLite persistence
-- Elastic bulk export generation
-
-Current mode:
-
-- locally runnable research lane
-- useful for prioritization and packaging
-- not wired to checkout, listing, or fulfillment
-
-### Shared Allocation Direction
-
-Path:
-
-- `orchestration/resource_allocator.py`
-- [NON_TRADING_ALLOCATOR_SPEC.md](/Users/johnbradley/Desktop/Elastifund/docs/NON_TRADING_ALLOCATOR_SPEC.md)
-
-Implemented direction:
-
-- non-trading is already a first-class lane in the allocator model
-- budget competition between trading and non-trading is designed and partially implemented at the orchestration layer
-
-Missing:
-
-- production non-trading metrics strong enough to justify allocator-driven scaling
-
-## Evidence Run On March 8, 2026
-
-Commands executed:
+## Verified Commands (March 9, 2026)
 
 ```bash
-python3 -m pytest nontrading/tests -q
-python3 -m nontrading.digital_products.main --run-once --source-file nontrading/tests/fixtures/sample_product_niches.json --top 3
-python3 -m nontrading.main --run-once --import-csv nontrading/tests/fixtures/sample_leads.csv
+make test-nontrading
+pytest -q tests/nontrading
+make smoke-nontrading
 ```
 
-Observed:
+## Remaining Launch Blockers
 
-- `11` non-trading tests passed
-- digital-product discovery ranked `ADHD Planner System` first from the fixture set
-- the revenue-agent harness enforced policy filters and stayed in safe dry-run mode
+- verified sending domain and DNS auth for non-dry-run providers
+- curated lead source and explicit human approval for live sends
+- checkout, billing, provisioning, and fulfillment reporting for paid delivery
+- production KPI loop for qualified leads, replies, booked calls, proposals, and revenue
 
-## Main Gap
+## Positioning
 
-The biggest gap is not code quality. It is product path mismatch.
-
-The design doc says the recommended first production non-trading wedge is:
-
-- a self-serve website growth audit
-- plus a recurring monitor
-
-The code that exists today is instead:
-
-- a compliance-first outbound harness
-- a digital-product discovery research lane
-
-Those are useful building blocks, but they are not the first monetization surface described in the plan.
-
-## Development Stage
-
-| Area | Stage | Notes |
-|---|---|---|
-| Revenue-agent harness | prototype / dry-run capable | strong safety posture, not yet productized |
-| Digital-product discovery | research-ready | ranking and export path exist |
-| Checkout and billing | not started | no hosted checkout or webhook provisioning |
-| Fulfillment engine for website audits | not started | still design-only |
-| Public GitHub visibility | weak before this pass | root README did not surface the lane cleanly |
-
-## Recommended Next Steps
-
-1. Keep the existing non-trading harnesses visible and runnable.
-   This pass does that by adding `nontrading/README.md`, a deterministic smoke script, and README coverage.
-
-2. Treat outbound as compliance infrastructure, not the launch wedge.
-   Do not spend the next cycle polishing cold outbound copy or volume controls as the primary business.
-
-3. Build the phase-1 revenue audit engine next.
-   First milestone:
-   - public website fetch
-   - deterministic issue detection
-   - evidence bundle artifact
-   - paid-audit deliverable skeleton
-
-4. Add payments and fulfillment before allocation scaling.
-   Without checkout, provisioning, refunds, and fulfillment metrics, the allocator has nothing reliable to scale.
-
-## Immediate Forward Motion Landed In This Pass
-
-- public docs now expose the non-trading lane
-- a deterministic `make smoke-nontrading` path can verify both current subsystems
-- the repo now has a durable status doc for the lane instead of hiding it inside planning notes
+JJ-N is now a functioning, safety-gated execution substrate. It should be treated as launch-prep infrastructure until domain auth, approval, and paid fulfillment are in place.

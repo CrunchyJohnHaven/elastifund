@@ -146,11 +146,12 @@ This is standard practice. Quantopian was open-source but nobody published their
 
 ## Current State (Update this section each cycle)
 
-**Date:** 2026-03-09 (daily deep review)
+**Date:** 2026-03-09 (hourly ops — updated by JJ automated check)
 **Cycle:** Flywheel Cycle 2 — Structural Alpha & Microstructure Defense
 **Capital:** $247.51 Polymarket (USDC) + $100 Kalshi (USD) = $347.51 total
-**Live trading:** BLOCKED (drift detected) — Dublin VPS deployed; `reports/remote_service_status.json` shows `jj-live.service` `running`/`active` at `2026-03-09T02:23:11Z`, but launch posture is still blocked (no closed trades, no deployed capital, A-6/B-1 gates, flywheel hold). Drift flag: service running while launch blocked — confirm remote mode is paper or shadow.
-**Live trades executed:** 0 (jj_state.json: total_trades=0, cycles_completed=314)
+**Live trading:** PAPER MODE CONFIRMED — Dublin VPS deployed and actively placing paper trades. `jj_state.json` shows 5 paper trades (all `paper-*` order IDs), 4 open positions, $25 notional deployed, 541 cycles completed. Drift flag RESOLVED: service is running in paper mode, not live. Launch posture remains blocked (A-6/B-1 gates, flywheel hold).
+**Paper trades executed:** 5 (jj_state.json: total_trades=5, cycles_completed=541, started_at=2026-03-07T18:59:59Z)
+**Open paper positions:** 4 — Weinstein sentencing (<5yr YES @0.132 $10, 20-30yr YES @0.262 $5), MegaETH FDV >$2B YES @0.165 $5, MegaETH airdrop NO @0.3435 $5. NOTE: MegaETH positions may indicate category filter bypass — "market cap" keyword should classify as crypto (priority 0) but positions exist. Investigate signal path.
 **Live config:** $5/position, 30 max open positions, $10 daily loss cap, 0.25 Kelly, 48h max resolution
 **Execution mode:** 100% Post-Only maker orders (Dispatch #75 pivot)
 **Data target:** 100 resolved trades in 7 days for live calibration data — NOT STARTED (0/100)

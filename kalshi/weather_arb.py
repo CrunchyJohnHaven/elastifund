@@ -68,9 +68,10 @@ CITY_CONFIG = {
     },
     "MIA": {
         "name": "Miami",
-        "lat": 25.7617,
-        "lon": -80.1918,
-        "aliases": ["miami"],
+        # Miami temperature contracts settle off MIA airport climate reports.
+        "lat": 25.7959,
+        "lon": -80.2870,
+        "aliases": ["miami", "miami international airport", "mia airport"],
         "ticker_prefixes": ["KXHIGHMIA", "KXHIGHMI"],
     },
     "AUS": {
@@ -379,6 +380,13 @@ def temperature_probability(
     return max(0.01, min(0.99, p))
 
 
+def _is_tight_temp_range_contract(contract: tuple[str, float, Optional[float]]) -> bool:
+    kind, lo, hi = contract
+    if kind != "range" or hi is None:
+        return False
+    return (hi - lo) <= 2.0
+
+
 def fetch_nws_snapshot(city_code: str, target_date: Optional[datetime] = None) -> ForecastSnapshot:
     cfg = CITY_CONFIG[city_code]
     lat = cfg["lat"]
@@ -674,6 +682,7 @@ def build_weather_signal(
     if not title:
         title = str(_field(market, "ticker", ""))
 
+    contract: Optional[tuple[str, float, Optional[float]]] = None
     if mtype == "rain":
         if snapshot.pop_probability is None:
             return None
@@ -708,6 +717,19 @@ def build_weather_signal(
 
     side = "yes" if yes_edge >= no_edge else "no"
     edge = yes_edge if side == "yes" else no_edge
+
+    # Avoid generic fades of modal 2-degree center buckets when the point forecast
+    # still sits inside the bracket; require a directional thesis first.
+    if (
+        mtype == "temperature"
+        and contract is not None
+        and side == "no"
+        and _is_tight_temp_range_contract(contract)
+    ):
+        _, lo, hi = contract
+        if hi is not None and lo <= snapshot.high_temp_f <= hi:
+            return None
+
     if edge < edge_threshold:
         return None
 

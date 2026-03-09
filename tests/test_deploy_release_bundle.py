@@ -201,6 +201,7 @@ def test_build_release_contract_requires_snapshot_and_profile_selection(tmp_path
     assert contract["required_bundle_files"] == [
         ".env.example",
         "config/runtime_profiles/blocked_safe.json",
+        "config/runtime_profiles/maker_velocity_all_in.json",
         "config/runtime_profiles/research_scan.json",
         "config/runtime_profiles/shadow_fast_flow.json",
         "reports/public_runtime_snapshot.json",
@@ -244,6 +245,7 @@ def test_validate_release_plan_flags_stale_sha_and_missing_required_bundle_files
     assert validation["missing_required_bundle_files"] == [
         ".env.example",
         "config/runtime_profiles/blocked_safe.json",
+        "config/runtime_profiles/maker_velocity_all_in.json",
         "config/runtime_profiles/research_scan.json",
         "config/runtime_profiles/shadow_fast_flow.json",
         "reports/public_runtime_snapshot.json",
@@ -286,6 +288,7 @@ def test_build_release_manifest_collects_checksums_and_runtime_truth(
         json.dumps({"restart_recommended": True})
     )
     (tmp_path / "config" / "runtime_profiles" / "blocked_safe.json").write_text("{}\n")
+    (tmp_path / "config" / "runtime_profiles" / "maker_velocity_all_in.json").write_text("{}\n")
     (tmp_path / "config" / "runtime_profiles" / "shadow_fast_flow.json").write_text("{}\n")
     (tmp_path / "config" / "runtime_profiles" / "research_scan.json").write_text("{}\n")
 
@@ -313,6 +316,7 @@ def test_build_release_manifest_collects_checksums_and_runtime_truth(
         ".env.example",
         "bot/jj_live.py",
         "config/runtime_profiles/blocked_safe.json",
+        "config/runtime_profiles/maker_velocity_all_in.json",
         "config/runtime_profiles/research_scan.json",
         "config/runtime_profiles/shadow_fast_flow.json",
         "reports/public_runtime_snapshot.json",
@@ -383,6 +387,7 @@ def test_build_remote_paper_commands_uses_remote_dir() -> None:
 def _write_release_contract_files(tmp_path: Path) -> None:
     (tmp_path / "config" / "runtime_profiles").mkdir(parents=True, exist_ok=True)
     (tmp_path / "config" / "runtime_profiles" / "blocked_safe.json").write_text("{}\n")
+    (tmp_path / "config" / "runtime_profiles" / "maker_velocity_all_in.json").write_text("{}\n")
     (tmp_path / "config" / "runtime_profiles" / "shadow_fast_flow.json").write_text("{}\n")
     (tmp_path / "config" / "runtime_profiles" / "research_scan.json").write_text("{}\n")
     (tmp_path / "reports").mkdir(exist_ok=True)

@@ -75,14 +75,14 @@ The non-Docker path was verified directly. Docker still requires Docker Desktop 
 |---|---|
 | Runtime truth | prefer `reports/public_runtime_snapshot.json` and `reports/runtime_truth_latest.json`; use `reports/remote_cycle_status.json`, `reports/remote_service_status.json`, `FAST_TRADE_EDGE_ANALYSIS.md`, and `reports/arb_empirical_snapshot.json` for the underlying detail |
 | Capital tracked in docs | `$347.51` total (`$247.51` Polymarket + `$100` Kalshi) |
-| Runtime state | `0` trades after `313` cycles; `reports/remote_service_status.json` shows `jj-live.service` `stopped` at `2026-03-09T01:28:43Z`, while launch posture remains blocked |
-| Fast-flow launch posture | wallet-flow is `ready` with `80` scored wallets and `fast_flow_restart_ready=true`, but the latest edge scan still says `stay_paused`, the service is stopped, and the threshold-sensitivity refresh still found `0` tradeable markets at YES `0.15`, NO `0.05`; YES `0.08`, NO `0.03`; and YES `0.05`, NO `0.02` |
+| Runtime state | `0` trades after `314` cycles; `reports/remote_service_status.json` shows `jj-live.service` `running` at `2026-03-09T02:23:11Z`, while launch posture remains blocked |
+| Fast-flow launch posture | wallet-flow is `ready` with `80` scored wallets and `fast_flow_restart_ready=true`, but launch is still blocked and drift is present (service running while blocked); threshold-sensitivity refresh still found `0` tradeable markets at YES `0.15`, NO `0.05`; YES `0.08`, NO `0.03`; and YES `0.05`, NO `0.02` |
 | Trading strategy catalog | `131` tracked (`7` deployed, `6` building, `2` structural alpha, `1` re-evaluating, `10` rejected, `8` pre-rejected, `97` pipeline) |
 | Non-trading lane | compliance-first revenue harness, digital-product niche discovery, and JJ-N Phase 0 foundations (CRM, opportunity registry, approval/compliance, telemetry, engine stubs) are in repo; first revenue product is not yet launched |
-| Verification status | latest local verification shows root passing (`962 passed in 18.12s; 22 passed in 3.83s`); the current full multi-surface green baseline is `1,397` total tests (`962 + 22` root, `374` polymarket, `39` non-trading), and the repo-root `tests/` sync pass is `421` green |
-| Live validated P&L | still effectively pre-revenue; no inflated claims here |
+| Verification status | latest root verification artifact shows passing (`1016 passed in 21.25s; 23 passed in 2.89s`); JJ-N surfaces are currently green in this worktree (`61` package, `49` repo-root) |
+| Live validated P&L / ARR | still effectively pre-revenue (`0` closed trades, `0` deployed capital, realized ARR `0%`); theoretical maker-velocity ARR remains a backtest reference only |
 
-The March 9 runtime snapshot supersedes older prose that said the service was stopped and wallet-flow was not ready, but it still does not clear launch. The stable public snapshot now shows wallet-flow ready, service stopped, and launch blocked because there are no closed trades, no deployed capital, and A-6/B-1 remain unresolved. The latest deploy dry-run is now validated and kept the service stopped, but the remote mode is still unknown and the latest edge scan still says `stay_paused`, so any actual bundle upload or restart remains a deliberate paper/shadow evidence-collection decision rather than a green light from the signal stack.
+The March 9 runtime snapshot supersedes older prose that said the service was stopped. Current machine truth shows service running while launch remains blocked, which is explicit drift to reconcile before any further trade-path changes. There are still no closed trades, no deployed capital, and A-6/B-1 remain unresolved.
 
 ## Velocity Charts
 

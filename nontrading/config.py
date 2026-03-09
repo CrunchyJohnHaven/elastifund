@@ -37,6 +37,15 @@ DEFAULT_PERSONAL_EMAIL_DOMAINS = (
     "protonmail.com",
 )
 
+PLACEHOLDER_DOMAINS = {
+    "example.invalid",
+    "invalid",
+    "localhost",
+    "example.com",
+    "example.org",
+    "example.net",
+}
+
 
 def _get_bool(name: str, default: bool) -> bool:
     raw = getenv(name)
@@ -80,6 +89,24 @@ def _split_localparts(raw: str | None, default: Iterable[str]) -> tuple[str, ...
     else:
         values = tuple(part.strip().lower() for part in raw.split(",") if part.strip())
     return values or tuple(default)
+
+
+def normalize_domain_for_checks(value: str | None) -> str:
+    text = (value or "").strip().lower()
+    if not text:
+        return ""
+    if "@" in text:
+        text = text.split("@", 1)[1]
+    return text.strip(".")
+
+
+def is_placeholder_domain(value: str | None) -> bool:
+    domain = normalize_domain_for_checks(value)
+    if not domain:
+        return True
+    if domain in PLACEHOLDER_DOMAINS:
+        return True
+    return domain.endswith(".invalid") or domain.endswith(".local")
 
 
 @dataclass(frozen=True)
@@ -170,4 +197,3 @@ class RevenueAgentSettings:
         encoded_email = quote(email, safe="")
         encoded_campaign = quote(campaign_name, safe="")
         return f"{base}/unsubscribe?email={encoded_email}&campaign={encoded_campaign}"
-

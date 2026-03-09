@@ -14,10 +14,11 @@ The repo has the first service-offer and operator assets, not a production reven
 
 Current repo truth verified on 2026-03-09:
 
-- `make test-nontrading` passes with `53` tests in `nontrading/tests`
-- the repo-root `tests/nontrading` surface currently fails `1` of `49` tests on persisted registry ranking after reload
-- the Website Growth Audit offer, templates, follow-up sequence, dashboard asset, and `RevenuePipeline` module now exist
-- the legacy campaign harness still remains the runnable CLI entrypoint
+- `make test-nontrading` is currently green in this worktree (`61` tests)
+- `pytest -q tests/nontrading` is currently green in this worktree (`49` tests)
+- the Website Growth Audit offer, templates, follow-up sequence, dashboard asset, and `RevenuePipeline` module exist
+- `nontrading/main.py` now builds and runs `RevenuePipeline`
+- live-provider startup is hard-blocked when sender domain/auth is placeholder or unverified
 
 ## What Exists Today
 
@@ -60,15 +61,15 @@ proposal_sent, outcome_recorded
 ```
 
 Current repo truth:
-the engine modules still keep their Phase 0 `process()` compatibility stubs, but the pipeline and stage-specific methods now exist.
-`nontrading/main.py` still runs the legacy campaign engine rather than the pipeline.
+the engine modules still keep their Phase 0 `process()` compatibility stubs, and the pipeline plus stage-specific methods are active.
+`nontrading/main.py` builds and runs the pipeline path.
 
 ## Phase 0 Status
 
 | Capability | State | Notes |
 |---|---|---|
 | CRM schema | Done | stable Phase 0 data model exists |
-| Opportunity registry | Done, persistence in progress | scoring exists and store-backed work landed, but reload ranking still fails on the repo-root test surface |
+| Opportunity registry | Done | scoring exists, store-backed paths exist, and reload ranking tests are green in both test surfaces in this worktree |
 | Approval classes | Done | AUTO / REVIEW / ESCALATE routing exists in a separate module |
 | Paper mode | Done | safe default remains on |
 | Telemetry | Done | ECS-shaped event output plus Elastic index template |
@@ -76,7 +77,7 @@ the engine modules still keep their Phase 0 `process()` compatibility stubs, but
 | Domain auth | Missing | config defaults still use `example.invalid` placeholders |
 | Templates | Done | three Website Growth Audit templates exist |
 | Unified approval pipeline | Done | `nontrading/approval_gate.py` now re-exports the unified gate |
-| RevenuePipeline | Built, not wired | `nontrading/pipeline.py` exists, but the CLI still uses the legacy harness |
+| RevenuePipeline | Wired | `nontrading/pipeline.py` exists and the CLI now runs the pipeline path |
 
 ## First Wedge
 
@@ -103,10 +104,9 @@ Planned service definition:
 
 ## What Is Still Missing For Phase 1
 
-- fix the repo-root registry persistence regression after reload
-- wire `nontrading/main.py` into the pipeline path
 - verified sending domain and DNS auth
 - curated lead list plus approval to send real messages
+- checkout, billing, provisioning, and fulfillment metrics for a real revenue loop
 
 ## Safe Defaults
 

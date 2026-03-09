@@ -64,6 +64,15 @@ We still have a weather strategy in the pipeline: NOAA Multi-Model Weather Conse
 
 4. **Longer time horizons with wider confidence intervals.** 7-day forecasts have more error, but markets might also misprice them more. There could be a sweet spot where forecast error is large but market mispricing is larger.
 
+## Strategy Revision (March 9, 2026)
+
+The Miami 84°-85°F review tightened our execution policy for Kalshi temperature buckets:
+
+1. **Settlement-source first.** Trade from the exact settlement station/oracle (for Miami daily highs: Miami International Airport climate report), not city-center weather snapshots.
+2. **No center-bucket fades without displacement.** Skip `NO` on tight (2-degree) range buckets when the NWS point high is still inside the bracket.
+3. **Directional thesis only.** If the thesis is "hotter" or "cooler," target the adjacent directional bucket rather than mechanically fading the modal center bucket.
+4. **Mispricing cushion required.** Treat small differences as noise; prioritize only clear dislocations with enough margin over model/forecast uncertainty.
+
 ## Code
 
 Strategy implementation: `src/strategies/weather_bracket.py`

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-03-09T01:31:10Z",
+  "generated_at": "2026-03-09T10:59:14Z",
   "instance_version": "2.8.3",
   "cycle": {
     "number": 2,
@@ -34,19 +34,18 @@
   },
   "trading_agent": {
     "tracked_capital_usd": 347.51,
-    "deployed_capital_usd": 0.0,
-    "undeployed_capital_usd": 347.51,
-    "cycles_completed": 313,
+    "deployed_capital_usd": 25.0,
+    "undeployed_capital_usd": 322.51,
+    "cycles_completed": 541,
     "closed_trades": 0,
     "total_trades": 0,
-    "service_status": "stopped",
-    "service_checked_at": "2026-03-09T01:28:43.910481+00:00",
+    "service_status": "running",
+    "service_checked_at": "2026-03-09T10:57:50.967363+00:00",
     "launch_posture": "blocked",
     "launch_blocked": true,
     "launch_blocked_checks": [
-      "service_not_running",
+      "root_tests_not_passing",
       "no_closed_trades",
-      "no_deployed_capital",
       "a6_gate_blocked",
       "b1_gate_blocked",
       "flywheel_not_green"
@@ -69,24 +68,25 @@
     "strategies_rejected": 10,
     "strategies_pre_rejected": 8,
     "strategies_research_pipeline": 97,
-    "current_root_tests_main": 913,
-    "current_root_tests_import_boundary": 22,
-    "current_root_tests_total": 935,
-    "current_root_test_summary": "913 passed in 18.38s; 22 passed in 3.49s",
+    "current_root_tests_main": 1016,
+    "current_root_tests_import_boundary": 23,
+    "current_root_tests_total": 1039,
+    "current_root_test_summary": "1016 passed in 21.25s; 23 passed in 2.89s",
     "verified_polymarket_tests": 374,
-    "verified_nontrading_tests": 39,
+    "verified_nontrading_tests": 61,
     "current_full_verified_total": 1348,
     "backtest_win_rate_calibrated": 0.712,
     "backtest_win_rate_no_only": 0.762,
     "velocity_win_rate_sub24h": 0.72,
     "velocity_backtest_arr_pct_theoretical": 6007.0,
     "maker_excess_return_pct": 1.12,
-    "signal_sources_documented": 6,
+    "signal_sources_documented": 7,
     "bot_modules": 47,
     "allowed_neg_risk_event_count": 563,
     "qualified_a6_live_surface_count": 57,
     "a6_executable_below_gate": 0,
-    "b1_deterministic_pairs": 0
+    "b1_deterministic_pairs": 0,
+    "verified_nontrading_sync_tests": 49
   },
   "non_trading_agent": {
     "status_date": "2026-03-09",
@@ -106,15 +106,16 @@
     ],
     "phase0_engine_stub_count": 5,
     "revenue_lanes_active": 0,
-    "compliance_status": "paper-mode approval plus compliance guard active",
-    "jj_n_rollout_status": "Phase 0 foundations landed; production wedge still not launched",
-    "tests_passed": 39,
+    "compliance_status": "paper-mode approval plus compliance guard active; live sender blocked on placeholder/unverified identity",
+    "jj_n_rollout_status": "Pipeline wired and testable; revenue wedge not launched",
+    "tests_passed": 61,
     "smoke_coverage_documented": true,
     "launch_ready": false,
     "crm_schema": true,
     "opportunity_registry": true,
     "approval_gate": true,
-    "telemetry_wired": true
+    "telemetry_wired": true,
+    "tests_repo_root_passed": 49
   },
   "contribution_flywheel": {
     "diary_entries": 14,
@@ -154,7 +155,7 @@
     "combined_current_usd": 0.0,
     "combined_next_target_pct": 10.0,
     "combined_next_target_usd": 34.75,
-    "methodology": "No live ARR can be computed yet because there are 0 closed trades and 0 deployed capital. Current run-rate remains 0%; the 10% figure is the operator target, while 6007% remains a theoretical backtest reference only."
+    "methodology": "Realized ARR is 0% until closed trades and deployed capital exist. Target ARR is operator objective. Theoretical ARR remains a backtest reference only."
   },
   "timeline": [
     {
@@ -327,5 +328,12 @@
     "This dataset supersedes the earlier March 9 305-cycle / 1,278-test snapshot. Current checked-in runtime truth still shows 308 cycles, and the freshest root suite now reports 913 + 22 passing.",
     "The published combined verified total is now 1,348 because this Instance 5 pass reran make test, make test-polymarket, and make test-nontrading against the current workspace state.",
     "JJ-N is no longer accurately described as not started: Phase 0 foundations are landed, but revenue remains zero and the production wedge is still unlaunched."
-  ]
+  ],
+  "velocity_summary": {
+    "realized_arr_pct": 0.0,
+    "target_arr_pct": 10.0,
+    "theoretical_arr_pct": 6007.0,
+    "runtime_cycles": 541,
+    "closed_trades": 0
+  }
 }

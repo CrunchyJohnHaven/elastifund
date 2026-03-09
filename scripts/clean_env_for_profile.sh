@@ -94,14 +94,11 @@ echo
 
 (
     cd "$PROJECT_DIR"
-    set -a
-    # shellcheck disable=SC1090
-    source "$ENV_FILE"
-    set +a
-    python3 - <<'PY'
+    JJ_RUNTIME_PROFILE="$PROFILE_NAME" python3 - <<'PY'
+import os
 from bot.runtime_profile import load_runtime_profile
 
-bundle = load_runtime_profile()
+bundle = load_runtime_profile(env={"JJ_RUNTIME_PROFILE": os.environ["JJ_RUNTIME_PROFILE"]})
 profile = bundle.profile
 print("Verification:")
 print(f"  Profile: {bundle.selected_profile}")

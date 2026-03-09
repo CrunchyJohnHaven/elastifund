@@ -1,73 +1,16 @@
-<svg xmlns='http://www.w3.org/2000/svg' width='1320' height='700' viewBox='0 0 1320 700' role='img' aria-labelledby='title2 desc2'>
-<title id='title2'>Elastifund ARR estimate</title>
-<desc id='desc2'>Realized ARR remains zero. The next operator target is 10 percent on tracked capital while JJ-N foundations are landed but pre-revenue.</desc>
-<rect width='1320' height='700' fill='#f7f3eb' />
-<rect x='28' y='26' width='1264' height='648' rx='28' fill='#efe8dc' stroke='#e4dac9' stroke-width='1.2' />
-<text x='64' y='82' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='30' font-weight='700' fill='#16202a'>Elastifund ARR Estimate</text>
-<text x='64' y='112' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='16' font-weight='400' fill='#60707c'>Run-rate view only. Trading remains blocked and JJ-N has infrastructure but no revenue yet.</text>
-<rect x='46' y='148' width='708' height='506' rx='24' fill='#fffdfa' stroke='#ddd5c8' stroke-width='1.2' />
-<rect x='782' y='148' width='492' height='242' rx='24' fill='#fffdfa' stroke='#ddd5c8' stroke-width='1.2' />
-<rect x='782' y='412' width='492' height='242' rx='24' fill='#fffdfa' stroke='#ddd5c8' stroke-width='1.2' />
-<text x='74' y='190' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='20' font-weight='700' fill='#16202a'>Run-rate frame</text>
-<text x='74' y='218' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#60707c'>Theoretical upside still exists, but the realized line stays at 0 until the system records closed trades or revenue.</text>
-<line x1='104' y1='510.0' x2='664' y2='510.0' stroke='#e2dbcf' stroke-width='1.0' stroke-dasharray='5 7' />
-<text x='90' y='515.0' text-anchor='end' font-family='Avenir Next, Segoe UI, sans-serif' font-size='12' font-weight='400' fill='#60707c'>0%</text>
-<line x1='104' y1='450.0' x2='664' y2='450.0' stroke='#e2dbcf' stroke-width='1.0' stroke-dasharray='5 7' />
-<text x='90' y='455.0' text-anchor='end' font-family='Avenir Next, Segoe UI, sans-serif' font-size='12' font-weight='400' fill='#60707c'>2.5%</text>
-<line x1='104' y1='390.0' x2='664' y2='390.0' stroke='#e2dbcf' stroke-width='1.0' stroke-dasharray='5 7' />
-<text x='90' y='395.0' text-anchor='end' font-family='Avenir Next, Segoe UI, sans-serif' font-size='12' font-weight='400' fill='#60707c'>5%</text>
-<line x1='104' y1='330.0' x2='664' y2='330.0' stroke='#e2dbcf' stroke-width='1.0' stroke-dasharray='5 7' />
-<text x='90' y='335.0' text-anchor='end' font-family='Avenir Next, Segoe UI, sans-serif' font-size='12' font-weight='400' fill='#60707c'>7.5%</text>
-<line x1='104' y1='270.0' x2='664' y2='270.0' stroke='#e2dbcf' stroke-width='1.0' stroke-dasharray='5 7' />
-<text x='90' y='275.0' text-anchor='end' font-family='Avenir Next, Segoe UI, sans-serif' font-size='12' font-weight='400' fill='#60707c'>10%</text>
-<rect x='178' y='504' width='120' height='6' rx='18' fill='#1f7a64' stroke='#1f7a64' stroke-width='1.0' />
-<text x='238' y='550' text-anchor='middle' font-family='Avenir Next, Segoe UI, sans-serif' font-size='15' font-weight='700' fill='#16202a'>Realized</text>
-<text x='238' y='576' text-anchor='middle' font-family='Avenir Next, Segoe UI, sans-serif' font-size='24' font-weight='700' fill='#1f7a64'>0.0%</text>
-<text x='238' y='602' text-anchor='middle' font-family='Avenir Next, Segoe UI, sans-serif' font-size='14' font-weight='400' fill='#60707c'>$0.00/yr</text>
-<text x='238' y='624' text-anchor='middle' font-family='Avenir Next, Segoe UI, sans-serif' font-size='12' font-weight='400' fill='#60707c'>0 closed trades</text>
-<rect x='358' y='270.0' width='120' height='240.0' rx='18' fill='#c47b07' stroke='#c47b07' stroke-width='1.0' />
-<text x='418' y='550' text-anchor='middle' font-family='Avenir Next, Segoe UI, sans-serif' font-size='15' font-weight='700' fill='#16202a'>Next target</text>
-<text x='418' y='576' text-anchor='middle' font-family='Avenir Next, Segoe UI, sans-serif' font-size='24' font-weight='700' fill='#c47b07'>10.0%</text>
-<text x='418' y='602' text-anchor='middle' font-family='Avenir Next, Segoe UI, sans-serif' font-size='14' font-weight='400' fill='#60707c'>$34.75/yr</text>
-<text x='418' y='624' text-anchor='middle' font-family='Avenir Next, Segoe UI, sans-serif' font-size='12' font-weight='400' fill='#60707c'>low-confidence operator target</text>
-<rect x='538' y='504' width='120' height='6' rx='18' fill='#8a96a3' stroke='#8a96a3' stroke-width='1.0' />
-<text x='598' y='550' text-anchor='middle' font-family='Avenir Next, Segoe UI, sans-serif' font-size='15' font-weight='700' fill='#16202a'>JJ-N</text>
-<text x='598' y='576' text-anchor='middle' font-family='Avenir Next, Segoe UI, sans-serif' font-size='24' font-weight='700' fill='#8a96a3'>0.0%</text>
-<text x='598' y='602' text-anchor='middle' font-family='Avenir Next, Segoe UI, sans-serif' font-size='14' font-weight='400' fill='#60707c'>$0.00/yr</text>
-<text x='598' y='624' text-anchor='middle' font-family='Avenir Next, Segoe UI, sans-serif' font-size='12' font-weight='400' fill='#60707c'>Phase 0 foundations only</text>
-<rect x='88' y='540' width='612' height='84' rx='18' fill='#fff5dc' stroke='#e5c476' stroke-width='1.2' />
-<text x='112' y='572' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='17' font-weight='700' fill='#16202a'>Backtest reference</text>
-<text x='112' y='600' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#60707c'>6,007% theoretical ARR on the velocity-maker backtest. Useful as context, not as a promise.</text>
-<text x='810' y='190' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='20' font-weight='700' fill='#16202a'>Capital and posture</text>
-<text x='810' y='220' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#60707c'>Current runtime truth from checked-in artifacts plus fresh suite runs in this pass.</text>
-<text x='810' y='256' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#60707c'>Tracked capital</text>
-<text x='1240' y='256' text-anchor='end' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='700' fill='#16202a'>$347.51</text>
-<text x='810' y='284' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#60707c'>Undeployed capital</text>
-<text x='1240' y='284' text-anchor='end' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='700' fill='#16202a'>$347.51</text>
-<text x='810' y='312' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#60707c'>Deployed capital</text>
-<text x='1240' y='312' text-anchor='end' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='700' fill='#16202a'>$0.00</text>
-<text x='810' y='340' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#60707c'>Service status</text>
-<text x='1240' y='340' text-anchor='end' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='700' fill='#16202a'>stopped</text>
-<text x='810' y='368' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#60707c'>Launch posture</text>
-<text x='1240' y='368' text-anchor='end' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='700' fill='#16202a'>blocked</text>
-<text x='810' y='396' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#60707c'>Wallet flow</text>
-<text x='1240' y='396' text-anchor='end' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='700' fill='#16202a'>ready</text>
-<text x='810' y='424' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#60707c'>Cycles completed</text>
-<text x='1240' y='424' text-anchor='end' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='700' fill='#16202a'>313</text>
-<text x='810' y='452' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#60707c'>Full verified tests</text>
-<text x='1240' y='452' text-anchor='end' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='700' fill='#16202a'>1348</text>
-<text x='810' y='454' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='20' font-weight='700' fill='#16202a'>Readiness and blockers</text>
-<text x='810' y='484' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#60707c'>Velocity improved. Launch did not. That distinction matters.</text>
-<circle cx='820' cy='514' r='4' fill='#1f7a64' />
-<text x='836' y='518' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#16202a'>Wallet flow ready with 80 scored wallets</text>
-<circle cx='820' cy='540' r='4' fill='#1f7a64' />
-<text x='836' y='544' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#16202a'>JJ-N foundations landed with 39 passing tests</text>
-<circle cx='820' cy='566' r='4' fill='#b42318' />
-<text x='836' y='570' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#16202a'>No closed trades are available for calibration yet</text>
-<circle cx='820' cy='592' r='4' fill='#b42318' />
-<text x='836' y='596' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#16202a'>No capital is currently deployed</text>
-<circle cx='820' cy='618' r='4' fill='#b42318' />
-<text x='836' y='622' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#16202a'>A-6 and B-1 remain blocked by public-data evidence</text>
-<circle cx='820' cy='644' r='4' fill='#c47b07' />
-<text x='836' y='648' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#16202a'>Service check: 2026-03-09T01:28:43.910481Z</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="420" viewBox="0 0 960 420">
+<rect width="100%" height="100%" fill="#fffaf0"/>
+<text x="40" y="44" font-family="Arial" font-size="22" fill="#1a202c">ARR Framing (Realized vs Target vs Theoretical)</text>
+<text x="40" y="72" font-family="Arial" font-size="14" fill="#2d3748">Tracked capital: $347.51 | Realized annualized return remains 0% until closed trades/deployed capital</text>
+<line x1="90" y1="300" x2="900" y2="300" stroke="#a0aec0"/>
+<rect x="140" y="300" width="120" height="0" fill="#2f855a" opacity="0.9"/>
+<text x="140" y="330" font-family="Arial" font-size="12" fill="#2d3748">Realized ARR</text>
+<text x="140" y="292" font-family="Arial" font-size="12" fill="#1a202c">0%</text>
+<rect x="380" y="280" width="120" height="20" fill="#2b6cb0" opacity="0.9"/>
+<text x="380" y="330" font-family="Arial" font-size="12" fill="#2d3748">Target ARR</text>
+<text x="380" y="272" font-family="Arial" font-size="12" fill="#1a202c">10%</text>
+<rect x="620" y="100" width="120" height="200" fill="#c05621" opacity="0.9"/>
+<text x="620" y="330" font-family="Arial" font-size="12" fill="#2d3748">Theoretical (scaled)</text>
+<text x="620" y="92" font-family="Arial" font-size="12" fill="#1a202c">100%</text>
+<text x="40" y="390" font-family="Arial" font-size="12" fill="#4a5568">Theoretical bar is scaled for readability and is not realized performance.</text>
 </svg>

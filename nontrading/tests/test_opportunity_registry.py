@@ -96,3 +96,25 @@ def test_store_backed_apply_persists_score(tmp_path) -> None:
     assert persisted is not None
     assert persisted.score == 79.0
     assert persisted.metadata["registry_decision"] == "advance"
+
+
+def test_store_backed_ranking_is_stable_after_reload(tmp_path) -> None:
+    store = make_store(tmp_path)
+    first = OpportunityRegistry(store=store)
+    account = store.create_account(Account(name="Acme Builders"))
+    first.apply(
+        store.create_opportunity(Opportunity(account_id=account.id or 0, name="slow")),
+        make_score_input(time_to_first_dollar=0.25),
+    )
+    first.apply(
+        store.create_opportunity(Opportunity(account_id=account.id or 0, name="fast")),
+        make_score_input(time_to_first_dollar=0.95),
+    )
+    first.apply(
+        store.create_opportunity(Opportunity(account_id=account.id or 0, name="mid")),
+        make_score_input(time_to_first_dollar=0.6),
+    )
+
+    second = OpportunityRegistry(store=store)
+    ranked = second.rank_opportunities()
+    assert [int(item.id or 0) for item in ranked] == [2, 3, 1]

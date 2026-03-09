@@ -10,6 +10,9 @@ def test_run_smoke_exercises_both_nontrading_lanes() -> None:
     assert result["revenue_agent"]["leads"] == 6
     assert result["revenue_agent"]["sent"] == 3
     assert result["revenue_agent"]["filtered"] == 3
+    assert result["revenue_agent"]["pipeline_status"] == "completed"
+    assert result["revenue_agent"]["pipeline_outreach_sent"] == 0
+    assert result["revenue_agent"]["pipeline_messages"] == 3
     assert result["revenue_agent"]["recipients"] == [
         "info@usbiz.com",
         "owner@optedin-us.com",
@@ -31,6 +34,9 @@ def test_format_smoke_summary_is_operator_readable() -> None:
                 "sent": 3,
                 "filtered": 3,
                 "suppressed": 0,
+                "pipeline_status": "completed",
+                "pipeline_outreach_sent": 0,
+                "pipeline_messages": 3,
                 "recipients": ["info@usbiz.com"],
             },
             "digital_products": {
@@ -44,5 +50,5 @@ def test_format_smoke_summary_is_operator_readable() -> None:
     )
 
     assert "nontrading smoke ok" in summary
-    assert "revenue_agent campaigns=1 leads=6 sent=3" in summary
+    assert "revenue_agent campaigns=1 leads=6 sent=3 filtered=3 pipeline_status=completed" in summary
     assert "digital_products ranked=5 top_title=ADHD Planner System" in summary
