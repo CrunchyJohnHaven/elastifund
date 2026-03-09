@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-03-09T01:17:47.402098Z",
+  "generated_at": "2026-03-09T01:24:03Z",
   "cycle": {
     "number": 2,
     "name": "Flywheel Cycle 2 \u2014 Structural Alpha & Microstructure Defense"
@@ -9,6 +9,7 @@
     "runtime_truth": "reports/runtime_truth_latest.json",
     "remote_cycle_status": "reports/remote_cycle_status.json",
     "root_test_status": "reports/root_test_status.json",
+    "full_verified_handoff": "reports/parallel/instance3.done.json",
     "backlog": "research/edge_backlog_ranked.md",
     "velocity_strategy": "research/velocity_maker_strategy.md",
     "nontrading_status": "docs/NON_TRADING_STATUS.md",
@@ -48,9 +49,9 @@
     "current_root_tests_import_boundary": 22,
     "current_root_tests_total": 894,
     "current_root_test_summary": "872 passed in 17.67s; 22 passed in 3.54s",
-    "last_full_verified_total": 1256,
+    "last_full_verified_total": 1278,
     "last_full_verified_breakdown": {
-      "root_main": 849,
+      "root_main": 871,
       "root_import_boundary": 22,
       "polymarket": 374,
       "nontrading": 11
@@ -91,7 +92,7 @@
     "project_age_days": 22,
     "tracked_strategies_per_week": 41.7,
     "current_root_tests_total": 894,
-    "last_full_verified_total": 1256,
+    "last_full_verified_total": 1278,
     "dispatch_markdown_files": 95,
     "dispatch_work_orders": 11,
     "diary_entries": 14,

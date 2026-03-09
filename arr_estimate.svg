@@ -52,8 +52,8 @@
 <text x='1240' y='368' text-anchor='end' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='700' fill='#16202a'>blocked</text>
 <text x='810' y='396' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#60707c'>Fast-flow status</text>
 <text x='1240' y='396' text-anchor='end' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='700' fill='#16202a'>ready</text>
-<text x='810' y='424' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#60707c'>Current root tests</text>
-<text x='1240' y='424' text-anchor='end' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='700' fill='#16202a'>872 + 22</text>
+<text x='810' y='424' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#60707c'>Current root / full green</text>
+<text x='1240' y='424' text-anchor='end' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='700' fill='#16202a'>872 + 22 / 1,278</text>
 <text x='810' y='454' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='20' font-weight='700' fill='#16202a'>Blockers and readiness</text>
 <text x='810' y='484' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#60707c'>Stale blocker removed: wallet flow is now ready.</text>
 <circle cx='820' cy='514' r='4' fill='#1f7a64' />

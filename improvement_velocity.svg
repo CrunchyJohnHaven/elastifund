@@ -154,7 +154,7 @@
 <rect x='976' y='388' width='352' height='126' rx='18' fill='#f4efe4' stroke='#e1d7c5' stroke-width='1.2' />
 <text x='996' y='418' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='16' font-weight='700' fill='#16202a'>Non-trading lane</text>
 <text x='996' y='446' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='14' font-weight='400' fill='#60707c'>2 implemented subsystems, 0 launched revenue lanes</text>
-<text x='996' y='474' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='14' font-weight='400' fill='#60707c'>11 tests passing; smoke coverage on</text>
+<text x='996' y='474' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='14' font-weight='400' fill='#60707c'>Latest full green baseline: 1,278 total; non-trading 11</text>
 <text x='996' y='502' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='14' font-weight='400' fill='#60707c'>Phase-1 growth-audit wedge is still design-only</text>
 <text x='980' y='558' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='18' font-weight='700' fill='#16202a'>Contribution flywheel</text>
 <text x='980' y='588' text-anchor='start' font-family='Avenir Next, Segoe UI, sans-serif' font-size='13' font-weight='400' fill='#60707c'>Diary entries</text>
