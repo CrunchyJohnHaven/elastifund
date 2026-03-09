@@ -38,7 +38,7 @@ def _float_env(name: str, default: str) -> float:
 
 PLATT_A = _float_env("PLATT_A", "0.5914")
 PLATT_B = _float_env("PLATT_B", "-0.3977")
-CLAUDE_MODEL_DEFAULT = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20241022")
+CLAUDE_MODEL_DEFAULT = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 OPENAI_MODEL_DEFAULT = os.environ.get("JJ_OPENAI_ENSEMBLE_MODEL", "gpt-4o-mini")
 OPENAI_INPUT_COST_PER_M = float(os.environ.get("JJ_OPENAI_INPUT_COST_PER_M", "0.15"))
 OPENAI_OUTPUT_COST_PER_M = float(os.environ.get("JJ_OPENAI_OUTPUT_COST_PER_M", "0.60"))
