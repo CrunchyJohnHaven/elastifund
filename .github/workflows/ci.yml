@@ -35,7 +35,16 @@ jobs:
       - name: Hygiene
         run: make hygiene
       - name: Root regression suite
-        run: make test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u scripts/run_root_tests.py 2>&1 | tee root-regression.log
+      - name: Upload root regression log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: root-regression-log
+          path: root-regression.log
 
   polymarket:
     name: Polymarket Bot Tests
@@ -55,4 +64,13 @@ jobs:
       - name: Install dependencies
         run: make bootstrap
       - name: Polymarket regression suite
-        run: make test-polymarket
+        shell: bash
+        run: |
+          set -euo pipefail
+          make test-polymarket 2>&1 | tee polymarket-regression.log
+      - name: Upload polymarket regression log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: polymarket-regression-log
+          path: polymarket-regression.log

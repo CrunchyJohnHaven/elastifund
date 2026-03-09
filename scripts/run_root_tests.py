@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import platform
 import subprocess
 import sys
 from pathlib import Path
@@ -39,8 +40,21 @@ def _run(label: str, args: list[str], env: dict[str, str]) -> None:
         raise SystemExit(result.returncode)
 
 
+def _log_runtime() -> None:
+    pytest_installed = importlib.util.find_spec("pytest") is not None
+    print(
+        "[tests] runtime "
+        f"python={platform.python_version()} "
+        f"platform={platform.platform()} "
+        f"cwd={ROOT}",
+        flush=True,
+    )
+    print(f"[tests] pytest_installed={pytest_installed}", flush=True)
+
+
 def main() -> None:
     base_env = os.environ.copy()
+    _log_runtime()
 
     core_env = base_env.copy()
     core_env.pop(ENABLE_JJ_LIVE_SUITE, None)
