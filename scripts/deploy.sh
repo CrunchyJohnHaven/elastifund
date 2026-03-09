@@ -153,6 +153,7 @@ SCRIPT_SUPPORT_FILES=(
     "scripts/clean_env_for_profile.sh"
     "scripts/btc5_status.sh"
     "scripts/btc5_monte_carlo.py"
+    "scripts/btc5_regime_policy_lab.py"
     "scripts/run_btc5_autoresearch_cycle.py"
     "scripts/run_kalshi_weather_auto.sh"
     "scripts/run_flywheel_cycle.py"
