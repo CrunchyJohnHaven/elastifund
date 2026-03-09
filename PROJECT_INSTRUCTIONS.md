@@ -1,5 +1,5 @@
 # Elastifund — Project Instructions
-**Version:** 3.2.0 | **Updated:** 2026-03-08 | **Owner:** John Bradley
+**Version:** 3.4.0 | **Updated:** 2026-03-09 | **Owner:** John Bradley
 **Paste this into any new ChatGPT, Claude web, Claude Code, or Cowork session.**
 **Canonical filename:** `PROJECT_INSTRUCTIONS.md`. Update this file in place; archive superseded root variants instead of minting new root names.
 
@@ -19,11 +19,13 @@ For everything else — writing code, running tests, deploying to VPS, researchi
 
 ## 1. What This Is
 
-**Elastifund** is an AI-powered prediction market trading fund. AI persona: **JJ**. We trade on **Polymarket** (USDC, live) and **Kalshi** (USD, API connected). 20% of net trading profits fund veteran suicide prevention.
+**Elastifund** is an open, self-improving agentic operating system for real economic work. AI persona: **JJ**. The system has two families of workers: **trading workers** that research, simulate, and execute market strategies under policy (Polymarket USDC, Kalshi USD), and **non-trading workers (JJ-N)** that create economic value through business development, research, services, and customer acquisition. 20% of net profits fund veteran suicide prevention. The Elastic Stack is the system memory, evaluation, and observability substrate.
 
-**Status (March 8, 2026):** Bot deployed to Dublin VPS. Service STOPPED while the structural alpha stack is reprioritized around execution-validity gates: smart wallet flow for fast markets plus structural arbitrage measured in narrow form first (A-6 guaranteed-dollar first, B-1 templated only). Three long-dated orders were placed and cancelled. Velocity filter confirmed that pure LLM forecasting cannot be the only lane on Polymarket.
+**Status (machine truth reconciled on March 9, 2026):** Bot remains deployed to the Dublin VPS. `reports/remote_service_status.json` checked at `2026-03-09T00:06:56Z` shows `jj-live.service` `active`, which supersedes the older March 8 prose that said it was intentionally stopped. That service state does not clear launch gates: `jj_state.json` still shows `0` live trades after `294` cycles, `reports/remote_cycle_status.json` still marks launch `blocked`, wallet-flow is `not_ready`, the latest checked-in fast-trade report still says `REJECT ALL`, A-6 still has `0` executable constructions below `0.95`, and B-1 still has `0` deterministic template pairs in the first `1,000` allowed markets. Treat the running service as drift needing follow-up unless the remote mode is explicitly confirmed as paper or shadow.
 
-**Primary goal: Make the first dollar.** Fast feedback loops. Trade markets that resolve within hours, not months.
+**Primary goal: Make the first dollar.** Fast feedback loops. Trading: markets that resolve within hours, not months. Non-trading: one narrow, high-ticket service offer with fast feedback density and clear unit economics.
+
+**Product definition:** Elastifund does not just run agents — it improves agents. Improvement is the product. Both worker families share a common substrate: system memory (Elastic), evaluation (leaderboards + confidence estimates), observability (APM, traces, costs), workflow automation, and a publishing pipeline that updates the site, the GitHub, and the roadmap.
 
 ---
 
@@ -31,11 +33,30 @@ For everything else — writing code, running tests, deploying to VPS, researchi
 
 | Platform | Balance | Status | API |
 |----------|---------|--------|-----|
-| **Polymarket** | USDC | Live, service stopped for upgrade | py_clob_client, Gamma API |
+| **Polymarket** | USDC | Live wallet funded; March 9 remote artifact shows the service running, but launch posture is still blocked at the wallet-flow and A-6/B-1 gates | py_clob_client, Gamma API |
 | **Kalshi** | USD | API connected, trading not built | kalshi-python SDK, RSA auth |
 
 Polymarket proxy wallet: [redacted from repo; stored in runtime config]
 Kalshi API Key ID: [stored in .env — see .env.example]
+
+## 2A. Canonical March 9 Machine Snapshot
+
+| Metric | Value |
+|---|---|
+| Tracked capital | `$347.51` (`$247.51` Polymarket + `$100` Kalshi) |
+| Runtime state | `reports/remote_service_status.json` shows `jj-live.service` `running` at `2026-03-09T00:06:56Z`; `jj_state.json` still shows `0` live trades after `294` cycles |
+| Launch posture | `reports/remote_cycle_status.json` still marks launch `blocked`; treat the running service as drift until the remote mode is reconciled |
+| Wallet-flow readiness | `not_ready` (smart-wallet bootstrap JSON missing, wallet-score database missing, `no_scored_wallets`) |
+| Fast-market pipeline | Latest checked-in artifact is `FAST_TRADE_EDGE_ANALYSIS.md` at `2026-03-07T19:07:38+00:00`, still `REJECT ALL` |
+| Structural-alpha gate | March 9 edge scan still found `0` executable A-6 opportunities below `0.95` and `0` deterministic B-1 template pairs in the first `1,000` allowed markets; no promotion |
+| Verification baseline | `make hygiene` passed; root suite `849 + 22`; `make test-polymarket` `374`; `make test-nontrading` `11`; `1,256` total verified |
+| Dispatch inventory | `11` `DISPATCH_*` work-orders; `95` markdown files in `research/dispatches/` |
+| Next operator action | Build wallet-flow bootstrap artifacts, confirm readiness, then restart `jj_live` only in paper or shadow fast-flow mode |
+
+March 9 handoffs on top of the machine snapshot:
+
+- `reports/edge_scan_20260309T000551Z.json` recommends `stay-paused` because there were no viable `<24h` Gamma candidates, no executable A-6 opportunities, and no deterministic B-1 template pairs.
+- `reports/deploy_20260309T000746Z.json` found `jj-live.service` already `active` and skipped deploy because the release manifest was missing.
 
 ---
 
@@ -77,13 +98,13 @@ SIGNAL 5: Guaranteed Dollar Scanner (A-6) [SHADOW MODE, EMPIRICAL GATE]
   Edge: cheapest guaranteed-dollar construction < 0.95
   Construction order: YES+NO first, neg-risk-conversion second, full basket last
   Sizing: Execution-risk-adjusted, capped at $5/leg
-  Status: top-of-book ranking landed; live fill/dwell capture is the next gate
+  Status: top-of-book ranking landed; current audit still shows 0 constructions below the 0.95 gate, so live fill/dwell capture is the next gate and no promotion is allowed yet
 
 SIGNAL 6: Templated Dependency Engine (B-1) [NARROWED / GATED]
   Markets: Deterministic template families in one event cluster
   Edge: implication / exclusion / complement violations > 5% and >= 2x combined spread
   Sizing: Execution-risk-adjusted, capped at $5/leg
-  Status: template matcher landed; live density audit currently shows zero deterministic pairs in the first 1,000 allowed markets
+  Status: template matcher landed; current density audit still shows zero deterministic pairs in the first 1,000 allowed markets, so no promotion is allowed yet
 
 CONFIRMATION LAYER:
   2+ predictive sources agree → highest confidence, boosted size
@@ -125,7 +146,7 @@ No auth required.
 ssh -i $LIGHTSAIL_KEY ubuntu@$VPS_IP
 ```
 - Bot path: `/home/ubuntu/polymarket-trading-bot/`
-- Service: `jj-live.service` (systemd, currently STOPPED)
+- Service: `jj-live.service` (systemd; remote artifact `active` at `2026-03-09T00:06:56Z`, but launch posture still blocked)
 - Geoblock: PASSED (country=IE, Polymarket requires non-US)
 - Installed: Python 3.12, py_clob_client, web3, websockets, anthropic
 - **Note:** VPS IP, SSH key path stored in `.env` — never commit these
@@ -175,8 +196,6 @@ Elastifund/
 ├── docs/REPO_MAP.md            ← Canonical directory map and task routing
 ├── docs/FORK_AND_RUN.md        ← Beginner-friendly local boot and shared-hub guide
 ├── COMMAND_NODE.md             ← Deep technical reference
-├── LLM_CONTEXT_MANIFEST.md     ← Canonical root context standard
-├── KARPATHY_AUTORESEARCH_REPORT.md ← Loop-design and benchmark discipline notes
 ├── README.md                   ← GitHub public-facing
 ├── .env.example / .gitignore
 │
@@ -192,14 +211,17 @@ Elastifund/
 ├── data/                       ← Runtime DBs (wallet_scores.db, quant.db)
 ├── scripts/                    ← deploy.sh
 │
-├── research/                   ← Strategy research
-│   ├── dispatches/             ← 79 research prompts (P0-P3, by tool target)
-│   ├── prompts/                ← Original research prompt docs
-│   └── *.md                    ← Research findings
+├── research/                   ← Strategy research and longer-form findings
+│   ├── deep_research_prompt.md ← Current deep-research execution package
+│   ├── deep_research_output.md ← Wide strategy taxonomy source document
+│   ├── jj_assessment_dispatch.md ← JJ prioritization and kill decisions
+│   ├── karpathy_autoresearch_report.md ← Loop-design and benchmark discipline notes
+│   └── *.md                    ← Other research findings and ranked backlogs
 │
 ├── docs/
-│   ├── strategy/               ← SMART_WALLET_SPEC, LLM_ENSEMBLE_SPEC, etc.
-│   ├── ops/                    ← Deploy guides, checklists, audits
+│   ├── strategy/               ← Flywheel, edge system, SMART_WALLET_SPEC, etc.
+│   ├── ops/                    ← Deploy guides, llm_context_manifest, checklists, audits
+│   ├── diary/                  ← Public-facing research diary entries
 │   └── templates/              ← Report templates
 │
 └── archive/                    ← Superseded files (Replit builds, old handoffs)
@@ -341,4 +363,4 @@ See `research/dispatches/DISPATCH_097_competitive_inventory_benchmark_blueprint.
 
 ---
 
-*v3.2.0 — Updated 2026-03-08. Adopted stable canonical root filenames, added the root-context standard, and aligned the lightweight coding-session package around `AGENTS.md`, `PROJECT_INSTRUCTIONS.md`, and `docs/REPO_MAP.md`. See `COMMAND_NODE.md` for deep technical reference.*
+*v3.4.0 — Updated 2026-03-09. Integrated Elastic Vision Document: product definition now covers trading + non-trading workers on a shared Elastic substrate. Non-trading revenue worker (JJ-N) is the first-class front door. Machine truth unchanged: service artifact `running`, launch blocked, `0` trades / `294` cycles, wallet-flow `not_ready`, pipeline `REJECT ALL`. See `COMMAND_NODE.md` v2.4.0 for deep technical reference.*

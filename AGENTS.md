@@ -26,6 +26,8 @@ make preflight
 make hygiene
 make test
 make verify
+make test-nontrading
+make smoke-nontrading
 make test-polymarket
 ```
 
@@ -35,7 +37,7 @@ Use one owner per path at a time.
 
 | Lane | Best fit | Typical ownership |
 |---|---|---|
-| Focused implementation, bug fixing, test repair | Codex | `bot/`, `execution/`, `strategies/`, `signals/`, isolated code patches |
+| Focused implementation, bug fixing, test repair | Codex | `bot/`, `execution/`, `strategies/`, `signals/`, `nontrading/`, isolated code patches |
 | Repo reconnaissance, broad synthesis, doc orchestration | Claude Code | `docs/`, `research/`, `deploy/`, cross-cutting summaries, rollout briefs |
 | Shared verification | either | `make hygiene`, `make test`, `make test-polymarket` |
 
@@ -45,8 +47,11 @@ If two agents need the same file, stop parallelizing. Path ownership beats merge
 
 - Use one shared root virtualenv. Do not editable-install `polymarket-bot/` into it.
 - Treat `bot/`, `execution/`, `strategies/`, and `infra/` as live-trading-sensitive paths. Behavior changes there need tests and evidence.
-- Treat `data/`, `logs/`, `reports/`, and `state/` as runtime artifact directories, not source-of-truth docs.
+- Treat `data/`, `logs/`, and `state/` as runtime artifact directories, not source-of-truth docs.
+- For live posture and cycle truth, prefer `jj_state.json`, `reports/remote_cycle_status.json`, `reports/remote_service_status.json`, and `research/edge_backlog_ranked.md` over stale prose.
+- Existing JSON handoff artifacts are the runtime status contract. Do not invent new runtime APIs just to pass state between lanes.
 - Keep new durable docs under `docs/` or `research/`, not the repo root.
+- Keep the repo root narrow: entrypoints, public repo standards, and compatibility files only.
 - Keep secrets in `.env` only. Runtime state, credentials, exports, and local scratch files should stay ignored.
 - Private investor and legal materials live outside this repo and are out of scope for normal coding sessions.
 
@@ -55,7 +60,9 @@ If two agents need the same file, stop parallelizing. Path ownership beats merge
 - Live trading logic: `bot/`, `execution/`, `strategies/`, `signals/`, `infra/`
 - Research pipeline and validation: `src/`, `backtest/`, `simulator/`, `edge-backlog/`
 - APIs, persistence, and orchestration: `hub/`, `data_layer/`, `orchestration/`
-- Non-trading revenue lanes: `nontrading/`, `inventory/`
+- Non-trading revenue lanes (JJ-N): `nontrading/`, `inventory/`
+- Vision and strategic docs: `research/elastic_vision_document.md`, `research/platform_vision_document.md`
+- Website build guidance: `REPLIT_NEXT_BUILD.md`, `REPLIT_WEBSITE_CURRENT.pdf`
 - Documentation and publishing: `docs/`, `research/`, `README.md`
 
 ## Definition Of Done

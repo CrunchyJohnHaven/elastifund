@@ -49,6 +49,7 @@ import json
 import time
 import math
 import asyncio
+import contextlib
 import logging
 import argparse
 import sqlite3
@@ -63,6 +64,11 @@ import numpy as np
 from dotenv import load_dotenv
 load_dotenv()
 
+try:
+    from bot import elastic_client
+except ImportError:
+    import elastic_client  # type: ignore
+
 # Ensure POLY_PRIVATE_KEY is set (VPS may use POLYMARKET_PK instead)
 if not os.environ.get("POLY_PRIVATE_KEY"):
     pk = os.environ.get("POLYMARKET_PK", "")
@@ -76,6 +82,59 @@ bot_root = Path(__file__).resolve().parent
 project_root = bot_root.parent
 sys.path.insert(0, str(bot_root))
 sys.path.insert(0, str(project_root))
+try:
+    from bot.apm_setup import apm_transaction, capture_span, get_apm_runtime, initialize_apm
+    from bot.log_config import configure_logging, ecs_extra
+    from bot.latency_tracker import track_latency
+except Exception:
+    try:
+        from apm_setup import apm_transaction, capture_span, get_apm_runtime, initialize_apm  # type: ignore
+        from log_config import configure_logging, ecs_extra  # type: ignore
+        from latency_tracker import track_latency  # type: ignore
+    except Exception:
+        class _NoopAPMRuntime:
+            def set_labels(self, *args, **kwargs):
+                return None
+
+            def set_context(self, *args, **kwargs):
+                return None
+
+            def record_metric(self, *args, **kwargs):
+                return None
+
+            def capture_metric(self, *args, **kwargs):
+                return None
+
+        _NOOP_APM_RUNTIME = _NoopAPMRuntime()
+
+        def initialize_apm():
+            return _NOOP_APM_RUNTIME
+
+        def get_apm_runtime():
+            return _NOOP_APM_RUNTIME
+
+        @contextlib.contextmanager
+        def capture_span(*args, **kwargs):
+            yield
+
+        def apm_transaction(*args, **kwargs):
+            def decorator(func):
+                return func
+
+            return decorator
+
+        def track_latency(*args, **kwargs):
+            def decorator(func):
+                return func
+
+            return decorator
+
+        def configure_logging(*args, **kwargs):
+            return None
+
+        def ecs_extra(**kwargs):
+            return kwargs
+
 try:
     from bot.polymarket_runtime import (
         ClaudeAnalyzer,
@@ -171,6 +230,14 @@ except ImportError:
         from lead_lag_engine import LeadLagEngine
     except ImportError:
         LeadLagEngine = None
+
+try:
+    from bot.anomaly_consumer import ElasticAnomalyConsumer
+except ImportError:
+    try:
+        from anomaly_consumer import ElasticAnomalyConsumer  # type: ignore
+    except ImportError:
+        ElasticAnomalyConsumer = None
 
 try:
     from bot.combinatorial_integration import (
@@ -278,14 +345,8 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("/tmp/jj_live.log"),
-    ],
-)
+configure_logging(service_name="elastifund-bot", force=True)
+initialize_apm()
 logger = logging.getLogger("JJ")
 
 # ---------------------------------------------------------------------------
@@ -300,6 +361,9 @@ MAX_EXPOSURE_PCT = float(os.environ.get("JJ_MAX_EXPOSURE_PCT", "0.90"))
 KELLY_FRACTION = float(os.environ.get("JJ_KELLY_FRACTION", "0.25"))
 MAX_KELLY_FRACTION = float(os.environ.get("JJ_MAX_KELLY_FRACTION", "0.25"))
 SCAN_INTERVAL = int(os.environ.get("JJ_SCAN_INTERVAL", "180"))
+ELASTIC_ORDERBOOK_SNAPSHOT_INTERVAL_SECONDS = float(
+    os.environ.get("JJ_ELASTIC_ORDERBOOK_SNAPSHOT_INTERVAL", "30")
+)
 MAX_OPEN_POSITIONS = int(os.environ.get("JJ_MAX_OPEN_POSITIONS", "30"))
 MIN_EDGE = float(os.environ.get("JJ_MIN_EDGE", "0.05"))
 INITIAL_BANKROLL = float(os.environ.get("JJ_INITIAL_BANKROLL", "247.51"))
@@ -369,6 +433,13 @@ def _float_env(name: str, default: str) -> float:
         return float(raw)
     except ValueError:
         return float(default)
+
+
+def _bool_env(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw in (None, ""):
+        return bool(default)
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
 PLATT_A = _float_env("PLATT_A", "0.5914")
@@ -572,7 +643,9 @@ CATEGORY_KEYWORDS = {
 }
 
 # Category priority: higher = better expected LLM edge
-CATEGORY_PRIORITY = {
+# Override any category via env: JJ_CAT_PRIORITY_<CATEGORY>=<int>
+# Example: export JJ_CAT_PRIORITY_CRYPTO=2  (unlocks crypto markets)
+_DEFAULT_CATEGORY_PRIORITY = {
     "politics": 3,      # Best LLM category (Lu 2025)
     "weather": 3,       # Structural arbitrage (NOAA/GFS data)
     "economic": 2,      # Scheduled releases, consensus alignment
@@ -582,6 +655,10 @@ CATEGORY_PRIORITY = {
     "geopolitical": 1,  # ~30% worse than experts (RAND)
     "fed_rates": 0,     # Worst category — systematic overconfidence
     "unknown": 0,       # REJECT — unclassifiable markets have no structural LLM edge
+}
+CATEGORY_PRIORITY = {
+    cat: int(_float_env(f"JJ_CAT_PRIORITY_{cat.upper()}", str(default)))
+    for cat, default in _DEFAULT_CATEGORY_PRIORITY.items()
 }
 
 # Polymarket taker fee rates (introduced Feb 18, 2026)
@@ -601,11 +678,14 @@ MAKER_REBATE_RATES = {
 }
 
 # Asymmetric thresholds (from 532-market backtest)
-YES_THRESHOLD = 0.15    # Higher bar — 56% historical win rate on YES
-NO_THRESHOLD = 0.05     # Lower bar — 76% historical win rate on NO
+# Env-var configurable: JJ_YES_THRESHOLD, JJ_NO_THRESHOLD, JJ_MIN_CATEGORY_PRIORITY
+# To loosen gates: export JJ_YES_THRESHOLD=0.08 JJ_NO_THRESHOLD=0.03
+# To tighten gates: export JJ_YES_THRESHOLD=0.20 JJ_NO_THRESHOLD=0.08
+YES_THRESHOLD = _float_env("JJ_YES_THRESHOLD", "0.15")    # Default 15% — 56% historical win rate on YES
+NO_THRESHOLD = _float_env("JJ_NO_THRESHOLD", "0.05")      # Default 5% — 76% historical win rate on NO
 
 # Minimum category priority to analyze (0=skip, 1=cautious, 2+=analyze)
-MIN_CATEGORY_PRIORITY = 1
+MIN_CATEGORY_PRIORITY = int(_float_env("JJ_MIN_CATEGORY_PRIORITY", "1"))
 
 
 import re
@@ -2248,6 +2328,22 @@ class JJLive:
         check_geoblock()
 
         self.paper_mode = PAPER_TRADING
+        self.enable_llm_signals = _bool_env("ENABLE_LLM_SIGNALS", True)
+        self.enable_wallet_flow = _bool_env("ENABLE_WALLET_FLOW", True)
+        self.enable_lmsr = _bool_env("ENABLE_LMSR", True)
+        self.enable_cross_platform_arb = _bool_env("ENABLE_CROSS_PLATFORM_ARB", True)
+        self.fast_flow_only = _bool_env("JJ_FAST_FLOW_ONLY", False)
+        self.wallet_flow_scores_file = Path(
+            os.environ.get("JJ_WALLET_FLOW_SCORES_FILE", "data/smart_wallets.json")
+        )
+        self.wallet_flow_db_file = Path(
+            os.environ.get("JJ_WALLET_FLOW_DB_FILE", "data/wallet_scores.db")
+        )
+        self._startup_lane_health: dict[str, dict[str, Any]] = {}
+        self._last_lane_health: dict[str, dict[str, Any]] = {}
+        self._elastic_orderbook_task = None
+        self._elastic_market_lookup: dict[str, dict[str, Any]] = {}
+        self._elastic_token_market_index: dict[str, str] = {}
         self.state = JJState()
         self.scanner = MarketScanner()
 
@@ -2285,33 +2381,44 @@ class JJLive:
         # LLM Analyzer: prefer the new multi-model ensemble over single Claude.
         self.ensemble_mode = False
         self.ensemble_cost_tracker = None
-        if EnsembleEstimator is not None:
-            try:
-                if LLMCostTracker is not None:
-                    self.ensemble_cost_tracker = LLMCostTracker(
-                        daily_cap_usd=ENSEMBLE_DAILY_COST_CAP_USD,
-                    )
-                self.analyzer = EnsembleEstimator(
-                    calibrate_fn=self.adaptive_platt.calibrate,
-                    min_edge=MIN_EDGE,
-                    daily_cost_cap_usd=ENSEMBLE_DAILY_COST_CAP_USD,
-                    cost_tracker=self.ensemble_cost_tracker,
-                    enable_second_claude=ENSEMBLE_ENABLE_SECOND_CLAUDE,
-                )
-                self.ensemble_cost_tracker = self.analyzer.cost_tracker
-                self.ensemble_mode = True
-                logger.info(
-                    "Ensemble estimator initialized: models=%s cost_cap=$%.2f second_claude=%s",
-                    ", ".join(self.analyzer.models) or "none",
-                    ENSEMBLE_DAILY_COST_CAP_USD,
-                    ENSEMBLE_ENABLE_SECOND_CLAUDE,
-                )
-            except Exception as e:
-                logger.warning(f"Ensemble estimator init failed, falling back to Claude-only: {e}")
-                self.analyzer = ClaudeAnalyzer()
+        self.analyzer = None
+        if self._llm_lane_enabled():
+            if self._has_llm_credentials():
+                if EnsembleEstimator is not None:
+                    try:
+                        if LLMCostTracker is not None:
+                            self.ensemble_cost_tracker = LLMCostTracker(
+                                daily_cap_usd=ENSEMBLE_DAILY_COST_CAP_USD,
+                            )
+                        self.analyzer = EnsembleEstimator(
+                            calibrate_fn=self.adaptive_platt.calibrate,
+                            min_edge=MIN_EDGE,
+                            daily_cost_cap_usd=ENSEMBLE_DAILY_COST_CAP_USD,
+                            cost_tracker=self.ensemble_cost_tracker,
+                            enable_second_claude=ENSEMBLE_ENABLE_SECOND_CLAUDE,
+                        )
+                        self.ensemble_cost_tracker = self.analyzer.cost_tracker
+                        self.ensemble_mode = True
+                        logger.info(
+                            "Ensemble estimator initialized: models=%s cost_cap=$%.2f second_claude=%s",
+                            ", ".join(self.analyzer.models) or "none",
+                            ENSEMBLE_DAILY_COST_CAP_USD,
+                            ENSEMBLE_ENABLE_SECOND_CLAUDE,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Ensemble estimator init failed, falling back to Claude-only: {e}")
+                        self.analyzer = ClaudeAnalyzer()
+                else:
+                    self.analyzer = ClaudeAnalyzer()
+                    logger.info("Using single-model ClaudeAnalyzer (ensemble estimator not available)")
+            else:
+                logger.warning("LLM signal lane enabled but no model credentials found — skipping LLM initialization")
         else:
-            self.analyzer = ClaudeAnalyzer()
-            logger.info("Using single-model ClaudeAnalyzer (ensemble estimator not available)")
+            logger.info(
+                "LLM signal lane disabled (ENABLE_LLM_SIGNALS=%s, JJ_FAST_FLOW_ONLY=%s)",
+                self.enable_llm_signals,
+                self.fast_flow_only,
+            )
         self.fill_tracker = (
             FillTracker(db_path=self.db.db_path, report_path=Path("reports/fill_rate_report.md"))
             if FillTracker is not None
@@ -2343,28 +2450,40 @@ class JJLive:
         )
 
         # Signal source #2: LMSR Bayesian Engine
-        if LMSREngine is not None:
+        self.lmsr_module_available = LMSREngine is not None
+        if self.enable_lmsr and LMSREngine is not None:
             self.lmsr_engine = LMSREngine(
                 entry_threshold=float(os.environ.get("JJ_LMSR_THRESHOLD", "0.05")),
             )
             logger.info("LMSR Bayesian Engine initialized")
         else:
             self.lmsr_engine = None
-            logger.warning("LMSR engine not available — running without")
+            if not self.enable_lmsr:
+                logger.info("LMSR lane disabled by config")
+            else:
+                logger.warning("LMSR engine not available — running without")
 
         # Signal source #3: Smart Wallet Flow Detector
-        self.wallet_flow_available = wallet_flow_get_signals is not None
+        self.wallet_flow_module_available = wallet_flow_get_signals is not None
+        self.wallet_flow_available = self.enable_wallet_flow and self.wallet_flow_module_available
         if self.wallet_flow_available:
             logger.info("Smart Wallet Flow Detector available")
         else:
-            logger.warning("Wallet flow detector not available — running without")
+            if not self.enable_wallet_flow:
+                logger.info("Wallet flow lane disabled by config")
+            else:
+                logger.warning("Wallet flow detector not available — running without")
 
         # Signal source #4: Cross-Platform Arbitrage Scanner
-        self.arb_available = arb_get_signals is not None
+        self.arb_module_available = arb_get_signals is not None
+        self.arb_available = self.enable_cross_platform_arb and self.arb_module_available
         if self.arb_available:
             logger.info("Cross-platform arb scanner available")
         else:
-            logger.warning("Cross-platform arb scanner not available — running without")
+            if not self.enable_cross_platform_arb:
+                logger.info("Cross-platform arb lane disabled by config")
+            else:
+                logger.warning("Cross-platform arb scanner not available — running without")
 
         # Signal source #5: WebSocket Trade Stream + VPIN/OFI defense
         self.trade_stream = None
@@ -2375,6 +2494,7 @@ class JJLive:
                     vpin_bucket_size=float(os.environ.get("JJ_VPIN_BUCKET_SIZE", "500")),
                     vpin_window_size=int(os.environ.get("JJ_VPIN_WINDOW", "10")),
                     on_regime_change=self._on_regime_change,
+                    on_ofi_update=self._on_ofi_update,
                     on_ofi_alert=self._on_ofi_alert,
                     heartbeat_interval=float(os.environ.get("JJ_WS_HEARTBEAT_INTERVAL", "10")),
                     rest_poll_interval=float(os.environ.get("JJ_WS_REST_POLL_INTERVAL", "5")),
@@ -2398,10 +2518,32 @@ class JJLive:
         else:
             logger.warning("Lead-lag engine not available — running without")
 
-        # Signal source #7: Multi-outcome sum-violation scanner
+        # Signal source #7: Elastic ML anomaly feedback
+        self.anomaly_consumer = None
+        self._anomaly_task = None
+        if ElasticAnomalyConsumer is not None:
+            try:
+                self.anomaly_consumer = ElasticAnomalyConsumer()
+                if self.anomaly_consumer.enabled:
+                    logger.info(
+                        "Elastic ML anomaly consumer initialized (threshold=%.1f interval=%ss)",
+                        self.anomaly_consumer.score_threshold,
+                        self.anomaly_consumer.poll_interval_seconds,
+                    )
+                else:
+                    logger.info("Elastic ML anomaly consumer available but disabled")
+            except Exception as e:
+                logger.warning(f"Elastic ML anomaly consumer init failed: {e}")
+                self.anomaly_consumer = None
+        else:
+            logger.warning("Elastic ML anomaly consumer not available — running without")
+
+        # Signal source #8: Multi-outcome sum-violation scanner
         self.sum_violation_scanner = None
         self.sum_violation_strategy = None
-        if SumViolationScanner is not None and SumViolationStrategy is not None:
+        if self.fast_flow_only:
+            logger.info("Sum-violation lane disabled in fast-flow-only mode")
+        elif SumViolationScanner is not None and SumViolationStrategy is not None:
             try:
                 self.sum_violation_scanner = SumViolationScanner(
                     interval_seconds=SCAN_INTERVAL,
@@ -2424,7 +2566,7 @@ class JJLive:
                         "reports/sum_violations_log.md",
                     ),
                 )
-                logger.info("Signal source #7: Multi-outcome Sum Violation initialized")
+                logger.info("Signal source #8: Multi-outcome Sum Violation initialized")
             except Exception as e:
                 logger.warning(f"Sum-violation strategy init failed: {e}")
                 self.sum_violation_scanner = None
@@ -2434,7 +2576,9 @@ class JJLive:
 
         # Signals 5/6: A-6 + B-1 structural alpha integration.
         self.combinatorial_cfg = (
-            CombinatorialConfig.from_env() if CombinatorialConfig is not None else None
+            CombinatorialConfig.from_env()
+            if (not self.fast_flow_only and CombinatorialConfig is not None)
+            else None
         )
         self.constraint_signal_store = None
         self.a6_shadow_scanner = None
@@ -2451,6 +2595,8 @@ class JJLive:
             "kill_triggers": [],
             "metrics": {},
         }
+        if self.fast_flow_only:
+            logger.info("Combinatorial lanes disabled in fast-flow-only mode")
         if self.combinatorial_cfg is not None and self.combinatorial_cfg.any_enabled():
             if CombinatorialSignalStore is not None:
                 self.constraint_signal_store = CombinatorialSignalStore(
@@ -2534,6 +2680,14 @@ class JJLive:
             MAX_RESOLUTION_HOURS,
             self.paper_mode,
         )
+        logger.info(
+            "  Lane toggles: llm=%s wallet=%s lmsr=%s cross_platform=%s fast_flow_only=%s",
+            self.enable_llm_signals,
+            self.enable_wallet_flow,
+            self.enable_lmsr,
+            self.enable_cross_platform_arb,
+            self.fast_flow_only,
+        )
         logger.info(f"  Max per trade: ${MAX_POSITION_USD}")
         logger.info(f"  Daily loss limit: ${MAX_DAILY_LOSS_USD}")
         logger.info(f"  Kelly fraction: {KELLY_FRACTION} (max {MAX_KELLY_FRACTION})")
@@ -2601,8 +2755,260 @@ class JJLive:
                 self.combinatorial_cfg.fill_timeout_seconds,
                 self.combinatorial_cfg.merge_min_notional_usd,
             )
+        self._startup_lane_health = self._build_startup_lane_health()
+        self._log_lane_health_summary("startup", self._startup_lane_health)
         logger.info(f"  Database: {DB_FILE}")
         logger.info("=" * 60)
+
+    def _llm_lane_enabled(self) -> bool:
+        return bool(self.enable_llm_signals) and not bool(self.fast_flow_only)
+
+    def _combinatorial_lane_enabled(self) -> bool:
+        return not bool(self.fast_flow_only)
+
+    def _has_llm_credentials(self) -> bool:
+        return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY"))
+
+    def _wallet_flow_bootstrap_status(self) -> tuple[bool, str | None]:
+        scores_path = Path(getattr(self, "wallet_flow_scores_file", Path("data/smart_wallets.json")))
+        db_path = Path(getattr(self, "wallet_flow_db_file", Path("data/wallet_scores.db")))
+        if not scores_path.exists() or not db_path.exists():
+            return False, "not_bootstrapped"
+        try:
+            with open(scores_path) as f:
+                payload = json.load(f)
+            wallets = payload.get("wallets", {}) if isinstance(payload, dict) else {}
+            if not isinstance(wallets, dict) or not wallets:
+                return False, "not_bootstrapped"
+        except Exception:
+            return False, "not_bootstrapped"
+        return True, None
+
+    def _cross_platform_key_paths(self) -> list[Path]:
+        configured = os.environ.get("KALSHI_RSA_KEY_PATH", "")
+        candidates = [
+            Path(__file__).resolve().parent / "kalshi" / "kalshi_rsa_private.pem",
+        ]
+        if configured:
+            candidates.append(Path(configured).expanduser())
+        candidates.extend(
+            [
+                Path.home() / "Desktop" / "Elastifund" / "bot" / "kalshi" / "kalshi_rsa_private.pem",
+                Path.home() / "Desktop" / "Elastifund" / "kalshi" / "kalshi_rsa_private.pem",
+            ]
+        )
+        deduped: list[Path] = []
+        seen: set[Path] = set()
+        for path in candidates:
+            resolved = path.expanduser()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            deduped.append(resolved)
+        return deduped
+
+    def _has_cross_platform_credentials(self) -> bool:
+        api_key_id = os.environ.get("KALSHI_API_KEY_ID", "").strip()
+        if not api_key_id:
+            return False
+        return any(path.exists() for path in self._cross_platform_key_paths())
+
+    @staticmethod
+    def _lane_health_payload(
+        status: str,
+        *,
+        reason: str | None = None,
+        signals: int | None = None,
+        detail: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"status": status}
+        if reason:
+            payload["reason"] = reason
+        if signals is not None:
+            payload["signals"] = int(signals)
+        if detail:
+            payload["detail"] = detail
+        return payload
+
+    def _build_startup_lane_health(self) -> dict[str, dict[str, Any]]:
+        health: dict[str, dict[str, Any]] = {}
+
+        if not self._llm_lane_enabled():
+            health["llm"] = self._lane_health_payload("disabled", reason="disabled")
+        elif self.analyzer is None or not self._has_llm_credentials():
+            health["llm"] = self._lane_health_payload("not_ready", reason="no_credentials")
+        else:
+            health["llm"] = self._lane_health_payload("active")
+
+        if not self.enable_wallet_flow:
+            health["wallet_flow"] = self._lane_health_payload("disabled", reason="disabled")
+        elif not getattr(self, "wallet_flow_module_available", False):
+            health["wallet_flow"] = self._lane_health_payload("disabled", reason="unavailable")
+        else:
+            wallet_ready, wallet_reason = self._wallet_flow_bootstrap_status()
+            if wallet_ready:
+                health["wallet_flow"] = self._lane_health_payload("active")
+            else:
+                health["wallet_flow"] = self._lane_health_payload("not_ready", reason=wallet_reason)
+
+        if not self.enable_lmsr:
+            health["lmsr"] = self._lane_health_payload("disabled", reason="disabled")
+        elif not getattr(self, "lmsr_module_available", False) or self.lmsr_engine is None:
+            health["lmsr"] = self._lane_health_payload("disabled", reason="unavailable")
+        else:
+            health["lmsr"] = self._lane_health_payload("active")
+
+        if not self.enable_cross_platform_arb:
+            health["cross_platform_arb"] = self._lane_health_payload("disabled", reason="disabled")
+        elif not getattr(self, "arb_module_available", False):
+            health["cross_platform_arb"] = self._lane_health_payload("disabled", reason="unavailable")
+        elif not self._has_cross_platform_credentials():
+            health["cross_platform_arb"] = self._lane_health_payload("not_ready", reason="no_credentials")
+        else:
+            health["cross_platform_arb"] = self._lane_health_payload("active")
+
+        combinatorial_enabled = bool(
+            self.sum_violation_strategy is not None
+            or (self.combinatorial_cfg is not None and self.combinatorial_cfg.any_enabled())
+        )
+        if not self._combinatorial_lane_enabled() or not combinatorial_enabled:
+            health["combinatorial"] = self._lane_health_payload("disabled", reason="disabled")
+        else:
+            health["combinatorial"] = self._lane_health_payload("active")
+
+        return health
+
+    def _build_cycle_lane_health(
+        self,
+        *,
+        llm_signals: list[dict],
+        wallet_signals: list[dict],
+        lmsr_signals: list[dict],
+        arb_signals: list[dict],
+        combinatorial_signals: list[dict],
+        sum_violation_signals: list[dict],
+        combinatorial_cycle: dict[str, Any],
+    ) -> dict[str, dict[str, Any]]:
+        health = {
+            lane: dict(payload)
+            for lane, payload in self._build_startup_lane_health().items()
+        }
+
+        if health["llm"]["status"] == "active":
+            health["llm"] = self._lane_health_payload(
+                "active" if llm_signals else "idle",
+                reason=None if llm_signals else "no_signals",
+                signals=len(llm_signals),
+            )
+
+        if health["wallet_flow"]["status"] == "active":
+            health["wallet_flow"] = self._lane_health_payload(
+                "active" if wallet_signals else "idle",
+                reason=None if wallet_signals else "no_signals",
+                signals=len(wallet_signals),
+            )
+
+        if health["lmsr"]["status"] == "active":
+            health["lmsr"] = self._lane_health_payload(
+                "active" if lmsr_signals else "idle",
+                reason=None if lmsr_signals else "no_signals",
+                signals=len(lmsr_signals),
+            )
+
+        if health["cross_platform_arb"]["status"] == "active":
+            health["cross_platform_arb"] = self._lane_health_payload(
+                "active" if arb_signals else "idle",
+                reason=None if arb_signals else "no_signals",
+                signals=len(arb_signals),
+            )
+
+        if health["combinatorial"]["status"] == "active":
+            comb_signal_count = len(combinatorial_signals) + len(sum_violation_signals)
+            gate_health = combinatorial_cycle.get("metrics", {}).get("health", {})
+            gate_blocked = bool(combinatorial_cycle.get("blocked", 0))
+            if isinstance(gate_health, dict):
+                gate_blocked = gate_blocked or any(
+                    isinstance(payload, dict) and payload.get("status") == "blocked"
+                    for payload in gate_health.values()
+                )
+            if gate_blocked:
+                health["combinatorial"] = self._lane_health_payload(
+                    "blocked",
+                    reason="blocked_by_gate",
+                    signals=comb_signal_count,
+                )
+            else:
+                health["combinatorial"] = self._lane_health_payload(
+                    "active" if comb_signal_count else "idle",
+                    reason=None if comb_signal_count else "no_signals",
+                    signals=comb_signal_count,
+                )
+
+        return health
+
+    @staticmethod
+    def _format_lane_health_summary(lane_health: dict[str, dict[str, Any]]) -> str:
+        parts = []
+        for lane, payload in lane_health.items():
+            label = f"{lane}={payload.get('status', 'unknown')}"
+            reason = payload.get("reason")
+            if reason:
+                label += f"({reason})"
+            if "signals" in payload:
+                label += f":{payload['signals']}"
+            parts.append(label)
+        return " | ".join(parts)
+
+    def _log_lane_health_summary(
+        self,
+        stage: str,
+        lane_health: dict[str, dict[str, Any]],
+        *,
+        cycle_num: int | None = None,
+    ) -> None:
+        self._last_lane_health = {
+            lane: dict(payload)
+            for lane, payload in lane_health.items()
+        }
+        suffix = f" cycle={cycle_num}" if cycle_num is not None else ""
+        logger.info(
+            "Lane health [%s%s]: %s",
+            stage,
+            suffix,
+            self._format_lane_health_summary(lane_health),
+        )
+
+    @staticmethod
+    def _hydrate_signal_market_context(signal: dict[str, Any], market_lookup: dict[str, dict[str, Any]]) -> None:
+        market_id = str(signal.get("market_id", ""))
+        market = market_lookup.get(market_id)
+        if market is None and market_id:
+            try:
+                market = market_lookup.get(str(int(market_id)))
+            except (TypeError, ValueError):
+                market = None
+        if not isinstance(market, dict):
+            return
+
+        signal.setdefault("question", market.get("question", ""))
+        signal.setdefault("category", market.get("category", "unknown"))
+
+        source = str(signal.get("source", "") or "")
+        if source == "wallet_flow" or signal.get("market_price") in (None, 0, 0.0, 0.5):
+            signal["market_price"] = market.get("yes_price", signal.get("market_price", 0.5))
+
+        if signal.get("resolution_hours") in (None, 0, 0.0):
+            signal["resolution_hours"] = market.get("resolution_hours")
+
+        if (
+            signal.get("velocity_score") in (None, 0, 0.0)
+            and signal.get("edge") is not None
+            and signal.get("resolution_hours") not in (None, 0, 0.0)
+        ):
+            signal["velocity_score"] = velocity_score(
+                _safe_float(signal.get("edge"), 0.0),
+                _safe_float(signal.get("resolution_hours"), 1.0),
+            )
 
     def _init_telegram(self):
         """Initialize Telegram notifier (handles both class versions)."""
@@ -2628,6 +3034,203 @@ class JJLive:
                     logger.warning("Could not init Telegram — notifications disabled")
                     return _DummyNotifier()
 
+    def _safe_elastic_call(self, method_name: str, payload: dict[str, Any]) -> None:
+        try:
+            method = getattr(elastic_client, method_name, None)
+            if callable(method):
+                method(payload)
+        except Exception as exc:
+            logger.warning("Elastic telemetry failed (%s): %s", method_name, exc)
+
+    def _record_signal_evaluation(
+        self,
+        *,
+        signal_source: str,
+        market_id: str,
+        signal_value: float | None,
+        confidence: float | None,
+        acted_on: bool,
+        reason_skipped: str | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        payload = {
+            "signal_source": signal_source,
+            "market_id": str(market_id),
+            "signal_value": signal_value,
+            "confidence": confidence,
+            "acted_on": acted_on,
+        }
+        if reason_skipped:
+            payload["reason_skipped"] = reason_skipped
+        if extra:
+            payload.update(extra)
+        self._safe_elastic_call("index_signal", payload)
+
+    def _record_trade_telemetry(
+        self,
+        trade_record: dict[str, Any],
+        *,
+        fill_status: str,
+        execution_stage: str,
+    ) -> None:
+        payload = dict(trade_record)
+        payload["fill_status"] = fill_status
+        payload["execution_stage"] = execution_stage
+        self._safe_elastic_call("index_trade", payload)
+
+    def _record_kill_telemetry(
+        self,
+        *,
+        kill_rule: str,
+        metric_value: float | None,
+        threshold: float | None,
+        action_taken: str,
+        market_id: str = "",
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        payload = {
+            "kill_rule": kill_rule,
+            "market_id": str(market_id),
+            "metric_value": metric_value,
+            "threshold": threshold,
+            "action_taken": action_taken,
+        }
+        if extra:
+            payload.update(extra)
+        self._safe_elastic_call("index_kill", payload)
+
+    def _build_orderbook_snapshot(self, token_id: str) -> dict[str, Any] | None:
+        if self.trade_stream is None:
+            return None
+
+        book = self.trade_stream.get_book(token_id)
+        micro = self.trade_stream.get_microstructure(token_id)
+        if book is None or micro is None:
+            return None
+
+        best_bid = book.bids[0].price if book.bids else None
+        best_ask = book.asks[0].price if book.asks else None
+        midpoint = book.midpoint
+        spread_bps = None
+        if best_bid is not None and best_ask is not None and midpoint > 0:
+            spread_bps = ((best_ask - best_bid) / midpoint) * 10_000.0
+
+        return {
+            "market_id": self._elastic_token_market_index.get(token_id, token_id),
+            "token_id": token_id,
+            "best_bid": best_bid,
+            "best_ask": best_ask,
+            "spread_bps": spread_bps,
+            "depth_5lvl_bid": sum(level.size for level in book.bids[:5]),
+            "depth_5lvl_ask": sum(level.size for level in book.asks[:5]),
+            "vpin": micro.get("vpin"),
+            "ofi": micro.get("ofi"),
+            "ofi_raw": micro.get("ofi_raw"),
+            "flow_regime": micro.get("regime"),
+            "midpoint": midpoint,
+            "connection_mode": micro.get("connection_mode"),
+        }
+
+    def _emit_orderbook_snapshots(self) -> int:
+        if self.trade_stream is None:
+            return 0
+
+        emitted = 0
+        for token_id in list(getattr(self.trade_stream, "token_ids", [])):
+            snapshot = self._build_orderbook_snapshot(str(token_id))
+            if snapshot is None:
+                continue
+            self._safe_elastic_call("index_orderbook_snapshot", snapshot)
+            emitted += 1
+        return emitted
+
+    async def _orderbook_snapshot_loop(self) -> None:
+        while True:
+            await asyncio.sleep(ELASTIC_ORDERBOOK_SNAPSHOT_INTERVAL_SECONDS)
+            emitted = self._emit_orderbook_snapshots()
+            if emitted:
+                logger.debug("Elastic orderbook snapshots emitted: %d", emitted)
+
+    async def _refresh_elastic_ml_state(self, *, force: bool = False) -> dict[str, Any]:
+        """Poll Elastic ML results when configured and summarize active controls."""
+        if self.anomaly_consumer is None:
+            return {}
+
+        try:
+            records = await self.anomaly_consumer.poll_if_due(force=force)
+            snapshot = self.anomaly_consumer.snapshot()
+            if records:
+                logger.info(
+                    "Elastic ML: processed=%d paused=%d cautioned=%d flagged=%d",
+                    len(records),
+                    len(snapshot.get("paused_markets", [])),
+                    len(snapshot.get("cautioned_markets", [])),
+                    len(snapshot.get("flagged_signal_sources", [])),
+                )
+            if snapshot.get("flagged_signal_sources"):
+                logger.warning(
+                    "Elastic ML review flags active: %s",
+                    ", ".join(snapshot["flagged_signal_sources"]),
+                )
+            return snapshot
+        except Exception as e:
+            logger.warning(f"Elastic ML refresh failed (non-fatal): {e}")
+            return {}
+
+    def _get_elastic_ml_feedback(self, market_id: str) -> dict[str, Any]:
+        """Return best-effort Elastic ML control state for a market."""
+        if self.anomaly_consumer is None:
+            return {
+                "market_id": str(market_id),
+                "size_multiplier": 1.0,
+                "score": 0.0,
+                "jobs": [],
+                "paused": False,
+                "pause_reason": "",
+            }
+
+        try:
+            return self.anomaly_consumer.get_market_feedback(str(market_id))
+        except Exception as e:
+            logger.warning(f"Elastic ML feedback lookup failed (non-fatal): {e}")
+            return {
+                "market_id": str(market_id),
+                "size_multiplier": 1.0,
+                "score": 0.0,
+                "jobs": [],
+                "paused": False,
+                "pause_reason": "",
+            }
+
+    def _apply_elastic_ml_size_modifier(
+        self,
+        signal: dict[str, Any],
+        *,
+        market_id: str,
+        size_usd: float,
+    ) -> float:
+        """Reduce size when Elastic ML has flagged toxic flow for the market."""
+        feedback = self._get_elastic_ml_feedback(market_id)
+        signal["elastic_ml_feedback"] = feedback
+
+        size_multiplier = float(feedback.get("size_multiplier", 1.0) or 1.0)
+        if size_multiplier >= 0.999:
+            return size_usd
+
+        adjusted = round(max(0.0, size_usd) * max(0.0, min(1.0, size_multiplier)), 2)
+        signal["elastic_ml_modifier"] = size_multiplier
+        signal["elastic_ml_score"] = feedback.get("score", 0.0)
+        signal["elastic_ml_jobs"] = feedback.get("jobs", [])
+        logger.warning(
+            "Elastic ML caution: market=%s size=$%.2f->$%.2f score=%.1f jobs=%s",
+            str(market_id)[:16],
+            size_usd,
+            adjusted,
+            float(feedback.get("score", 0.0) or 0.0),
+            ",".join(feedback.get("jobs", [])) or "none",
+        )
+        return adjusted
+
     def _cancel_live_order(self, order_id: str) -> bool:
         """Cancel a live CLOB order, tolerating response shape differences."""
         if not order_id or self.clob is None:
@@ -2643,8 +3246,259 @@ class JJLive:
         except Exception:
             return False
 
+    @track_latency("place_order")
+    async def place_order(
+        self,
+        *,
+        signal: dict[str, Any],
+        market_id: str,
+        token_id: str,
+        side: str,
+        price: float,
+        order_price: float,
+        order_size: float,
+        size_usd: float,
+        category: str,
+        trade_record: dict[str, Any],
+        order_metadata: dict[str, Any],
+    ) -> bool:
+        strategy = str(signal.get("source", "jj_live"))
+        with capture_span(
+            "order_placement",
+            span_type="trading.execution",
+            labels={
+                "market_id": market_id,
+                "strategy": strategy,
+                "paper_mode": self.paper_mode,
+            },
+        ):
+            if self.paper_mode:
+                paper_order_id = f"paper-{uuid.uuid4().hex[:8]}"
+                trade_record["order_id"] = paper_order_id
+
+                trade_id = self.db.log_trade(trade_record)
+                self._record_trade_telemetry(
+                    {
+                        **trade_record,
+                        "trade_id": trade_id,
+                        "order_price": order_price,
+                        "order_size": order_size,
+                    },
+                    fill_status="filled",
+                    execution_stage="paper_trade",
+                )
+
+                if self.fill_tracker is not None:
+                    self.fill_tracker.record_order(
+                        order_id=paper_order_id,
+                        trade_id=trade_id,
+                        market_id=market_id,
+                        token_id=token_id,
+                        question=signal["question"],
+                        category=category,
+                        side=side,
+                        direction=signal["direction"],
+                        price=order_price,
+                        size=order_size,
+                        size_usd=size_usd,
+                        order_type="maker",
+                        paper=True,
+                        metadata=order_metadata,
+                    )
+                    self.fill_tracker.record_fill(
+                        order_id=paper_order_id,
+                        trade_id=trade_id,
+                        market_id=market_id,
+                        token_id=token_id,
+                        fill_price=price,
+                        fill_size=order_size,
+                        fill_size_usd=size_usd,
+                        latency_seconds=0.0,
+                        cumulative_size_matched=order_size,
+                        status="filled",
+                    )
+
+                self.multi_sim.simulate_trade(signal, trade_id)
+                self.state.record_trade(
+                    market_id=market_id,
+                    question=signal["question"],
+                    direction=signal["direction"],
+                    price=price,
+                    size_usd=size_usd,
+                    edge=signal["edge"],
+                    confidence=signal["confidence"],
+                    order_id=paper_order_id,
+                )
+
+                logger.info(
+                    "  PAPER TRADE LOGGED: %s (db: %s)",
+                    paper_order_id,
+                    trade_id,
+                    extra=ecs_extra(
+                        market_id=market_id,
+                        strategy=strategy,
+                        order_id=paper_order_id,
+                        trade_id=trade_id,
+                    ),
+                )
+
+                try:
+                    if self.signal_dedup.should_notify(market_id, signal["direction"]):
+                        conf_tag = " [CONFIRMED]" if signal.get("_confirmation") else ""
+                        await self.notifier.send_message(
+                            f"JJ PAPER TRADE{conf_tag}\n"
+                            f"{signal['direction'].upper()} ${size_usd:.2f}\n"
+                            f"{signal['question'][:60]}\n"
+                            f"Edge: {signal['edge']:.1%} | Price: {price:.3f}\n"
+                            f"Source: {strategy} | Cat: {category}\n"
+                            f"ID: {paper_order_id}"
+                        )
+                    else:
+                        logger.debug(
+                            "Dedup suppressed notification: %s %s",
+                            market_id[:16],
+                            signal["direction"],
+                            extra=ecs_extra(market_id=market_id, strategy=strategy),
+                        )
+                except Exception:
+                    pass
+
+                return True
+
+            use_post_only = True
+            min_order_size = clob_min_order_size(order_price, min_shares=POLY_MIN_ORDER_SHARES)
+            if order_size < min_order_size:
+                logger.info(
+                    "  SKIP (%.2f shares / $%.2f below live min %.2f shares / $%.2f): %s",
+                    order_size,
+                    order_size * order_price,
+                    min_order_size,
+                    _CLOB_HARD_MIN_NOTIONAL_USD,
+                    signal.get("question", "")[:50],
+                    extra=ecs_extra(market_id=market_id, strategy=strategy),
+                )
+                return False
+
+            try:
+                order_args = OrderArgs(
+                    token_id=token_id,
+                    price=order_price,
+                    size=order_size,
+                    side=BUY,
+                )
+                signed_order = self.clob.create_order(order_args)
+                result = self.clob.post_order(
+                    signed_order,
+                    OrderType.GTC,
+                    post_only=use_post_only,
+                )
+
+                order_id = ""
+                if isinstance(result, dict):
+                    order_id = result.get("orderID", result.get("id", ""))
+                    success = not result.get("error")
+                else:
+                    success = bool(result)
+
+                if success and order_id:
+                    logger.info(
+                        "  ORDER PLACED: %s",
+                        order_id,
+                        extra=ecs_extra(
+                            market_id=market_id,
+                            strategy=strategy,
+                            order_id=order_id,
+                            order_size=order_size,
+                            order_price=order_price,
+                        ),
+                    )
+                    self._record_trade_telemetry(
+                        {
+                            **trade_record,
+                            "order_id": order_id,
+                            "order_price": order_price,
+                            "order_size": order_size,
+                        },
+                        fill_status="posted",
+                        execution_stage="live_order_posted",
+                    )
+                    if self.fill_tracker is not None:
+                        self.fill_tracker.record_order(
+                            order_id=order_id,
+                            market_id=market_id,
+                            token_id=token_id,
+                            question=signal["question"],
+                            category=category,
+                            side=side,
+                            direction=signal["direction"],
+                            price=order_price,
+                            size=order_size,
+                            size_usd=size_usd,
+                            order_type="maker",
+                            metadata=order_metadata,
+                        )
+
+                    try:
+                        res_h = signal.get("resolution_hours")
+                        res_str = f"{res_h:.1f}h" if res_h else "?"
+                        vel = signal.get("velocity_score", 0)
+                        conf_tag = " [CONFIRMED]" if signal.get("_confirmation") else ""
+                        fill_line = (
+                            self.fill_tracker.format_fill_rate_line(hours=FILL_REPORT_HOURS)
+                            if self.fill_tracker is not None
+                            else "Fill rate last 24h: n/a"
+                        )
+                        await self.notifier.send_message(
+                            f"JJ LIVE ORDER POSTED{conf_tag}\n"
+                            f"{signal['direction'].upper()} ${size_usd:.2f}\n"
+                            f"{signal['question'][:60]}\n"
+                            f"Edge: {signal['edge']:.1%} | Price: {price:.3f}\n"
+                            f"Resolves: {res_str} | Velocity: {vel:.0f}\n"
+                            f"Source: {strategy} | Cat: {category} | Fee: {signal['taker_fee']:.4f}\n"
+                            f"{fill_line}\n"
+                            f"Order: {order_id[:16]}..."
+                        )
+                    except Exception:
+                        pass
+
+                    return True
+
+                if success:
+                    logger.warning(
+                        "  ORDER ACKNOWLEDGED WITHOUT ID: %s",
+                        result,
+                        extra=ecs_extra(market_id=market_id, strategy=strategy),
+                    )
+                    return False
+
+                err_msg = result.get("error", str(result)) if isinstance(result, dict) else str(result)
+                logger.warning(
+                    "  ORDER FAILED: %s",
+                    err_msg,
+                    extra=ecs_extra(market_id=market_id, strategy=strategy),
+                )
+                return False
+
+            except Exception as e:
+                logger.error(
+                    "  ORDER ERROR: %s",
+                    e,
+                    extra=ecs_extra(market_id=market_id, strategy=strategy),
+                )
+                try:
+                    await self.notifier.send_error(str(e), context="place_order")
+                except Exception:
+                    pass
+                return False
+
+    @track_latency("order_to_fill")
     async def _record_live_fill(self, fill_event: "OrderFillEvent") -> None:
         """Translate a detected maker fill into a trade record and state update."""
+        get_apm_runtime().record_metric(
+            "order_to_fill_ms",
+            float(fill_event.latency_seconds) * 1000.0,
+            labels={"market_id": fill_event.market_id},
+        )
         metadata = fill_event.metadata if isinstance(fill_event.metadata, dict) else {}
         trade_record = dict(metadata.get("trade_record") or {})
         signal_context = dict(metadata.get("signal_context") or {})
@@ -2661,6 +3515,17 @@ class JJLive:
             }
         )
         trade_id = self.db.log_trade(trade_record)
+        self._record_trade_telemetry(
+            {
+                **trade_record,
+                "trade_id": trade_id,
+                "latency_seconds": fill_event.latency_seconds,
+                "fill_price": fill_event.fill_price,
+                "fill_size": fill_event.fill_size,
+            },
+            fill_status="filled",
+            execution_stage="fill_detected",
+        )
         if self.fill_tracker is not None:
             self.fill_tracker.attach_trade_id(fill_event.order_id, trade_id)
 
@@ -2695,6 +3560,12 @@ class JJLive:
             fill_event.fill_size,
             fill_event.fill_price,
             fill_event.latency_seconds,
+            extra=ecs_extra(
+                market_id=fill_event.market_id,
+                strategy="fill_detection",
+                order_id=fill_event.order_id,
+                latency_seconds=fill_event.latency_seconds,
+            ),
         )
         try:
             fill_line = (
@@ -2964,6 +3835,11 @@ class JJLive:
                     order_id = f"paper-sumv-{uuid.uuid4().hex[:8]}"
                     trade_record["order_id"] = order_id
                     trade_id = self.db.log_trade(trade_record)
+                    self._record_trade_telemetry(
+                        {**trade_record, "trade_id": trade_id, "order_size": shares},
+                        fill_status="filled",
+                        execution_stage="paper_sum_violation",
+                    )
                     self.multi_sim.simulate_trade(leg_signal, trade_id)
                     self.state.record_trade(
                         market_id=market_id,
@@ -3023,6 +3899,11 @@ class JJLive:
 
                     trade_record["order_id"] = order_id
                     trade_id = self.db.log_trade(trade_record)
+                    self._record_trade_telemetry(
+                        {**trade_record, "trade_id": trade_id, "order_size": shares},
+                        fill_status="posted",
+                        execution_stage="live_sum_violation",
+                    )
                     self.multi_sim.simulate_trade(leg_signal, trade_id)
                     self.state.record_trade(
                         market_id=market_id,
@@ -3083,7 +3964,7 @@ class JJLive:
         # Position tracking: fills already recorded by executor's internal
         # NegRiskInventory.  Log to constraint_arb.db for historical analysis.
         try:
-            self.db.log_trade({
+            trade_record = {
                 "market_id": basket.event_id,
                 "question": f"A-6 basket {basket.basket_id[:16]}",
                 "direction": "buy_yes_basket",
@@ -3093,7 +3974,13 @@ class JJLive:
                 "confidence": 1.0,
                 "order_id": basket.basket_id,
                 "source": "a6",
-            })
+            }
+            trade_id = self.db.log_trade(trade_record)
+            self._record_trade_telemetry(
+                {**trade_record, "trade_id": trade_id},
+                fill_status="filled",
+                execution_stage="a6_basket_complete",
+            )
         except Exception as e:
             logger.debug("A-6 trade log failed: %s", e)
 
@@ -3349,6 +4236,21 @@ class JJLive:
     def _on_regime_change(self, token_id: str, prev_regime, new_regime):
         """Callback when VPIN regime changes for a market."""
         logger.info(f"VPIN regime change: {token_id[:12]}... {prev_regime.value} → {new_regime.value}")
+        vpin_value = None
+        if self.trade_stream is not None:
+            try:
+                vpin_value = self.trade_stream.vpin.get_vpin(token_id)
+            except Exception:
+                vpin_value = None
+        self._record_signal_evaluation(
+            signal_source="vpin",
+            market_id=self._elastic_token_market_index.get(token_id, token_id),
+            signal_value=vpin_value,
+            confidence=max(0.0, min(1.0, 1.0 - abs((vpin_value or 0.5) - 0.5) * 2.0)),
+            acted_on=new_regime.value != "toxic",
+            reason_skipped="toxic_flow" if new_regime.value == "toxic" else None,
+            extra={"token_id": token_id, "previous_regime": prev_regime.value, "new_regime": new_regime.value},
+        )
         if new_regime.value == "toxic":
             logger.warning(f"TOXIC FLOW detected on {token_id[:12]}... — should pull maker quotes")
             # In live mode, cancel resting orders on this token
@@ -3358,6 +4260,30 @@ class JJLive:
                     logger.info("Cancelled all resting orders due to toxic flow")
                 except Exception as e:
                     logger.error(f"Failed to cancel orders on toxic flow: {e}")
+
+    def _on_ofi_update(self, token_id: str, ofi_snapshot) -> None:
+        self._record_signal_evaluation(
+            signal_source="ofi",
+            market_id=self._elastic_token_market_index.get(token_id, token_id),
+            signal_value=_safe_float(getattr(ofi_snapshot, "normalized_ofi", None), None),
+            confidence=max(
+                0.0,
+                min(
+                    1.0,
+                    abs(_safe_float(getattr(ofi_snapshot, "normalized_ofi", 0.0), 0.0))
+                    / max(getattr(self.trade_stream.ofi, "RATIO_THRESHOLD", 1.0), 1e-9),
+                ),
+            )
+            if self.trade_stream is not None
+            else 0.0,
+            acted_on=True,
+            extra={
+                "token_id": token_id,
+                "raw_ofi": _safe_float(getattr(ofi_snapshot, "raw_ofi", None), None),
+                "levels_used": getattr(ofi_snapshot, "levels_used", None),
+                "directional_skew": _safe_float(getattr(ofi_snapshot, "directional_skew", None), None),
+            },
+        )
 
     def _on_ofi_alert(self, token_id: str, ofi_snapshot):
         """Callback when OFI kill switch triggers."""
@@ -3404,6 +4330,7 @@ class JJLive:
             "vpin": _safe_float(worst_vpin.get("vpin"), 0.5),
             "regime": worst_vpin.get("regime", "neutral"),
             "ofi": strongest_ofi.get("ofi"),
+            "ofi_raw": strongest_ofi.get("ofi_raw"),
             "ofi_skew": strongest_ofi.get("ofi_skew"),
             "connection_mode": strongest_ofi.get("connection_mode", status.get("connection_mode", "unknown")),
             "fallback_active": bool(
@@ -3448,6 +4375,32 @@ class JJLive:
             micro["connection_mode"],
             micro["latency_p99_ms"],
             signal.get("question", "")[:60],
+        )
+        self._record_signal_evaluation(
+            signal_source="ofi",
+            market_id=str(signal.get("market_id", "")),
+            signal_value=_safe_float(micro.get("ofi"), None),
+            confidence=max(
+                0.0,
+                min(
+                    1.0,
+                    abs(_safe_float(micro.get("ofi"), 0.0))
+                    / max(
+                        getattr(getattr(self.trade_stream, "ofi", None), "RATIO_THRESHOLD", 1.0),
+                        1e-9,
+                    ),
+                ),
+            )
+            if self.trade_stream is not None
+            else 0.0,
+            acted_on=True,
+            extra={
+                "question": signal.get("question", ""),
+                "token_ids": micro.get("tokens", []),
+                "raw_ofi": micro.get("ofi_raw"),
+                "directional_skew": micro.get("ofi_skew"),
+                "vpin_estimate": micro.get("vpin"),
+            },
         )
         return signal
 
@@ -3519,6 +4472,7 @@ class JJLive:
 
         return client
 
+    @apm_transaction("signal_evaluation_cycle", transaction_type="trading")
     async def run_cycle(self) -> dict:
         """Run one scan → analyze → trade cycle.
 
@@ -3527,7 +4481,17 @@ class JJLive:
         """
         cycle_start = time.time()
         cycle_num = self.state.state["cycles_completed"] + 1
-        logger.info(f"=== JJ Cycle {cycle_num} starting ===")
+        get_apm_runtime().set_labels(
+            {
+                "cycle": cycle_num,
+                "paper_mode": self.paper_mode,
+            }
+        )
+        logger.info(
+            "=== JJ Cycle %s starting ===",
+            cycle_num,
+            extra=ecs_extra(strategy="jj_live", cycle=cycle_num, paper_mode=self.paper_mode),
+        )
 
         # Sync resolved positions: remove closed trades from state to free
         # position slots.  Without this, open_positions grows forever and
@@ -3555,6 +4519,12 @@ class JJLive:
         # Safety check: daily loss limit
         if not self.state.check_daily_loss_limit():
             logger.warning(f"DAILY LOSS LIMIT HIT: ${self.state.state['daily_pnl']:.2f}")
+            self._record_kill_telemetry(
+                kill_rule="daily_loss",
+                metric_value=_safe_float(self.state.state.get("daily_pnl"), 0.0),
+                threshold=-abs(MAX_DAILY_LOSS_USD),
+                action_taken="pause_trading",
+            )
             await self.notifier.send_message(
                 f"⛔ JJ DAILY LOSS LIMIT — P&L: ${self.state.state['daily_pnl']:.2f}\n"
                 f"Pausing until tomorrow."
@@ -3578,28 +4548,38 @@ class JJLive:
         except Exception as e:
             logger.warning(f"Adaptive Platt refresh failed (non-fatal): {e}")
 
+        elastic_ml_snapshot = await self._refresh_elastic_ml_state(
+            force=self._anomaly_task is None
+        )
+
         fill_reconciliation = None
         if not self.paper_mode and self.fill_tracker is not None and self.clob is not None:
             try:
-                fill_reconciliation = self.fill_tracker.reconcile_open_orders(
-                    fetch_order=self.clob.get_order,
-                    cancel_order=self._cancel_live_order,
-                    max_order_age_hours=MAX_ORDER_AGE_HOURS,
-                )
-                if (
-                    fill_reconciliation.fills_detected > 0
-                    or fill_reconciliation.stale_cancelled > 0
-                ):
-                    logger.info(
-                        "Live order reconciliation: checked=%d fills=%d stale_cancelled=%d",
-                        fill_reconciliation.orders_checked,
-                        fill_reconciliation.fills_detected,
-                        fill_reconciliation.stale_cancelled,
+                with capture_span("fill_detection", span_type="trading.fill"):
+                    fill_reconciliation = self.fill_tracker.reconcile_open_orders(
+                        fetch_order=self.clob.get_order,
+                        cancel_order=self._cancel_live_order,
+                        max_order_age_hours=MAX_ORDER_AGE_HOURS,
                     )
-                for fill_event in fill_reconciliation.fill_events:
-                    await self._record_live_fill(fill_event)
-                for stale_order_id in fill_reconciliation.stale_order_ids:
-                    logger.info("STALE ORDER CANCELLED: %s", stale_order_id[:16])
+                    if (
+                        fill_reconciliation.fills_detected > 0
+                        or fill_reconciliation.stale_cancelled > 0
+                    ):
+                        logger.info(
+                            "Live order reconciliation: checked=%d fills=%d stale_cancelled=%d",
+                            fill_reconciliation.orders_checked,
+                            fill_reconciliation.fills_detected,
+                            fill_reconciliation.stale_cancelled,
+                            extra=ecs_extra(strategy="fill_detection"),
+                        )
+                    for fill_event in fill_reconciliation.fill_events:
+                        await self._record_live_fill(fill_event)
+                    for stale_order_id in fill_reconciliation.stale_order_ids:
+                        logger.info(
+                            "STALE ORDER CANCELLED: %s",
+                            stale_order_id[:16],
+                            extra=ecs_extra(strategy="fill_detection", order_id=stale_order_id),
+                        )
             except Exception as e:
                 logger.warning(f"Fill reconciliation failed (non-fatal): {e}")
 
@@ -3656,7 +4636,8 @@ class JJLive:
 
         # 1. SCAN
         try:
-            result = self.scanner.fetch_active_markets(limit=100)
+            with capture_span("market_scan", span_type="signal.scan"):
+                result = self.scanner.fetch_active_markets(limit=100)
             # Handle both sync and async scanners
             if asyncio.iscoroutine(result):
                 markets = await result
@@ -3667,8 +4648,10 @@ class JJLive:
             logger.error(f"Scanner failed: {e}")
             return {"status": "error", "reason": f"scanner: {e}"}
 
-        # Filter actionable (price between 10-90%)
+        # Build a broad execution universe for all lanes, then derive the
+        # narrower LLM-eligible subset from it.
         actionable = []
+        llm_actionable = []
         market_lookup = {}  # market_id -> market data
 
         skipped_category = 0
@@ -3686,7 +4669,7 @@ class JJLive:
 
                 question = m.get("question", "")
                 raw_resolution_hours = estimate_resolution_hours(m) if MAX_RESOLUTION_HOURS > 0 else None
-                allowed, filter_reason, category, res_hours = apply_llm_market_filters(
+                allowed, filter_reason, category, llm_resolution_hours = apply_llm_market_filters(
                     question,
                     resolution_hours=raw_resolution_hours,
                 )
@@ -3695,11 +4678,8 @@ class JJLive:
                         skipped_category += 1
                     elif filter_reason == "velocity":
                         skipped_too_slow += 1
-                    continue
-                if res_hours is not None:
-                    # Store for later use in velocity scoring and execution-time
-                    # revalidation so no later path can bypass the filter.
-                    m["_resolution_hours"] = res_hours
+                    elif filter_reason == "resolution":
+                        skipped_no_resolution += 1
 
                 # Extract YES price — handle multiple formats
                 yes_price = None
@@ -3749,12 +4729,16 @@ class JJLive:
                     token_ids = normalize_token_ids(raw_tokens)
 
                 # Extract market ID
-                market_id = m.get("id", m.get("condition_id", m.get("market_id", "")))
+                market_id = str(m.get("id", m.get("condition_id", m.get("market_id", ""))))
 
                 if not market_id or not token_ids:
                     continue
 
-                res_hours = m.get("_resolution_hours")
+                m["_resolution_hours"] = (
+                    llm_resolution_hours
+                    if allowed and llm_resolution_hours is not None
+                    else raw_resolution_hours
+                )
                 actionable.append(m)
                 market_lookup[market_id] = {
                     "question": m.get("question", ""),
@@ -3764,8 +4748,11 @@ class JJLive:
                     "liquidity": float(m.get("liquidity", 0) or 0),
                     "tags": m.get("tags", []) or [],
                     "category": category,
-                    "resolution_hours": res_hours,
+                    "resolution_hours": m.get("_resolution_hours"),
+                    "llm_allowed": allowed,
                 }
+                if allowed:
+                    llm_actionable.append(m)
             except Exception as e:
                 logger.debug(f"Skip market: {e}")
                 continue
@@ -3779,12 +4766,27 @@ class JJLive:
                 f"Velocity filter: skipped {skipped_too_slow} too slow "
                 f"(>{MAX_RESOLUTION_HOURS}h) + {skipped_no_resolution} unknown resolution"
             )
-        logger.info(f"Found {len(actionable)} actionable markets (resolve within {MAX_RESOLUTION_HOURS}h)")
+        logger.info(
+            "Found %d executable markets; %d pass LLM gates (max_res=%sh)",
+            len(actionable),
+            len(llm_actionable),
+            MAX_RESOLUTION_HOURS,
+        )
+        self._elastic_market_lookup = {
+            str(market_id): dict(metadata)
+            for market_id, metadata in market_lookup.items()
+            if isinstance(metadata, dict)
+        }
+        self._elastic_token_market_index = {}
+        for market_id, metadata in self._elastic_market_lookup.items():
+            for token_id in metadata.get("token_ids", []):
+                if token_id:
+                    self._elastic_token_market_index[str(token_id)] = str(market_id)
 
         # Register actionable market tokens with the trade stream
         if self.trade_stream:
             for m in actionable:
-                mid = m.get("id", m.get("condition_id", ""))
+                mid = str(m.get("id", m.get("condition_id", "")))
                 mdata = market_lookup.get(mid, {})
                 for tid in mdata.get("token_ids", []):
                     self.trade_stream.add_token(tid)
@@ -3813,10 +4815,19 @@ class JJLive:
             + self.state.count_active_linked_baskets()
             + pending_order_count
         )
-        for m in actionable[:20]:
-            market_id = m.get("id", m.get("condition_id", ""))
+        for m in llm_actionable[:20]:
+            market_id = str(m.get("id", m.get("condition_id", "")))
 
             if self.state.has_position(market_id) or str(market_id) in pending_market_ids:
+                continue
+
+            feedback = self._get_elastic_ml_feedback(str(market_id))
+            if feedback.get("paused"):
+                logger.info(
+                    "Elastic ML pause: skipping analysis for market=%s reason=%s",
+                    str(market_id)[:16],
+                    feedback.get("pause_reason", ""),
+                )
                 continue
 
             if active_position_slots + len(markets_for_analysis) >= MAX_OPEN_POSITIONS:
@@ -3828,7 +4839,7 @@ class JJLive:
                 logger.info("Exposure limit reached")
                 break
 
-            mdata_lookup = market_lookup.get(market_id, {})
+            mdata_lookup = market_lookup.get(str(market_id), {})
             markets_for_analysis.append({
                 "market_id": str(market_id),
                 "question": m.get("question", ""),
@@ -3836,7 +4847,10 @@ class JJLive:
                 "category": mdata_lookup.get("category", "unknown"),
             })
 
-        if markets_for_analysis:
+        if self._llm_lane_enabled() and self.analyzer is None:
+            logger.warning("LLM lane skipped for cycle — credentials or analyzer unavailable")
+
+        if self._llm_lane_enabled() and self.analyzer is not None and markets_for_analysis:
             analyzer_label = "ensemble" if self.ensemble_mode else "Claude"
             logger.info(f"Sending {len(markets_for_analysis)} markets to {analyzer_label} for analysis...")
 
@@ -4015,21 +5029,8 @@ class JJLive:
                 if isinstance(is_mispriced, str):
                     is_mispriced = is_mispriced.lower() in ("true", "yes", "1")
 
-                # Map direction from various VPS formats
-                direction = map_vps_signal_direction(r, market_price)
-
-                if direction == "hold" or not is_mispriced:
-                    continue
-
-                edge = abs(_safe_float(r.get("edge", 0.0), 0.0))
-                if edge < MIN_EDGE:
-                    continue
-
                 # Convert confidence string to float
                 confidence = normalize_confidence(r.get("confidence", 0.5))
-
-                # Get resolution hours for velocity scoring
-                vel_score = velocity_score(edge, res_hours) if res_hours else 0.0
 
                 # Ensemble metadata (if available)
                 n_models = int(_safe_float(r.get("n_models", 1), 1))
@@ -4065,6 +5066,71 @@ class JJLive:
                 individual_model_estimates = r.get("individual_model_estimates", {})
                 if not isinstance(individual_model_estimates, dict):
                     individual_model_estimates = {}
+                counter_probability = _safe_float(r.get("counter_probability"), None)
+                counter_shift = _safe_float(r.get("counter_shift"), None)
+                debate_available = counter_probability is not None or counter_shift is not None
+
+                def emit_llm_family_events(*, acted_on: bool, reason_skipped: str | None = None) -> None:
+                    self._record_signal_evaluation(
+                        signal_source="llm",
+                        market_id=mid,
+                        signal_value=calibrated_prob,
+                        confidence=confidence,
+                        acted_on=acted_on,
+                        reason_skipped=reason_skipped,
+                        extra={
+                            "question": question,
+                            "market_price": market_price,
+                            "raw_probability": raw_prob,
+                            "calibrated_probability": calibrated_prob,
+                            "direction": direction,
+                        },
+                    )
+                    self._record_signal_evaluation(
+                        signal_source="ensemble",
+                        market_id=mid,
+                        signal_value=calibrated_prob if n_models > 1 else raw_prob,
+                        confidence=agreement if n_models > 1 else confidence,
+                        acted_on=acted_on and n_models > 1,
+                        reason_skipped=reason_skipped if n_models > 1 else "single_model_only",
+                        extra={
+                            "question": question,
+                            "market_price": market_price,
+                            "model_count": n_models,
+                            "model_spread": model_spread,
+                            "model_stddev": model_stddev,
+                            "agreement": agreement,
+                        },
+                    )
+                    self._record_signal_evaluation(
+                        signal_source="debate",
+                        market_id=mid,
+                        signal_value=counter_shift if counter_shift is not None else counter_probability,
+                        confidence=agreement if debate_available else 0.0,
+                        acted_on=acted_on and debate_available,
+                        reason_skipped=reason_skipped if debate_available else "debate_data_unavailable",
+                        extra={
+                            "question": question,
+                            "market_price": market_price,
+                            "counter_probability": counter_probability,
+                            "counter_shift": counter_shift,
+                        },
+                    )
+
+                # Map direction from various VPS formats
+                direction = map_vps_signal_direction(r, market_price)
+
+                if direction == "hold" or not is_mispriced:
+                    emit_llm_family_events(acted_on=False, reason_skipped="not_mispriced")
+                    continue
+
+                edge = abs(_safe_float(r.get("edge", 0.0), 0.0))
+                if edge < MIN_EDGE:
+                    emit_llm_family_events(acted_on=False, reason_skipped="edge_below_minimum")
+                    continue
+
+                # Get resolution hours for velocity scoring
+                vel_score = velocity_score(edge, res_hours) if res_hours else 0.0
 
                 if n_models > 1:
                     logger.info(
@@ -4138,6 +5204,7 @@ class JJLive:
                     "platt_b": self.adaptive_platt.active_b,
                 }
                 self._attach_microstructure_context(signal_payload, market_lookup)
+                emit_llm_family_events(acted_on=True)
                 signals.append(signal_payload)
 
         # Tag LLM signals with source
@@ -4148,15 +5215,20 @@ class JJLive:
         # --- SIGNAL SOURCE #2: Smart Wallet Flow Detector ---
         wallet_signals = []
         if self.wallet_flow_available:
-            try:
-                wallet_signals = wallet_flow_get_signals()
-                if wallet_signals:
-                    logger.info(f"Wallet flow: {len(wallet_signals)} signals")
+            wallet_ready, wallet_reason = self._wallet_flow_bootstrap_status()
+            if not wallet_ready:
+                logger.info("Wallet flow skipped — %s", wallet_reason)
+            else:
+                try:
+                    wallet_signals = wallet_flow_get_signals()
+                    if wallet_signals:
+                        logger.info(f"Wallet flow: {len(wallet_signals)} signals")
                     for ws in wallet_signals:
                         ws["source"] = "wallet_flow"
+                        self._hydrate_signal_market_context(ws, market_lookup)
                         attach_signal_source_metadata(ws)
-            except Exception as e:
-                logger.warning(f"Wallet flow scan failed (non-fatal): {e}")
+                except Exception as e:
+                    logger.warning(f"Wallet flow scan failed (non-fatal): {e}")
 
         # --- SIGNAL SOURCE #3: LMSR Bayesian Engine ---
         lmsr_signals = []
@@ -4165,23 +5237,28 @@ class JJLive:
                 lmsr_signals = self.lmsr_engine.get_signals(actionable)
                 if lmsr_signals:
                     logger.info(f"LMSR engine: {len(lmsr_signals)} signals")
-                    for ls in lmsr_signals:
-                        attach_signal_source_metadata(ls)
+                for ls in lmsr_signals:
+                    self._hydrate_signal_market_context(ls, market_lookup)
+                    attach_signal_source_metadata(ls)
             except Exception as e:
                 logger.warning(f"LMSR scan failed (non-fatal): {e}")
 
         # --- SIGNAL SOURCE #4: Cross-Platform Arbitrage ---
         arb_signals = []
         if self.arb_available:
-            try:
-                arb_signals = arb_get_signals()
-                if arb_signals:
-                    logger.info(f"Cross-platform arb: {len(arb_signals)} signals")
+            if not self._has_cross_platform_credentials():
+                logger.info("Cross-platform arb skipped — no_credentials")
+            else:
+                try:
+                    arb_signals = arb_get_signals()
+                    if arb_signals:
+                        logger.info(f"Cross-platform arb: {len(arb_signals)} signals")
                     for asig in arb_signals:
                         asig["source"] = "cross_platform_arb"
+                        self._hydrate_signal_market_context(asig, market_lookup)
                         attach_signal_source_metadata(asig)
-            except Exception as e:
-                logger.warning(f"Cross-platform arb scan failed (non-fatal): {e}")
+                except Exception as e:
+                    logger.warning(f"Cross-platform arb scan failed (non-fatal): {e}")
 
         # --- SIGNAL SOURCE #5: Lead-Lag Arbitrage Engine ---
         lead_lag_signals = []
@@ -4190,7 +5267,7 @@ class JJLive:
                 # Feed current prices to the lead-lag engine
                 now = time.time()
                 for m in actionable:
-                    mid = m.get("id", m.get("condition_id", ""))
+                    mid = str(m.get("id", m.get("condition_id", "")))
                     mdata = market_lookup.get(mid, {})
                     price = mdata.get("yes_price", 0.5)
                     question = mdata.get("question", "")
@@ -4211,7 +5288,7 @@ class JJLive:
                     edge = min(edge, 0.15)  # Cap at 15%
 
                     if edge >= MIN_EDGE:
-                        lead_lag_signals.append({
+                        lead_lag_signal = {
                             "market_id": ll.follower_id,
                             "question": follower_data.get("question", ""),
                             "direction": direction,
@@ -4225,16 +5302,41 @@ class JJLive:
                             "resolution_hours": follower_data.get("resolution_hours"),
                             "velocity_score": velocity_score(edge, follower_data.get("resolution_hours")),
                             "source": "lead_lag",
-                        })
+                        }
+                        self._record_signal_evaluation(
+                            signal_source="leadlag",
+                            market_id=ll.follower_id,
+                            signal_value=ll.expected_follower_move,
+                            confidence=ll.confidence,
+                            acted_on=True,
+                            extra={
+                                "leader_id": ll.leader_id,
+                                "question": follower_data.get("question", ""),
+                                "pair_score": ll.pair_score,
+                                "leader_price_change": ll.leader_price_change,
+                            },
+                        )
+                        lead_lag_signals.append(lead_lag_signal)
+                    else:
+                        self._record_signal_evaluation(
+                            signal_source="leadlag",
+                            market_id=ll.follower_id,
+                            signal_value=ll.expected_follower_move,
+                            confidence=ll.confidence,
+                            acted_on=False,
+                            reason_skipped="edge_below_minimum",
+                            extra={"leader_id": ll.leader_id, "pair_score": ll.pair_score},
+                        )
 
                 if lead_lag_signals:
                     logger.info(f"Lead-lag engine: {len(lead_lag_signals)} signals")
                     for lsig in lead_lag_signals:
+                        self._hydrate_signal_market_context(lsig, market_lookup)
                         attach_signal_source_metadata(lsig)
             except Exception as e:
                 logger.warning(f"Lead-lag scan failed (non-fatal): {e}")
 
-        # --- SIGNAL SOURCE #7: Multi-Outcome Sum Violations ---
+        # --- SIGNAL SOURCE #8: Multi-Outcome Sum Violations ---
         sum_violation_signals = []
         if self.sum_violation_strategy is not None:
             try:
@@ -4259,6 +5361,8 @@ class JJLive:
                             _safe_float(ssig.get("details", {}).get("violation_amount"), 0.0),
                             _safe_float(ssig.get("edge"), 0.0),
                         )
+                for ssig in sum_violation_signals:
+                    self._hydrate_signal_market_context(ssig, market_lookup)
             except Exception as e:
                 logger.warning(f"Sum-violation scan failed (non-fatal): {e}")
 
@@ -4272,15 +5376,33 @@ class JJLive:
                 mdata = market_lookup.get(mid, {})
                 token_ids = mdata.get("token_ids", [])
                 is_toxic = False
+                max_vpin = 0.0
+                dominant_token_id = token_ids[0] if token_ids else ""
                 for tid in token_ids:
+                    current_vpin = self.trade_stream.vpin.get_vpin(tid)
+                    if current_vpin >= max_vpin:
+                        max_vpin = current_vpin
+                        dominant_token_id = tid
                     if not self.trade_stream.should_quote(tid):
                         is_toxic = True
-                        vpin_val = self.trade_stream.vpin.get_vpin(tid)
                         logger.info(
                             f"VPIN GATE: blocking {s['question'][:40]}... "
-                            f"(VPIN={vpin_val:.3f}, toxic)"
+                            f"(VPIN={current_vpin:.3f}, toxic)"
                         )
                         break
+                self._record_signal_evaluation(
+                    signal_source="vpin",
+                    market_id=str(mid),
+                    signal_value=max_vpin if token_ids else None,
+                    confidence=max(0.0, min(1.0, 1.0 - abs(max_vpin - 0.5) * 2.0)) if token_ids else 0.0,
+                    acted_on=not is_toxic,
+                    reason_skipped="toxic_flow" if is_toxic else None,
+                    extra={
+                        "question": s.get("question", ""),
+                        "token_id": dominant_token_id,
+                        "token_ids": token_ids,
+                    },
+                )
                 if not is_toxic:
                     filtered_signals.append(s)
 
@@ -4390,6 +5512,22 @@ class JJLive:
             f"A6:{combinatorial_cycle['a6_detected']} B1:{combinatorial_cycle['b1_detected']} "
             f"sumv:{len(sum_violation_signals)})"
         )
+        llm_cycle_signals = [s for s in signals if "llm" in str(s.get("source", "")).split("+")]
+        wallet_cycle_signals = [s for s in signals if "wallet_flow" in str(s.get("source", "")).split("+")]
+        lmsr_cycle_signals = [s for s in signals if "lmsr" in str(s.get("source", "")).split("+")]
+        arb_cycle_signals = [
+            s for s in signals if "cross_platform_arb" in str(s.get("source", "")).split("+")
+        ]
+        lane_health = self._build_cycle_lane_health(
+            llm_signals=llm_cycle_signals,
+            wallet_signals=wallet_cycle_signals,
+            lmsr_signals=lmsr_cycle_signals,
+            arb_signals=arb_cycle_signals,
+            combinatorial_signals=combinatorial_bypass_signals,
+            sum_violation_signals=sum_violation_signals,
+            combinatorial_cycle=combinatorial_cycle,
+        )
+        self._log_lane_health_summary("cycle", lane_health, cycle_num=cycle_num)
 
         # 3. EXECUTE TRADES
         trades_placed = 0
@@ -4413,6 +5551,17 @@ class JJLive:
             mdata = market_lookup.get(market_id)
 
             if not mdata:
+                continue
+
+            feedback = self._get_elastic_ml_feedback(str(market_id))
+            signal["elastic_ml_feedback"] = feedback
+            if feedback.get("paused"):
+                logger.warning(
+                    "Elastic ML pause: skipping order placement market=%s reason=%s | %s",
+                    str(market_id)[:16],
+                    feedback.get("pause_reason", ""),
+                    signal.get("question", "")[:60],
+                )
                 continue
 
             if "llm" in str(signal.get("source", "")).split("+"):
@@ -4453,6 +5602,12 @@ class JJLive:
                     disagreement_modifier,
                     size_usd,
                 )
+
+            size_usd = self._apply_elastic_ml_size_modifier(
+                signal,
+                market_id=str(market_id),
+                size_usd=size_usd,
+            )
 
             if (
                 size_usd <= 0
@@ -4546,175 +5701,20 @@ class JJLive:
                 },
             }
 
-            if self.paper_mode:
-                # ---- PAPER TRADING: simulate locally ----
-                paper_order_id = f"paper-{uuid.uuid4().hex[:8]}"
-                trade_record["order_id"] = paper_order_id
-
-                # Log to SQLite
-                trade_id = self.db.log_trade(trade_record)
-
-                if self.fill_tracker is not None:
-                    self.fill_tracker.record_order(
-                        order_id=paper_order_id,
-                        trade_id=trade_id,
-                        market_id=market_id,
-                        token_id=token_id,
-                        question=signal["question"],
-                        category=category,
-                        side=side,
-                        direction=signal["direction"],
-                        price=order_price,
-                        size=order_size,
-                        size_usd=size_usd,
-                        order_type="maker",
-                        paper=True,
-                        metadata=order_metadata,
-                    )
-                    self.fill_tracker.record_fill(
-                        order_id=paper_order_id,
-                        trade_id=trade_id,
-                        market_id=market_id,
-                        token_id=token_id,
-                        fill_price=price,
-                        fill_size=shares,
-                        fill_size_usd=size_usd,
-                        latency_seconds=0.0,
-                        cumulative_size_matched=shares,
-                        status="filled",
-                    )
-
-                # Multi-bankroll simulation
-                self.multi_sim.simulate_trade(signal, trade_id)
-
-                # Record in state tracker
-                self.state.record_trade(
-                    market_id=market_id,
-                    question=signal["question"],
-                    direction=signal["direction"],
-                    price=price,
-                    size_usd=size_usd,
-                    edge=signal["edge"],
-                    confidence=signal["confidence"],
-                    order_id=paper_order_id,
-                )
-
-                logger.info(f"  PAPER TRADE LOGGED: {paper_order_id} (db: {trade_id})")
-
-                try:
-                    if self.signal_dedup.should_notify(market_id, signal['direction']):
-                        src = signal.get('source', 'llm')
-                        conf_tag = " [CONFIRMED]" if signal.get('_confirmation') else ""
-                        await self.notifier.send_message(
-                            f"JJ PAPER TRADE{conf_tag}\n"
-                            f"{signal['direction'].upper()} ${size_usd:.2f}\n"
-                            f"{signal['question'][:60]}\n"
-                            f"Edge: {signal['edge']:.1%} | Price: {price:.3f}\n"
-                            f"Source: {src} | Cat: {category}\n"
-                            f"ID: {paper_order_id}"
-                        )
-                    else:
-                        logger.debug("Dedup suppressed notification: %s %s", market_id[:16], signal['direction'])
-                except Exception:
-                    pass
-
+            if await self.place_order(
+                signal=signal,
+                market_id=market_id,
+                token_id=token_id,
+                side=side,
+                price=price,
+                order_price=order_price,
+                order_size=order_size,
+                size_usd=size_usd,
+                category=category,
+                trade_record=trade_record,
+                order_metadata=order_metadata,
+            ):
                 trades_placed += 1
-
-            else:
-                # ---- LIVE TRADING: post to CLOB ----
-                # DISPATCH #75 FIX: ALL orders must be post-only (maker).
-                # At $347 capital, taker fees (up to 1.56% at the money)
-                # are mathematically fatal. Maker orders = 0% fee + rebate.
-                # Previously only crypto/sports were post-only. Now universal.
-                use_post_only = True
-
-                min_order_size = clob_min_order_size(order_price, min_shares=POLY_MIN_ORDER_SHARES)
-                if order_size < min_order_size:
-                    logger.info(
-                        "  SKIP (%.2f shares / $%.2f below live min %.2f shares / $%.2f): %s",
-                        order_size,
-                        order_size * order_price,
-                        min_order_size,
-                        _CLOB_HARD_MIN_NOTIONAL_USD,
-                        signal.get("question", "")[:50],
-                    )
-                    continue
-
-                try:
-                    order_args = OrderArgs(
-                        token_id=token_id,
-                        price=order_price,
-                        size=order_size,
-                        side=BUY,
-                    )
-                    signed_order = self.clob.create_order(order_args)
-                    result = self.clob.post_order(
-                        signed_order, OrderType.GTC,
-                        post_only=use_post_only,
-                    )
-
-                    order_id = ""
-                    if isinstance(result, dict):
-                        order_id = result.get("orderID", result.get("id", ""))
-                        success = not result.get("error")
-                    else:
-                        success = bool(result)
-
-                    if success and order_id:
-                        logger.info(f"  ORDER PLACED: {order_id}")
-                        if self.fill_tracker is not None:
-                            self.fill_tracker.record_order(
-                                order_id=order_id,
-                                market_id=market_id,
-                                token_id=token_id,
-                                question=signal["question"],
-                                category=category,
-                                side=side,
-                                direction=signal["direction"],
-                                price=order_price,
-                                size=order_size,
-                                size_usd=size_usd,
-                                order_type="maker",
-                                metadata=order_metadata,
-                            )
-
-                        try:
-                            res_h = signal.get('resolution_hours')
-                            res_str = f"{res_h:.1f}h" if res_h else "?"
-                            vel = signal.get('velocity_score', 0)
-                            src = signal.get('source', 'llm')
-                            conf_tag = " [CONFIRMED]" if signal.get('_confirmation') else ""
-                            fill_line = (
-                                self.fill_tracker.format_fill_rate_line(hours=FILL_REPORT_HOURS)
-                                if self.fill_tracker is not None
-                                else "Fill rate last 24h: n/a"
-                            )
-                            await self.notifier.send_message(
-                                f"JJ LIVE ORDER POSTED{conf_tag}\n"
-                                f"{signal['direction'].upper()} ${size_usd:.2f}\n"
-                                f"{signal['question'][:60]}\n"
-                                f"Edge: {signal['edge']:.1%} | Price: {price:.3f}\n"
-                                f"Resolves: {res_str} | Velocity: {vel:.0f}\n"
-                                f"Source: {src} | Cat: {category} | Fee: {signal['taker_fee']:.4f}\n"
-                                f"{fill_line}\n"
-                                f"Order: {order_id[:16]}..."
-                            )
-                        except Exception:
-                            pass
-
-                        trades_placed += 1
-                    elif success:
-                        logger.warning("  ORDER ACKNOWLEDGED WITHOUT ID: %s", result)
-                    else:
-                        err_msg = result.get("error", str(result)) if isinstance(result, dict) else str(result)
-                        logger.warning(f"  ORDER FAILED: {err_msg}")
-
-                except Exception as e:
-                    logger.error(f"  ORDER ERROR: {e}")
-                    try:
-                        await self.notifier.send_error(str(e), context="place_order")
-                    except Exception:
-                        pass
 
             # Small delay between orders
             await asyncio.sleep(0.5)
@@ -4800,6 +5800,8 @@ class JJLive:
                 if isinstance(merge_result, dict)
                 else 0
             ),
+            "lane_health": lane_health,
+            "elastic_ml": elastic_ml_snapshot,
             "combinatorial": combinatorial_cycle,
             "elapsed_seconds": round(elapsed, 1),
         }
@@ -4823,6 +5825,7 @@ class JJLive:
             f"actionable={len(actionable)} predictive={len(signals)} combinatorial={len(combinatorial_bypass_signals)} "
             f"sumv_orders={sum_violation_orders} trades={trades_placed} "
             f"fills={summary['fills_detected']} stale={summary['stale_orders_cancelled']} "
+            f"ml_paused={len(summary['elastic_ml'].get('paused_markets', [])) if isinstance(summary.get('elastic_ml'), dict) else 0} "
             f"fill24h={summary['fill_rate_24h']:.1%} (max_res={MAX_RESOLUTION_HOURS}h "
             f"platt={self.adaptive_platt.active_mode}) ==="
         )
@@ -4980,10 +5983,13 @@ class JJLive:
         logger.info(f"JJ {mode_tag} — Starting continuous mode")
         try:
             try:
+                startup_lane_health = self._startup_lane_health or self._build_startup_lane_health()
                 if self.ensemble_mode:
                     sources = [f"LLM Ensemble ({len(self.analyzer.models)} models + RAG)"]
-                else:
+                elif self.analyzer is not None:
                     sources = ["LLM (Claude-only)"]
+                else:
+                    sources = []
                 if self.lmsr_engine:
                     sources.append("LMSR")
                 if self.wallet_flow_available:
@@ -4994,6 +6000,8 @@ class JJLive:
                     sources.append("VPIN/OFI")
                 if self.lead_lag:
                     sources.append("LeadLag")
+                if self.anomaly_consumer is not None and self.anomaly_consumer.enabled:
+                    sources.append("ElasticML")
                 if self.sum_violation_strategy is not None:
                     sources.append("SumViolation")
                 if self.combinatorial_cfg and self.combinatorial_cfg.enable_a6_shadow:
@@ -5004,6 +6012,7 @@ class JJLive:
                     f"JJ {mode_tag} TRADING ONLINE\n"
                     f"Bankroll: ${self.state.state['bankroll']:.2f}\n"
                     f"Signal sources: {' + '.join(sources)}\n"
+                    f"Lane health: {self._format_lane_health_summary(startup_lane_health)}\n"
                     f"Max/trade: ${MAX_POSITION_USD}\n"
                     f"Kelly: {KELLY_FRACTION}\n"
                     f"Scan every {SCAN_INTERVAL}s\n"
@@ -5015,6 +6024,14 @@ class JJLive:
             if self.trade_stream:
                 self._trade_stream_task = asyncio.create_task(self.trade_stream.start())
                 logger.info("WebSocket trade stream started as background task")
+                self._elastic_orderbook_task = asyncio.create_task(self._orderbook_snapshot_loop())
+                logger.info(
+                    "Elastic orderbook snapshot task started (interval=%ss)",
+                    ELASTIC_ORDERBOOK_SNAPSHOT_INTERVAL_SECONDS,
+                )
+            if self.anomaly_consumer is not None and self.anomaly_consumer.enabled:
+                self._anomaly_task = asyncio.create_task(self.anomaly_consumer.start())
+                logger.info("Elastic ML anomaly consumer started as background task")
 
             while True:
                 try:
@@ -5043,6 +6060,32 @@ class JJLive:
                         pass
                     await asyncio.sleep(60)
         finally:
+            if self.anomaly_consumer is not None:
+                self.anomaly_consumer.stop()
+            if self._anomaly_task is not None:
+                self._anomaly_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._anomaly_task
+                self._anomaly_task = None
+            if self._elastic_orderbook_task is not None:
+                self._elastic_orderbook_task.cancel()
+                try:
+                    await self._elastic_orderbook_task
+                except asyncio.CancelledError:
+                    pass
+                self._elastic_orderbook_task = None
+            if self.trade_stream is not None:
+                try:
+                    await self.trade_stream.stop()
+                except Exception:
+                    pass
+            if self._trade_stream_task is not None:
+                self._trade_stream_task.cancel()
+                try:
+                    await self._trade_stream_task
+                except asyncio.CancelledError:
+                    pass
+                self._trade_stream_task = None
             if self.a6_shadow_scanner is not None:
                 try:
                     self.a6_shadow_scanner.close()
@@ -5065,6 +6108,7 @@ class JJLive:
         db_stats = self.db.get_stats()
         multi = self.multi_sim.get_summary()
         combinatorial_summary = self.db.get_combinatorial_summary(hours=24 * 14)
+        lane_health = self._last_lane_health or self._startup_lane_health or self._build_startup_lane_health()
 
         mode_str = "PAPER" if self.paper_mode else "LIVE"
         print(f"\n{'='*50}")
@@ -5121,6 +6165,15 @@ class JJLive:
                 f"blocked={metrics.get('blocked', 0)} "
                 f"capture={metrics.get('avg_capture_rate') if metrics.get('avg_capture_rate') is not None else 'n/a'}"
             )
+
+        if lane_health:
+            print(f"\nLane Health:")
+            for lane, payload in lane_health.items():
+                reason = payload.get("reason")
+                signals = payload.get("signals")
+                reason_str = f" ({reason})" if reason else ""
+                signals_str = f" signals={signals}" if signals is not None else ""
+                print(f"  {lane}: {payload.get('status', 'unknown')}{reason_str}{signals_str}")
 
         if s["open_positions"]:
             print(f"\nOpen Positions:")

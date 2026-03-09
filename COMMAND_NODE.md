@@ -1,7 +1,7 @@
 # COMMAND NODE — Predictive Alpha Fund
 
-**Version:** 2.0.0
-**Last Updated:** 2026-03-08
+**Version:** 2.4.0
+**Last Updated:** 2026-03-09
 **Owner:** John Bradley (johnhavenbradley@gmail.com)
 **Purpose:** Single source of truth for all AI instances (ChatGPT, Cowork, Claude Code, Grok) to operate with full project context. Paste this document (or relevant sections) into any new session so the AI can write prompts, make decisions, and build on prior work without re-discovery.
 **Canonical filename:** `COMMAND_NODE.md`. Archived root variants belong under `archive/root-history/`, not at repo root.
@@ -12,7 +12,11 @@
 
 | Version | Date | Change Summary |
 |---------|------|----------------|
-| 2.0.0 | 2026-03-08 | Adopted stable canonical root naming, synced root context references, and refreshed status counts to match the ranked backlog. |
+| 2.4.0 | 2026-03-09 | Integrated Elastic Vision Document and Platform Vision Document: added product definition (trading + non-trading workers on shared substrate), six-layer master architecture, non-trading five-engine architecture, numbered-docs governance plan, messaging system, opportunity scoring framework, JJ-N rollout plan, and vision-aligned Replit build priorities. |
+| 2.3.0 | 2026-03-09 | Reconciled March 9 machine truth against the March 8 hold-state prose: remote service artifact now shows `active`, runtime is `0` trades after `294` cycles, wallet-flow remains `not_ready`, and launch stays blocked with no strategy promotion. |
+| 2.2.0 | 2026-03-08 | Synced Cycle 2 repo truth: verified test counts, paused-service posture, REJECT ALL pipeline status, dispatch inventory, and explicit no-promotion language for A-6/B-1. |
+| 2.1.0 | 2026-03-08 | Added the Elastic observability lane: Kibana dashboards, APM instrumentation, ML anomaly feedback as signal source `#7`, and deployment notes for the new telemetry surface. |
+| 2.0.0 | 2026-03-08 | Adopted stable canonical entrypoint naming, synced context references, and refreshed status counts to match the ranked backlog. |
 | 1.1.1 | 2026-03-07 | Integrated A-6/B-1 combinatorial arbitrage build plan: Signal Sources 5/6, deterministic bypass routing, constraint-arb data stores, and repo-specific execution gates. |
 | 1.1.0 | 2026-03-07 | Updated with JJ persona + prime directive, dual mission framing, 6-phase flywheel cycle, strategy status table (6 deployed / 5 building / 10 rejected / 30 pipeline), RTDS maker-edge and Dublin latency findings, refreshed document hierarchy, open-source guardrails, and website vision summary. |
 | 1.0.2 | 2026-03-07 | Prior baseline with flywheel v2 framing, hybrid strategy architecture, and deployment context. |
@@ -30,7 +34,7 @@ JJ is the principal execution layer of Elastifund: direct, evidence-driven, and 
 
 **Dual mission:** (1) Generate trading returns from validated edges. (2) Build the world's best public resource on agentic trading at johnbradleytrading.com.
 
-**Current status (2026-03-08):** Polymarket funded ($247.51 USDC), Kalshi connected ($100 USD), Dublin VPS active (AWS eu-west-1), live bot paused while the A-6/B-1 execution-validity gate is measured before any restart.
+**Current status (machine truth reconciled on 2026-03-09):** Polymarket is funded ($247.51 USDC), Kalshi is connected ($100 USD), and the Dublin VPS remains the production host. `reports/remote_service_status.json` checked at `2026-03-09T00:06:56Z` shows `jj-live.service` `active`, which supersedes the older March 8 prose that said the service was intentionally stopped. That does not change launch posture: `jj_state.json` still shows `0` live trades after `294` cycles, `reports/remote_cycle_status.json` still marks launch `blocked`, wallet-flow is `not_ready`, the latest checked-in fast-trade artifact still says `REJECT ALL`, and A-6/B-1 remain blocked with `0` executable A-6 opportunities below `0.95` and `0` deterministic B-1 template pairs in the first `1,000` allowed markets. Elastic observability, APM, and anomaly feedback remain part of the target operator stack so we can debug faster without making the bot hard-dependent on Elasticsearch.
 
 | Strategy Status | Count | Source |
 |-----------------|-------|--------|
@@ -43,7 +47,109 @@ JJ is the principal execution layer of Elastifund: direct, evidence-driven, and 
 | Research Pipeline | 97 | `research/edge_backlog_ranked.md` |
 | Total Tracked | 131 | `research/edge_backlog_ranked.md` |
 
+**Cycle 2 verification baseline (2026-03-09 source set):**
+- `make hygiene` passed.
+- Root suite passed `849 + 22` tests.
+- `make test-polymarket` passed `374` tests.
+- `make test-nontrading` passed `11` tests.
+- Total verified tests across the current baseline: `1,256`.
+
+**Dispatch inventory:** `11` `DISPATCH_*` work-orders and `95` markdown files in `research/dispatches/`.
+
+**Promotion status:** No promotion this cycle. The March 9 service artifact supersedes the old stopped-state claim, but because wallet-flow is still `not_ready` and launch remains blocked, treat the running service as drift requiring follow-up before any paper/shadow restart.
+
 **The Flywheel:** Research -> Implement -> Test -> Record -> Publish -> Repeat in 3-5 day cycles.
+
+### Product Definition (Vision-Aligned, March 9 2026)
+
+Elastifund is an open, self-improving platform for agentic capital allocation and agentic labor. It has two families of workers sharing a common substrate:
+
+- **Trading workers:** agents that research, simulate, rank, and optionally execute market strategies under policy.
+- **Non-trading workers (JJ-N):** agents that create economic value through business development, research, services, operations, and customer acquisition. The first wedge is a revenue-operations worker for a single high-ticket service business.
+
+The unifying principle: the project does not just run agents — it improves agents. Improvement is the product.
+
+### Master Architecture (Six-Layer)
+
+| Layer | Purpose | What lives here |
+|---|---|---|
+| 1. Experience | Human-facing surfaces | Homepage, /elastic, /develop, README, dashboards, leaderboards, diary, roadmap |
+| 2. Control | Policy and orchestration | Scheduling, approvals, budgets, task queues, retries, permissions, autonomy levels |
+| 3. Worker | Specialized agents | Trading workers, revenue workers, research workers, proposal workers, coding workers |
+| 4. Evaluation | Judgment and ranking | Experiment scoring, leaderboards, confidence estimates, forecasts, improvement velocity |
+| 5. Memory | Shared context | Leads, messages, market data, prompts, outcomes, code diffs, notes, templates, forecasts |
+| 6. Data / Telemetry | Ground truth | Events, logs, metrics, traces, costs, errors, artifacts, commits, model usage |
+
+Design discipline: every important action creates an event, every event is queryable, every query supports a judgment, every judgment updates both a worker and a public surface.
+
+### Non-Trading Architecture (Five-Engine Model)
+
+| Engine | Purpose | Outputs |
+|---|---|---|
+| 1. Account Intelligence | Find, enrich, and score targets | Target lists, contact records, fit scores, opportunity notes |
+| 2. Outreach | Draft, queue, and send compliant messages | Sequences, variants, send decisions, follow-up schedules |
+| 3. Interaction | Handle replies, scheduling, and meeting prep | Reply classifications, calendar holds, briefs, next actions |
+| 4. Proposal | Turn discovery into scoped offers | Proposal drafts, scope recommendations, pricing bands, follow-up assets |
+| 5. Learning | Evaluate outcomes and revise playbooks | Template changes, score updates, prompt revisions, experiment decisions |
+
+All five engines write into the same Elastic-backed memory. Observability tracks latency, errors, model costs, handoff frequency, reply classification accuracy, proposal turnaround, and policy events.
+
+### Non-Trading Opportunity Scoring Framework
+
+| Criterion | Question | Weight |
+|---|---|---|
+| Time to first dollar | Can this opportunity generate cash quickly? | 25 |
+| Gross margin | Is the profit pool attractive after delivery costs? | 20 |
+| Automation fraction | How much of the workflow can the system own now? | 20 |
+| Data exhaust | Will the workflow produce strong signals for learning? | 15 |
+| Compliance simplicity | Can it be operated safely and legally? | 10 |
+| Capital required | How much cash before evidence exists? | 5 |
+| Sales-cycle length | Will feedback arrive fast enough to improve? | 5 |
+
+Any opportunity scoring below threshold remains in research only.
+
+### JJ-N Rollout Plan (0 to 90 Days)
+
+| Phase | Days | Goal | Deliverables |
+|---|---|---|---|
+| 0 — Foundations | 1-14 | Create a safe, measurable system | Opportunity registry, CRM schema, telemetry, dashboards, domain/auth setup, templates, approval classes, paper mode |
+| 1 — Assisted pilot | 15-30 | Run live outreach with human approvals | Curated lead list, message angles, follow-up engine, meeting booking flow, weekly review |
+| 2 — Partial autonomy | 31-60 | Automate low-risk actions, strengthen learning | Auto-queue sequences, reply classifier, meeting briefs, proposal drafting, confidence-based approvals |
+| 3 — Repeatability | 61-90 | Prove one repeatable lane | Documented win-loss patterns, stable funnel metrics, published worker leaderboard, go/no-go on expansion |
+
+Success criterion: "prove one revenue loop that can be measured, improved, and explained."
+
+### Numbered Root Documents (Governance Plan)
+
+The repo should migrate toward these canonical numbered documents, updated every time the system materially changes:
+
+| File | Purpose |
+|---|---|
+| `00_MISSION_AND_PRINCIPLES.md` | Why the project exists, what it optimizes, and what it will not do |
+| `01_EXECUTIVE_SUMMARY.md` | Plain-language explanation for non-technical readers and leadership |
+| `02_ARCHITECTURE.md` | System map, data flow, layers, and design constraints |
+| `03_METRICS_AND_LEADERBOARDS.md` | Definitions for all public graphs and scorecards |
+| `04_TRADING_WORKERS.md` | Trading system overview, policies, risk boundaries, paper vs live |
+| `05_NON_TRADING_WORKERS.md` | Revenue-worker strategy, workflows, evaluation, and rollout |
+| `06_EXPERIMENT_DIARY.md` | Chronological change log of experiments, outcomes, and lessons |
+| `07_FORECASTS_AND_CHECKPOINTS.md` | Current forecasts, expected milestones, and confidence changes |
+| `08_PROMPT_LIBRARY.md` | Canonical prompts, prompt variants, and prompt-review process |
+| `09_GOVERNANCE_AND_SAFETY.md` | Autonomy levels, approvals, security, compliance, and incident policy |
+| `10_OPERATIONS_RUNBOOK.md` | How to run the system, recover failures, and update components |
+| `11_PUBLIC_MESSAGING.md` | Approved copy blocks for the site, GitHub, and outreach |
+| `12_MANAGED_SERVICE_BOUNDARY.md` | What stays open source and what is offered as hosted infrastructure |
+
+These documents create narrative stability and make it possible for any agent or contributor to know where truth lives.
+
+### Messaging System (Approved Language)
+
+**Use:** "self-improving," "policy-governed autonomy," "agentic work," "economic work," "evidence," "benchmarks," "run in paper mode by default."
+
+**Never use:** "self-modifying binary," "remove the human from the loop," "agent swarm that makes money."
+
+**Homepage hero:** "A self-improving agentic operating system for real economic work."
+
+**/elastic hero:** "Open-source agents need a system memory. Elastic is the Search AI platform that makes them reliable."
 
 ---
 
@@ -53,7 +159,7 @@ JJ is the principal execution layer of Elastifund: direct, evidence-driven, and 
 
 ```
 VPS: 52.208.155.0 (AWS Lightsail Dublin, eu-west-1)
-systemd: jj-live.service (currently STOPPED)
+systemd: jj-live.service (remote artifact: `active` at `2026-03-09T00:06:56Z`; launch posture still blocked)
 Bot file: bot/jj_live.py (local) → /home/ubuntu/polymarket-trading-bot/jj_live.py (VPS)
 
 SIGNAL SOURCE 1: Ensemble Estimator + Agentic RAG (bot/ensemble_estimator.py, every 5 min)
@@ -115,8 +221,23 @@ SIGNAL SOURCE 6: LLM Dependency Graph Arb (B-1, BUILDING)
 ├── SIZE:      Execution-risk-adjusted, hard-capped at `$5` per leg
 └── STATUS:    Heuristic engine exists; LLM edge cache and live monitor pending
 
+OBSERVABILITY LAYER: Elastic Stack (target paths under `infra/`)
+├── INGEST:    `infra/filebeat.yml` ships structured logs from `/var/log/elastifund/`
+├── TRACE:     `bot/apm_setup.py` sends critical-path transactions and spans to APM
+├── INDEX:     `bot/elastic_client.py` writes trades, signals, kills, orderbook, and latency docs
+├── VIEW:      Kibana dashboards cover trading overview, signal quality, kill rules, and orderbook health
+└── DETECT:    Elastic ML jobs score VPIN, OFI, spread, confidence drift, and kill-rule frequency
+
+SIGNAL SOURCE 7: Elastic ML Anomaly Consumer (bot/anomaly_consumer.py, FEEDBACK LANE)
+├── POLL:      `.ml-anomalies-*` every 60s
+├── REACT:     VPIN / OFI anomalies reduce position size by anomaly_score / 100
+├── PAUSE:     Spread anomalies can pause new order placement on one market
+├── FLAG:      Confidence drift is surfaced for human review and backlog triage
+└── RULE:      Failures in this lane log warnings and continue; Elastic must never be a hard dependency
+
 CONFIRMATION LAYER (jj_live.py, WIRED):
-├── All 6 sources run in parallel when their data planes are active
+├── Sources 1-6 produce the primary trade thesis when their data planes are active
+├── Source 7 applies caution modifiers and temporary pauses when anomaly jobs are live
 ├── Signals grouped by (market_id, direction)
 ├── 2+ sources agree → boosted size (quarter-Kelly)
 ├── LLM alone + res > 12h → standard quarter-Kelly
@@ -138,6 +259,21 @@ Data stores:
 ```
 
 Repo-specific build spec: `docs/strategy/combinatorial_arb_implementation_deep_dive.md`
+
+### Elastic Integration Modules
+
+| File | Purpose |
+|------|---------|
+| `bot/elastic_client.py` | Singleton Elasticsearch client, async bulk writer, and graceful no-op surface when `ES_ENABLED=false` |
+| `bot/elastic_dashboards.py` | Kibana Saved Objects importer for dashboard packs under `infra/kibana_dashboards/` |
+| `bot/apm_setup.py` | Elastic APM bootstrap for critical-path transactions, external API spans, and custom latency metrics |
+| `bot/log_config.py` | ECS-style structured JSON logging with file output for Filebeat pickup |
+| `bot/latency_tracker.py` | Shared decorator for timing, structured logging, APM spans, and latency event indexing |
+| `bot/elastic_ml_setup.py` | Elasticsearch ML job and datafeed bootstrap for order-flow and signal-drift anomaly detection |
+| `bot/anomaly_consumer.py` | Signal source `#7`, which consumes high-score anomalies and feeds caution back into trading decisions |
+| `infra/docker-compose.elastic.yml` | Single-node Elasticsearch, Kibana, Filebeat, and APM Server for local or VPS deployment |
+| `infra/index_templates/` | Index templates for trades, signals, kills, and orderbook documents |
+| `infra/kibana_dashboards/` | Versioned NDJSON dashboard exports for trading, signals, kill rules, orderbook health, APM, and ML views |
 
 ### Bot Source Files (polymarket-bot/src/)
 
@@ -321,6 +457,8 @@ A systematic playbook for identifying markets where traders misread resolution c
 | Calibrated v2 + NO-only | 70.2% | 282 | 0.2171 | +1,620% |
 | Cal v2 + Asym + Confidence | 68.6% | 354 | 0.2171 | +1,476% |
 
+**Current benchmark framing:** `71.2%` is the strongest calibrated selective variant used for public scorecards, `68.5%` is the older broad calibrated reference, and `64.9%` is the raw uncalibrated baseline.
+
 ### Ensemble Skeleton (Added 2026-03-05)
 
 `polymarket-bot/src/ensemble.py` — multi-model probability estimation framework:
@@ -347,17 +485,21 @@ A systematic playbook for identifying markets where traders misread resolution c
 | 95th percentile | $40,207 | +302% |
 | P(total loss) | **0.0%** | |
 
-### Live Paper Trading (Latest)
+### Current Runtime Snapshot (2026-03-09 machine truth)
 
 | Metric | Value |
 |--------|-------|
-| Cycles completed | 2 (post-fix) |
-| Markets scanned/cycle | 100 |
-| Signals/cycle | 18 |
-| Starting cash | $75.00 |
-| Cash deployed | $68.00 (34 positions × $2) |
-| Closed trades | 0 (awaiting resolution) |
-| Realized P&L | $0.00 |
+| Runtime cycles completed | 294 |
+| Live trades executed | 0 |
+| Open positions | 0 |
+| Deployed capital | $0.00 |
+| Service state | `reports/remote_service_status.json` shows `jj-live.service` `running` at `2026-03-09T00:06:56Z` |
+| Launch posture | `reports/remote_cycle_status.json` still marks launch `blocked`; treat the running service as drift until the remote mode is reconciled |
+| Wallet-flow readiness | `not_ready` (`missing_data/smart_wallets.json`, `missing_data/wallet_scores.db`, `no_scored_wallets`) |
+| Fast-market pipeline | Latest checked-in artifact is `FAST_TRADE_EDGE_ANALYSIS.md` at `2026-03-07T19:07:38+00:00`, still `REJECT ALL` |
+| A-6 gate | March 9 edge scan found `0` executable opportunities below the `0.95` threshold |
+| B-1 gate | March 9 template audit found `0` deterministic template pairs in the first `1,000` allowed markets |
+| Promotion status | No promotion; next operator action is to bootstrap wallet-flow and restart only in paper/shadow fast-flow mode |
 
 ---
 
@@ -512,10 +654,13 @@ READY → DISPATCHED → COMPLETED → INTEGRATED
 | `COMMAND_NODE.md` | Full context handoff for new AI sessions (single source of truth) | Every flywheel cycle |
 | `PROJECT_INSTRUCTIONS.md` | Quick-start operating context + active priority queue | When priorities change |
 | `CLAUDE.md` | JJ persona + prime directive + execution rules | Rarely (process changes only) |
-| `FLYWHEEL_STRATEGY.md` | Master strategy, flywheel design, website direction | On strategic shifts |
+| `REPLIT_NEXT_BUILD.md` | Canonical build instructions for the next website iteration | Every flywheel cycle |
+| `docs/strategy/flywheel_strategy.md` | Master strategy, flywheel design, website direction | On strategic shifts |
 | `README.md` | Public-facing framing and live status | When metrics/change narrative updates |
 | `research/edge_backlog_ranked.md` | Canonical strategy status and ranked pipeline | Every flywheel cycle |
 | `FAST_TRADE_EDGE_ANALYSIS.md` | Current pipeline verdicts and kill-rule outcomes | After each pipeline run |
+| `research/elastic_vision_document.md` | Strategic vision: Elastic positioning, messaging, non-trading strategy, governance | On strategic shifts |
+| `research/platform_vision_document.md` | Platform vision: architecture, metrics, contribution flywheel, compliance | On strategic shifts |
 | `research/DEEP_RESEARCH_PROMPT_100_STRATEGIES.md` | 100-strategy generation prompt + composite scoring | When prompt improves |
 | `research/RTDS_MAKER_EDGE_IMPLEMENTATION.md` | Fast-market RTDS maker execution spec | As implementation evolves |
 | `research/LatencyEdgeResearch.md` | Infrastructure latency map and execution implications | On infra findings |
@@ -547,7 +692,7 @@ OUTPUT: [Format and location]
 
 DONE WHEN: [Success criteria]
 
-SOP: After completing this task, UPDATE COMMAND_NODE.md (increment version number, add version log entry) and review all affected top-level docs for staleness.
+SOP: After completing this task, UPDATE COMMAND_NODE.md (increment version number, add version log entry) and review all affected canonical docs for staleness.
 ```
 
 ### Tool-Specific Notes
@@ -566,15 +711,16 @@ SOP: After completing this task, UPDATE COMMAND_NODE.md (increment version numbe
 
 | Metric | Value | Source |
 |--------|-------|--------|
-| Capital deployed | $247.51 Polymarket + $100 Kalshi | `PROJECT_INSTRUCTIONS.md` |
-| Strategy statuses | 6 deployed / 6 building / 9 rejected / 1 re-evaluating / 30 pipeline | `research/edge_backlog_ranked.md` |
-| Total tracked strategies | 51 | `research/edge_backlog_ranked.md` |
+| Tracked capital | $347.51 tracked / $0.00 deployed | `PROJECT_INSTRUCTIONS.md` |
+| Strategy statuses | 7 deployed / 6 building / 2 structural alpha / 1 re-evaluating / 10 rejected / 8 pre-rejected / 97 research pipeline | `research/edge_backlog_ranked.md` |
+| Total tracked strategies | 131 | `research/edge_backlog_ranked.md` |
 | Current pipeline verdict | REJECT ALL (no validated edge yet) | `FAST_TRADE_EDGE_ANALYSIS.md` |
-| Data coverage (latest run) | 2,399 trades, 1,405 wallets tracked | `FAST_TRADE_EDGE_ANALYSIS.md` |
-| Live trading state | Service stopped pending the A-6/B-1 execution-validity gate | `PROJECT_INSTRUCTIONS.md` |
-| Tests passing | 345 | `README.md` |
-| Research dispatches | 77 | `README.md` |
-| Flywheel cycle speed | 3-5 days | `FLYWHEEL_STRATEGY.md` |
+| Data coverage (latest run) | 2,615 trade records, 1,513 wallets tracked | `FAST_TRADE_EDGE_ANALYSIS.md` |
+| Live trading state | Remote artifact shows service running; launch still blocked pending wallet-flow readiness and the A-6/B-1 gates | `PROJECT_INSTRUCTIONS.md` |
+| Tests verified | 1,256 total (`849 + 22` root, `374` polymarket, `11` non-trading) | `PROJECT_INSTRUCTIONS.md` |
+| Dispatch work-orders | 11 `DISPATCH_*` files | `research/dispatches/` |
+| Dispatch library | 95 markdown files | `research/dispatches/` |
+| Flywheel cycle speed | 3-5 days | `docs/strategy/flywheel_strategy.md` |
 | Dublin latency to CLOB | ~5-10ms to London (eu-west-2) | `research/LatencyEdgeResearch.md` |
 | Primary fast-market infra target | WebSockets + RTDS + maker-only execution | `research/RTDS_MAKER_EDGE_IMPLEMENTATION.md` |
 
@@ -665,16 +811,39 @@ Safety gate chain (ALL must pass):
           -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
-### Key Files (Updated File Structure — 2026-03-07)
+### Elastic Observability Checklist
+
+Run this when the Elastic lane is enabled:
+
+```text
+[ ] 1. Start the stack: bash infra/setup.sh
+[ ] 2. Confirm Elasticsearch health and open Kibana at http://127.0.0.1:5601
+[ ] 3. Store the generated elastic password outside the repo and export ES_* env vars
+[ ] 4. Verify Filebeat is shipping /var/log/elastifund/*.log and *.json files
+[ ] 5. Confirm APM transactions exist for the signal evaluation cycle and order path
+[ ] 6. Import dashboard packs from infra/kibana_dashboards/
+[ ] 7. Check elastifund-trades, elastifund-signals, elastifund-kills, and elastifund-orderbook in Discover
+[ ] 8. If ML is enabled, create/open jobs and verify anomaly_consumer remains fail-soft when no anomalies exist
+```
+
+### Key Files (Updated File Structure — 2026-03-08)
 
 ```
 Elastifund/
-├── PROJECT_INSTRUCTIONS.md      ← Quick-start for any AI session (paste this first)
-├── COMMAND_NODE.md      ← THIS FILE (deep reference)
-├── README.md
+├── AGENTS.md                   ← Machine-first entrypoint and root guardrails
+├── PROJECT_INSTRUCTIONS.md     ← Quick-start for any AI session (paste this first)
+├── COMMAND_NODE.md             ← THIS FILE (deep reference)
+├── README.md                   ← Public-facing overview
 │
 ├── bot/                        ← LIVE TRADING CODE
 │   ├── jj_live.py              ← Main bot + confirmation layer (→ VPS)
+│   ├── elastic_client.py       ← Async Elastic writer, health checks, fail-soft telemetry
+│   ├── elastic_dashboards.py   ← Kibana saved-object importer
+│   ├── apm_setup.py            ← Elastic APM bootstrap + transaction wiring
+│   ├── log_config.py           ← Structured ECS-style logging
+│   ├── latency_tracker.py      ← Decorator for latency events, spans, and reports
+│   ├── anomaly_consumer.py     ← Signal source #7: ML anomaly feedback lane
+│   ├── elastic_ml_setup.py     ← ML job creation and anomaly status tooling
 │   ├── lmsr_engine.py          ← LMSR Bayesian pricing + inefficiency detector
 │   ├── wallet_flow_detector.py ← Smart wallet consensus signals (complete)
 │   ├── ensemble_estimator.py   ← Canonical multi-model estimator + RAG + Brier
@@ -687,32 +856,32 @@ Elastifund/
 ├── backtest/                   ← Backtesting, Monte Carlo, calibration
 ├── simulator/                  ← Position sizing simulator
 ├── data_layer/                 ← DB schema, migrations
+├── infra/                      ← Elastic compose, Filebeat/APM config, index templates, dashboards
 ├── data/                       ← Runtime DBs (wallet_scores.db, quant.db)
 ├── scripts/                    ← deploy.sh
 │
 ├── research/
-│   ├── dispatches/             ← 79 research prompts (P0-P3)
-│   ├── prompts/                ← Original prompt docs
-│   └── *.md                    ← Research findings
+│   ├── deep_research_prompt.md ← Current deep-research execution package
+│   ├── deep_research_output.md ← Wide strategy taxonomy source document
+│   ├── jj_assessment_dispatch.md ← JJ prioritization and kill decisions
+│   ├── karpathy_autoresearch_report.md ← Loop-design and benchmark discipline notes
+│   └── *.md                    ← Other research findings and ranked backlogs
 │
 ├── docs/
-│   ├── strategy/               ← SMART_WALLET_SPEC, LLM_ENSEMBLE_SPEC, etc.
-│   ├── ops/                    ← Deploy guides, checklists, audits
+│   ├── strategy/               ← Flywheel, edge system, SMART_WALLET_SPEC, etc.
+│   ├── ops/                    ← Deploy guides, llm_context_manifest, checklists, audits
+│   ├── diary/                  ← Public-facing research diary entries
 │   └── templates/              ← Report templates
-│
-├── fund/
-│   ├── investor/               ← Reports, pitch sheets
-│   └── legal/                  ← PPM, subscription agreements
 │
 └── archive/                    ← Superseded files
 ```
 
-### Funded Accounts (as of 2026-03-07)
+### Funded Accounts (machine truth reconciled on 2026-03-09)
 
 | Platform | Balance | Wallet/Key | Status |
 |----------|---------|------------|--------|
-| Polymarket | $247.51 USDC | Proxy 0xb2fef31cf185b75d0c9c77bd1f8fe9fd576f69a5 | Live, service stopped for upgrade |
-| Kalshi | $100.00 USD | Key ID b20ab9fa-b387-4aac-b160-c22d58705935 | API connected, arb scanner built, cross-platform matching live |
+| Polymarket | $247.51 USDC | Proxy 0xb2fef31cf185b75d0c9c77bd1f8fe9fd576f69a5 | Live wallet funded; remote service artifact is `running`, but launch posture remains blocked pending wallet-flow readiness and the A-6/B-1 gates |
+| Kalshi | $100.00 USD | Key ID b20ab9fa-b387-4aac-b160-c22d58705935 | API connected, trading not built |
 
 ### VPS Access
 
@@ -766,8 +935,8 @@ After every cycle:
 | Tier | Documents |
 |------|-----------|
 | Always (every cycle) | `FAST_TRADE_EDGE_ANALYSIS.md`, `research/edge_backlog_ranked.md`, website diary entry |
-| On meaningful changes | `COMMAND_NODE.md` (version bump required), `PROJECT_INSTRUCTIONS.md`, `EDGE_DISCOVERY_SYSTEM.md`, `README.md` |
-| Infrequent / strategic | `CLAUDE.md`, `FLYWHEEL_STRATEGY.md`, investor materials |
+| On meaningful changes | `COMMAND_NODE.md` (version bump required), `PROJECT_INSTRUCTIONS.md`, `docs/strategy/edge_discovery_system.md`, `README.md` |
+| Infrequent / strategic | `CLAUDE.md`, `docs/strategy/flywheel_strategy.md`, investor materials |
 
 ### Open-Source Guardrails
 
@@ -780,9 +949,9 @@ After every cycle:
 | File | Purpose |
 |------|---------|
 | `research/DEEP_RESEARCH_PROMPT_100_STRATEGIES.md` | 100-strategy research prompt (paste into deep research sessions) |
-| `FLYWHEEL_STRATEGY.md` | Master project strategy — the north star document |
+| `docs/strategy/flywheel_strategy.md` | Master project strategy — the north star document |
 | `REPLIT_DASHBOARD_v3.md` | Full website specification for Replit build |
-| `EDGE_DISCOVERY_SYSTEM.md` | Technical spec for continuous edge research pipeline |
+| `docs/strategy/edge_discovery_system.md` | Technical spec for continuous edge research pipeline |
 | `FAST_TRADE_EDGE_ANALYSIS.md` | Auto-generated current status of all tested strategies |
 | `research/edge_backlog_ranked.md` | Ranked list of strategy hypotheses to test |
 
