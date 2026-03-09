@@ -156,17 +156,35 @@ def test_build_remote_cycle_status_includes_btc5_maker_observation(tmp_path: Pat
                 "created_at": "2026-03-09T13:24:59+00:00",
                 "updated_at": "2026-03-09T13:25:00+00:00",
             },
+            {
+                "window_start_ts": 1773063000,
+                "window_end_ts": 1773063300,
+                "slug": "btc-updown-5m-1773063000",
+                "decision_ts": 1773063299,
+                "direction": "DOWN",
+                "order_price": 0.48,
+                "trade_size_usd": 5.0,
+                "order_status": "live_filled",
+                "filled": 1,
+                "pnl_usd": 5.416,
+                "created_at": "2026-03-09T13:34:59+00:00",
+                "updated_at": "2026-03-09T13:35:00+00:00",
+            },
         ],
     )
 
     status = build_remote_cycle_status(tmp_path)
 
     assert status["btc_5min_maker"]["status"] == "ok"
-    assert status["btc_5min_maker"]["live_filled_rows"] == 2
-    assert status["btc_5min_maker"]["live_filled_pnl_usd"] == 0.2071
-    assert status["runtime"]["btc5_live_filled_rows"] == 2
+    assert status["btc_5min_maker"]["live_filled_rows"] == 3
+    assert status["btc_5min_maker"]["live_filled_pnl_usd"] == 5.6231
+    assert status["btc_5min_maker"]["fill_attribution"]["best_direction"]["label"] == "DOWN"
+    assert status["btc_5min_maker"]["fill_attribution"]["best_price_bucket"]["label"] == "<0.49"
+    assert status["runtime"]["btc5_live_filled_rows"] == 3
     assert status["runtime"]["btc5_latest_order_status"] == "live_filled"
-    assert status["runtime"]["btc5_latest_trade_pnl_usd"] == -5.0
+    assert status["runtime"]["btc5_latest_trade_pnl_usd"] == 5.416
+    assert status["runtime"]["btc5_best_direction"] == "DOWN"
+    assert status["runtime"]["btc5_best_price_bucket"] == "<0.49"
 
 
 def test_build_remote_cycle_status_refreshes_data_cadence_from_live_observations(
@@ -739,18 +757,23 @@ def test_write_remote_cycle_status_emits_runtime_truth_and_public_snapshot(
     assert runtime_truth["latest_pipeline"]["recommendation"] == "REJECT ALL"
     assert runtime_truth["polymarket_wallet"]["maker_address"] == "0xabc"
     assert runtime_truth["btc_5min_maker"]["live_filled_rows"] == 1
+    assert runtime_truth["btc_5min_maker"]["fill_attribution"]["best_direction"]["label"] == "UP"
+    assert runtime_truth["btc_5min_maker"]["fill_attribution"]["best_price_bucket"]["label"] == "<0.49"
     assert runtime_truth["reconciliation"]["btc_5min_maker"]["live_filled_pnl_usd"] == 5.4184
+    assert runtime_truth["reconciliation"]["btc_5min_maker"]["fill_attribution"]["best_price_bucket"]["label"] == "<0.49"
     assert runtime_truth["reconciliation"]["polymarket_wallet"]["free_collateral_usd"] == 0.0
     assert runtime_truth["state_improvement"]["hourly_budget_progress"]["window_minutes"] == 60
     assert runtime_truth["state_improvement"]["per_venue_candidate_counts"]["polymarket"] >= 0
     assert isinstance(runtime_truth["state_improvement"]["reject_reasons"], list)
     assert runtime_truth["state_improvement"]["operator_digest"]
+    assert runtime_truth["state_improvement"]["strategy_recommendations"]["btc5_edge_profile"]["best_direction"]["label"] == "UP"
     assert public_snapshot["snapshot_source"] == "reports/runtime_truth_latest.json"
     assert public_snapshot["service"]["status"] == "running"
     assert "host" not in public_snapshot["service"]
     assert public_snapshot["capital"]["polymarket_actual_deployable_usd"] == 0.0
     assert public_snapshot["polymarket_wallet"]["total_wallet_value_usd"] == 60.67
     assert public_snapshot["btc_5min_maker"]["live_filled_pnl_usd"] == 5.4184
+    assert public_snapshot["btc_5min_maker"]["fill_attribution"]["best_price_bucket"]["label"] == "<0.49"
     assert public_snapshot["runtime"]["btc5_live_filled_rows"] == 1
     assert "maker_address" not in public_snapshot["polymarket_wallet"]
     assert public_snapshot["state_improvement"]["operator_digest"]

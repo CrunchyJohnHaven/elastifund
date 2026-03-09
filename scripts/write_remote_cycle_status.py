@@ -195,6 +195,7 @@ recent_live_filled = conn.execute(
 all_live_filled = [dict(row) for row in conn.execute(
     \"\"\"
     SELECT
+        id,
         direction,
         ABS(delta) AS abs_delta,
         order_price,
@@ -256,6 +257,78 @@ def recommend_guardrails(rows):
         "baseline_live_filled_pnl_usd": baseline_pnl,
     }
 
+def price_bucket(order_price):
+    price = f(order_price)
+    if price < 0.49:
+        return "<0.49"
+    if price < 0.50:
+        return "0.49"
+    if price < 0.51:
+        return "0.50"
+    return "0.51+"
+
+def summarize_fill_attribution(rows):
+    if not rows:
+        return None
+
+    def rollup(group_rows, label):
+        fills = len(group_rows)
+        pnl = round(sum(f(row.get("pnl_usd")) for row in group_rows), 4)
+        avg_pnl = round(pnl / fills, 4) if fills else 0.0
+        avg_price = round(sum(f(row.get("order_price")) for row in group_rows) / fills, 4) if fills else 0.0
+        return {
+            "label": label,
+            "fills": fills,
+            "pnl_usd": pnl,
+            "avg_pnl_usd": avg_pnl,
+            "avg_order_price": avg_price,
+        }
+
+    direction_groups = {}
+    price_groups = {}
+    for row in rows:
+        direction = (str(row.get("direction") or "UNKNOWN").strip().upper() or "UNKNOWN")
+        direction_groups.setdefault(direction, []).append(row)
+        price_groups.setdefault(price_bucket(row.get("order_price")), []).append(row)
+
+    by_direction = sorted(
+        [rollup(group_rows, direction) for direction, group_rows in direction_groups.items()],
+        key=lambda item: (-item["pnl_usd"], -item["fills"], item["label"]),
+    )
+    bucket_order = {"<0.49": 0, "0.49": 1, "0.50": 2, "0.51+": 3}
+    by_price_bucket = sorted(
+        [rollup(group_rows, bucket) for bucket, group_rows in price_groups.items()],
+        key=lambda item: bucket_order.get(item["label"], 99),
+    )
+    recent = sorted(rows, key=lambda row: int(row.get("id") or 0), reverse=True)[:12]
+    recent_directions = sorted({
+        (str(row.get("direction") or "UNKNOWN").strip().upper() or "UNKNOWN")
+        for row in recent
+    })
+    recent_by_direction = sorted(
+        [
+            rollup(
+                [row for row in recent if (str(row.get("direction") or "UNKNOWN").strip().upper() or "UNKNOWN") == direction],
+                direction,
+            )
+            for direction in recent_directions
+        ],
+        key=lambda item: (-item["pnl_usd"], -item["fills"], item["label"]),
+    )
+    best_direction = by_direction[0] if by_direction else None
+    best_price_bucket = max(
+        by_price_bucket,
+        key=lambda item: (item["pnl_usd"], item["fills"], -bucket_order.get(item["label"], 99)),
+    ) if by_price_bucket else None
+    return {
+        "by_direction": by_direction,
+        "by_price_bucket": by_price_bucket,
+        "recent_live_filled_summary": rollup(recent, "recent_12_live_filled"),
+        "recent_live_filled_by_direction": recent_by_direction,
+        "best_direction": best_direction,
+        "best_price_bucket": best_price_bucket,
+    }
+
 print(json.dumps({
     "status": "ok",
     "checked_at": checked_at,
@@ -268,6 +341,7 @@ print(json.dumps({
     "latest_trade": dict(latest_row) if latest_row is not None else {},
     "recent_live_filled": [dict(row) for row in recent_live_filled],
     "guardrail_recommendation": recommend_guardrails(all_live_filled),
+    "fill_attribution": summarize_fill_attribution(all_live_filled),
 }, sort_keys=True))
 """
 
@@ -287,6 +361,83 @@ def _micro_usdc_to_usd(value: Any) -> float:
     if parsed is None:
         return 0.0
     return round(parsed / 1_000_000.0, 6)
+
+
+def _btc5_price_bucket(order_price: Any) -> str:
+    price = _safe_float(order_price, 0.0)
+    if price < 0.49:
+        return "<0.49"
+    if price < 0.50:
+        return "0.49"
+    if price < 0.51:
+        return "0.50"
+    return "0.51+"
+
+
+def _summarize_btc5_fill_attribution(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not rows:
+        return None
+
+    def _rollup(group_rows: list[dict[str, Any]], *, label: str) -> dict[str, Any]:
+        fills = len(group_rows)
+        pnl = round(sum(_safe_float(row.get("pnl_usd"), 0.0) for row in group_rows), 4)
+        avg_pnl = round(pnl / fills, 4) if fills else 0.0
+        avg_price = round(
+            sum(_safe_float(row.get("order_price"), 0.0) for row in group_rows) / fills,
+            4,
+        ) if fills else 0.0
+        return {
+            "label": label,
+            "fills": fills,
+            "pnl_usd": pnl,
+            "avg_pnl_usd": avg_pnl,
+            "avg_order_price": avg_price,
+        }
+
+    direction_groups: dict[str, list[dict[str, Any]]] = {}
+    price_bucket_groups: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        direction = str(row.get("direction") or "UNKNOWN").strip().upper() or "UNKNOWN"
+        direction_groups.setdefault(direction, []).append(row)
+        price_bucket_groups.setdefault(_btc5_price_bucket(row.get("order_price")), []).append(row)
+
+    by_direction = sorted(
+        (_rollup(group_rows, label=direction) for direction, group_rows in direction_groups.items()),
+        key=lambda item: (-item["pnl_usd"], -item["fills"], item["label"]),
+    )
+    bucket_order = {"<0.49": 0, "0.49": 1, "0.50": 2, "0.51+": 3}
+    by_price_bucket = sorted(
+        (_rollup(group_rows, label=bucket) for bucket, group_rows in price_bucket_groups.items()),
+        key=lambda item: bucket_order.get(item["label"], 99),
+    )
+    sorted_recent = sorted(
+        rows,
+        key=lambda row: _int_or_none(row.get("id")) or 0,
+        reverse=True,
+    )[:12]
+    recent_summary = _rollup(sorted_recent, label="recent_12_live_filled")
+    recent_by_direction = sorted(
+        (
+            _rollup([row for row in sorted_recent if str(row.get("direction") or "").strip().upper() == direction], label=direction)
+            for direction in {str(row.get("direction") or "UNKNOWN").strip().upper() or "UNKNOWN" for row in sorted_recent}
+        ),
+        key=lambda item: (-item["pnl_usd"], -item["fills"], item["label"]),
+    )
+
+    best_direction = by_direction[0] if by_direction else None
+    best_price_bucket = max(
+        by_price_bucket,
+        key=lambda item: (item["pnl_usd"], item["fills"], -bucket_order.get(item["label"], 99)),
+        default=None,
+    )
+    return {
+        "by_direction": by_direction,
+        "by_price_bucket": by_price_bucket,
+        "recent_live_filled_summary": recent_summary,
+        "recent_live_filled_by_direction": recent_by_direction,
+        "best_direction": best_direction,
+        "best_price_bucket": best_price_bucket,
+    }
 
 
 def _load_polymarket_wallet_state(root: Path) -> dict[str, Any]:
@@ -606,6 +757,7 @@ def _load_btc5_maker_state_from_db(
         all_live_filled = conn.execute(
             """
             SELECT
+                id,
                 direction,
                 ABS(delta) AS abs_delta,
                 order_price,
@@ -629,9 +781,9 @@ def _load_btc5_maker_state_from_db(
 
     latest_summary = dict(latest_row) if latest_row is not None else {}
     recent_rows = [dict(row) for row in recent_live_filled]
-    guardrail_recommendation = _recommend_btc5_guardrails(
-        [dict(row) for row in all_live_filled]
-    )
+    all_live_filled_rows = [dict(row) for row in all_live_filled]
+    guardrail_recommendation = _recommend_btc5_guardrails(all_live_filled_rows)
+    fill_attribution = _summarize_btc5_fill_attribution(all_live_filled_rows)
     return {
         "status": "ok",
         "checked_at": checked_at,
@@ -657,6 +809,7 @@ def _load_btc5_maker_state_from_db(
         "latest_trade": latest_summary,
         "recent_live_filled": recent_rows,
         "guardrail_recommendation": guardrail_recommendation,
+        "fill_attribution": fill_attribution,
     }
 
 
@@ -727,6 +880,7 @@ def _merge_btc5_maker_observation(
 
     runtime = status.setdefault("runtime", {})
     latest_trade = btc5_maker.get("latest_trade") or {}
+    fill_attribution = btc5_maker.get("fill_attribution") or {}
     runtime.update(
         {
             "btc5_checked_at": btc5_maker.get("checked_at"),
@@ -744,6 +898,20 @@ def _merge_btc5_maker_observation(
             "btc5_latest_window_start_ts": _int_or_none(latest_trade.get("window_start_ts")),
             "btc5_latest_trade_pnl_usd": _float_or_none(latest_trade.get("pnl_usd")),
             "btc5_guardrail_recommendation": btc5_maker.get("guardrail_recommendation"),
+            "btc5_best_direction": (fill_attribution.get("best_direction") or {}).get("label"),
+            "btc5_best_direction_pnl_usd": _float_or_none(
+                (fill_attribution.get("best_direction") or {}).get("pnl_usd")
+            ),
+            "btc5_best_price_bucket": (fill_attribution.get("best_price_bucket") or {}).get("label"),
+            "btc5_best_price_bucket_pnl_usd": _float_or_none(
+                (fill_attribution.get("best_price_bucket") or {}).get("pnl_usd")
+            ),
+            "btc5_recent_live_filled_pnl_usd": _float_or_none(
+                (fill_attribution.get("recent_live_filled_summary") or {}).get("pnl_usd")
+            ),
+            "btc5_recent_live_filled_rows": _int_or_none(
+                (fill_attribution.get("recent_live_filled_summary") or {}).get("fills")
+            ),
         }
     )
 
@@ -1012,6 +1180,10 @@ def render_remote_cycle_status_markdown(status: dict[str, Any]) -> str:
     )
     if btc5_maker.get("status") == "ok":
         latest_trade = btc5_maker.get("latest_trade") or {}
+        fill_attribution = btc5_maker.get("fill_attribution") or {}
+        best_direction = fill_attribution.get("best_direction") or {}
+        best_price_bucket = fill_attribution.get("best_price_bucket") or {}
+        recent_summary = fill_attribution.get("recent_live_filled_summary") or {}
         lines.extend(
             [
                 f"- Live filled rows: {btc5_maker.get('live_filled_rows') or 0}",
@@ -1021,6 +1193,25 @@ def render_remote_cycle_status_markdown(status: dict[str, Any]) -> str:
                 f"- Latest trade status: {latest_trade.get('order_status') or 'unknown'}",
                 f"- Latest trade direction: {latest_trade.get('direction') or 'unknown'}",
                 f"- Latest trade PnL: {_format_money(latest_trade.get('pnl_usd') or 0.0)}",
+                (
+                    f"- Best direction: {best_direction.get('label')} "
+                    f"({best_direction.get('fills', 0)} fills, {_format_money(best_direction.get('pnl_usd') or 0.0)})"
+                    if best_direction
+                    else "- Best direction: n/a"
+                ),
+                (
+                    f"- Best price bucket: {best_price_bucket.get('label')} "
+                    f"({best_price_bucket.get('fills', 0)} fills, {_format_money(best_price_bucket.get('pnl_usd') or 0.0)})"
+                    if best_price_bucket
+                    else "- Best price bucket: n/a"
+                ),
+                (
+                    f"- Recent 12 live fills: {recent_summary.get('fills', 0)} fills, "
+                    f"{_format_money(recent_summary.get('pnl_usd') or 0.0)} total, "
+                    f"{_format_money(recent_summary.get('avg_pnl_usd') or 0.0)} avg"
+                    if recent_summary
+                    else "- Recent 12 live fills: n/a"
+                ),
                 "",
             ]
         )
@@ -2056,6 +2247,7 @@ def build_runtime_truth_snapshot(
                     "latest_live_filled_at"
                 ),
                 "latest_trade": status.get("btc_5min_maker", {}).get("latest_trade") or {},
+                "fill_attribution": status.get("btc_5min_maker", {}).get("fill_attribution") or {},
             },
         },
         "capital": status["capital"],
@@ -2228,6 +2420,7 @@ def build_public_runtime_snapshot(runtime_truth_snapshot: dict[str, Any]) -> dic
             "latest_live_filled_at": btc5_maker.get("latest_live_filled_at"),
             "latest_trade": btc5_maker.get("latest_trade") or {},
             "recent_live_filled": list(btc5_maker.get("recent_live_filled") or []),
+            "fill_attribution": btc5_maker.get("fill_attribution") or {},
         },
         "structural_gates": {
             "a6": {
@@ -3295,6 +3488,7 @@ def _build_state_improvement_report(
         },
         "strategy_recommendations": {
             "btc5_guardrails": btc5_maker.get("guardrail_recommendation"),
+            "btc5_edge_profile": (btc5_maker.get("fill_attribution") or {}),
         },
         "metrics": current_metrics,
     }
