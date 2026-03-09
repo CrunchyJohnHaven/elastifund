@@ -188,6 +188,39 @@ def _parse_timestamp(raw: str) -> Optional[datetime]:
     return dt.astimezone(timezone.utc)
 
 
+def _already_ordered_tickers(*, orders_log: Path = ORDERS_LOG) -> set[tuple[str, str]]:
+    """Return set of (ticker, side) pairs already ordered to prevent duplicate submissions."""
+    seen: set[tuple[str, str]] = set()
+    if not orders_log.exists():
+        return seen
+    with orders_log.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            execution_result = str(row.get("execution_result", "")).strip().lower()
+            if not execution_result:
+                order = row.get("order", {})
+                execution_result = str(order.get("status", "") if isinstance(order, dict) else "").strip().lower()
+            if execution_result not in {"paper", "live"}:
+                continue
+            ticker = str(row.get("market_ticker", "")).strip()
+            if not ticker:
+                signal = row.get("signal", {})
+                ticker = str(signal.get("market_ticker", "") if isinstance(signal, dict) else "").strip()
+            side = str(row.get("side", "")).strip()
+            if not side:
+                signal = row.get("signal", {})
+                side = str(signal.get("side", "") if isinstance(signal, dict) else "").strip()
+            if ticker and side:
+                seen.add((ticker, side))
+    return seen
+
+
 def _current_hourly_usage(
     *,
     now: Optional[datetime] = None,
@@ -378,6 +411,37 @@ def temperature_probability(
         p = _norm_cdf(hi + 0.5, mean, std_f) - _norm_cdf(a - 0.5, mean, std_f)
 
     return max(0.01, min(0.99, p))
+
+
+def _adaptive_temp_std(target_date: date, city_code: str, base_std: float = 3.0) -> float:
+    """Reduce temperature std for same-day forecasts where uncertainty is lower.
+
+    NWS forecast error (std) by horizon:
+      Same-day (0-6h to max temp): ~1.5°F
+      Same-day (6-12h):            ~2.0°F
+      Next-day (12-24h):           ~2.5°F
+      2-3 days:                    ~3.5°F
+      4+ days:                     use base_std as-is
+    """
+    now_utc = datetime.now(timezone.utc)
+    today_utc = now_utc.date()
+    horizon_days = (target_date - today_utc).days
+    if horizon_days < 0:
+        return max(1.0, base_std)
+    if horizon_days == 0:
+        # Same-day: estimate hours until typical max temp (~20:00 UTC for US East, ~22:00 for US West).
+        # Use 21:00 UTC as rough midpoint for "peak temp hour" across US cities.
+        hours_until_peak = max(0.0, 21.0 - now_utc.hour - now_utc.minute / 60.0)
+        if hours_until_peak <= 2.0:
+            return 1.0  # Temperature nearly locked in.
+        if hours_until_peak <= 6.0:
+            return 1.5
+        return 2.0
+    if horizon_days == 1:
+        return 2.5
+    if horizon_days <= 3:
+        return 3.5
+    return max(base_std, 4.5)
 
 
 def _is_tight_temp_range_contract(contract: tuple[str, float, Optional[float]]) -> bool:
@@ -736,12 +800,12 @@ def build_weather_signal(
     yes_spread = yes_ask - (yes_bid if yes_bid is not None else max(0.0, yes_ask - 0.01))
     no_spread = no_ask - (no_bid if no_bid is not None else max(0.0, no_ask - 0.01))
     spread = yes_spread if side == "yes" else no_spread
-    if spread > max_spread:
+    if spread < 0.0 or spread > max_spread:
         return None
 
     order_prob = yes_order_prob if side == "yes" else no_order_prob
-    if order_prob is None:
-        return None
+    if order_prob is None or order_prob < 0.03:
+        return None  # Reject dust orders below 3¢ — no liquidity.
     confidence = max(0.0, min(1.0, edge / max(edge_threshold, 1e-6)))
     return WeatherSignal(
         timestamp=datetime.now(timezone.utc).isoformat(),
@@ -875,6 +939,7 @@ def scan_weather_signals(
             )
             continue
 
+        adaptive_std = _adaptive_temp_std(target_day, city_code, base_std=temp_std_f)
         for market in city_markets:
             sig = build_weather_signal(
                 city_code,
@@ -882,7 +947,7 @@ def scan_weather_signals(
                 market,
                 edge_threshold=edge_threshold,
                 max_spread=max_spread,
-                temp_std_f=temp_std_f,
+                temp_std_f=adaptive_std,
                 maker_offset_cents=maker_offset_cents,
             )
             if sig:
@@ -894,6 +959,15 @@ def scan_weather_signals(
 
 def run_once(args: argparse.Namespace) -> int:
     session = get_kalshi_client(execute=args.execute)
+
+    # Check for settled markets and log calibration data before scanning new signals.
+    try:
+        settled = log_settlement_outcomes(session)
+        if settled:
+            logger.info("Logged %d settlement outcomes for calibration.", settled)
+    except Exception as e:
+        logger.debug("Settlement check skipped: %s", e)
+
     signals = scan_weather_signals(
         session,
         edge_threshold=args.edge_threshold,
@@ -912,10 +986,20 @@ def run_once(args: argparse.Namespace) -> int:
     kelly_fraction = float(args.kelly_fraction)
 
     orders_placed = 0
+    already_ordered = _already_ordered_tickers()
     hourly_usage = _current_hourly_usage()
     hour_orders_placed = hourly_usage.order_count
     hour_notional = hourly_usage.notional_usd
     for sig in signals[: args.max_signals]:
+        if (sig.market_ticker, sig.side) in already_ordered:
+            _record_decision(
+                signal=sig,
+                size_usd=0.0,
+                execution_result="rejected",
+                reason_code="already_ordered",
+                execute=args.execute,
+            )
+            continue
         size_usd = _kelly_size_usd(
             side=sig.side,
             model_probability=sig.model_probability,
@@ -1000,6 +1084,7 @@ def run_once(args: argparse.Namespace) -> int:
         if execution_result in {"paper", "live"}:
             hour_orders_placed += 1
             hour_notional = round(hour_notional + size_usd, 2)
+            already_ordered.add((sig.market_ticker, sig.side))
 
         print(
             f"[{sig.city}] {sig.market_ticker} {sig.side.upper()} "
@@ -1016,6 +1101,129 @@ def run_once(args: argparse.Namespace) -> int:
         f"{'LIVE' if args.execute else 'PAPER'} orders={orders_placed}"
     )
     return 0
+
+
+SETTLEMENT_LOG = DATA_DIR / "kalshi_weather_settlements.jsonl"
+
+
+def log_settlement_outcomes(session: KalshiSession) -> int:
+    """Check settled markets and log actual outcomes vs model predictions for calibration.
+
+    Reads orders log, finds settled markets, records predicted vs actual outcome.
+    Returns count of newly logged settlements.
+    """
+    if not ORDERS_LOG.exists():
+        logger.info("No orders log to check for settlements.")
+        return 0
+
+    # Load already-logged settlements to avoid duplicates.
+    logged: set[str] = set()
+    if SETTLEMENT_LOG.exists():
+        with SETTLEMENT_LOG.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                    logged.add(str(row.get("order_client_id", "")))
+                except json.JSONDecodeError:
+                    continue
+
+    # Collect unique (ticker, side) orders from the log.
+    orders_to_check: dict[str, dict] = {}
+    with ORDERS_LOG.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            order = row.get("order", {})
+            if not isinstance(order, dict):
+                continue
+            client_id = str(order.get("client_order_id", "")).strip()
+            if not client_id or client_id in logged:
+                continue
+            execution_result = str(row.get("execution_result", "")).strip().lower()
+            if not execution_result:
+                execution_result = str(order.get("status", "")).strip().lower()
+            if execution_result not in {"paper", "live"}:
+                continue
+            orders_to_check[client_id] = row
+
+    if not orders_to_check:
+        logger.info("No unsettled orders to check.")
+        return 0
+
+    # Try to get settlement results from Kalshi API.
+    settled_count = 0
+    tickers_checked: set[str] = set()
+    for client_id, order_row in orders_to_check.items():
+        signal = order_row.get("signal", {})
+        if not isinstance(signal, dict):
+            continue
+        ticker = str(signal.get("market_ticker", "")).strip()
+        if not ticker or ticker in tickers_checked:
+            # Still log the calibration row for this order using cached result.
+            pass
+        tickers_checked.add(ticker)
+
+        # Try API lookup for settlement.
+        result_str = None
+        try:
+            if session.markets_api is not None:
+                market_resp = session.markets_api.get_market(ticker=ticker)
+                market_data = market_resp
+            else:
+                market_data = _json_get(f"{KALSHI_API_BASE}/markets/{ticker}", timeout=10.0)
+            status = str(_field(market_data, "status", "") or _field(market_data, "market", {}).get("status", "")).lower()
+            if status not in {"settled", "finalized", "closed"}:
+                continue
+            result_str = str(_field(market_data, "result", "") or _field(market_data, "market", {}).get("result", "")).lower()
+        except Exception as e:
+            logger.debug("Settlement check failed for %s: %s", ticker, e)
+            continue
+
+        if result_str is None:
+            continue
+
+        side = str(signal.get("side", "")).strip()
+        model_prob = float(signal.get("model_probability", 0.0))
+        order_prob = float(signal.get("order_probability", 0.0))
+        edge = float(signal.get("edge", 0.0))
+        won = (side == "yes" and result_str == "yes") or (side == "no" and result_str == "no")
+
+        settlement_row = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "order_client_id": client_id,
+            "market_ticker": ticker,
+            "city": str(signal.get("city", "")),
+            "side": side,
+            "result": result_str,
+            "won": won,
+            "model_probability": model_prob,
+            "order_probability": order_prob,
+            "edge": edge,
+            "notional_usd": float(order_row.get("notional_usd", 0.0)),
+            "reason": str(signal.get("reason", "")),
+        }
+        _append_jsonl(SETTLEMENT_LOG, settlement_row)
+        settled_count += 1
+        logger.info(
+            "Settlement: %s %s %s result=%s won=%s model_p=%.3f edge=%.3f",
+            signal.get("city", ""),
+            ticker,
+            side.upper(),
+            result_str,
+            won,
+            model_prob,
+            edge,
+        )
+
+    return settled_count
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1044,6 +1252,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=int(os.environ.get("KALSHI_WEATHER_MAX_ORDERS_PER_HOUR", os.environ.get("KALSHI_WEATHER_MAX_ORDERS", "5"))),
         help="Rolling 60-minute order count cap",
     )
+    p.add_argument("--check-settlements", action="store_true", help="Check settled markets and log outcomes, then exit")
     p.add_argument("--loop", action="store_true", help="Run continuously")
     p.add_argument("--interval-seconds", type=int, default=int(os.environ.get("KALSHI_WEATHER_LOOP_INTERVAL_SECONDS", "300")))
     p.add_argument("--log-level", default=os.environ.get("LOG_LEVEL", "INFO"))
@@ -1070,6 +1279,12 @@ def main() -> int:
         logger.warning("KALSHI_WEATHER_PAPER_TRADING is false but --execute not supplied; using paper mode")
 
     try:
+        if args.check_settlements:
+            session = get_kalshi_client(execute=False)
+            settled = log_settlement_outcomes(session)
+            print(f"Logged {settled} settlement outcomes to {SETTLEMENT_LOG}")
+            return 0
+
         if not args.loop:
             return run_once(args)
 

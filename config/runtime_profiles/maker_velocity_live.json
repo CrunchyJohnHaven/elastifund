@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "All-capital maker-velocity track (AGGRESSIVE). Fast-flow-only, <=24h crypto markets, live order submission enabled. Full bankroll exposure with single-position concentration, full Kelly, and full daily-loss envelope.",
+  "description": "Live maker-velocity full deployment. All capital available across fast-resolving markets. Crypto unlocked (priority 3), politics/weather/economic enabled. $10 per position, uncapped daily loss, 0.25 Kelly, 30 max positions. 24h max resolution for velocity. LLM signals ON, wallet-flow ON, VPIN defense active. A6/B1 disabled. Purpose: deploy all capital, collect data, see what happens.",
   "mode": {
     "execution_mode": "shadow",
     "paper_trading": false,
@@ -8,7 +8,7 @@
     "launch_gate": "none"
   },
   "feature_flags": {
-    "enable_llm_signals": false,
+    "enable_llm_signals": true,
     "enable_wallet_flow": true,
     "enable_lmsr": true,
     "enable_cross_platform_arb": false,
@@ -17,39 +17,39 @@
     "enable_a6_live": false,
     "enable_b1_shadow": false,
     "enable_b1_live": false,
-    "enable_a6_embedded_shadow_scanner": true
+    "enable_a6_embedded_shadow_scanner": false
   },
   "risk_limits": {
-    "max_position_usd": 247.51,
-    "max_daily_loss_usd": 247.51,
-    "max_exposure_pct": 1.0,
-    "kelly_fraction": 1.0,
-    "max_kelly_fraction": 1.0,
-    "scan_interval_seconds": 15,
-    "max_open_positions": 1,
-    "min_edge": 0.02,
-    "initial_bankroll": 247.51,
-    "hourly_notional_budget_usd": 247.51
+    "max_position_usd": 10.0,
+    "max_daily_loss_usd": 227.38,
+    "max_exposure_pct": 0.95,
+    "kelly_fraction": 0.25,
+    "max_kelly_fraction": 0.50,
+    "scan_interval_seconds": 30,
+    "max_open_positions": 30,
+    "min_edge": 0.03,
+    "initial_bankroll": 227.38,
+    "hourly_notional_budget_usd": 227.38
   },
   "market_filters": {
     "max_resolution_hours": 24.0,
-    "min_category_priority": 0,
+    "min_category_priority": 1,
     "category_priorities": {
-      "politics": 0,
-      "weather": 0,
-      "economic": 0,
+      "politics": 3,
+      "weather": 3,
+      "economic": 2,
       "crypto": 3,
       "sports": 0,
       "financial_speculation": 1,
-      "geopolitical": 0,
-      "fed_rates": 0,
+      "geopolitical": 1,
+      "fed_rates": 1,
       "unknown": 0
     }
   },
   "signal_thresholds": {
     "yes_threshold": 0.05,
     "no_threshold": 0.02,
-    "lmsr_entry_threshold": 0.02
+    "lmsr_entry_threshold": 0.03
   },
   "combinatorial_thresholds": {
     "a6_buy_threshold": 0.97,
@@ -59,8 +59,8 @@
     "fill_timeout_seconds": 2.0,
     "cancel_replace_count": 2,
     "max_notional_per_leg_usd": 5.0,
-    "arb_budget_usd": 100.0,
-    "merge_min_notional_usd": 20.0,
+    "arb_budget_usd": 50.0,
+    "merge_min_notional_usd": 10.0,
     "promotion_min_signals": 20,
     "required_capture_rate": 0.5,
     "required_classification_accuracy": 0.8,
@@ -70,11 +70,11 @@
     "dep_graph_db_path": "data/dep_graph.sqlite"
   },
   "microstructure_thresholds": {
-    "vpin_bucket_size": 150.0,
-    "vpin_window_size": 16,
-    "vpin_toxic_threshold": 0.7,
-    "vpin_safe_threshold": 0.2,
-    "ws_heartbeat_interval_seconds": 3.0,
-    "ws_rest_poll_interval_seconds": 1.0
+    "vpin_bucket_size": 250.0,
+    "vpin_window_size": 12,
+    "vpin_toxic_threshold": 0.70,
+    "vpin_safe_threshold": 0.20,
+    "ws_heartbeat_interval_seconds": 5.0,
+    "ws_rest_poll_interval_seconds": 2.0
   }
 }
