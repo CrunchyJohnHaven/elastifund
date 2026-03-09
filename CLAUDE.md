@@ -148,16 +148,16 @@ This is standard practice. Quantopian was open-source but nobody published their
 
 **Date:** 2026-03-09 (hourly ops — updated by JJ automated check)
 **Cycle:** Flywheel Cycle 2 — Structural Alpha & Microstructure Defense
-**Capital:** $247.51 Polymarket (USDC) + $100 Kalshi (USD) = $347.51 total
-**Live trading:** PAPER MODE CONFIRMED — Dublin VPS deployed and actively placing paper trades. `jj_state.json` shows 5 paper trades (all `paper-*` order IDs), 4 open positions, $25 notional deployed, 541 cycles completed. Drift flag RESOLVED: service is running in paper mode, not live. Launch posture remains blocked (A-6/B-1 gates, flywheel hold).
-**Paper trades executed:** 5 (jj_state.json: total_trades=5, cycles_completed=541, started_at=2026-03-07T18:59:59Z)
-**Open paper positions:** 4 — Weinstein sentencing (<5yr YES @0.132 $10, 20-30yr YES @0.262 $5), MegaETH FDV >$2B YES @0.165 $5, MegaETH airdrop NO @0.3435 $5. NOTE: MegaETH positions may indicate category filter bypass — "market cap" keyword should classify as crypto (priority 0) but positions exist. Investigate signal path.
-**Live config:** $5/position, 30 max open positions, $10 daily loss cap, 0.25 Kelly, 48h max resolution
+**Capital:** $245.65 Polymarket (USDC; $227.38 available cash) + $100 Kalshi (USD) = $345.65 total
+**Live trading:** MAKER VELOCITY LIVE — `maker_velocity_live` profile is the active deploy target for live maker orders on fast-resolving markets.
+**Paper trades executed:** Historical pre-deployment paper trades are retained for baseline reference.
+**Open positions:** 3 existing maker-velocity positions remain open (~$18 deployed); do not liquidate during profile switch.
+**Live config:** $10/position, 30 max open positions, uncapped daily loss, 0.25 Kelly, 24h max resolution, 30s scan interval
 **Execution mode:** 100% Post-Only maker orders (Dispatch #75 pivot)
-**Data target:** 100 resolved trades in 7 days for live calibration data — NOT STARTED (0/100)
+**Data target:** 100 resolved trades in 7 days for live calibration data — ACTIVE COLLECTION (first review at 50 resolved trades)
 **Fast-market pipeline:** Latest checked-in report (v2.8.0) at `2026-03-09T01:58:34+00:00` still says `REJECT ALL`; 7,050 active markets pulled, 22 fast BTC markets discovered, 0 passing current category gate. Threshold sensitivity: 0 at current (YES 0.15/NO 0.05), 6 at aggressive (YES 0.08/NO 0.03), 6 at wide-open (YES 0.05/NO 0.02). 2,858 trade records, 1,627 tracked wallets.
 **Strategies in backlog:** 131 tracked total (7 deployed, 6 building, 2 structural alpha, 10 rejected, 8 pre-rejected, 1 re-evaluating, 97 research pipeline)
-**Structural gates:** A-6 kill watch active — 30.8 of 168 observation hours logged, 0 executable constructions below 0.95, 0 relaxed candidates below 0.97, minimum top-of-book cost 0.982. Kill deadline: 2026-03-14T18:49:58+00:00. B-1 still 0 deterministic template pairs in 1,000 active allowed markets, same kill deadline. Wallet-flow is `ready` with `80` scored wallets, latest scan returned `stay_paused`.
+**Structural gates:** A-6/B-1 are disabled in `maker_velocity_live`; kill-watch evidence collection remains active through the March 14 deadline.
 **New modules (Cycle 2):**
   - bot/ws_trade_stream.py — WebSocket CLOB feed → VPIN + OFI (5-level weighted)
   - bot/lead_lag_engine.py — Semantic Lead-Lag Arbitrage (Granger causality + LLM semantic filter)
@@ -169,12 +169,13 @@ This is standard practice. Quantopian was open-source but nobody published their
 **Code health:** 48/48 bot/*.py pass syntax. Zero TODO/FIXME. All three LLM prompt templates confirmed with temporal grounding (debate_pipeline.py, lead_lag_engine.py, ensemble_estimator.py all include `Today's date: {current_date}`).
 **Calibration:** Static Platt A=0.5914, B=-0.3977 remain optimal. Walk-forward validation (532 markets): static Brier 0.2134 beats rolling-50 (0.2192), rolling-100 (0.2147), rolling-200 (0.2170). No drift — 0 live trades means 0 adaptive samples.
 **SignalDedupCache:** Present at line 708 of jj_live.py, instantiated at line 2881 with `SIGNAL_DEDUP_TTL_SECONDS`. Functioning.
-**Category filter:** `unknown` priority = 0 (REJECT) confirmed. 12 categories defined. No live misclassification data available (0 trades). Geopolitical keywords already include "sanctions"; prospective additions (tariff, trade war, AI, crypto ETF) deferred until live data shows actual misclassifications.
+**Category filter:** Maker-velocity category gates are active: `crypto=3` (unlocked), `politics=3`, `weather=3`, `economic=2`, with lower-priority lanes (`geopolitical`, `financial_speculation`) available per profile mapping.
+**BTC 5-min maker:** Instance 2 runs as a separate service target (`btc-5min-maker.service`) with $5/trade sizing and uncapped daily loss for high-frequency data collection.
 **JJ-N foundations:** JJ-N is now in a partial-completion state. Repo truth includes the CRM schema, store-backed registry work, a unified approval gate, Website Growth Audit offer/templates, a telemetry event writer, an Elastic index template, a JJ-N dashboard asset, and the five engine modules plus `RevenuePipeline`; `make test-nontrading` passes with `53` tests.
 **JJ-N pipeline status:** The pipeline exists in `nontrading/pipeline.py`, but `nontrading/main.py` still runs the legacy campaign harness. The repo-root `tests/nontrading` surface currently fails one persisted-registry ranking test after reload, domain auth still points at `example.invalid`, and live sending remains blocked on verified domain/auth plus explicit approval.
 **Governance scaffold:** `13` numbered docs now live under `docs/numbered/`, and the public-messaging lint is passing.
 **Vision integration (March 9):** Elastic Vision Document and Platform Vision Document integrated into all admin files. Product definition expanded: trading + non-trading workers on a shared Elastic substrate. Six-layer master architecture, five-engine non-trading architecture (Account Intelligence, Outreach, Interaction, Proposal, Learning), numbered-docs governance plan, messaging system, opportunity scoring framework, and JJ-N 90-day rollout plan are now canonical across COMMAND_NODE v2.9.2, PROJECT_INSTRUCTIONS v3.9.2, `docs/numbered/`, REPLIT_NEXT_BUILD, and README. Non-trading revenue worker (JJ-N) is the first-class front door.
-**Next action:** Confirm the remote mode as paper or shadow. The A-6/B-1 kill watch is now active with a hard deadline of March 14. If both lanes still show zero density at that deadline, kill both and reallocate effort to I-10 calibration training ground + VPIN maker defense. Any restart should stay paper/shadow and be framed as evidence collection only.
+**Next action:** Monitor fill rates, win rates, and VPIN accuracy under maker velocity deployment. Run first structured data review at 50 resolved trades.
 
 ---
 

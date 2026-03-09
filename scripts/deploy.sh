@@ -8,11 +8,13 @@ usage() {
 Usage:
   ./scripts/deploy.sh [user@host]
   ./scripts/deploy.sh --clean-env --profile live_aggressive --restart
+  ./scripts/deploy.sh --clean-env --profile maker_velocity_live --restart --btc5
 
 Options:
   --clean-env         Strip runtime override vars from the VPS .env and set JJ_RUNTIME_PROFILE
   --profile NAME      Runtime profile to write during --clean-env (default: live_aggressive)
   --restart           Restart jj-live.service after syncing files
+  --btc5              Install/restart btc-5min-maker.service on the VPS
   -h, --help          Show this help
 
 Notes:
@@ -27,13 +29,15 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 if [ -f "$PROJECT_DIR/.env" ]; then
     set -a
+    # Load only deploy-relevant keys to avoid shell-breaking values in other vars.
     # shellcheck disable=SC1090
-    source "$PROJECT_DIR/.env"
+    source <(grep -E '^(LIGHTSAIL_KEY|VPS_USER|VPS_IP)=' "$PROJECT_DIR/.env" || true)
     set +a
 fi
 
 CLEAN_ENV=false
 RESTART_SERVICE=false
+ENABLE_BTC5=false
 PROFILE_NAME="live_aggressive"
 TARGET_VPS=""
 
@@ -52,6 +56,9 @@ while [ $# -gt 0 ]; do
             ;;
         --restart)
             RESTART_SERVICE=true
+            ;;
+        --btc5)
+            ENABLE_BTC5=true
             ;;
         -h|--help)
             usage
@@ -78,6 +85,7 @@ SSH_KEY="${LIGHTSAIL_KEY:-$HOME/.ssh/lightsail.pem}"
 VPS="${TARGET_VPS:-${VPS_USER:-ubuntu}@${VPS_IP:?Set VPS_IP in .env or environment}}"
 BOT_DIR="/home/ubuntu/polymarket-trading-bot"
 SERVICE_NAME="jj-live.service"
+BTC5_SERVICE_NAME="btc-5min-maker.service"
 REMOTE_PYTHONPATH="$BOT_DIR:$BOT_DIR/bot:$BOT_DIR/polymarket-bot"
 SSH_CMD=(ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no)
 SCP_CMD=(scp -i "$SSH_KEY" -o StrictHostKeyChecking=no)
@@ -94,6 +102,7 @@ echo "  Target:   $VPS:$BOT_DIR"
 echo "  Profile:  $PROFILE_NAME"
 echo "  Clean env: $CLEAN_ENV"
 echo "  Restart:   $RESTART_SERVICE"
+echo "  BTC5 service: $ENABLE_BTC5"
 echo
 
 POLYBOT_FILES=(
@@ -107,6 +116,11 @@ POLYBOT_FILES=(
 
 SCRIPT_SUPPORT_FILES=(
     "scripts/clean_env_for_profile.sh"
+    "scripts/btc5_status.sh"
+)
+
+DEPLOY_ASSET_FILES=(
+    "deploy/btc-5min-maker.service"
 )
 
 sync_file() {
@@ -125,6 +139,7 @@ echo "  Creating remote directories..."
     $BOT_DIR/bot \
     $BOT_DIR/config/runtime_profiles \
     $BOT_DIR/data \
+    $BOT_DIR/deploy \
     $BOT_DIR/polymarket-bot/src/core \
     $BOT_DIR/scripts"
 
@@ -145,6 +160,10 @@ for relative_path in "${POLYBOT_FILES[@]}"; do
 done
 
 for relative_path in "${SCRIPT_SUPPORT_FILES[@]}"; do
+    sync_file "$relative_path"
+done
+
+for relative_path in "${DEPLOY_ASSET_FILES[@]}"; do
     sync_file "$relative_path"
 done
 
@@ -205,6 +224,16 @@ else
     echo "  Skipping service restart (--restart not set)."
 fi
 
+if $ENABLE_BTC5; then
+    echo
+    echo "  Installing/restarting $BTC5_SERVICE_NAME..."
+    "${SSH_CMD[@]}" "$VPS" "cd $BOT_DIR && source venv/bin/activate && pip install -q aiohttp websockets python-dotenv 2>&1 | tail -3"
+    "${SSH_CMD[@]}" "$VPS" "sudo install -m 644 $BOT_DIR/deploy/$BTC5_SERVICE_NAME /etc/systemd/system/$BTC5_SERVICE_NAME && sudo systemctl daemon-reload && sudo systemctl enable $BTC5_SERVICE_NAME && sudo systemctl restart $BTC5_SERVICE_NAME && sleep 2 && sudo systemctl is-active $BTC5_SERVICE_NAME && sudo journalctl -u $BTC5_SERVICE_NAME -n 20 --no-pager"
+else
+    echo
+    echo "  Skipping BTC 5-min service setup (--btc5 not set)."
+fi
+
 echo
 echo "========================================"
 echo "  Deploy complete."
@@ -213,4 +242,5 @@ echo
 echo "Examples:"
 echo "  ./scripts/deploy.sh --clean-env --profile live_aggressive --restart"
 echo "  ./scripts/deploy.sh --clean-env --profile paper_aggressive --restart"
+echo "  ./scripts/deploy.sh --clean-env --profile maker_velocity_live --restart --btc5"
 echo "  ./scripts/deploy.sh"

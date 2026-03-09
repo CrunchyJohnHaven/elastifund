@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import bot.jj_live as jj_live_module
 from bot.jj_live import JJLive
+from bot.jj_live import RollingNotionalBudgetTracker
 
 
 EMPTY_COMBINATORIAL_CYCLE = {
@@ -132,6 +133,9 @@ def test_real_jj_live_import_surface_exposes_wallet_flow_hook():
 def _make_live(tmp_path: Path, *, markets: list[dict]) -> JJLive:
     live = JJLive.__new__(JJLive)
     live.paper_mode = True
+    live.runtime_mode = "shadow"
+    live.allow_order_submission = True
+    live.allow_order_submission = True
     live.enable_llm_signals = False
     live.enable_wallet_flow = True
     live.enable_lmsr = False
@@ -181,6 +185,11 @@ def _make_live(tmp_path: Path, *, markets: list[dict]) -> JJLive:
         return {}
 
     live._refresh_elastic_ml_state = _refresh_elastic_ml_state
+    live.pm_hourly_campaign_enabled = False
+    live.pm_campaign_max_resolution_hours = 0.0
+    live.pm_campaign_budget = RollingNotionalBudgetTracker(cap_usd=0.0, window_seconds=3600)
+    live.pm_campaign_decision_log_path = tmp_path / "pm_campaign.log"
+    live._pm_campaign_recent_decisions = []
     return live
 
 
@@ -204,11 +213,16 @@ def test_startup_lane_health_reports_fast_flow_bootstrap_and_credentials(tmp_pat
     live.arb_module_available = True
     live.sum_violation_strategy = object()
     live.combinatorial_cfg = DummyCombinatorialConfig()
+    live.pm_hourly_campaign_enabled = False
+    live.pm_campaign_max_resolution_hours = 0.0
+    live.pm_campaign_budget = RollingNotionalBudgetTracker(cap_usd=0.0, window_seconds=3600)
+    live.pm_campaign_decision_log_path = tmp_path / "pm_campaign.log"
+    live._pm_campaign_recent_decisions = []
 
     health = live._build_startup_lane_health()
 
     assert health["llm"]["status"] == "disabled"
-    assert health["wallet_flow"]["reason"] == "not_bootstrapped"
+    assert health["wallet_flow"]["reason"] == "missing_scores_json,missing_scores_db"
     assert health["lmsr"]["status"] == "active"
     assert health["cross_platform_arb"]["reason"] == "no_credentials"
     assert health["combinatorial"]["status"] == "disabled"
@@ -274,7 +288,7 @@ def test_run_cycle_skips_wallet_flow_cleanly_when_bootstrap_missing(tmp_path, mo
     assert summary["status"] == "ok"
     assert summary["trades_placed"] == 0
     assert summary["lane_health"]["wallet_flow"]["status"] == "not_ready"
-    assert summary["lane_health"]["wallet_flow"]["reason"] == "not_bootstrapped"
+    assert summary["lane_health"]["wallet_flow"]["reason"] == "missing_scores_json,missing_scores_db"
 
 
 def test_run_cycle_executes_wallet_signal_in_fast_flow_mode(tmp_path, monkeypatch):

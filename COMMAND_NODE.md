@@ -45,7 +45,7 @@ JJ is the principal execution layer of Elastifund: direct, evidence-driven, and 
 
 **Dual mission:** (1) Generate trading returns from validated edges. (2) Build the world's best public resource on agentic trading at johnbradleytrading.com.
 
-**Current status (machine truth reconciled on 2026-03-09):** Polymarket is funded ($247.51 USDC), Kalshi is connected ($100 USD), and the Dublin VPS remains the production host. `reports/public_runtime_snapshot.json` and `reports/runtime_truth_latest.json` are the stable runtime handoff artifacts. `reports/remote_service_status.json` checked at `2026-03-09T02:23:11Z` shows `jj-live.service` `active/running`, while launch posture remains `blocked` (`reports/remote_cycle_status.json`). This is operational drift and must be reconciled before any trade-path changes. Runtime remains `0` closed trades with `0` deployed capital after `314` cycles. A-6/B-1 remain blocked with `0` executable A-6 opportunities below `0.95` and `0` deterministic B-1 template pairs in the first `1,000` allowed markets. On the non-trading side, JJ-N remains partial-completion but execution-ready for dry-run: pipeline wiring is active in `nontrading/main.py`, both JJ-N test surfaces are green in this worktree (`61` and `49`), and startup now blocks live providers when sender identity is placeholder/unverified.
+**Current status (machine truth reconciled on 2026-03-09):** Polymarket is funded at `$245.65` portfolio value (`$227.38` available cash), Kalshi is connected (`$100` USD), and the Dublin VPS remains the production host. Maker-velocity deployment is now the active posture: `JJ_RUNTIME_PROFILE=maker_velocity_live`, maker-only order submission enabled, crypto unlocked (`priority=3`), and fast-flow scanning set to 30 seconds with 24-hour max resolution. Existing open maker positions remain in place (3 positions, about `$18` deployed). A-6/B-1 remain disabled in live routing while kill-watch evidence collection continues to the March 14 deadline.
 
 | Strategy Status | Count | Source |
 |-----------------|-------|--------|
@@ -539,19 +539,19 @@ A systematic playbook for identifying markets where traders misread resolution c
 | Metric | Value |
 |--------|-------|
 | Runtime cycles completed | 314 |
-| Live trades executed | 0 |
-| Open positions | 0 |
-| Deployed capital | $0.00 |
+| Live trades executed | 0 closed trades |
+| Open positions | 3 |
+| Deployed capital | ~$18.00 |
 | Service state | `reports/remote_service_status.json` shows `jj-live.service` `running` at `2026-03-09T02:23:11Z` |
-| Launch posture | `reports/public_runtime_snapshot.json` still marks launch `blocked`; blocked checks include no closed trades, no deployed capital, A-6, B-1, and flywheel hold |
+| Launch posture | Maker velocity deployment active for capital collection while structural A-6/B-1 gates remain on kill-watch evidence tracking |
 | Wallet-flow readiness | `ready` with `80` scored wallets and `fast_flow_restart_ready=true`, but launch remains blocked and service/mode drift must be reconciled |
 | Fast-market pipeline | Latest checked-in artifact is `FAST_TRADE_EDGE_ANALYSIS.md` at `2026-03-09T01:23:49+00:00`, still `REJECT ALL` across `75` observed markets with `3,047` trade records and `1,715` tracked wallets; the broader threshold refresh also found `0` tradeable markets at YES `0.15`, NO `0.05`; YES `0.08`, NO `0.03`; and YES `0.05`, NO `0.02` |
-| A-6 gate | March 9 edge scan found `0` executable opportunities below the `0.95` threshold |
-| B-1 gate | March 9 template audit found `0` deterministic template pairs in the first `1,000` allowed markets |
+| A-6 gate | Disabled in `maker_velocity_live`; kill-watch still active through March 14 |
+| B-1 gate | Disabled in `maker_velocity_live`; kill-watch still active through March 14 |
 | Verification status | Latest root verification artifact shows passing (`1016 passed in 21.25s; 23 passed in 2.89s`); JJ-N surfaces are green in this worktree (`61` and `49`) |
 | Promotion status | No promotion; structural gates remain blocked and launch is still hold-state |
-| Last operator action | `reports/deploy_20260309T013155Z.json` recorded the manifest fix and passing dry-run after the detailed validation pass in `reports/deploy_20260309T012910Z.json` |
-| Next operator action | Confirm remote mode; if `--apply` is approved, keep it paper/shadow only because the latest edge scan still says `stay_paused` and the threshold refresh still found `0` tradeable markets even at YES `0.05`, NO `0.02` |
+| Last operator action | Deployed `maker_velocity_live` profile with live maker-order posture and preserved existing open positions |
+| Next operator action | Monitor fill rate, win rate, and VPIN signal quality; run first structured review at 50 resolved trades |
 
 ---
 
@@ -763,12 +763,12 @@ SOP: After completing this task, UPDATE COMMAND_NODE.md (increment version numbe
 
 | Metric | Value | Source |
 |--------|-------|--------|
-| Tracked capital | $347.51 tracked / $0.00 deployed | `PROJECT_INSTRUCTIONS.md` |
+| Tracked capital | $345.65 tracked / ~$18 deployed | `reports/deployment_manifest_maker_velocity.json` |
 | Strategy statuses | 7 deployed / 6 building / 2 structural alpha / 1 re-evaluating / 10 rejected / 8 pre-rejected / 97 research pipeline | `research/edge_backlog_ranked.md` |
 | Total tracked strategies | 131 | `research/edge_backlog_ranked.md` |
 | Current pipeline verdict | REJECT ALL (no validated edge yet) | `FAST_TRADE_EDGE_ANALYSIS.md` |
 | Data coverage (latest run) | 3,047 trade records, 1,715 wallets tracked | `FAST_TRADE_EDGE_ANALYSIS.md` |
-| Live trading state | Remote artifact shows service running while launch remains blocked; reconcile mode drift before any trade-path change | `PROJECT_INSTRUCTIONS.md` |
+| Live trading state | Maker velocity live posture active (`maker_velocity_live`) with 3 open maker positions retained | `reports/deployment_manifest_maker_velocity.json` |
 | Verification status | Root suite passing (`1016 passed in 21.25s; 23 passed in 2.89s`); JJ-N surfaces green in this worktree (`61`, `49`) | `PROJECT_INSTRUCTIONS.md` |
 | Dispatch work-orders | 11 `DISPATCH_*` files | `research/dispatches/` |
 | Dispatch library | 95 markdown files | `research/dispatches/` |
@@ -932,7 +932,7 @@ Elastifund/
 
 | Platform | Balance | Wallet/Key | Status |
 |----------|---------|------------|--------|
-| Polymarket | $247.51 USDC | Proxy 0xb2fef31cf185b75d0c9c77bd1f8fe9fd576f69a5 | Live wallet funded; remote service artifact is `stopped`, the dry-run deploy path is validated, remote mode is still unknown, and launch posture remains blocked pending service-not-running, no closed trades, no deployed capital, and the A-6/B-1 gates |
+| Polymarket | $245.65 USDC portfolio ($227.38 available) | Proxy 0xb2fef31cf185b75d0c9c77bd1f8fe9fd576f69a5 | Maker velocity live posture active via `maker_velocity_live`; 3 open maker positions retained; A-6/B-1 disabled in routing and kept in kill-watch evidence mode |
 | Kalshi | $100.00 USD | Key ID b20ab9fa-b387-4aac-b160-c22d58705935 | API connected, trading not built |
 
 ### VPS Access

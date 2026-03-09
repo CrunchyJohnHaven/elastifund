@@ -1,0 +1,20 @@
+[Unit]
+Description=BTC 5-Minute Maker Bot (Instance 2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/polymarket-trading-bot
+Environment=PYTHONPATH=/home/ubuntu/polymarket-trading-bot:/home/ubuntu/polymarket-trading-bot/bot:/home/ubuntu/polymarket-trading-bot/polymarket-bot
+EnvironmentFile=/home/ubuntu/polymarket-trading-bot/.env
+ExecStart=/home/ubuntu/polymarket-trading-bot/venv/bin/python3 bot/btc_5min_maker.py --continuous --live --verbose
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=btc5maker
+
+[Install]
+WantedBy=multi-user.target

@@ -6,7 +6,7 @@ from pathlib import Path
 def test_deploy_script_syncs_runtime_profile_contract_and_uses_systemd_service() -> None:
     script = (Path(__file__).resolve().parent.parent / "scripts" / "deploy.sh").read_text()
 
-    assert 'source "$PROJECT_DIR/.env"' in script
+    assert 'source <(grep -E \'^(LIGHTSAIL_KEY|VPS_USER|VPS_IP)=\' "$PROJECT_DIR/.env" || true)' in script
     assert 'for local_path in "$PROJECT_DIR"/bot/*.py; do' in script
     assert 'sync_file "config/__init__.py"' in script
     assert 'sync_file "config/runtime_profile.py"' in script

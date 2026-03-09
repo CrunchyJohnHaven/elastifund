@@ -69,6 +69,7 @@ class TestJJLiveSumViolationExecution(unittest.TestCase):
     def test_execute_sum_violation_signals_paper_mode(self) -> None:
         live = JJLive.__new__(JJLive)
         live.paper_mode = True
+        live.allow_order_submission = True
         live.clob = None
         live.state = _DummyState()
         live.db = _DummyDB()
@@ -117,7 +118,8 @@ class TestJJLiveSumViolationExecution(unittest.TestCase):
             ],
         }
 
-        orders_placed, action_map = asyncio.run(live._execute_sum_violation_signals([signal]))
+        with patch.object(jj_live_module, "MAX_OPEN_POSITIONS", 10):
+            orders_placed, action_map = asyncio.run(live._execute_sum_violation_signals([signal]))
 
         self.assertEqual(orders_placed, 3)
         self.assertEqual(action_map["sumv-1"], "traded")
@@ -127,6 +129,7 @@ class TestJJLiveSumViolationExecution(unittest.TestCase):
     def test_execute_sum_violation_signals_live_bumps_to_exchange_minimum(self) -> None:
         live = JJLive.__new__(JJLive)
         live.paper_mode = False
+        live.allow_order_submission = True
         live.clob = _CaptureClob()
         live.state = _DummyState()
         live.db = _DummyDB()
@@ -179,6 +182,7 @@ class TestJJLiveSumViolationExecution(unittest.TestCase):
             patch.object(jj_live_module, "OrderArgs", _CaptureOrderArgs),
             patch.object(jj_live_module, "OrderType", _CaptureOrderType),
             patch.object(jj_live_module, "BUY", "BUY"),
+            patch.object(jj_live_module, "MAX_OPEN_POSITIONS", 10),
         ):
             orders_placed, action_map = asyncio.run(live._execute_sum_violation_signals([signal]))
 

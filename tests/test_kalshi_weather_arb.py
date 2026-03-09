@@ -1,6 +1,7 @@
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from unittest.mock import patch
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,6 +10,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from kalshi.weather_arb import (
     ForecastSnapshot,
+    _adaptive_temp_std,
+    _already_ordered_tickers,
     _current_hourly_usage,
     _normalize_mode,
     _resolve_hourly_budget_usd,
@@ -234,3 +237,82 @@ def test_validate_args_rejects_invalid_hourly_limits():
         assert False, "expected ValueError"
     except ValueError as exc:
         assert "max-orders-per-hour" in str(exc)
+
+
+def test_already_ordered_tickers_deduplicates(tmp_path: Path):
+    log = tmp_path / "orders.jsonl"
+    rows = [
+        {
+            "market_ticker": "KXHIGHMIA-26MAR09-B84.5",
+            "side": "no",
+            "execution_result": "live",
+        },
+        {
+            "market_ticker": "KXHIGHNY-26MAR09-B65.5",
+            "side": "yes",
+            "execution_result": "paper",
+        },
+        {
+            "market_ticker": "KXHIGHCHI-26MAR09-B74.5",
+            "side": "no",
+            "execution_result": "rejected",
+        },
+    ]
+    log.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    result = _already_ordered_tickers(orders_log=log)
+    assert ("KXHIGHMIA-26MAR09-B84.5", "no") in result
+    assert ("KXHIGHNY-26MAR09-B65.5", "yes") in result
+    # Rejected orders should NOT be in the dedup set.
+    assert ("KXHIGHCHI-26MAR09-B74.5", "no") not in result
+
+
+def test_already_ordered_tickers_reads_nested_signal(tmp_path: Path):
+    log = tmp_path / "orders.jsonl"
+    row = {
+        "execute": True,
+        "signal": {"market_ticker": "KXHIGHLAX-26MAR09-B73.5", "side": "yes"},
+        "order": {"status": "live"},
+        "execution_result": "live",
+    }
+    log.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    result = _already_ordered_tickers(orders_log=log)
+    assert ("KXHIGHLAX-26MAR09-B73.5", "yes") in result
+
+
+def test_adaptive_temp_std_same_day_is_smaller():
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
+    far_out = today + timedelta(days=5)
+
+    # Same-day should be smaller than next-day.
+    std_today = _adaptive_temp_std(today, "NYC")
+    std_tomorrow = _adaptive_temp_std(tomorrow, "NYC")
+    std_far = _adaptive_temp_std(far_out, "NYC")
+
+    assert std_today <= 2.0, f"Same-day std should be <=2.0, got {std_today}"
+    assert std_tomorrow == 2.5
+    assert std_far >= 4.5
+
+
+def test_build_signal_rejects_negative_spread():
+    """Crossed markets (bid > ask) produce negative spread and should be filtered out."""
+    snapshot = ForecastSnapshot(
+        city="AUS",
+        target_date="2026-03-09",
+        high_temp_f=85.0,
+        pop_probability=0.2,
+        source_period="Sunday",
+    )
+    # Crossed market: yes_bid=99 > yes_ask=2 -> spread = 0.02 - 0.99 = -0.97
+    market = {
+        "ticker": "KXHIGHAUS-26MAR09-T86",
+        "event_ticker": "KXHIGHAUS-26MAR09",
+        "title": "Will the high temp in Austin be above 86?",
+        "subtitle": "Above 86",
+        "yes_ask": 2,
+        "yes_bid": 99,
+        "no_ask": 99,
+        "no_bid": 2,
+    }
+    sig = build_weather_signal("AUS", snapshot, market, edge_threshold=0.05, max_spread=0.15)
+    assert sig is None, "Should reject signal with negative spread (crossed market)"
