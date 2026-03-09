@@ -35,12 +35,16 @@ def test_build_cycle_command_includes_selected_flags() -> None:
         max_loss_hit_prob_increase=0.03,
         min_fill_lift=0,
         min_fill_retention_ratio=0.85,
+        regime_max_session_overrides=2,
+        regime_top_single_overrides_per_session=2,
+        regime_max_composed_candidates=64,
         restart_on_promote=False,
     )
     command = _build_cycle_command(args)
     assert "--db-path" in command
     assert "--include-archive-csvs" in command
     assert "--min-median-arr-improvement-pct" in command
+    assert "--regime-max-session-overrides" in command
     assert "--service-name" in command
     assert "btc-5min-maker.service" in command
     assert "--restart-on-promote" not in command
@@ -58,6 +62,14 @@ def test_write_loop_reports_accumulates_summary(tmp_path: Path) -> None:
         "best_profile": {"name": "current_live_profile"},
         "active_profile": {"name": "current_live_profile"},
         "arr": {"active_median_arr_pct": 1000.0, "best_median_arr_pct": 1000.0, "median_arr_delta_pct": 0.0},
+        "active_runtime_package": {"profile": {"name": "current_live_profile"}, "session_policy": []},
+        "best_runtime_package": {"profile": {"name": "current_live_profile"}, "session_policy": [{"name": "open_et", "et_hours": [9]}]},
+        "deploy_recommendation": "hold",
+        "package_confidence_label": "medium",
+        "package_confidence_reasons": ["validation_live_filled_rows=8", "generalization_ratio=0.8200"],
+        "package_missing_evidence": ["median_arr_delta_not_positive"],
+        "validation_live_filled_rows": 8,
+        "generalization_ratio": 0.82,
         "recommended_session_policy": [{"name": "open_et", "et_hours": [9, 10, 11], "max_abs_delta": 0.0001}],
         "hypothesis_lab": {"best_hypothesis": {"name": "hyp_down_open"}},
         "regime_policy_lab": {"best_policy": {"name": "policy_current_live_profile__open_et__grid_d0.00010_up0.49_down0.49"}},
@@ -92,5 +104,7 @@ def test_write_loop_reports_accumulates_summary(tmp_path: Path) -> None:
     assert "Last best hypothesis" in latest_md
     assert "Last best regime policy" in latest_md
     assert "Last best session policy records" in latest_md
+    assert "Last package decision" in latest_md
+    assert "Last package confidence" in latest_md
     assert "Last median ARR delta" in latest_md
     assert len(history_lines) == 2

@@ -105,20 +105,114 @@ def test_build_summary_finds_session_override_that_beats_current() -> None:
         seed=7,
         min_replay_fills=6,
         min_session_rows=4,
+        max_session_overrides=2,
+        top_single_overrides_per_session=2,
+        max_composed_candidates=16,
     )
 
     best = summary["best_policy"]
     assert best is not None
     assert best["policy"]["name"] != "policy_current_live_profile"
-    assert best["policy"]["overrides"][0]["session_name"] == "open_et"
+    assert best["policy"]["overrides"]
     assert "recommended_session_policy" in summary
     assert isinstance(summary["recommended_session_policy"], list)
     assert summary["recommended_session_policy"]
     runtime_policy = summary["recommended_session_policy"][0]
-    assert runtime_policy["name"] == "open_et"
-    assert runtime_policy["et_hours"] == [9, 10, 11]
+    assert runtime_policy["name"] == best["policy"]["overrides"][0]["session_name"]
+    assert runtime_policy["et_hours"] == best["policy"]["overrides"][0]["et_hours"]
     assert set(runtime_policy).issubset(
         {"name", "et_hours", "min_delta", "max_abs_delta", "up_max_buy_price", "down_max_buy_price", "maker_improve_ticks"}
     )
     assert summary["best_vs_current"]["median_arr_pct_delta"] > 0
     assert summary["best_vs_current"]["replay_pnl_delta_usd"] > 0
+    assert summary["best_candidate"]["name"]
+    assert "arr_delta_vs_active_pct" in summary
+    assert "p05_arr_delta_vs_active_pct" in summary
+    assert "validation_live_filled_rows" in summary
+    assert "generalization_ratio" in summary
+    assert "evidence_band" in summary
+    follow_ups = summary["follow_up_candidates"]
+    assert isinstance(follow_ups, list)
+    assert 1 <= len(follow_ups) <= 5
+    assert {
+        "name",
+        "session_name",
+        "et_hours",
+        "max_abs_delta",
+        "up_max_buy_price",
+        "down_max_buy_price",
+        "ranking_score",
+        "evidence_band",
+        "validation_live_filled_rows",
+        "generalization_ratio",
+        "validation_median_arr_pct",
+        "validation_p05_arr_pct",
+    }.issubset(follow_ups[0].keys())
+    scores = [candidate["ranking_score"] for candidate in follow_ups]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_build_summary_can_promote_two_session_policy() -> None:
+    rows: list[dict[str, object]] = []
+    row_id = 1
+    for hour in (9, 14):
+        for minute in range(0, 30, 5):
+            rows.append(
+                _row(
+                    row_id=row_id,
+                    ts=_ts(2026, 3, 9, hour, minute),
+                    direction="DOWN",
+                    order_price=0.50,
+                    pnl_usd=-5.0,
+                )
+            )
+            row_id += 1
+        for minute in (30, 35):
+            rows.append(
+                _row(
+                    row_id=row_id,
+                    ts=_ts(2026, 3, 9, hour, minute),
+                    direction="DOWN",
+                    order_price=0.49 if hour == 9 else 0.48,
+                    pnl_usd=5.2 if hour == 9 else 5.4,
+                )
+            )
+            row_id += 1
+    for minute in range(0, 30, 5):
+        rows.append(
+            _row(
+                row_id=row_id,
+                ts=_ts(2026, 3, 9, 12, minute),
+                direction="DOWN",
+                order_price=0.49,
+                pnl_usd=5.1,
+            )
+        )
+        row_id += 1
+
+    current = GuardrailProfile("current_live_profile", 0.00015, 0.49, 0.51, "current")
+    runtime = GuardrailProfile("runtime_recommended", 0.00015, 0.49, 0.51, "runtime")
+
+    summary = build_summary(
+        rows=rows,
+        db_path=Path("reports/tmp_remote_btc_5min_maker.db"),
+        current_live_profile=current,
+        runtime_recommended_profile=runtime,
+        paths=250,
+        block_size=3,
+        loss_limit_usd=10.0,
+        seed=11,
+        min_replay_fills=8,
+        min_session_rows=4,
+        max_session_overrides=2,
+        top_single_overrides_per_session=2,
+        max_composed_candidates=16,
+    )
+
+    best = summary["best_policy"]
+    assert best is not None
+    assert len(best["policy"]["overrides"]) == 2
+    assert summary["best_candidate"]["session_count"] == 2
+    assert len(summary["recommended_session_policy"]) == 2
+    assert summary["best_vs_current"]["replay_pnl_delta_usd"] > 0
+    assert summary["input"]["generated_composed_policies"] > 0

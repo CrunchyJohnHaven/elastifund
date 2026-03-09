@@ -10,6 +10,7 @@ import shutil
 import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -66,6 +67,23 @@ class PolicyCandidate:
     default_profile: GuardrailProfile
     overrides: tuple[PolicyOverride, ...] = tuple()
     note: str = ""
+
+
+def _policy_override_sort_key(override: PolicyOverride) -> tuple[int, tuple[int, ...], str]:
+    hours = tuple(sorted(override.et_hours))
+    return (len(hours), hours, override.session_name)
+
+
+def order_policy_overrides(overrides: tuple[PolicyOverride, ...] | list[PolicyOverride]) -> tuple[PolicyOverride, ...]:
+    return tuple(sorted(tuple(overrides), key=_policy_override_sort_key))
+
+
+def _evidence_band(fills: int) -> str:
+    if fills >= 16:
+        return "validated"
+    if fills >= 8:
+        return "candidate"
+    return "exploratory"
 
 
 def _now_utc() -> datetime:
@@ -166,9 +184,10 @@ def build_override_profiles() -> list[GuardrailProfile]:
 
 
 def _policy_name(default_profile: GuardrailProfile, overrides: tuple[PolicyOverride, ...]) -> str:
-    if not overrides:
+    ordered = order_policy_overrides(overrides)
+    if not ordered:
         return f"policy_{default_profile.name}"
-    suffix = "__".join(f"{override.session_name}__{override.profile.name}" for override in overrides)
+    suffix = "__".join(f"{override.session_name}__{override.profile.name}" for override in ordered)
     return f"policy_{default_profile.name}__{suffix}"
 
 
@@ -185,11 +204,20 @@ def row_matches_profile(row: dict[str, Any], profile: GuardrailProfile) -> bool:
     return True
 
 
-def row_matches_policy(row: dict[str, Any], policy: PolicyCandidate) -> bool:
+def _matching_policy_override(row: dict[str, Any], policy: PolicyCandidate) -> PolicyOverride | None:
     hour = row.get("et_hour")
-    for override in policy.overrides:
-        if hour in override.et_hours:
-            return row_matches_profile(row, override.profile)
+    if hour is None:
+        return None
+    matches = [override for override in policy.overrides if hour in override.et_hours]
+    if not matches:
+        return None
+    return order_policy_overrides(matches)[0]
+
+
+def row_matches_policy(row: dict[str, Any], policy: PolicyCandidate) -> bool:
+    override = _matching_policy_override(row, policy)
+    if override is not None:
+        return row_matches_profile(row, override.profile)
     return row_matches_profile(row, policy.default_profile)
 
 
@@ -381,21 +409,190 @@ def build_policy_candidates(
 ) -> list[PolicyCandidate]:
     sessions = build_session_filters(rows, min_session_rows=min_session_rows)
     override_profiles = build_override_profiles()
-    candidates = [PolicyCandidate(name=_policy_name(current_live_profile, tuple()), default_profile=current_live_profile)]
+    candidates = [
+        PolicyCandidate(
+            name=_policy_name(current_live_profile, tuple()),
+            default_profile=current_live_profile,
+        )
+    ]
     for session_name, hours in sessions:
         for profile in override_profiles:
             if _profile_key(profile) == _profile_key(current_live_profile):
                 continue
             override = PolicyOverride(session_name=session_name, et_hours=tuple(hours), profile=profile)
+            ordered_overrides = order_policy_overrides((override,))
             candidates.append(
                 PolicyCandidate(
-                    name=_policy_name(current_live_profile, (override,)),
+                    name=_policy_name(current_live_profile, ordered_overrides),
                     default_profile=current_live_profile,
-                    overrides=(override,),
+                    overrides=ordered_overrides,
                     note="single-session override on top of current live profile",
                 )
             )
     return candidates
+
+
+def _score_candidates(evaluated: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    current_policy = next(
+        (candidate for candidate in evaluated if not (candidate.get("policy", {}).get("overrides") or [])),
+        None,
+    )
+    current_replay_pnl = max(
+        1e-9,
+        _safe_float((current_policy or {}).get("historical", {}).get("replay_live_filled_pnl_usd"), 0.0),
+    )
+    current_fill_rows = max(
+        1,
+        _safe_int((current_policy or {}).get("historical", {}).get("replay_live_filled_rows"), 0),
+    )
+    for candidate in evaluated:
+        replay_pnl_ratio = _safe_float(candidate["historical"].get("replay_live_filled_pnl_usd"), 0.0) / current_replay_pnl
+        fill_ratio = _safe_int(candidate["historical"].get("replay_live_filled_rows"), 0) / float(current_fill_rows)
+        profit_probability = _safe_float(candidate["monte_carlo"].get("profit_probability"), 0.0)
+        median_arr_pct = _safe_float(candidate["continuation"].get("median_arr_pct"), 0.0)
+        candidate["scoring"] = _round_metrics(
+            {
+                "metric_name": "live_policy_score",
+                "replay_pnl_ratio_vs_current": replay_pnl_ratio,
+                "fill_ratio_vs_current": fill_ratio,
+                "profit_probability": profit_probability,
+                "live_policy_score": median_arr_pct
+                * max(0.25, min(1.0, replay_pnl_ratio))
+                * max(0.25, min(1.0, fill_ratio))
+                * max(0.5, profit_probability),
+            }
+        )
+
+    evaluated.sort(
+        key=lambda candidate: (
+            _safe_float(candidate.get("scoring", {}).get("live_policy_score"), 0.0),
+            _safe_float(candidate["continuation"].get("median_arr_pct"), 0.0),
+            _safe_float(candidate["continuation"].get("p05_arr_pct"), 0.0),
+            _safe_float(candidate["monte_carlo"].get("profit_probability"), 0.0),
+            -_safe_float(candidate["monte_carlo"].get("p95_max_drawdown_usd"), 0.0),
+            _safe_int(candidate["historical"].get("replay_live_filled_rows"), 0),
+            _safe_float(candidate["historical"].get("replay_live_filled_pnl_usd"), 0.0),
+        ),
+        reverse=True,
+    )
+    return evaluated, current_policy
+
+
+def _policy_candidate_from_record(record: dict[str, Any]) -> PolicyCandidate | None:
+    policy = record.get("policy") if isinstance(record, dict) else {}
+    if not isinstance(policy, dict):
+        return None
+    default_profile_payload = policy.get("default_profile")
+    if not isinstance(default_profile_payload, dict):
+        return None
+    default_profile = GuardrailProfile(
+        name=str(default_profile_payload.get("name") or "default_profile"),
+        max_abs_delta=_safe_float(default_profile_payload.get("max_abs_delta"), None),
+        up_max_buy_price=_safe_float(default_profile_payload.get("up_max_buy_price"), None),
+        down_max_buy_price=_safe_float(default_profile_payload.get("down_max_buy_price"), None),
+        note=str(default_profile_payload.get("note") or ""),
+    )
+    overrides: list[PolicyOverride] = []
+    for item in policy.get("overrides") or []:
+        if not isinstance(item, dict):
+            continue
+        profile_payload = item.get("profile")
+        if not isinstance(profile_payload, dict):
+            continue
+        hours = tuple(
+            int(hour)
+            for hour in (item.get("et_hours") or [])
+            if isinstance(hour, int) or (isinstance(hour, str) and hour.isdigit())
+        )
+        if not hours:
+            continue
+        overrides.append(
+            PolicyOverride(
+                session_name=str(item.get("session_name") or "").strip(),
+                et_hours=hours,
+                profile=GuardrailProfile(
+                    name=str(profile_payload.get("name") or "override_profile"),
+                    max_abs_delta=_safe_float(profile_payload.get("max_abs_delta"), None),
+                    up_max_buy_price=_safe_float(profile_payload.get("up_max_buy_price"), None),
+                    down_max_buy_price=_safe_float(profile_payload.get("down_max_buy_price"), None),
+                    note=str(profile_payload.get("note") or ""),
+                ),
+            )
+        )
+    ordered_overrides = order_policy_overrides(overrides)
+    return PolicyCandidate(
+        name=_policy_name(default_profile, ordered_overrides),
+        default_profile=default_profile,
+        overrides=ordered_overrides,
+        note=str(policy.get("note") or ""),
+    )
+
+
+def _composed_policy_candidates(
+    *,
+    evaluated: list[dict[str, Any]],
+    current_live_profile: GuardrailProfile,
+    max_session_overrides: int,
+    top_single_overrides_per_session: int,
+    max_composed_candidates: int,
+) -> list[PolicyCandidate]:
+    if max_session_overrides <= 1:
+        return []
+
+    singles_by_session: dict[str, list[dict[str, Any]]] = {}
+    for candidate in evaluated:
+        overrides = (candidate.get("policy") or {}).get("overrides") or []
+        if len(overrides) != 1:
+            continue
+        override = overrides[0] if isinstance(overrides[0], dict) else {}
+        session_name = str(override.get("session_name") or "").strip()
+        if not session_name:
+            continue
+        singles_by_session.setdefault(session_name, []).append(candidate)
+
+    seeds: list[dict[str, Any]] = []
+    for session_candidates in singles_by_session.values():
+        session_candidates.sort(
+            key=lambda candidate: (
+                _safe_float((candidate.get("scoring") or {}).get("live_policy_score"), 0.0),
+                _safe_float(((candidate.get("continuation") or {}).get("median_arr_pct")), 0.0),
+                _safe_float(((candidate.get("historical") or {}).get("replay_live_filled_pnl_usd")), 0.0),
+            ),
+            reverse=True,
+        )
+        seeds.extend(session_candidates[: max(1, int(top_single_overrides_per_session))])
+
+    composed: list[tuple[float, PolicyCandidate]] = []
+    seen_names: set[str] = set()
+    for left, right in combinations(seeds, 2):
+        left_policy = _policy_candidate_from_record(left)
+        right_policy = _policy_candidate_from_record(right)
+        if left_policy is None or right_policy is None:
+            continue
+        if len(left_policy.overrides) != 1 or len(right_policy.overrides) != 1:
+            continue
+        if left_policy.overrides[0].session_name == right_policy.overrides[0].session_name:
+            continue
+        overrides = order_policy_overrides(left_policy.overrides + right_policy.overrides)
+        if len(overrides) > max(1, int(max_session_overrides)):
+            continue
+        candidate = PolicyCandidate(
+            name=_policy_name(current_live_profile, overrides),
+            default_profile=current_live_profile,
+            overrides=overrides,
+            note=f"{len(overrides)}-session override on top of current live profile",
+        )
+        if candidate.name in seen_names:
+            continue
+        seen_names.add(candidate.name)
+        composed_score = (
+            _safe_float((left.get("scoring") or {}).get("live_policy_score"), 0.0)
+            + _safe_float((right.get("scoring") or {}).get("live_policy_score"), 0.0)
+        )
+        composed.append((composed_score, candidate))
+
+    composed.sort(key=lambda item: item[0], reverse=True)
+    return [candidate for _, candidate in composed[: max(0, int(max_composed_candidates))]]
 
 
 def _recommended_session_policy(best_policy: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -431,35 +628,115 @@ def _recommended_session_policy(best_policy: dict[str, Any] | None) -> list[dict
     return recommended
 
 
-def build_summary(
+def _candidate_runtime_package(candidate: dict[str, Any]) -> dict[str, Any]:
+    policy = candidate.get("policy") if isinstance(candidate, dict) else {}
+    if not isinstance(policy, dict):
+        policy = {}
+    historical = candidate.get("historical") if isinstance(candidate, dict) else {}
+    if not isinstance(historical, dict):
+        historical = {}
+    continuation = candidate.get("continuation") if isinstance(candidate, dict) else {}
+    if not isinstance(continuation, dict):
+        continuation = {}
+    scoring = candidate.get("scoring") if isinstance(candidate, dict) else {}
+    if not isinstance(scoring, dict):
+        scoring = {}
+    session_policy = _recommended_session_policy(candidate)
+    overrides = policy.get("overrides") if isinstance(policy.get("overrides"), list) else []
+    primary_override = overrides[0] if overrides and isinstance(overrides[0], dict) else {}
+    override_profile = (
+        primary_override.get("profile")
+        if isinstance(primary_override, dict) and isinstance(primary_override.get("profile"), dict)
+        else {}
+    )
+    if not isinstance(override_profile, dict):
+        override_profile = {}
+    default_profile = policy.get("default_profile") if isinstance(policy.get("default_profile"), dict) else {}
+    if not isinstance(default_profile, dict):
+        default_profile = {}
+    profile = override_profile or default_profile
+    session_names = [str(item.get("name") or "") for item in session_policy if isinstance(item, dict)]
+    et_hours = sorted(
+        {
+            int(hour)
+            for item in session_policy
+            if isinstance(item, dict)
+            for hour in (item.get("et_hours") or [])
+            if isinstance(hour, int) or (isinstance(hour, str) and hour.isdigit())
+        }
+    )
+    primary_session_name = (
+        str(primary_override.get("session_name") or "any")
+        if len(session_policy) <= 1
+        else f"{len(session_policy)}_sessions"
+    )
+    validation_live_filled_rows = _safe_int(historical.get("replay_live_filled_rows"), 0)
+    generalization_ratio = max(
+        0.0,
+        min(1.5, _safe_float(scoring.get("fill_ratio_vs_current"), 0.0)),
+    )
+    return {
+        "name": str(policy.get("name") or "candidate_policy"),
+        "session_name": primary_session_name,
+        "session_names": session_names,
+        "session_count": len(session_policy),
+        "session_policy": session_policy,
+        "et_hours": et_hours,
+        "max_abs_delta": (
+            _safe_float(profile.get("max_abs_delta"), 0.0)
+            if profile.get("max_abs_delta") is not None
+            else None
+        ),
+        "up_max_buy_price": (
+            _safe_float(profile.get("up_max_buy_price"), 0.0)
+            if profile.get("up_max_buy_price") is not None
+            else None
+        ),
+        "down_max_buy_price": (
+            _safe_float(profile.get("down_max_buy_price"), 0.0)
+            if profile.get("down_max_buy_price") is not None
+            else None
+        ),
+        "ranking_score": _safe_float(scoring.get("live_policy_score"), 0.0),
+        "evidence_band": _evidence_band(validation_live_filled_rows),
+        "validation_live_filled_rows": validation_live_filled_rows,
+        "generalization_ratio": generalization_ratio,
+        "validation_median_arr_pct": _safe_float(continuation.get("median_arr_pct"), 0.0),
+        "validation_p05_arr_pct": _safe_float(continuation.get("p05_arr_pct"), 0.0),
+    }
+
+
+def _follow_up_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    packages = [_candidate_runtime_package(candidate) for candidate in candidates]
+    packages.sort(
+        key=lambda item: (
+            -_safe_float(item.get("ranking_score"), 0.0),
+            str(item.get("name") or ""),
+        )
+    )
+    return packages[:5]
+
+
+def _evaluate_policies(
     *,
     rows: list[dict[str, Any]],
-    db_path: Path,
-    current_live_profile: GuardrailProfile,
-    runtime_recommended_profile: GuardrailProfile,
+    policies: list[PolicyCandidate],
     paths: int,
     block_size: int,
     loss_limit_usd: float,
     seed: int,
     min_replay_fills: int,
-    min_session_rows: int,
-) -> dict[str, Any]:
-    enriched_rows = enrich_rows(rows)
-    candidates = build_policy_candidates(
-        enriched_rows,
-        current_live_profile=current_live_profile,
-        min_session_rows=min_session_rows,
-    )
+) -> list[dict[str, Any]]:
     evaluated: list[dict[str, Any]] = []
-    for policy in candidates:
-        historical = summarize_policy_history(enriched_rows, policy)
+    for policy in policies:
+        historical = summarize_policy_history(rows, policy)
         if _safe_int(historical.get("replay_live_filled_rows"), 0) < min_replay_fills:
             continue
         monte_carlo = run_policy_monte_carlo(
-            enriched_rows,
+            rows,
             policy,
             paths=paths,
-            horizon_trades=max(len(enriched_rows), 20),
+            horizon_trades=max(len(rows), 20),
             block_size=block_size,
             loss_limit_usd=loss_limit_usd,
             seed=seed,
@@ -485,48 +762,63 @@ def build_summary(
                 "continuation": continuation,
             }
         )
+    return evaluated
 
-    current_policy = next(
-        (candidate for candidate in evaluated if not (candidate.get("policy", {}).get("overrides") or [])),
-        None,
+
+def build_summary(
+    *,
+    rows: list[dict[str, Any]],
+    db_path: Path,
+    current_live_profile: GuardrailProfile,
+    runtime_recommended_profile: GuardrailProfile,
+    paths: int,
+    block_size: int,
+    loss_limit_usd: float,
+    seed: int,
+    min_replay_fills: int,
+    min_session_rows: int,
+    max_session_overrides: int,
+    top_single_overrides_per_session: int,
+    max_composed_candidates: int,
+) -> dict[str, Any]:
+    enriched_rows = enrich_rows(rows)
+    initial_candidates = build_policy_candidates(
+        enriched_rows,
+        current_live_profile=current_live_profile,
+        min_session_rows=min_session_rows,
     )
-    current_replay_pnl = max(1e-9, _safe_float((current_policy or {}).get("historical", {}).get("replay_live_filled_pnl_usd"), 0.0))
-    current_fill_rows = max(1, _safe_int((current_policy or {}).get("historical", {}).get("replay_live_filled_rows"), 0))
-    for candidate in evaluated:
-        replay_pnl_ratio = _safe_float(candidate["historical"].get("replay_live_filled_pnl_usd"), 0.0) / current_replay_pnl
-        fill_ratio = _safe_int(candidate["historical"].get("replay_live_filled_rows"), 0) / float(current_fill_rows)
-        profit_probability = _safe_float(candidate["monte_carlo"].get("profit_probability"), 0.0)
-        median_arr_pct = _safe_float(candidate["continuation"].get("median_arr_pct"), 0.0)
-        candidate["scoring"] = _round_metrics(
-            {
-                "metric_name": "live_policy_score",
-                "replay_pnl_ratio_vs_current": replay_pnl_ratio,
-                "fill_ratio_vs_current": fill_ratio,
-                "profit_probability": profit_probability,
-                "live_policy_score": median_arr_pct
-                * max(0.25, min(1.0, replay_pnl_ratio))
-                * max(0.25, min(1.0, fill_ratio))
-                * max(0.5, profit_probability),
-            }
+    evaluated = _evaluate_policies(
+        rows=enriched_rows,
+        policies=initial_candidates,
+        paths=paths,
+        block_size=block_size,
+        loss_limit_usd=loss_limit_usd,
+        seed=seed,
+        min_replay_fills=min_replay_fills,
+    )
+    evaluated, current_policy = _score_candidates(evaluated)
+
+    composed_candidates = _composed_policy_candidates(
+        evaluated=evaluated,
+        current_live_profile=current_live_profile,
+        max_session_overrides=max_session_overrides,
+        top_single_overrides_per_session=top_single_overrides_per_session,
+        max_composed_candidates=max_composed_candidates,
+    )
+    if composed_candidates:
+        evaluated.extend(
+            _evaluate_policies(
+                rows=enriched_rows,
+                policies=composed_candidates,
+                paths=paths,
+                block_size=block_size,
+                loss_limit_usd=loss_limit_usd,
+                seed=seed,
+                min_replay_fills=min_replay_fills,
+            )
         )
+        evaluated, current_policy = _score_candidates(evaluated)
 
-    evaluated.sort(
-        key=lambda candidate: (
-            _safe_float(candidate.get("scoring", {}).get("live_policy_score"), 0.0),
-            _safe_float(candidate["continuation"].get("median_arr_pct"), 0.0),
-            _safe_float(candidate["continuation"].get("p05_arr_pct"), 0.0),
-            _safe_float(candidate["monte_carlo"].get("profit_probability"), 0.0),
-            -_safe_float(candidate["monte_carlo"].get("p95_max_drawdown_usd"), 0.0),
-            _safe_int(candidate["historical"].get("replay_live_filled_rows"), 0),
-            _safe_float(candidate["historical"].get("replay_live_filled_pnl_usd"), 0.0),
-        ),
-        reverse=True,
-    )
-
-    current_policy = next(
-        (candidate for candidate in evaluated if not (candidate.get("policy", {}).get("overrides") or [])),
-        None,
-    )
     best_policy = evaluated[0] if evaluated else None
     best_vs_current = None
     if best_policy is not None and current_policy is not None:
@@ -552,6 +844,8 @@ def build_summary(
                 - _safe_int(current_policy["historical"].get("replay_live_filled_rows"), 0),
             }
         )
+    active_profile_summary = _candidate_runtime_package(current_policy or {})
+    best_candidate_summary = _candidate_runtime_package(best_policy or {})
 
     return {
         "generated_at": _now_utc().isoformat(),
@@ -563,7 +857,9 @@ def build_summary(
                 sum(_safe_float(row.get("pnl_usd"), 0.0) for row in enriched_rows if row.get("order_status") == "live_filled"),
                 4,
             ),
-            "generated_policies": len(candidates),
+            "generated_policies": len(initial_candidates) + len(composed_candidates),
+            "generated_initial_policies": len(initial_candidates),
+            "generated_composed_policies": len(composed_candidates),
             "simulated_policies": len(evaluated),
         },
         "simulation": {
@@ -574,13 +870,31 @@ def build_summary(
             "seed": int(seed),
             "min_replay_fills": int(min_replay_fills),
             "min_session_rows": int(min_session_rows),
+            "max_session_overrides": int(max_session_overrides),
+            "top_single_overrides_per_session": int(top_single_overrides_per_session),
+            "max_composed_candidates": int(max_composed_candidates),
         },
         "current_live_profile": asdict(current_live_profile),
         "runtime_recommended_profile": asdict(runtime_recommended_profile),
         "candidates": evaluated,
+        "active_profile": {
+            "name": active_profile_summary.get("name", current_live_profile.name),
+            "session_name": "any",
+            "et_hours": [],
+            "max_abs_delta": current_live_profile.max_abs_delta,
+            "up_max_buy_price": current_live_profile.up_max_buy_price,
+            "down_max_buy_price": current_live_profile.down_max_buy_price,
+        },
+        "best_candidate": best_candidate_summary,
+        "arr_delta_vs_active_pct": _safe_float((best_vs_current or {}).get("median_arr_pct_delta"), 0.0),
+        "p05_arr_delta_vs_active_pct": _safe_float((best_vs_current or {}).get("p05_arr_pct_delta"), 0.0),
+        "validation_live_filled_rows": _safe_int(best_candidate_summary.get("validation_live_filled_rows"), 0),
+        "generalization_ratio": _safe_float(best_candidate_summary.get("generalization_ratio"), 0.0),
+        "evidence_band": str(best_candidate_summary.get("evidence_band") or "exploratory"),
         "current_policy": current_policy,
         "best_policy": best_policy,
         "recommended_session_policy": _recommended_session_policy(best_policy),
+        "follow_up_candidates": _follow_up_candidates(evaluated),
         "best_vs_current": best_vs_current,
     }
 
@@ -593,13 +907,14 @@ def _render_markdown(summary: dict[str, Any]) -> str:
     lines = [
         "# BTC5 Regime Policy Lab",
         "",
-        "This lab searches one-session overrides on top of the live BTC5 global profile. It is research-only and does not auto-promote live config.",
+        "This lab searches bounded session overrides on top of the live BTC5 global profile. It is research-only and does not auto-promote live config.",
         "",
         f"- Generated at: `{summary.get('generated_at')}`",
         f"- Observed decision rows: `{summary['input']['observed_window_rows']}`",
         f"- Observed live-filled rows: `{summary['input']['live_filled_rows']}`",
         f"- Observed realized PnL: `{summary['input']['observed_pnl_usd']:.4f}` USD",
         f"- Policies generated: `{summary['input']['generated_policies']}`",
+        f"- Composed policies generated: `{summary['input'].get('generated_composed_policies', 0)}`",
         f"- Policies simulated: `{summary['input']['simulated_policies']}`",
         "",
         "## Best Policy",
@@ -678,6 +993,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--min-replay-fills", type=int, default=12)
     parser.add_argument("--min-session-rows", type=int, default=6)
+    parser.add_argument("--max-session-overrides", type=int, default=2)
+    parser.add_argument("--top-single-overrides-per-session", type=int, default=2)
+    parser.add_argument("--max-composed-candidates", type=int, default=64)
     parser.add_argument("--include-archive-csvs", action="store_true")
     parser.add_argument("--archive-glob", default=DEFAULT_ARCHIVE_GLOB)
     parser.add_argument("--refresh-remote", action="store_true")
@@ -710,6 +1028,9 @@ def main() -> int:
         seed=int(args.seed),
         min_replay_fills=max(1, int(args.min_replay_fills)),
         min_session_rows=max(1, int(args.min_session_rows)),
+        max_session_overrides=max(1, int(args.max_session_overrides)),
+        top_single_overrides_per_session=max(1, int(args.top_single_overrides_per_session)),
+        max_composed_candidates=max(0, int(args.max_composed_candidates)),
     )
     json_path, md_path = _write_outputs(
         args.output_dir,

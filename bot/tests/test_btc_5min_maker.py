@@ -130,6 +130,21 @@ def test_active_session_guardrail_override_matches_et_hour() -> None:
     assert inactive is None
 
 
+def test_active_session_guardrail_override_prefers_more_specific_hours() -> None:
+    cfg = MakerConfig(
+        session_policy_json=(
+            '[{"name":"open_et","et_hours":[9,10,11],"up_max_buy_price":0.47,"down_max_buy_price":0.48},'
+            '{"name":"hour_et_09","et_hours":[9],"up_max_buy_price":0.48,"down_max_buy_price":0.49}]'
+        )
+    )
+
+    active = active_session_guardrail_override(cfg, window_start_ts=_ts(2026, 3, 9, 9, 35))
+
+    assert active is not None
+    assert tuple(override.name for override in cfg.session_guardrail_overrides) == ("hour_et_09", "open_et")
+    assert active.session_name == "hour_et_09"
+
+
 def test_effective_max_buy_price_prefers_session_override_cap() -> None:
     cfg = MakerConfig(
         up_max_buy_price=0.51,

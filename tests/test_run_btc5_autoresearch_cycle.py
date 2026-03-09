@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from scripts.run_btc5_autoresearch_cycle import (
+    _deploy_recommendation,
     _runtime_session_policy_from_overrides,
     _load_env_file,
     _merged_strategy_env,
@@ -239,6 +240,7 @@ def test_render_override_env_contains_promoted_values_and_session_overrides() ->
     assert "BTC5_PROBE_DOWN_MAX_BUY_PRICE=0.5" in text
     assert '# candidate=policy_current_live_profile__hour_et_09' in text
     assert 'BTC5_SESSION_OVERRIDES_JSON=[{"session_name":"hour_et_09"' in text
+    assert 'BTC5_SESSION_POLICY_JSON=[{"name":"hour_et_09"' in text
 
 
 def test_write_reports_keeps_artifacts_in_both_json_outputs(tmp_path: Path) -> None:
@@ -247,6 +249,14 @@ def test_write_reports_keeps_artifacts_in_both_json_outputs(tmp_path: Path) -> N
         "decision": {"action": "hold", "reason": "current_profile_is_best", "median_arr_delta_pct": 0.0, "historical_arr_delta_pct": 0.0, "p05_arr_delta_pct": 0.0},
         "active_profile": {"name": "current_live_profile"},
         "best_candidate": {"profile": {"name": "current_live_profile"}},
+        "active_runtime_package": {"profile": {"name": "current_live_profile"}, "session_policy": []},
+        "best_runtime_package": {"profile": {"name": "current_live_profile"}, "session_policy": []},
+        "deploy_recommendation": "hold",
+        "package_confidence_label": "low",
+        "package_confidence_reasons": ["insufficient_validation_or_generalization"],
+        "package_missing_evidence": ["validation_live_filled_rows_below_6"],
+        "validation_live_filled_rows": 0,
+        "generalization_ratio": 0.0,
         "simulation_summary": {"input": {"observed_window_rows": 75, "live_filled_rows": 45}},
     }
     artifacts = _write_reports(tmp_path, payload)
@@ -254,6 +264,41 @@ def test_write_reports_keeps_artifacts_in_both_json_outputs(tmp_path: Path) -> N
     latest_text = Path(artifacts["latest_json"]).read_text()
     assert '"artifacts"' in cycle_text
     assert '"artifacts"' in latest_text
+
+
+def test_deploy_recommendation_promote_shadow_hold() -> None:
+    decision = {
+        "median_arr_delta_pct": 0.2,
+        "profit_probability_delta": 0.0,
+        "p95_drawdown_delta_usd": 1.0,
+    }
+    assert (
+        _deploy_recommendation(
+            decision_action="promote",
+            decision=decision,
+            validation_live_filled_rows=3,
+            generalization_ratio=0.1,
+        )
+        == "promote"
+    )
+    assert (
+        _deploy_recommendation(
+            decision_action="hold",
+            decision=decision,
+            validation_live_filled_rows=6,
+            generalization_ratio=0.8,
+        )
+        == "shadow_only"
+    )
+    assert (
+        _deploy_recommendation(
+            decision_action="hold",
+            decision={"median_arr_delta_pct": 0.0, "profit_probability_delta": 0.0, "p95_drawdown_delta_usd": 1.0},
+            validation_live_filled_rows=10,
+            generalization_ratio=0.9,
+        )
+        == "hold"
+    )
 
 
 def test_runtime_session_policy_from_overrides_matches_contract() -> None:
@@ -276,3 +321,32 @@ def test_runtime_session_policy_from_overrides_matches_contract() -> None:
     assert record["name"] == "open_et"
     assert record["et_hours"] == [9, 10, 11]
     assert set(record.keys()) == {"name", "et_hours", "max_abs_delta", "up_max_buy_price", "down_max_buy_price"}
+
+
+def test_runtime_session_policy_from_overrides_prefers_specific_hours_first() -> None:
+    session_policy = _runtime_session_policy_from_overrides(
+        [
+            {
+                "session_name": "open_et",
+                "et_hours": [9, 10, 11],
+                "profile": {
+                    "name": "open_profile",
+                    "max_abs_delta": 0.00005,
+                    "up_max_buy_price": 0.47,
+                    "down_max_buy_price": 0.48,
+                },
+            },
+            {
+                "session_name": "hour_et_09",
+                "et_hours": [9],
+                "profile": {
+                    "name": "hour_profile",
+                    "max_abs_delta": 0.0001,
+                    "up_max_buy_price": 0.48,
+                    "down_max_buy_price": 0.49,
+                },
+            },
+        ]
+    )
+
+    assert [record["name"] for record in session_policy] == ["hour_et_09", "open_et"]

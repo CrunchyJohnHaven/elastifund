@@ -30,6 +30,8 @@ DEFAULT_BASE_ENV = Path("config/btc5_strategy.env")
 DEFAULT_OVERRIDE_ENV = Path("state/btc5_autoresearch.env")
 DEFAULT_REPORT_DIR = Path("reports/btc5_autoresearch")
 DEFAULT_SERVICE_NAME = "btc-5min-maker.service"
+DEFAULT_HYPOTHESIS_SUMMARY = Path("reports/btc5_hypothesis_lab/summary.json")
+DEFAULT_REGIME_POLICY_SUMMARY = Path("reports/btc5_regime_policy_lab/summary.json")
 
 
 def _now_utc() -> datetime:
@@ -51,6 +53,18 @@ def _load_env_file(path: Path) -> dict[str, str]:
         key, value = stripped.split("=", 1)
         values[key.strip()] = value.strip().strip('"').strip("'")
     return values
+
+
+def _load_json(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
 
 
 def _merged_strategy_env(base_env: Path, override_env: Path) -> dict[str, str]:
@@ -102,6 +116,11 @@ def _find_candidate(summary: dict[str, Any], name: str) -> dict[str, Any] | None
     return None
 
 
+def _session_override_sort_key(item: dict[str, Any]) -> tuple[int, tuple[int, ...], str]:
+    hours = tuple(int(hour) for hour in (item.get("et_hours") or []) if isinstance(hour, int))
+    return (len(hours), hours, str(item.get("session_name") or ""))
+
+
 def _normalized_session_overrides(overrides: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for item in overrides or []:
@@ -129,7 +148,7 @@ def _normalized_session_overrides(overrides: list[dict[str, Any]] | None) -> lis
                 },
             }
         )
-    normalized.sort(key=lambda item: (item["session_name"], item["et_hours"]))
+    normalized.sort(key=_session_override_sort_key)
     return normalized
 
 
@@ -152,6 +171,28 @@ def _runtime_session_policy_from_overrides(overrides: list[dict[str, Any]] | Non
             record["down_max_buy_price"] = _safe_float(down_max_buy_price, 0.0) or 0.0
         runtime_policy.append(record)
     return runtime_policy
+
+
+def _runtime_session_policy_from_env(env: dict[str, str]) -> list[dict[str, Any]]:
+    raw = str(env.get("BTC5_SESSION_POLICY_JSON") or "").strip()
+    if not raw:
+        return []
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        hours = item.get("et_hours")
+        if not name or not isinstance(hours, list):
+            continue
+        out.append(dict(item))
+    return out
 
 
 def _normalize_global_candidate(candidate: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -209,6 +250,98 @@ def _candidate_identity(candidate: dict[str, Any] | None) -> tuple[Any, ...]:
             for item in _normalized_session_overrides(candidate.get("session_overrides"))
         ),
     )
+
+
+def _runtime_package(
+    *,
+    profile: dict[str, Any] | None,
+    session_policy: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    return {
+        "profile": dict(profile or {}),
+        "session_policy": list(session_policy or []),
+    }
+
+
+def _extract_validation_rows(candidate: dict[str, Any] | None) -> int:
+    if not isinstance(candidate, dict):
+        return 0
+    scoring = candidate.get("scoring") or {}
+    historical = candidate.get("historical") or {}
+    for source in (scoring, historical):
+        for key in ("validation_live_filled_rows", "replay_live_filled_rows", "baseline_live_filled_rows"):
+            value = source.get(key)
+            if value is None:
+                continue
+            return max(0, int(_safe_float(value, 0.0) or 0))
+    return 0
+
+
+def _extract_generalization_ratio(
+    candidate: dict[str, Any] | None,
+    *,
+    hypothesis_summary: dict[str, Any] | None,
+) -> float:
+    if isinstance(candidate, dict):
+        scoring = candidate.get("scoring") or {}
+        continuation = candidate.get("continuation") or {}
+        for source in (scoring, continuation):
+            value = _safe_float(source.get("generalization_ratio"), None)
+            if value is not None:
+                return float(value)
+
+    if isinstance(hypothesis_summary, dict):
+        # Prefer best_hypothesis summary from the latest hypothesis lab when available.
+        best_hypothesis = hypothesis_summary.get("best_hypothesis") or {}
+        summary = best_hypothesis.get("summary") if isinstance(best_hypothesis, dict) else {}
+        if isinstance(summary, dict):
+            value = _safe_float(summary.get("generalization_ratio"), None)
+            if value is not None:
+                return float(value)
+        value = _safe_float(hypothesis_summary.get("generalization_ratio"), None)
+        if value is not None:
+            return float(value)
+    return 0.0
+
+
+def _package_confidence(
+    *,
+    validation_live_filled_rows: int,
+    generalization_ratio: float,
+) -> tuple[str, list[str]]:
+    reasons = [
+        f"validation_live_filled_rows={int(validation_live_filled_rows)}",
+        f"generalization_ratio={float(generalization_ratio):.4f}",
+    ]
+    if validation_live_filled_rows >= 12 and generalization_ratio >= 0.80:
+        return "high", reasons
+    if validation_live_filled_rows >= 6 and generalization_ratio >= 0.70:
+        return "medium", reasons
+    reasons.append("insufficient_validation_or_generalization")
+    return "low", reasons
+
+
+def _deploy_recommendation(
+    *,
+    decision_action: str,
+    decision: dict[str, Any],
+    validation_live_filled_rows: int,
+    generalization_ratio: float,
+) -> str:
+    if decision_action == "promote":
+        return "promote"
+    median_arr_delta_pct = _safe_float(decision.get("median_arr_delta_pct"), 0.0)
+    profit_probability_delta = _safe_float(decision.get("profit_probability_delta"), 0.0)
+    p95_drawdown_delta_usd = _safe_float(decision.get("p95_drawdown_delta_usd"), 0.0)
+    if (
+        median_arr_delta_pct > 0.0
+        and validation_live_filled_rows >= 6
+        and generalization_ratio >= 0.80
+        and profit_probability_delta >= -0.01
+        and p95_drawdown_delta_usd <= 3.0
+    ):
+        return "shadow_only"
+    return "hold"
 
 
 def _select_best_target(
@@ -370,6 +503,7 @@ def render_strategy_env(target: dict[str, Any], metadata: dict[str, Any]) -> str
     profile = base_profile or (target.get("profile") if isinstance(target.get("profile"), dict) else target)
     candidate_profile = target.get("profile") if isinstance(target.get("profile"), dict) else profile
     session_overrides = _normalized_session_overrides(target.get("session_overrides"))
+    session_policy = _runtime_session_policy_from_overrides(session_overrides)
     lines = [
         "# Managed by scripts/run_btc5_autoresearch_cycle.py",
         f"# generated_at={metadata['generated_at']}",
@@ -382,6 +516,7 @@ def render_strategy_env(target: dict[str, Any], metadata: dict[str, Any]) -> str
         f"BTC5_PROBE_UP_MAX_BUY_PRICE={profile.get('up_max_buy_price')}",
         f"BTC5_PROBE_DOWN_MAX_BUY_PRICE={profile.get('down_max_buy_price')}",
         f"BTC5_SESSION_OVERRIDES_JSON={json.dumps(session_overrides, separators=(',', ':'))}",
+        f"BTC5_SESSION_POLICY_JSON={json.dumps(session_policy, separators=(',', ':'))}",
     ]
     return "\n".join(lines) + "\n"
 
@@ -439,11 +574,14 @@ def _write_reports(report_dir: Path, payload: dict[str, Any]) -> dict[str, str]:
         "",
         f"- Generated at: `{payload['generated_at']}`",
         f"- Action: `{payload['decision']['action']}`",
+        f"- Deploy recommendation: `{payload.get('deploy_recommendation', 'hold')}`",
         f"- Reason: `{payload['decision']['reason']}`",
         f"- Selected source: `{payload['decision'].get('selected_source', 'none')}`",
         f"- Selected family: `{payload['decision'].get('selected_family', 'none')}`",
         f"- Active profile: `{payload['active_profile']['name']}`",
         f"- Best profile: `{payload['best_candidate']['profile']['name'] if payload.get('best_candidate') else 'none'}`",
+        f"- Package confidence: `{payload.get('package_confidence_label', 'low')}`",
+        f"- Package confidence reasons: `{'; '.join(payload.get('package_confidence_reasons') or ['none'])}`",
         f"- Observed window rows: `{payload['simulation_summary']['input']['observed_window_rows']}`",
         f"- Observed live-filled rows: `{payload['simulation_summary']['input']['live_filled_rows']}`",
         "",
@@ -466,6 +604,20 @@ def _write_reports(report_dir: Path, payload: dict[str, Any]) -> dict[str, str]:
         "```json",
         json.dumps(payload.get("recommended_session_policy") or [], indent=2, sort_keys=True),
         "```",
+        "",
+        "## Runtime Package",
+        "",
+        f"- Active package profile: `{((payload.get('active_runtime_package') or {}).get('profile') or {}).get('name', 'none')}`",
+        f"- Active package session-policy records: `{len(((payload.get('active_runtime_package') or {}).get('session_policy') or []))}`",
+        f"- Best package profile: `{((payload.get('best_runtime_package') or {}).get('profile') or {}).get('name', 'none')}`",
+        f"- Best package session-policy records: `{len(((payload.get('best_runtime_package') or {}).get('session_policy') or []))}`",
+        f"- Validation live-filled rows: `{payload.get('validation_live_filled_rows', 0)}`",
+        f"- Generalization ratio: `{payload.get('generalization_ratio', 0.0):.4f}`",
+        "",
+        "## Package Decision",
+        "",
+        f"- Deploy recommendation: `{payload.get('deploy_recommendation', 'hold')}`",
+        f"- Evidence missing: `{'; '.join(payload.get('package_missing_evidence') or ['none'])}`",
         "",
         "## Best Candidate",
         "",
@@ -504,6 +656,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-fill-lift", type=int, default=0)
     parser.add_argument("--min-fill-retention-ratio", type=float, default=0.85)
     parser.add_argument("--regime-min-session-rows", type=int, default=6)
+    parser.add_argument("--regime-max-session-overrides", type=int, default=2)
+    parser.add_argument("--regime-top-single-overrides-per-session", type=int, default=2)
+    parser.add_argument("--regime-max-composed-candidates", type=int, default=64)
+    parser.add_argument("--hypothesis-summary", type=Path, default=DEFAULT_HYPOTHESIS_SUMMARY)
+    parser.add_argument("--regime-policy-summary", type=Path, default=DEFAULT_REGIME_POLICY_SUMMARY)
     return parser.parse_args()
 
 
@@ -547,8 +704,13 @@ def main() -> int:
         seed=int(args.seed),
         min_replay_fills=max(1, int(args.min_replay_fills)),
         min_session_rows=max(1, int(args.regime_min_session_rows)),
+        max_session_overrides=max(1, int(args.regime_max_session_overrides)),
+        top_single_overrides_per_session=max(1, int(args.regime_top_single_overrides_per_session)),
+        max_composed_candidates=max(0, int(args.regime_max_composed_candidates)),
     )
     regime_policy_summary["baseline"] = baseline
+    hypothesis_summary = _load_json(args.hypothesis_summary) or {}
+    latest_regime_summary = _load_json(args.regime_policy_summary) or {}
 
     current_candidate = _normalize_global_candidate(_find_candidate(global_summary, "current_live_profile"))
     if current_candidate is None:
@@ -581,6 +743,52 @@ def main() -> int:
         if args.restart_on_promote:
             restart_result = _restart_service(str(args.service_name))
 
+    best_session_policy = (
+        _runtime_session_policy_from_overrides((best_candidate or {}).get("session_overrides"))
+        or list((latest_regime_summary or {}).get("recommended_session_policy") or [])
+        or list((hypothesis_summary or {}).get("recommended_session_policy") or [])
+    )
+    active_session_policy = _runtime_session_policy_from_env(merged_env)
+    active_runtime_package = _runtime_package(
+        profile={
+            "name": active_profile.name,
+            "max_abs_delta": active_profile.max_abs_delta,
+            "up_max_buy_price": active_profile.up_max_buy_price,
+            "down_max_buy_price": active_profile.down_max_buy_price,
+        },
+        session_policy=active_session_policy,
+    )
+    best_runtime_package = _runtime_package(
+        profile=(best_candidate or {}).get("profile") or {},
+        session_policy=best_session_policy,
+    )
+    validation_live_filled_rows = _extract_validation_rows(best_candidate)
+    generalization_ratio = _extract_generalization_ratio(
+        best_candidate,
+        hypothesis_summary=hypothesis_summary,
+    )
+    package_confidence_label, package_confidence_reasons = _package_confidence(
+        validation_live_filled_rows=validation_live_filled_rows,
+        generalization_ratio=generalization_ratio,
+    )
+    deploy_recommendation = _deploy_recommendation(
+        decision_action=str(decision.get("action") or "hold"),
+        decision=decision,
+        validation_live_filled_rows=validation_live_filled_rows,
+        generalization_ratio=generalization_ratio,
+    )
+    package_missing_evidence: list[str] = []
+    if validation_live_filled_rows < 6:
+        package_missing_evidence.append("validation_live_filled_rows_below_6")
+    if generalization_ratio < 0.80:
+        package_missing_evidence.append("generalization_ratio_below_0.80")
+    if _safe_float(decision.get("median_arr_delta_pct"), 0.0) <= 0:
+        package_missing_evidence.append("median_arr_delta_not_positive")
+    if _safe_float(decision.get("profit_probability_delta"), 0.0) < -0.01:
+        package_missing_evidence.append("profit_probability_delta_below_-0.01")
+    if _safe_float(decision.get("p95_drawdown_delta_usd"), 0.0) > 3.0:
+        package_missing_evidence.append("p95_drawdown_delta_above_3.0")
+
     payload = {
         "generated_at": _now_utc().isoformat(),
         "base_strategy_env": str(args.strategy_env),
@@ -593,10 +801,16 @@ def main() -> int:
             "down_max_buy_price": active_profile.down_max_buy_price,
         },
         "decision": decision,
+        "deploy_recommendation": deploy_recommendation,
+        "package_confidence_label": package_confidence_label,
+        "package_confidence_reasons": package_confidence_reasons,
+        "validation_live_filled_rows": int(validation_live_filled_rows),
+        "generalization_ratio": round(float(generalization_ratio), 4),
+        "package_missing_evidence": package_missing_evidence,
+        "active_runtime_package": active_runtime_package,
+        "best_runtime_package": best_runtime_package,
         "arr_tracking": _arr_tracking(best_candidate, current_candidate),
-        "recommended_session_policy": _runtime_session_policy_from_overrides(
-            (best_candidate or {}).get("session_overrides")
-        ),
+        "recommended_session_policy": best_session_policy,
         "best_candidate": best_candidate,
         "current_candidate": current_candidate,
         "global_best_candidate": global_best_candidate,

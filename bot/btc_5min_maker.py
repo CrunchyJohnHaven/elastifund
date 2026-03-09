@@ -137,6 +137,16 @@ class SessionGuardrailOverride:
         return self.name
 
 
+def _session_guardrail_sort_key(override: SessionGuardrailOverride) -> tuple[int, tuple[int, ...], str]:
+    return (len(tuple(sorted(override.et_hours))), tuple(sorted(override.et_hours)), override.session_name)
+
+
+def order_session_guardrail_overrides(
+    overrides: Iterable[SessionGuardrailOverride],
+) -> tuple[SessionGuardrailOverride, ...]:
+    return tuple(sorted(tuple(overrides), key=_session_guardrail_sort_key))
+
+
 def _load_json_array_file(path_value: str) -> list[Any]:
     path_text = str(path_value or "").strip()
     if not path_text:
@@ -184,7 +194,7 @@ def parse_session_guardrail_overrides(value: Any) -> tuple[SessionGuardrailOverr
                 maker_improve_ticks=parsed_ticks,
             )
         )
-    return tuple(overrides)
+    return order_session_guardrail_overrides(overrides)
 
 
 def load_session_guardrail_overrides(
@@ -216,10 +226,10 @@ def active_session_guardrail_override(
     dt_et = _window_dt_et(window_start_ts)
     if dt_et is None:
         return None
-    for override in cfg.session_guardrail_overrides:
-        if dt_et.hour in override.et_hours:
-            return override
-    return None
+    matches = [
+        override for override in cfg.session_guardrail_overrides if dt_et.hour in override.et_hours
+    ]
+    return matches[0] if matches else None
 
 
 def session_guardrail_reason(

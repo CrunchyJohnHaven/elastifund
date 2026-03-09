@@ -79,6 +79,12 @@ def _build_cycle_command(args: argparse.Namespace) -> list[str]:
         str(args.min_fill_lift),
         "--min-fill-retention-ratio",
         str(args.min_fill_retention_ratio),
+        "--regime-max-session-overrides",
+        str(args.regime_max_session_overrides),
+        "--regime-top-single-overrides-per-session",
+        str(args.regime_top_single_overrides_per_session),
+        "--regime-max-composed-candidates",
+        str(args.regime_max_composed_candidates),
     ]
     if args.service_name:
         cmd.extend(["--service-name", str(args.service_name)])
@@ -291,6 +297,8 @@ def _build_entry(
     best_profile = ((cycle_payload or {}).get("best_candidate") or {}).get("profile") or {}
     active_profile = (cycle_payload or {}).get("active_profile") or {}
     arr = (cycle_payload or {}).get("arr_tracking") or {}
+    package_confidence_reasons = list((cycle_payload or {}).get("package_confidence_reasons") or [])
+    package_missing_evidence = list((cycle_payload or {}).get("package_missing_evidence") or [])
     return {
         "started_at": started_at.isoformat(),
         "finished_at": finished_at.isoformat(),
@@ -312,6 +320,14 @@ def _build_entry(
             "profit_probability_delta": decision.get("profit_probability_delta"),
             "fill_lift": decision.get("fill_lift"),
         },
+        "active_runtime_package": (cycle_payload or {}).get("active_runtime_package") or {},
+        "best_runtime_package": (cycle_payload or {}).get("best_runtime_package") or {},
+        "deploy_recommendation": (cycle_payload or {}).get("deploy_recommendation") or "hold",
+        "package_confidence_label": (cycle_payload or {}).get("package_confidence_label") or "low",
+        "package_confidence_reasons": package_confidence_reasons,
+        "package_missing_evidence": package_missing_evidence,
+        "validation_live_filled_rows": int((cycle_payload or {}).get("validation_live_filled_rows") or 0),
+        "generalization_ratio": float((cycle_payload or {}).get("generalization_ratio") or 0.0),
         "recommended_session_policy": (cycle_payload or {}).get("recommended_session_policy") or [],
         "artifacts": (cycle_payload or {}).get("artifacts") or {},
         "hook": hook_result,
@@ -359,6 +375,13 @@ def _write_loop_reports(loop_report_dir: Path, entry: dict[str, Any]) -> dict[st
                 f"- Last best hypothesis: `{((entry.get('hypothesis_lab') or {}).get('best_hypothesis') or {}).get('name', 'none')}`",
                 f"- Last best regime policy: `{((entry.get('regime_policy_lab') or {}).get('best_policy') or {}).get('name', 'none')}`",
                 f"- Last best session policy records: `{len(entry.get('recommended_session_policy') or [])}`",
+                f"- Last package decision: `{entry.get('deploy_recommendation', 'hold')}`",
+                f"- Last package confidence: `{entry.get('package_confidence_label', 'low')}`",
+                f"- Last package confidence reasons: `{'; '.join(entry.get('package_confidence_reasons') or ['none'])}`",
+                f"- Last missing evidence: `{'; '.join(entry.get('package_missing_evidence') or ['none'])}`",
+                f"- Last best package profile: `{((entry.get('best_runtime_package') or {}).get('profile') or {}).get('name', 'none')}`",
+                f"- Last active package profile: `{((entry.get('active_runtime_package') or {}).get('profile') or {}).get('name', 'none')}`",
+                f"- Last best package session-policy records: `{len(((entry.get('best_runtime_package') or {}).get('session_policy') or []))}`",
                 f"- Last median ARR delta: `{(entry.get('arr') or {}).get('median_arr_delta_pct', 0.0)}`",
                 f"- Last replay PnL delta (USD): `{(entry.get('arr') or {}).get('replay_pnl_delta_usd', 0.0)}`",
                 f"- Last profit-probability delta: `{(entry.get('arr') or {}).get('profit_probability_delta', 0.0)}`",
@@ -402,6 +425,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-loss-hit-prob-increase", type=float, default=0.03)
     parser.add_argument("--min-fill-lift", type=int, default=0)
     parser.add_argument("--min-fill-retention-ratio", type=float, default=0.85)
+    parser.add_argument("--regime-max-session-overrides", type=int, default=2)
+    parser.add_argument("--regime-top-single-overrides-per-session", type=int, default=2)
+    parser.add_argument("--regime-max-composed-candidates", type=int, default=64)
     parser.add_argument("--restart-on-promote", action="store_true")
     parser.add_argument("--interval-seconds", type=int, default=300)
     parser.add_argument("--max-cycles", type=int, default=0)
