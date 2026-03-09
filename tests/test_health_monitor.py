@@ -168,7 +168,7 @@ def test_build_daily_summary_snapshot_counts_signals_trades_and_errors(tmp_path:
     state_path.write_text(
         json.dumps(
             {
-                "bankroll": 247.51,
+                "bankroll": 250.0,
                 "total_trades": 3,
                 "trades_today": 2,
                 "open_positions": {"m1": {}, "m2": {}},
@@ -193,7 +193,7 @@ def test_build_daily_summary_snapshot_counts_signals_trades_and_errors(tmp_path:
     assert snapshot["daily_pnl"] == 0.75
     assert snapshot["error_count"] == 2
     assert snapshot["open_positions"] == 2
-    assert snapshot["bankroll"] == 247.51
+    assert snapshot["bankroll"] == 250.0
 
 
 def test_build_telegram_sender_constructs_sync_sender_without_loading_scanner(
@@ -279,7 +279,7 @@ def test_format_daily_summary_preserves_operational_fields() -> None:
             "daily_pnl": 0.75,
             "error_count": 1,
             "open_positions": 3,
-            "bankroll": 247.51,
+            "bankroll": 250.0,
             "last_cycle_number": 314,
             "last_cycle_status": "ok",
             "last_cycle_signals": 2,

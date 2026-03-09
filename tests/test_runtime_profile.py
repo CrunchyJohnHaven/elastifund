@@ -105,7 +105,7 @@ def test_maker_velocity_all_in_profile_concentrates_on_fast_crypto() -> None:
     assert bundle.config["risk_limits"]["max_position_usd"] == 50.0
     assert bundle.config["risk_limits"]["max_open_positions"] == 10
     assert bundle.config["risk_limits"]["min_edge"] == 0.01
-    assert bundle.config["risk_limits"]["hourly_notional_budget_usd"] == 247.51
+    assert bundle.config["risk_limits"]["hourly_notional_budget_usd"] == 250.0
     assert bundle.config["market_filters"]["max_resolution_hours"] == 1.0
     assert bundle.config["market_filters"]["min_category_priority"] == 1
     assert bundle.config["market_filters"]["category_priorities"]["crypto"] == 3

@@ -108,7 +108,7 @@ python3 scripts/maker_velocity_blitz.py emit-contracts \
 python3 scripts/maker_velocity_blitz.py build-hour0-plan \
   --signals-json reports/hour0_wallet_signals.json \
   --markets-json reports/hour0_markets.json \
-  --bankroll-usd 247.51 \
+  --bankroll-usd 250.0 \
   --output reports/maker_velocity_hour0_plan.json
 ```
 

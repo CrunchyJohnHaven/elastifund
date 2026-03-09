@@ -88,7 +88,7 @@ class RiskLimitsConfig:
     scan_interval_seconds: int = 300
     max_open_positions: int = 5
     min_edge: float = 0.05
-    initial_bankroll: float = 247.51
+    initial_bankroll: float = 250.0
     hourly_notional_budget_usd: float = 0.0
 
     def __post_init__(self) -> None:

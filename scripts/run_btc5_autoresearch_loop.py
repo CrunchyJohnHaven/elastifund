@@ -24,6 +24,10 @@ DEFAULT_ARR_TSV = Path("research/btc5_arr_progress.tsv")
 DEFAULT_ARR_SVG = Path("research/btc5_arr_progress.svg")
 DEFAULT_ARR_SUMMARY_MD = Path("research/btc5_arr_summary.md")
 DEFAULT_ARR_LATEST_JSON = Path("research/btc5_arr_latest.json")
+DEFAULT_HYPOTHESIS_FRONTIER_TSV = Path("research/btc5_hypothesis_frontier.tsv")
+DEFAULT_HYPOTHESIS_FRONTIER_SVG = Path("research/btc5_hypothesis_frontier.svg")
+DEFAULT_HYPOTHESIS_FRONTIER_SUMMARY_MD = Path("research/btc5_hypothesis_frontier_summary.md")
+DEFAULT_HYPOTHESIS_FRONTIER_LATEST_JSON = Path("research/btc5_hypothesis_frontier_latest.json")
 
 
 def _now_utc() -> datetime:
@@ -185,6 +189,37 @@ def _run_hypothesis_lab(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _render_hypothesis_frontier(args: argparse.Namespace) -> dict[str, Any]:
+    command = [
+        sys.executable,
+        str(ROOT / "scripts" / "render_btc5_hypothesis_frontier.py"),
+        "--history-jsonl",
+        str(args.loop_report_dir / "history.jsonl"),
+        "--tsv-out",
+        str(args.hypothesis_frontier_tsv_out),
+        "--svg-out",
+        str(args.hypothesis_frontier_svg_out),
+        "--summary-md-out",
+        str(args.hypothesis_frontier_summary_md_out),
+        "--latest-json-out",
+        str(args.hypothesis_frontier_latest_json_out),
+    ]
+    result = subprocess.run(
+        command,
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=120,
+    )
+    return {
+        "command": command,
+        "returncode": result.returncode,
+        "stdout_tail": (result.stdout or "").strip()[-500:],
+        "stderr_tail": (result.stderr or "").strip()[-500:],
+    }
+
+
 def _build_entry(
     *,
     cycle_command: list[str],
@@ -259,6 +294,7 @@ def _write_loop_reports(loop_report_dir: Path, entry: dict[str, Any]) -> dict[st
                 f"- Last reason: `{entry.get('decision', {}).get('reason', 'cycle_failed')}`",
                 f"- Last best profile: `{entry.get('best_profile', {}).get('name', 'none')}`",
                 f"- Last active profile: `{entry.get('active_profile', {}).get('name', 'none')}`",
+                f"- Last best hypothesis: `{((entry.get('hypothesis_lab') or {}).get('best_hypothesis') or {}).get('name', 'none')}`",
                 f"- Last finished at: `{entry['finished_at']}`",
             ]
         )
@@ -304,8 +340,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--arr-svg-out", type=Path, default=DEFAULT_ARR_SVG)
     parser.add_argument("--arr-summary-md-out", type=Path, default=DEFAULT_ARR_SUMMARY_MD)
     parser.add_argument("--arr-latest-json-out", type=Path, default=DEFAULT_ARR_LATEST_JSON)
+    parser.add_argument("--hypothesis-frontier-tsv-out", type=Path, default=DEFAULT_HYPOTHESIS_FRONTIER_TSV)
+    parser.add_argument("--hypothesis-frontier-svg-out", type=Path, default=DEFAULT_HYPOTHESIS_FRONTIER_SVG)
+    parser.add_argument(
+        "--hypothesis-frontier-summary-md-out",
+        type=Path,
+        default=DEFAULT_HYPOTHESIS_FRONTIER_SUMMARY_MD,
+    )
+    parser.add_argument(
+        "--hypothesis-frontier-latest-json-out",
+        type=Path,
+        default=DEFAULT_HYPOTHESIS_FRONTIER_LATEST_JSON,
+    )
     parser.add_argument("--skip-arr-render", action="store_true")
     parser.add_argument("--skip-hypothesis-lab", action="store_true")
+    parser.add_argument("--skip-hypothesis-frontier-render", action="store_true")
     return parser.parse_args()
 
 
@@ -340,11 +389,13 @@ def main() -> int:
             finished_at=finished_at,
             hook_result=hook_result,
         )
+        if not args.skip_hypothesis_lab:
+            entry["hypothesis_lab"] = _run_hypothesis_lab(args)
         loop_payload = _write_loop_reports(args.loop_report_dir, entry)
         if not args.skip_arr_render:
             loop_payload["arr_render"] = _render_arr_progress(args)
-        if not args.skip_hypothesis_lab:
-            loop_payload["hypothesis_lab"] = _run_hypothesis_lab(args)
+        if not args.skip_hypothesis_frontier_render:
+            loop_payload["hypothesis_frontier_render"] = _render_hypothesis_frontier(args)
         print(json.dumps(loop_payload, indent=2, sort_keys=True))
         cycle_count += 1
         if args.max_cycles and cycle_count >= args.max_cycles:

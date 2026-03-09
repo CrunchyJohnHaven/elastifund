@@ -6,7 +6,7 @@ You are an autonomous Codex instance for the Elastifund trading system. Execute 
 
 ## STATE SNAPSHOT (Injected 2026-03-09 v2.8.0)
 
-- Capital: $247.51 Polymarket (USDC) + $100 Kalshi (USD) = $347.51 total
+- Capital: Internal seed bankroll withheld from public docs
 - Live trades executed: 0 (305 cycles completed, zero trades placed)
 - Service: `jj-live.service` `active` at `2026-03-09T01:06:09Z` — treat as drift until mode confirmed
 - Fast-trade pipeline: REJECT ALL across 74 observed markets (29×15m, 38×5m, 7×4h)
@@ -38,7 +38,7 @@ Find the highest-edge, shortest-duration (<24h resolution) opportunities availab
 
 1. Read `PROJECT_INSTRUCTIONS.md` Section 3 for current signal architecture. Note which signals are DEPLOYED vs BUILDING vs GATED.
 
-2. Read `CLAUDE.md` "Current State" for exact capital, position limits, daily loss cap, Kelly fraction, and execution mode. Confirm: $247.51 Poly, $100 Kalshi, $5/position, 0.25 Kelly, post-only maker.
+2. Read `CLAUDE.md` "Current State" for the current bankroll posture, position limits, daily loss cap, Kelly fraction, and execution mode. Confirm the internal balance split privately, plus $5/position, 0.25 Kelly, post-only maker.
 
 3. Read `research/edge_backlog_ranked.md`. Identify strategies tagged ready-to-deploy or building that target <24h markets. The 7 deployed strategies are: LLM Probability, Asymmetric Thresholds, Category Routing, Fee-Aware Gating, Quarter-Kelly, Velocity Scoring, Universal Post-Only.
 
@@ -88,7 +88,7 @@ Find the highest-edge, shortest-duration (<24h resolution) opportunities availab
       "cross_platform_arb": {"kalshi_markets": N, "matches": N, "arb_opportunities": N},
       "wallet_flow_status": {"ready": true, "scored_wallets": 80},
       "markets": [...],
-      "capital_available": 247.51,
+      "current_system_arr_pct": 0.0,
       "recommended_action": "restart-with-aggressive-thresholds | stay-paused | restart-current"
     }
     ```

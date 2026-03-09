@@ -33,7 +33,7 @@ This prompt is designed to be pasted verbatim into OpenAI Codex. It defines **5 
 ## SHARED CONTEXT (All Instances Read This)
 
 ### What We Have
-- $247.51 USDC on Polymarket + $100 USD on Kalshi = $347.51 total capital
+- Internal seed bankroll withheld from public docs
 - Dublin VPS (AWS Lightsail eu-west-1), 5-10ms latency to CLOB (eu-west-2, London)
 - Python 3.12, py-clob-client, signature_type=1 (POLY_PROXY — type 2 fails)
 - 100% post-only maker execution (zero fees, rebate eligible)

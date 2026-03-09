@@ -55,7 +55,7 @@ The honest March 9, 2026 snapshot is:
 - `jj-live.service` is `stopped` as of `2026-03-09T01:34:47.856921+00:00`.
 - Wallet-flow is `ready` with `80` scored wallets.
 - Total trades remain `0`.
-- Tracked capital remains `$347.51`, with `$0` deployed.
+- Current system ARR remains `0%` realized.
 - Launch posture remains `blocked`.
 - The latest checked root verification is `956 passed in 18.77s; 22 passed in 3.69s`.
 

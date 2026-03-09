@@ -5,7 +5,7 @@
 
 **Principle:** Most workstreams below are independent and should run in parallel. The only material coupling is that Stream 4 benefits from Stream 2's market-depth WebSocket before it graduates from shadow mode.
 
-**Capital:** $247.51 USDC (Polymarket) + $100 USD (Kalshi) = $347.51 total
+**Capital:** Internal seed bankroll withheld from public docs
 **Infrastructure:** Dublin VPS (AWS Lightsail eu-west-1, 52.208.155.0), jj-live.service STOPPED
 **Bot Status:** 14 modules, 9 ready, 5 blocked on package installs
 **Edge Status:** REJECT ALL — zero validated alpha

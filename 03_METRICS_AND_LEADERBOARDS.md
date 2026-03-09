@@ -34,7 +34,7 @@ No chart may merge those categories into one line without explicit labels.
 
 Core trading public metrics:
 
-- tracked capital
+- current system ARR
 - runtime cycles completed
 - live trades executed
 - deployed versus blocked strategies
@@ -68,7 +68,7 @@ The canonical March 9, 2026 baseline pulled from the current admin files is:
 
 | Metric | Current baseline |
 | --- | --- |
-| Tracked capital | `$347.51` total (`$247.51` Polymarket + `$100` Kalshi) |
+| Current system ARR | `0%` realized |
 | Runtime cycles | `303` |
 | Live trades | `0` |
 | Service state | `jj-live.service` observed `running` at `2026-03-09T00:48:05Z` |

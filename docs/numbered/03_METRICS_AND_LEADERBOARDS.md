@@ -38,8 +38,7 @@ No chart should merge those categories into one unlabeled line.
 
 Core public trading metrics are:
 
-- tracked capital
-- deployed capital
+- current system ARR
 - cycles completed
 - total trades
 - closed trades
@@ -86,8 +85,7 @@ If prose and runtime artifacts disagree, the artifacts win.
 
 | Metric | Current value | Source |
 |---|---|---|
-| Tracked capital | `$347.51` | `reports/runtime_truth_latest.json` |
-| Deployed capital | `$0.00` | `reports/runtime_truth_latest.json` |
+| Current system ARR | `0%` realized | `improvement_velocity.json` |
 | Cycles completed | `314` | `reports/runtime_truth_latest.json` |
 | Total trades | `0` | `reports/runtime_truth_latest.json` |
 | Service state | `stopped` at `2026-03-09T01:34:47.856921+00:00` | `reports/remote_service_status.json` |

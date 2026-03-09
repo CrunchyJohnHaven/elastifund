@@ -33,8 +33,8 @@ The operating model is:
 
 Current tracked state:
 
-- Tracked capital: `$347.51`
-- Deployed capital: `$0.00`
+- Current system ARR: `0%` realized
+- Deployed capital: not part of public GitHub reporting
 - Total trades: `0`
 - Open positions: `0`
 - Latest flywheel decision: `hold`

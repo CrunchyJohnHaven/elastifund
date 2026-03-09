@@ -104,6 +104,7 @@ Pair headline claims with evidence.
 If a message mentions performance, pair it with source artifacts and labels.
 If a message mentions autonomy, pair it with policy and approval context.
 If a message mentions improvement, pair it with scorecards, tests, or diary evidence.
+Public surfaces should report current system ARR and non-sensitive status counts, not portfolio balances or account-by-account wallet disclosures.
 
 ## Review Gate
 

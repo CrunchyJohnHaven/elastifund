@@ -103,7 +103,7 @@ DURATION: 15 min
 DEPENDS ON: benefits from #6 data but can run independently
 
 STATE SNAPSHOT (v2.8.0):
-- Capital: $247.51 Polymarket (USDC) + $100 Kalshi (USD)
+- Capital: Internal seed bankroll withheld from public docs
 - Live trades: 0 (311 cycles)
 - Service: active but drift — mode unconfirmed
 - Execution mode: 100% Post-Only maker orders
@@ -212,7 +212,7 @@ DO NOT TOUCH: bot/, execution/, strategies/, signals/, src/, tests/
 STEPS:
 1. Read REPLIT_NEXT_BUILD.md for build spec
 2. Read research/elastic_vision_document.md and research/platform_vision_document.md
-3. Correct all metrics: 1,278 tests, 311 cycles, 131 strategies, 7 signal sources, $347.51 capital
+3. Correct all metrics: 1,278 tests, 311 cycles, 131 strategies, 7 signal sources, 0% realized current system ARR
 4. Rewrite homepage hero to vision-approved copy
 5. Add JJ-N section with five-engine overview
 6. Add route stubs: /elastic, /develop, /leaderboards/trading, /leaderboards/worker, /diary, /roadmap, /docs

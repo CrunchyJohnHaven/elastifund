@@ -39,7 +39,7 @@ Each escalation requires a manual .env change and systemd restart. The bot canno
 
 | Metric | Value |
 |--------|-------|
-| Capital | $247.51 USDC on Polymarket |
+| Capital | Internal seed bankroll withheld from public docs |
 | VPS cost | $5/month |
 | Latency to CLOB | 5-10ms |
 | Dashboard endpoints | 9 |

@@ -21,15 +21,15 @@
   },
   "risk_limits": {
     "max_position_usd": 50.0,
-    "max_daily_loss_usd": 247.51,
+    "max_daily_loss_usd": 250.0,
     "max_exposure_pct": 1.0,
     "kelly_fraction": 1.0,
     "max_kelly_fraction": 1.0,
     "scan_interval_seconds": 15,
     "max_open_positions": 10,
     "min_edge": 0.01,
-    "initial_bankroll": 247.51,
-    "hourly_notional_budget_usd": 247.51
+    "initial_bankroll": 250.0,
+    "hourly_notional_budget_usd": 250.0
   },
   "market_filters": {
     "max_resolution_hours": 1.0,

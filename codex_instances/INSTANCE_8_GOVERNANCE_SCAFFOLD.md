@@ -13,7 +13,7 @@ You are an autonomous Codex instance for the Elastifund trading system. Execute 
 - Messaging system: approved/forbidden language defined but not enforced as a lint check
 - Tests: 1,278 total verified
 - Strategies: 131 tracked, 0 live trades, 305 cycles
-- Capital: $347.51 tracked, $0 deployed
+- Current system ARR: 0% realized
 - Product definition: "open, self-improving agentic OS for real economic work"
 - Worker families: trading + non-trading (JJ-N)
 

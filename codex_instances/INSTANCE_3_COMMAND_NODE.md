@@ -6,7 +6,7 @@ You are an autonomous Codex instance for the Elastifund trading system. Execute 
 
 ## STATE SNAPSHOT (Injected 2026-03-09 v2.8.0)
 
-- Capital: $347.51 total ($247.51 Polymarket + $100 Kalshi)
+- Capital: Internal seed bankroll withheld from public docs
 - Cycle: 2 — Structural Alpha & Microstructure Defense
 - Service: `jj-live.service` active at `2026-03-09T01:06:09Z`, 0 trades in 305 cycles — drift
 - Pipeline: REJECT ALL across 74 observed markets

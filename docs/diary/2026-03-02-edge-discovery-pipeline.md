@@ -35,7 +35,7 @@ This pipeline is one of our key differentiators. Most prediction market bots are
 
 | Metric | Value |
 |--------|-------|
-| Capital | $247.51 USDC on Polymarket |
+| Capital | Internal seed bankroll withheld from public docs |
 | Features in pipeline | 83 across 7 groups |
 | Model types | 6 |
 | Kill rules | 6 (all automated) |

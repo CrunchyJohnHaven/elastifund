@@ -88,7 +88,7 @@ It is not a repo that mixes live, paper, and forecast results into one flatterin
 ## Current Reality On March 9, 2026
 
 The current machine truth still shows a pre-revenue system.
-Tracked capital is `$347.51`, deployed capital is `$0`, total trades are `0`, and launch posture remains `blocked`.
+Current system ARR is `0%` realized, total trades are `0`, and launch posture remains `blocked`.
 `reports/runtime_truth_latest.json` generated at `2026-03-09T01:35:13+00:00` shows `314` cycles completed, wallet-flow `ready` with `80` scored wallets, root verification `passing` (`956 passed in 18.77s; 22 passed in 3.69s`), and `jj-live.service` `stopped` as of `2026-03-09T01:34:47.856921+00:00`.
 That is the standard for all other narrative layers: say what is true, then improve it.
 

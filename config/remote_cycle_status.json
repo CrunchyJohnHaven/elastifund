@@ -2,7 +2,7 @@
   "capital_sources": [
     {
       "account": "Polymarket",
-      "amount_usd": 247.51,
+      "amount_usd": 250.0,
       "source": "jj_state.json"
     },
     {

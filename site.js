@@ -34,8 +34,6 @@ const DEFAULTS = {
 };
 
 const PUBLIC_SITE_SNAPSHOT = {
-  trackedCapitalUsd: 347.51,
-  deployedCapitalUsd: 0,
   cyclesCompleted: 311,
   totalTrades: 0,
   closedTrades: 0,
@@ -103,6 +101,12 @@ function formatUsd(value) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   }).format(Number(value || 0));
+}
+
+function formatPercent(value, maximumFractionDigits = 1) {
+  const number = Number(value || 0);
+  const digits = Number.isInteger(number) ? 0 : maximumFractionDigits;
+  return `${number.toFixed(digits)}%`;
 }
 
 function formatLongDate(value) {
@@ -285,11 +289,8 @@ function setCommonValues(data) {
   const values = {
     cycle_label: data.cycleLabel,
     sprint_cycle: `Cycle ${data.cycleNumber}`,
-    tracked_capital: formatUsd(data.capitalTracked),
-    undeployed_capital: formatUsd(data.capitalTracked - data.capitalDeployed),
-    deployed_capital: formatUsd(data.capitalDeployed),
-    polymarket_capital: formatUsd(data.polymarketCapital),
-    kalshi_capital: formatUsd(data.kalshiCapital),
+    current_system_arr: `${formatPercent(data.currentSystemArrPct)} realized`,
+    current_system_arr_value: formatPercent(data.currentSystemArrPct),
     runtime_cycles: String(data.cyclesCompleted),
     live_trades: String(data.totalTrades),
     live_closed_trades: String(data.closedTrades),
@@ -429,9 +430,6 @@ async function loadSiteData() {
   const verificationStatus = String(
     pick(rootTestStatus, ['status'], pick(snapshot, ['verification.status'], 'passing'))
   ).toLowerCase();
-  const capitalSources = pick(detail, ['capital.sources'], []);
-  const polymarketCapital = capitalSources.find(source => source.account === 'Polymarket')?.amount_usd ?? 247.51;
-  const kalshiCapital = capitalSources.find(source => source.account === 'Kalshi')?.amount_usd ?? 100.0;
   const blockedChecks = pick(detail, ['launch.blocked_checks'], []);
   const launchReasons = humanizeBlockedChecks(blockedChecks).filter((value, index, array) => array.indexOf(value) === index);
   const fastMarkets = pick(pipeline, ['public_safe_counts.fast_markets'], {});
@@ -477,14 +475,15 @@ async function loadSiteData() {
     : verificationParsed.passedTotal
       ? `${verificationParsed.passedTotal} passed current root suites`
       : rootVerificationSummary;
+  const currentSystemArrPct = normalizeNumber(
+    pick(velocity, ['arr_estimate.combined_current_pct'], pick(velocity, ['arr_estimate.trading_realized_pct'], 0)),
+    0
+  );
 
   return {
     cycleLabel,
     cycleNumber,
-    capitalTracked: PUBLIC_SITE_SNAPSHOT.trackedCapitalUsd,
-    capitalDeployed: PUBLIC_SITE_SNAPSHOT.deployedCapitalUsd,
-    polymarketCapital,
-    kalshiCapital,
+    currentSystemArrPct,
     cyclesCompleted: PUBLIC_SITE_SNAPSHOT.cyclesCompleted,
     totalTrades: PUBLIC_SITE_SNAPSHOT.totalTrades,
     closedTrades: PUBLIC_SITE_SNAPSHOT.closedTrades,

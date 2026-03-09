@@ -10,7 +10,7 @@
 
 | Metric | Value |
 |--------|-------|
-| Capital | $247.51 Polymarket (USDC) + $100 Kalshi (USD) = $347.51 total |
+| Capital | Internal seed bankroll withheld from public docs |
 | Service | `jj-live.service` status ambiguous — remote artifact shows `active`, but 0 trades in 298 cycles. Launch gates blocked. |
 | Live trades | 0 |
 | Fast-trade pipeline | `REJECT ALL` (all hypotheses failed kill rules) |
@@ -207,7 +207,7 @@
        "strategies_rejected": 18,
        "test_count": 353,
        "dispatch_count": 95,
-       "capital_deployed_usd": 347.51,
+       "current_system_arr_pct": 0.0,
        "backtest_win_rate_no": 0.762,
        "backtest_win_rate_yes": 0.56,
        "maker_excess_return_pct": 1.12,

@@ -14,14 +14,14 @@ The numbers do not lie, and they are embarrassing.
 |--------|-------|------------|
 | Cycles completed | 314 | The bot has run 314 times and found nothing to trade |
 | Trades executed | 0 | Zero. Not one. |
-| Capital deployed | $0 of $347.51 | 100% idle capital |
+| Current system ARR | 0% realized | Pre-claim system posture |
 | Pipeline verdict | REJECT ALL | 75 markets scanned, all rejected |
 | Service status | STOPPED | VPS service inactive since 01:28 UTC |
 | Test suite | 1,395 passing | Green across all surfaces |
 | Code modules | 46 bot/*.py files | Syntax-clean, zero TODO/FIXME |
 | Strategy backlog | 131 tracked | 7 deployed, 6 building, 118 pipeline/rejected |
 
-**Diagnosis:** We built a $0 trading firm with 65,000 lines of infrastructure. The code is excellent. The tests are comprehensive. The documentation is meticulous. And we have never made a single trade.
+**Diagnosis:** We built a pre-claim trading system with 65,000 lines of infrastructure. The code is excellent. The tests are comprehensive. The documentation is meticulous. And we have never made a single trade.
 
 The root cause is a compound gate failure:
 1. Signal thresholds too conservative (0.15/0.05) — zero markets pass

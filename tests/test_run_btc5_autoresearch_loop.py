@@ -57,6 +57,7 @@ def test_write_loop_reports_accumulates_summary(tmp_path: Path) -> None:
         "best_profile": {"name": "current_live_profile"},
         "active_profile": {"name": "current_live_profile"},
         "arr": {"active_median_arr_pct": 1000.0, "best_median_arr_pct": 1000.0, "median_arr_delta_pct": 0.0},
+        "hypothesis_lab": {"best_hypothesis": {"name": "hyp_down_open"}},
         "artifacts": {},
         "hook": None,
         "stdout_tail": "",
@@ -79,6 +80,9 @@ def test_write_loop_reports_accumulates_summary(tmp_path: Path) -> None:
     assert second_payload["summary"]["promotions_total"] == 1
 
     latest_json = json.loads((tmp_path / "latest.json").read_text())
+    latest_md = (tmp_path / "latest.md").read_text()
     history_lines = (tmp_path / "history.jsonl").read_text().strip().splitlines()
     assert latest_json["summary"]["cycles_total"] == 2
+    assert latest_json["latest_entry"]["hypothesis_lab"]["best_hypothesis"]["name"] == "hyp_down_open"
+    assert "Last best hypothesis" in latest_md
     assert len(history_lines) == 2

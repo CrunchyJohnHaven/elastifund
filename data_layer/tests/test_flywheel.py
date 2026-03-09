@@ -406,8 +406,8 @@ class TestFlywheelBridge:
 
         snapshot = payload["strategies"][0]["deployments"][0]["snapshot"]
 
-        assert snapshot["starting_bankroll"] == pytest.approx(247.51)
-        assert snapshot["ending_bankroll"] == pytest.approx(247.51)
+        assert snapshot["starting_bankroll"] == pytest.approx(250.0)
+        assert snapshot["ending_bankroll"] == pytest.approx(250.0)
         assert snapshot["max_drawdown_pct"] == pytest.approx(0.0)
         assert snapshot["metrics"]["paper_mode"] is False
 
@@ -1411,8 +1411,8 @@ def _make_mixed_mode_jj_live_bot_db(bot_db: Path) -> Path:
             [
                 ("2026-03-07T19:00:00+00:00", 1, 0, 0, 1000.0, 0.0, 0, 1),
                 ("2026-03-07T19:05:00+00:00", 2, 0, 0, 1000.0, 0.0, 0, 1),
-                ("2026-03-07T22:00:00+00:00", 3, 0, 0, 247.51, 0.0, 0, 0),
-                ("2026-03-07T22:05:00+00:00", 4, 0, 0, 247.51, 0.0, 0, 0),
+                ("2026-03-07T22:00:00+00:00", 3, 0, 0, 250.0, 0.0, 0, 0),
+                ("2026-03-07T22:05:00+00:00", 4, 0, 0, 250.0, 0.0, 0, 0),
             ],
         )
         conn.commit()

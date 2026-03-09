@@ -75,13 +75,13 @@ The non-Docker path was verified directly. Docker still requires Docker Desktop 
 | Area | Current state |
 |---|---|
 | Runtime truth | prefer `reports/public_runtime_snapshot.json` and `reports/runtime_truth_latest.json`; use `reports/remote_cycle_status.json`, `reports/remote_service_status.json`, `FAST_TRADE_EDGE_ANALYSIS.md`, and `reports/arb_empirical_snapshot.json` for the underlying detail |
-| Capital tracked in docs | `$347.51` total (`$247.51` Polymarket + `$100` Kalshi) |
+| Current system ARR | `0%` realized; this is the claim-safe current ARR until closed-trade and deployed-capital truth reconcile (`improvement_velocity.json`) |
 | Runtime state | `reports/runtime_truth_latest.json` generated at `2026-03-09T16:19:45Z` shows `565` cycles, `5` local trade-db trades, `4` local open positions, and `jj-live.service` `stopped`; the remote wallet surface simultaneously shows `28` open positions and `9` closed positions, so local-ledger vs wallet reconciliation is still open |
 | Fast-flow launch posture | selected profile is `maker_velocity_all_in`; `jj-live` is now intentionally stopped while the dedicated BTC 5-minute maker remains live under tighter guardrails; `fast_flow_restart_ready=true`, but the latest candidate counts are still `0` and the latest pipeline verdict is still `REJECT ALL` |
 | Trading strategy catalog | `131` tracked (`7` deployed, `6` building, `2` structural alpha, `1` re-evaluating, `10` rejected, `8` pre-rejected, `97` pipeline) |
 | Non-trading lane | compliance-first revenue harness, a runnable `RevenuePipeline`, digital-product niche discovery, and the Website Growth Audit offer are in repo; the lane is implemented and safety-gated, but not revenue-live |
 | Verification status | latest root verification artifact shows passing (`1140 passed in 25.88s; 25 passed in 4.47s`); JJ-N surfaces are green in this worktree (`64` package, `49` repo-root) |
-| Live validated P&L / ARR | local trade-db truth still shows `0` closed trades, but the remote Polymarket wallet reports `9` closed positions with realized PnL `$26.8256` and the BTC 5-minute maker DB reports `32` live-filled rows with cumulative filled PnL `$34.4628`; treat this as promising but not claim-ready until runtime truth is reconciled |
+| Live trading evidence | local trade-db truth still shows `0` closed trades, while remote wallet and BTC 5-minute maker surfaces show live activity; treat the system as pre-claim until runtime truth is reconciled |
 
 The March 9 runtime snapshot supersedes older prose that said the system still had `314` cycles and `0` trades. Current machine truth shows `jj-live` intentionally stopped, the BTC 5-minute sleeve live, and a remaining split between local runtime accounting and remote wallet evidence that still needs reconciliation before any stronger trading claims.
 

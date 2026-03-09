@@ -34,7 +34,7 @@ Still, this is the lowest-risk signal source in our system. When it fires, we tr
 
 | Metric | Value |
 |--------|-------|
-| Capital | $247.51 Polymarket + $100 Kalshi |
+| Capital | Internal seed bankroll withheld from public docs |
 | Kalshi markets scanned | ~3,000 |
 | Cross-platform matches found | 47 |
 | Arb opportunities detected | 3 (narrow, <$5 capacity each) |

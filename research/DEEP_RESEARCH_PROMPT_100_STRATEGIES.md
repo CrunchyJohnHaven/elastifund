@@ -122,7 +122,7 @@ We are building the most comprehensive publicly available resource on agentic tr
 
 ### Our Constraints
 
-- **Capital:** $247.51 USDC (Polymarket) + $100 USD (Kalshi). Total ~$350.
+- **Capital:** Internal seed bankroll withheld from public docs.
 - **Monthly budget for data:** <$100
 - **Team:** One human (John) + AI agents (Claude, ChatGPT, Cowork mode)
 - **Implementation time per strategy:** 1-2 weeks max

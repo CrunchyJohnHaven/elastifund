@@ -16,7 +16,7 @@ Machine-truth reconciliation:
 
 Current repo truth:
 
-- Tracked capital: `$347.51`
+- Current system ARR: `0%` realized
 - Deployed capital: `$0.00`
 - Runtime cycles completed: `294`
 - Total trades: `0`

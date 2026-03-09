@@ -6,7 +6,7 @@ You are an autonomous Codex instance for the Elastifund trading system. Execute 
 
 ## STATE SNAPSHOT (Injected 2026-03-09 v2.8.0)
 
-- Capital: $347.51 total ($247.51 Polymarket + $100 Kalshi)
+- Current system ARR: 0% realized
 - Strategies: 131 tracked (7 deployed, 6 building, 2 structural alpha, 10 rejected, 8 pre-rejected, 1 re-evaluating, 97 research)
 - Tests: 1,278 total verified (871+22 root, 374 polymarket, 11 non-trading)
 - Dispatches: 11 DISPATCH_* work-orders; 95 markdown files in `research/dispatches/`
@@ -61,7 +61,7 @@ Build the next iteration of the Replit website (https://elastifund.replit.app) w
    - Test count → 1,278 total verified
    - Dispatch count → 95
    - Signal sources → 7
-   - Capital → $347.51
+   - Current system ARR → 0% realized
    - Cycles completed → 305
    - Win rate → 71.2% calibrated (NO-only: 76.2%)
    - Daily loss cap → $5

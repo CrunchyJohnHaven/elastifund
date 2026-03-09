@@ -433,7 +433,7 @@ SCAN_INTERVAL = 180
 ELASTIC_ORDERBOOK_SNAPSHOT_INTERVAL_SECONDS = 30.0
 MAX_OPEN_POSITIONS = 30
 MIN_EDGE = 0.05
-INITIAL_BANKROLL = 247.51
+INITIAL_BANKROLL = 250.0
 MAX_RESOLUTION_HOURS = 48.0
 SIGNAL_DEDUP_TTL_SECONDS = 3600
 PAPER_TRADING = True
@@ -579,7 +579,7 @@ def _reload_runtime_settings(*, persist: bool = False) -> RuntimeProfileBundle:
     )
     MAX_OPEN_POSITIONS = int(os.environ.get("JJ_MAX_OPEN_POSITIONS", "30"))
     MIN_EDGE = float(os.environ.get("JJ_MIN_EDGE", "0.05"))
-    INITIAL_BANKROLL = float(os.environ.get("JJ_INITIAL_BANKROLL", "247.51"))
+    INITIAL_BANKROLL = float(os.environ.get("JJ_INITIAL_BANKROLL", "250.0"))
     MAX_RESOLUTION_HOURS = float(os.environ.get("JJ_MAX_RESOLUTION_HOURS", "48"))
     SIGNAL_DEDUP_TTL_SECONDS = int(os.environ.get("JJ_SIGNAL_DEDUP_TTL", "3600"))
     PAPER_TRADING = _bool_env("PAPER_TRADING", True)

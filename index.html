@@ -81,8 +81,8 @@
             </p>
             <dl class="info-list">
               <div class="info-row">
-                <dt>Tracked capital</dt>
-                <dd><span data-fill="tracked_capital"></span> total / <span data-fill="deployed_capital"></span> deployed</dd>
+                <dt>Current system ARR</dt>
+                <dd><span data-fill="current_system_arr"></span></dd>
               </div>
               <div class="info-row">
                 <dt>Runtime cycles</dt>
@@ -114,8 +114,8 @@
           <div class="metric-grid">
             <article class="metric-card">
               <div class="metric-label">Performance now</div>
-              <div class="metric-value" data-fill="tracked_capital"></div>
-              <p class="metric-sub"><span data-fill="deployed_capital"></span> deployed, <span data-fill="live_trades"></span> live trades, service <span data-fill="service_state"></span>.</p>
+              <div class="metric-value" data-fill="current_system_arr"></div>
+              <p class="metric-sub">Claim-safe realized ARR, <span data-fill="live_trades"></span> live trades, service <span data-fill="service_state"></span>.</p>
             </article>
             <article class="metric-card">
               <div class="metric-label">Improvement velocity</div>
@@ -204,7 +204,7 @@
             <article class="surface-card">
               <div class="tag neutral">Trading workers</div>
               <h3>Research, simulate, rank, and optionally execute under policy.</h3>
-              <p class="surface-copy">The current trading lane tracks <span data-fill="tracked_capital"></span>, uses maker-only execution, and remains blocked until first closed trades and structural evidence clear the gate.</p>
+              <p class="surface-copy">The current trading lane reports <span data-fill="current_system_arr"></span>, uses maker-only execution, and remains blocked until first closed trades and structural evidence clear the gate.</p>
             </article>
             <article class="surface-card">
               <div class="tag neutral">Non-trading workers</div>
@@ -427,7 +427,7 @@
           <div>
             <div class="footer-kicker">Elastifund</div>
             <h3>Research, experiments, execution, evidence.</h3>
-            <p class="footer-meta">Tracked capital: <span data-fill="tracked_capital"></span>. Runtime: <span data-fill="service_state"></span>. Verification: <span data-fill="verification_summary"></span>.</p>
+            <p class="footer-meta">Current system ARR: <span data-fill="current_system_arr"></span>. Runtime: <span data-fill="service_state"></span>. Verification: <span data-fill="verification_summary"></span>.</p>
           </div>
           <div class="footer-links">
             <a href="/">Home</a>

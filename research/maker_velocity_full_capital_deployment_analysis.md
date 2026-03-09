@@ -3,7 +3,7 @@
 **Author:** JJ (Autonomous Execution Layer)
 **Date:** 2026-03-09
 **Classification:** Internal — Decision Document
-**Capital at stake:** $347.51 ($247.51 Polymarket USDC + $100 Kalshi USD)
+**Capital at stake:** Internal seed bankroll withheld from public docs
 
 ---
 
@@ -11,7 +11,7 @@
 
 You asked me to push all capital into maker velocity and get it deployed in the next hour. I've read every line of code, every dispatch, every pipeline output. Here is the truth:
 
-**We have zero validated edge.** The pipeline says REJECT ALL. Every strategy variant has failed kill rules. We have zero resolved signals, zero closed trades, zero fill-rate data. Deploying $347.51 of real capital into a strategy with no empirical validation is not "pushing in" — it is donating to counterparties.
+**We have zero validated edge.** The pipeline says REJECT ALL. Every strategy variant has failed kill rules. We have zero resolved signals, zero closed trades, zero fill-rate data. Deploying the entire seed bankroll into a strategy with no empirical validation is not "pushing in" — it is donating to counterparties.
 
 That said, you asked for the analysis of *how* to do it, and you asked about maximizing ARR through fast-resolving trades for data collection. Those are two different things, and the second one is actually the right instinct. Below is everything an LLM system designer needs to build the optimal deployment, followed by my honest assessment of what we should actually do.
 
@@ -116,7 +116,7 @@ Where:
 
 ## Part 2: Platform-Specific Deployment Details
 
-### Polymarket ($247.51 USDC)
+### Polymarket (internal seed bankroll slice)
 
 **API Integration:**
 - CLOB API with signature_type=1 (POLY_PROXY) — type 2 fails
@@ -133,7 +133,7 @@ Where:
 - None of the allowed-category markets have <24h resolution in current data
 
 **The Minimum Order Problem:**
-With $5 minimum notional per order and $247.51 total capital:
+With $5 minimum notional per order and the available seed capital:
 - Maximum simultaneous positions: 49 (at minimum size)
 - At $5/position with 30 max open (current config): $150 deployed, $97.51 idle
 - With 3-level ladders: $15 per market (3 × $5), max 16 markets simultaneously
@@ -224,7 +224,7 @@ Even if every trade loses money, the DATA from 100 resolved trades is worth more
 4. We get real latency distribution data
 5. We calibrate the ensemble estimator against actual outcomes
 
-**The 100-trade target costs at most $10/day × 8-10 days = $80-100 in worst-case losses** (at daily loss cap). The information value of knowing our fill rate, win rate, and calibration accuracy is worth far more than $100 to a $347.51 fund trying to scale.
+**The 100-trade target costs at most $10/day × 8-10 days = $80-100 in worst-case losses** (at daily loss cap). The information value of knowing our fill rate, win rate, and calibration accuracy is worth far more than that incremental loss budget to a small seed fund trying to scale.
 
 ### Optimal Data Collection Allocation
 
@@ -284,7 +284,7 @@ ssh dublin "systemctl status jj-live && cat /opt/elastifund/jj_state.json"
 ```
 - Verify paper mode confirmed
 - Verify no accidental live orders exist
-- Verify capital balances match expected ($247.51 Poly, $100 Kalshi)
+- Verify capital balances match the operator's internal records
 
 **Minutes 10-20: Lift Category Gate for BTC Maker-Only**
 - In `jj_live.py`: Add exception to `_DEFAULT_CATEGORY_PRIORITY` for crypto when execution_mode = "maker_only"
@@ -363,7 +363,7 @@ Here's what I actually think we should do, and it's not "push all capital in rig
 - If maker EV > 0 with statistical significance: Push to 90% capital deployment
 - If maker EV ≤ 0: Kill maker velocity, reallocate to next strategy
 
-**Why phased?** Because deploying $347.51 all at once based on zero empirical data violates our own Kill Rule 5 (minimum signal count), Kill Rule 6 (OOS EV must be positive), and the promotion gates (≥20 signals, ≥50% capture rate, ≤5% false positive rate). The rules exist for a reason. I wrote them.
+**Why phased?** Because deploying the full seed bankroll all at once based on zero empirical data violates our own Kill Rule 5 (minimum signal count), Kill Rule 6 (OOS EV must be positive), and the promotion gates (≥20 signals, ≥50% capture rate, ≤5% false positive rate). The rules exist for a reason. I wrote them.
 
 **The fastest path to deploying all capital IS the phased approach.** It gets us from zero data to a deployment decision in 7 days. Pushing all capital in right now gets us the same data but with $200+ more at risk and no ability to course-correct.
 
@@ -372,7 +372,7 @@ Here's what I actually think we should do, and it's not "push all capital in rig
 ## Part 7: The Numbers That Matter
 
 ### What We Know
-- Capital: $347.51
+- Capital: internal seed bankroll withheld from public docs
 - Infrastructure: Built, tested, 1,397 passing tests
 - Calibration: Validated (Brier 0.2134, beats all rolling windows)
 - Wallet flow: Ready (80 scored wallets)
@@ -414,10 +414,10 @@ Any LLM session that needs to design or execute the optimal maker velocity deplo
 
 ### Key Design Parameters
 ```python
-# Capital
-TOTAL_CAPITAL = 347.51  # USD equivalent
-POLYMARKET_USDC = 247.51
-KALSHI_USD = 100.00
+# Capital (withheld from public docs)
+TOTAL_CAPITAL = INTERNAL_SEED_CAPITAL_USD
+POLYMARKET_USDC = INTERNAL_POLYMARKET_USD
+KALSHI_USD = INTERNAL_KALSHI_USD
 
 # Risk Limits
 MAX_POSITION_USD = 5.0

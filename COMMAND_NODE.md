@@ -73,13 +73,13 @@ As of `reports/runtime_truth_latest.json` generated at `2026-03-09T16:19:45.6824
 | Effective mode | `agent_run_mode=shadow`, `execution_mode=shadow`, `paper_trading=false`, `allow_order_submission=true`, `order_submit_enabled=false` | The bot is not in plain paper mode, but it also is not in a clean launch-ready state. |
 | Service posture | `jj-live.service` is now `stopped`; the dedicated BTC 5-minute maker is the only intended live sleeve | Service-state drift has been resolved, but broader launch posture remains blocked. |
 | Runtime accounting | `565` cycles, `5` trade-db trades, `4` local open positions, `0` local closed trades, `25.00` executed notional total | The local runtime ledger still looks thin and incomplete. |
-| Remote Polymarket wallet | wallet value `$287.3204`, free collateral `$111.21323`, `28` open positions, `9` closed positions, realized PnL `$26.8256`, unrealized PnL `$12.9888` | Wallet truth is materially ahead of local accounting and must be reconciled before making claims. |
-| BTC 5-minute maker evidence | `51` total rows, `32` `live_filled`, cumulative `live_filled_pnl_usd=34.4628`, latest guardrail recommendation `max_abs_delta=0.00015`, `UP max=0.51`, `DOWN max=0.51` | There is real short-horizon trading evidence in the remote SQLite surface, and it now informs bounded guardrails. |
+| Remote Polymarket wallet | `28` open positions, `9` closed positions, and wallet-versus-ledger drift still unresolved | Wallet truth is materially ahead of local accounting and must be reconciled before making claims. |
+| BTC 5-minute maker evidence | `51` total rows, `32` `live_filled`, positive cumulative filled outcomes, latest guardrail recommendation `max_abs_delta=0.00015`, `UP max=0.51`, `DOWN max=0.51` | There is real short-horizon trading evidence in the remote SQLite surface, and it now informs bounded guardrails. |
 | Candidate generation now | `0` Polymarket, `0` Kalshi, `0` total | Current edge reachability is still zero in the latest improvement report. |
 | Latest pipeline verdict | `REJECT ALL` | The older scan says nothing is tradeable, which conflicts with later BTC maker evidence. |
 | Structural alpha A-6 | `blocked`; `53` qualified live-surface events, `0` executable constructions below `0.95` | No promotion. The lane still lacks executable evidence. |
 | Structural alpha B-1 | `blocked`; `0` deterministic template pairs in first `1,000` allowed markets | No promotion. Density remains too low. |
-| Capital tracked | `$347.51` total (`$247.51` Polymarket + `$100` Kalshi) | This is the tracked planning capital, not the full remote wallet accounting surface. |
+| Current system ARR | `0%` realized | This is the public-safe current ARR from `improvement_velocity.json`; target and theoretical references stay separate from realized performance. |
 | Root verification artifact | `1140 passed in 25.88s; 25 passed in 4.47s` | The root suite is green in the latest artifact set. |
 | JJ-N repo truth | `nontrading/main.py` builds and runs `RevenuePipeline`; `make test-nontrading` is green at `61`; repo-root JJ-N tests are green at `49` | The non-trading lane is implemented and safety-gated, but not revenue-live. |
 | First non-trading wedge | Website Growth Audit exists in code, priced at `$500-$2500`, `5` delivery days, fulfillment type `hybrid` | This is the best current path to first non-trading dollars. |
@@ -102,7 +102,7 @@ Strategy catalog truth from `research/edge_backlog_ranked.md`:
 Deep Research should treat the following as first-class system problems, not footnotes:
 
 1. Local-ledger vs wallet drift
-   Local runtime accounting says `4` open positions and `$25.00` deployed. The remote wallet surface says `28` open positions and about `$176.1072` current position value.
+   Local runtime accounting says `4` open positions and `0` local closed trades. The remote wallet surface says `28` open positions and `9` closed positions.
 
 2. Profile-vs-effective drift
    The checked-in `config/runtime_profiles/maker_velocity_all_in.json` says:
@@ -114,13 +114,13 @@ Deep Research should treat the following as first-class system problems, not foo
    The effective runtime captured in `reports/runtime_truth_latest.json` says:
    - `max_resolution_hours=24.0`
    - YES and NO thresholds `0.05 / 0.02`
-   - `max_position_usd=247.51`
+   - `max_position_usd` is effectively set to the full available cap in the checked-in runtime truth
 
 3. Signal-lane drift
    The selected maker-velocity posture says fast-flow only with LLM disabled, but `jj_state.json` still shows five LLM-dominant trades on non-fast markets.
 
 4. Scan-vs-execution drift
-   The latest checked pipeline verdict is `REJECT ALL`, while the remote BTC 5-minute maker database shows `32` live-filled rows and positive cumulative filled PnL.
+   The latest checked pipeline verdict is `REJECT ALL`, while the remote BTC 5-minute maker database shows `32` live-filled rows and positive cumulative filled outcomes.
 
 Conclusion:
 

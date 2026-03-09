@@ -1,7 +1,7 @@
 # Codex Dispatch Index — March 9, 2026
 
 **Source truth:** COMMAND_NODE.md v2.8.0 | PROJECT_INSTRUCTIONS.md v3.8.0
-**Machine state:** 305 cycles, 0 live trades, $347.51 tracked/$0 deployed, REJECT ALL, 1,278 tests green
+**Machine state:** 305 cycles, 0 live trades, 0% realized current system ARR, REJECT ALL, 1,278 tests green
 
 ---
 

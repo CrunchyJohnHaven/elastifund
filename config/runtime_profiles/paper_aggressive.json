@@ -28,7 +28,7 @@
     "scan_interval_seconds": 120,
     "max_open_positions": 5,
     "min_edge": 0.03,
-    "initial_bankroll": 247.51
+    "initial_bankroll": 250.0
   },
   "market_filters": {
     "max_resolution_hours": 48.0,

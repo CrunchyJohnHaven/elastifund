@@ -17,7 +17,7 @@ As of `2026-03-09T01:35:13+00:00`, the runtime shows:
 
 - `314` cycles completed.
 - `0` total trades.
-- `$347.51` tracked capital with `$0` deployed.
+- `0%` realized current system ARR.
 - wallet-flow `ready` with `80` scored wallets.
 - `jj-live.service` currently `stopped`.
 - launch posture `blocked`.

@@ -21,8 +21,9 @@ echo "PAPER_TRADING=false" >> .env
 grep -q "ENABLE_A6_SHADOW" .env || echo "ENABLE_A6_SHADOW=true" >> .env
 
 # Set correct bankroll
+INITIAL_BANKROLL_USD="${JJ_INITIAL_BANKROLL:-250}"
 sed -i '/^JJ_INITIAL_BANKROLL/d' .env
-echo "JJ_INITIAL_BANKROLL=247.51" >> .env
+echo "JJ_INITIAL_BANKROLL=${INITIAL_BANKROLL_USD}" >> .env
 
 # Set position size
 sed -i '/^JJ_MAX_POSITION_USD/d' .env
@@ -32,7 +33,7 @@ echo "JJ_MAX_POSITION_USD=2.00" >> .env
 sed -i '/^JJ_MAX_DAILY_LOSS_USD/d' .env
 echo "JJ_MAX_DAILY_LOSS_USD=10" >> .env
 
-echo "  .env updated: PAPER_TRADING=false, bankroll=247.51, max_pos=2.00"
+echo "  .env updated: PAPER_TRADING=false, bankroll=${INITIAL_BANKROLL_USD}, max_pos=2.00"
 
 # ── 2. Set PYTHONPATH ──
 echo "[2/6] Setting PYTHONPATH..."
@@ -136,7 +137,7 @@ echo "  Bot: $(sudo systemctl is-active jj-live.service)"
 echo "  Paper mode: OFF (real trading)"
 echo "  Max position: \$2.00"
 echo "  Daily loss limit: \$10"
-echo "  Bankroll: \$247.51"
+echo "  Bankroll: configured in .env"
 echo "  A-6 shadow: ON"
 echo "  Data sync: every 2 hours (cron)"
 echo ""

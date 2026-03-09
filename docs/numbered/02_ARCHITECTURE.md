@@ -109,7 +109,7 @@ The most important source files are:
 ## Current March 9 Snapshot
 
 The active runtime truth is still a blocked system:
-`314` cycles, `0` total trades, `$347.51` tracked capital, wallet-flow `ready`, A-6 blocked, B-1 blocked, and `jj-live.service` currently `stopped`.
+`314` cycles, `0` total trades, `0%` realized current system ARR, wallet-flow `ready`, A-6 blocked, B-1 blocked, and `jj-live.service` currently `stopped`.
 That snapshot matters because architecture is only useful when it matches reality.
 
 ## Architectural Implication

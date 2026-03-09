@@ -34,7 +34,7 @@ Snapshot highlights (2026-03-09):
 - Active thresholds: YES `0.05`, NO `0.02`, max resolution `24h`.
 - Service status: `jj-live.service` is **running** (`active`) but launch posture remains **blocked**.
 - Drift flag present: running service while launch remains blocked; remote mode must be explicitly confirmed as paper or shadow.
-- Capital tracked: `$347.51` total (`$247.51` Polymarket + `$100` Kalshi).
+- Current system ARR: `0%` realized.
 - Trades: `5` total in db, `0` closed trades, `open_positions=4`, realized pnl flat.
 - Fast-flow restart readiness: `true`.
 - Structural lanes A-6/B-1: still blocked by empirical gates.
@@ -54,8 +54,8 @@ Key values currently set:
 - `enable_wallet_flow=true`
 - `enable_lmsr=true`
 - `enable_llm_signals=false`
-- `max_position_usd=247.51`
-- `max_daily_loss_usd=247.51`
+- `max_position_usd` is set to the full available cap in the captured runtime profile
+- `max_daily_loss_usd` is set to the full available cap in the captured runtime profile
 - `max_exposure_pct=1.0`
 - `max_open_positions=1`
 - `kelly_fraction=1.0`

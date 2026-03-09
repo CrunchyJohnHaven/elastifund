@@ -35,7 +35,7 @@ def test_launch_check_outputs_machine_booleans_and_nonzero_on_block(tmp_path: Pa
         )
     )
     (repo / "reports" / "remote_service_status.json").write_text(json.dumps({"status": "running"}))
-    (repo / "jj_state.json").write_text(json.dumps({"bankroll": 247.51}))
+    (repo / "jj_state.json").write_text(json.dumps({"bankroll": 250.0}))
 
     out_path = repo / "reports" / "launch_gate.json"
     result = _run(

@@ -26,7 +26,7 @@ This changes our infrastructure priority: WebSocket upgrade (Dispatch #078) befo
 
 | Metric | Value |
 |--------|-------|
-| Capital | $247.51 Polymarket + $100 Kalshi |
+| Capital | Internal seed bankroll withheld from public docs |
 | Strategies tested to date | 16 (6 deployed, 10 rejected) |
 | Strategies in pipeline | 30 |
 | Tests passing | 345 |

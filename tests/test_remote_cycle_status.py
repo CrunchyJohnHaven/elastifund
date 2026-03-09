@@ -86,7 +86,7 @@ def test_build_remote_cycle_status_includes_polymarket_wallet_observation(
     assert status["capital"]["polymarket_actual_deployable_usd"] == 12.34
     assert status["capital"]["polymarket_observed_deployed_usd"] == 27.89
     assert status["capital"]["polymarket_observed_total_usd"] == 43.51
-    assert status["capital"]["polymarket_tracked_vs_observed_delta_usd"] == 204.0
+    assert status["capital"]["polymarket_tracked_vs_observed_delta_usd"] == 206.49
     assert status["runtime"]["polymarket_live_orders"] == 2
     assert status["runtime"]["polymarket_open_positions"] == 3
     assert status["runtime"]["polymarket_closed_positions_realized_pnl_usd"] == -1.49
@@ -803,7 +803,7 @@ def test_write_remote_cycle_status_emits_runtime_mode_reconciliation_artifact(tm
     _write_json(
         tmp_path / "jj_state.json",
         {
-            "bankroll": 247.51,
+            "bankroll": 250.0,
             "total_deployed": 25.0,
             "daily_pnl": 0.0,
             "total_pnl": 0.0,
@@ -896,7 +896,7 @@ def test_write_remote_cycle_status_emits_runtime_mode_reconciliation_artifact(tm
         tmp_path / "reports" / "runtime_operator_overrides.env",
         "\n".join(
             [
-                "JJ_MAX_POSITION_USD=247.51",
+                "JJ_MAX_POSITION_USD=250.0",
                 "JJ_MAX_OPEN_POSITIONS=1",
                 "JJ_YES_THRESHOLD=0.05",
                 "JJ_NO_THRESHOLD=0.02",
@@ -979,7 +979,7 @@ def test_write_remote_cycle_status_emits_runtime_mode_reconciliation_artifact(tm
     assert runtime_truth["order_submit_enabled"] is False
     assert runtime_truth["launch_posture"] == "blocked"
     assert runtime_truth["restart_recommended"] is False
-    assert runtime_truth["effective_caps"]["max_position_usd"] == 247.51
+    assert runtime_truth["effective_caps"]["max_position_usd"] == 250.0
     assert runtime_truth["effective_thresholds"]["yes_threshold"] == 0.05
     assert runtime_truth["drift_flags"]["profile_override_drift"] is True
     assert runtime_truth["drift_flags"]["docs_stale"] is True
@@ -1290,7 +1290,7 @@ def test_bridge_pull_only_captures_service_snapshot_before_status(tmp_path: Path
                 "    (dest / 'data').mkdir(parents=True, exist_ok=True)",
                 "    (dest / 'reports' / 'flywheel').mkdir(parents=True, exist_ok=True)",
                 "    (dest / 'jj_state.json').write_text(json.dumps({",
-                "        'bankroll': 247.51,",
+                "        'bankroll': 250.0,",
                 "        'total_deployed': 0.0,",
                 "        'daily_pnl': 0.0,",
                 "        'total_pnl': 0.0,",
@@ -1328,7 +1328,7 @@ def test_bridge_pull_only_captures_service_snapshot_before_status(tmp_path: Path
                 "if 'systemctl is-active jj-live.service' in command:",
                 "    print('inactive')",
                 "elif 'jj_state.json' in command:",
-                "    print('  Bankroll: $247.51')",
+                "    print('  Bankroll: configured in .env')",
                 "    print('  Daily P&L: $0.00')",
                 "    print('  Total P&L: $0.00')",
                 "    print('  Open positions: 0')",
@@ -1380,7 +1380,7 @@ def _write_base_remote_state(root: Path) -> None:
         root / "config" / "remote_cycle_status.json",
         {
             "capital_sources": [
-                {"account": "Polymarket", "amount_usd": 247.51, "source": "jj_state.json"},
+                {"account": "Polymarket", "amount_usd": 250.0, "source": "jj_state.json"},
                 {"account": "Kalshi", "amount_usd": 100.0, "source": "manual_tracked_balance"},
             ],
             "pull_policy": {
@@ -1406,7 +1406,7 @@ def _write_base_remote_state(root: Path) -> None:
     _write_json(
         root / "jj_state.json",
         {
-            "bankroll": 247.51,
+            "bankroll": 250.0,
             "total_deployed": 0.0,
             "daily_pnl": 0.0,
             "total_pnl": 0.0,

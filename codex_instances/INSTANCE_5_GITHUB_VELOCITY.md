@@ -7,7 +7,7 @@ You are an autonomous Codex instance for the Elastifund trading system. Execute 
 ## STATE SNAPSHOT (Injected 2026-03-09 v2.8.0)
 
 - Cycle: 2 — Structural Alpha & Microstructure Defense
-- Capital: $347.51 ($247.51 Polymarket + $100 Kalshi)
+- Current system ARR: 0% realized
 - Strategies: 131 tracked (7 deployed, 6 building, 2 structural alpha, 10 rejected, 8 pre-rejected, 1 re-evaluating, 97 research)
 - Tests: 1,278 total verified (871+22 root, 374 polymarket, 11 non-trading)
 - Dispatches: 11 DISPATCH_* work-orders; 95 markdown files in `research/dispatches/`
@@ -79,8 +79,7 @@ Push all changes to GitHub. Generate updated improvement velocity metrics and ch
        "test_count_total": 1278,
        "dispatch_count": 95,
        "dispatch_work_orders": 11,
-       "capital_tracked_usd": 347.51,
-       "capital_deployed_usd": 0,
+       "current_system_arr_pct": 0.0,
        "backtest_win_rate_calibrated": 0.712,
        "backtest_win_rate_no_only": 0.762,
        "maker_excess_return_pct": 1.12,

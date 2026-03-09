@@ -56,7 +56,7 @@ def test_rank_wallet_signals_orders_by_score_desc() -> None:
 
 def test_allocate_hour0_notional_respects_reserve_and_per_market_cap() -> None:
     allocations = allocate_hour0_notional(
-        bankroll_usd=247.51,
+        bankroll_usd=250.0,
         ranked_signals=[
             {"market_id": "m1", "score": 10.0},
             {"market_id": "m2", "score": 8.0},
@@ -65,9 +65,9 @@ def test_allocate_hour0_notional_respects_reserve_and_per_market_cap() -> None:
             {"market_id": "m5", "score": 2.0},
         ],
     )
-    deployable = 247.51 * 0.95
+    deployable = 250.0 * 0.95
     assert sum(allocations.values()) <= deployable + 1e-6
-    assert all(value <= (247.51 * 0.20) + 1e-6 for value in allocations.values())
+    assert all(value <= (250.0 * 0.20) + 1e-6 for value in allocations.values())
     assert len(allocations) >= 4
 
 
@@ -111,7 +111,7 @@ def test_evaluate_blitz_launch_ready_blocks_on_stale_conflict_and_drift() -> Non
             "runtime_truth": {"drift_detected": True},
         },
         remote_service_status={"status": "stopped"},
-        jj_state={"bankroll": 247.51},
+        jj_state={"bankroll": 250.0},
     )
     assert decision.launch_go is False
     assert decision.checks["fresh_pull_required"] is False
@@ -132,7 +132,7 @@ def test_evaluate_blitz_launch_ready_passes_when_checks_green() -> None:
             "runtime_truth": {"drift_detected": False},
         },
         remote_service_status={"status": "running"},
-        jj_state={"bankroll": 247.51},
+        jj_state={"bankroll": 250.0},
         now=datetime(2026, 3, 9, 11, 0, tzinfo=timezone.utc),
     )
     assert decision.launch_go is True

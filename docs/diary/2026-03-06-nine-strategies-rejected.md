@@ -36,7 +36,7 @@ The emotional reality: spending 6 hours coding something and watching the pipeli
 
 | Metric | Value |
 |--------|-------|
-| Capital | $247.51 Polymarket + $100 Kalshi |
+| Capital | Internal seed bankroll withheld from public docs |
 | Strategies tested to date | 15 (6 deployed, 9 rejected) |
 | Tests passing | 310 |
 | Research dispatches | 60 |

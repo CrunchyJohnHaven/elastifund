@@ -4,7 +4,7 @@
 **Author:** JJ
 **Profile:** `maker_velocity_live`
 **Mode:** LIVE maker orders on Polymarket (crypto + politics + weather + economic)
-**Capital at risk:** $247.51 Polymarket USDC, UNCAPPED daily loss (full deployment)
+**Capital at risk:** Internal Polymarket bankroll withheld from public docs, UNCAPPED daily loss (full deployment)
 
 ---
 
@@ -89,7 +89,7 @@ ssh -i "$SSH_KEY" "$VPS" "cat >> /home/ubuntu/polymarket-trading-bot/.env << 'EO
 
 # BTC 5-Min Maker (Instance 2)
 BTC5_PAPER_TRADING=false
-BTC5_BANKROLL_USD=247.51
+BTC5_BANKROLL_USD=<internal_seed_bankroll>
 BTC5_RISK_FRACTION=0.02
 BTC5_MAX_TRADE_USD=5.00
 BTC5_MIN_TRADE_USD=5.00
@@ -152,7 +152,7 @@ Kalshi weather markets resolve daily. At $10/trade with $5 daily loss cap, expec
 | JJ main (crypto+politics+weather) | 5-15 | 4-24h | uncapped |
 | BTC 5-min maker | 10-60 | 5 min | uncapped |
 | Kalshi weather | 1-3 | 24h | uncapped |
-| **Total** | **16-78** | — | **$347.51 max** |
+| **Total** | **16-78** | — | **internal bankroll max** |
 
 **Target: 100 resolved trades in 5-7 days**
 **All capital deployed. No daily loss caps. Kelly 0.25 and $10 position size provide natural risk distribution.**
