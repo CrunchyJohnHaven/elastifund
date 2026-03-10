@@ -12,6 +12,7 @@ from hub.app.benchmark_api import router as benchmark_router
 from hub.app.config import get_settings
 from hub.app.elasticsearch_security import ElasticsearchSecurityClient
 from hub.app.flywheel_api import router as flywheel_router
+from hub.app.nontrading_api import router as nontrading_router
 from hub.app.registry import HubRegistry
 from shared.python.elastifund_shared.topology import (
     ELASTIFUND_KNOWLEDGE_SHARING_TIERS,
@@ -35,6 +36,7 @@ app = FastAPI(
 app.include_router(benchmark_router)
 app.include_router(agent_router)
 app.include_router(flywheel_router)
+app.include_router(nontrading_router)
 
 
 class ApiKeyCreateRequest(BaseModel):
