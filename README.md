@@ -2,7 +2,9 @@
 
 **A self-improving agentic operating system for real economic work.**
 
-Elastifund is an autonomous trading system where AI agents research, estimate probabilities, size positions, and execute trades on prediction markets — with no human in the loop on individual decisions. The human (John) designs the architecture, safety constraints, and risk parameters. The agent operates within them.
+Elastifund is a policy-governed agentic operating system for trading, non-trading work, and finance control. AI workers research, estimate probabilities, size positions, and execute bounded tasks under explicit safety, approval, and risk parameters. John sets the architecture, policy, and capital boundaries; the system operates within them.
+
+Elastic is the shared substrate for system memory, evaluation, observability, and publishing across the trading workers, JJ-N, and the finance control plane.
 
 The system is live. It trades real money. It learns from every outcome.
 
@@ -10,22 +12,54 @@ The system is live. It trades real money. It learns from every outcome.
 
 ---
 
-## Live Performance (March 9, 2026)
+## Public ARR Snapshot (March 10, 2026)
 
 | Metric | Value |
 |---|---|
-| Portfolio value | **$333.18** (Polymarket) + $100 (Kalshi) = **$433** total |
-| Available capital | $286.86 |
-| Trading status | **Live — placing and resolving real trades** |
-| Active categories | Weather, geopolitical, central bank/economic, crypto |
-| BTC 5-min maker sleeve | 56 live fills, **+$91.79** cumulative P&L, avg +$1.64/fill |
-| Past-day P&L | +$1.91 |
-| Strategy catalog | 131 tracked (7 deployed, 6 building, 97 in research pipeline) |
-| Test suite | 1,397 passing across all surfaces |
-| Commits | 88 |
-| Research dispatches | 95 published |
+| Conservative public forecast ARR | **4,000%+** |
+| Raw selected BTC5 forecast ARR | **3.92M%** annualized continuation ARR |
+| Raw best-package BTC5 forecast ARR | **5.90M%** annualized continuation ARR |
+| Raw P05 BTC5 forecast ARR | **2.07M%** annualized continuation ARR |
+| BTC5 live sleeve | **123** live-filled rows, **+$108.86** live-filled P&L |
+| Live sleeve run-rate | **20.2k%** annualized on the trailing **12** live fills across **4.83 hours** |
+| Strongest live shape | **DOWN** direction still leads at **+$89.46**; **<0.49** remains the best price bucket at **+$50.90** |
+| Public forecast posture | **promote / high confidence** |
+| Fund-level realized ARR | **blocked** until ledger/wallet reconciliation closes |
 
-> **Data trust policy:** Portfolio and P&L figures come from the live Polymarket wallet, verified via web UI on March 9, 2026. Local reporting artifacts (`reports/runtime_truth_latest.json`) have historically drifted from wallet truth. When in doubt, wallet wins.
+> **Disclosure note:** The README now headlines a conservative **4,000%+** BTC5 forecast ARR on March 10, 2026. The freshest selected machine forecast in [`improvement_velocity.json`](improvement_velocity.json) is materially higher, but fund-level realized ARR remains withheld while wallet and ledger reconciliation stays open. Public headline claims are intentionally clamped until that closes.
+>
+> **Source artifacts:** [`improvement_velocity.json`](improvement_velocity.json), [`reports/btc5_autoresearch/latest.json`](reports/btc5_autoresearch/latest.json), [`reports/btc5_autoresearch_loop/latest.json`](reports/btc5_autoresearch_loop/latest.json), and [`reports/runtime_truth_latest.json`](reports/runtime_truth_latest.json).
+
+---
+
+## Why Elastic Matters Here
+
+Elastic matters here because the core product is not just a bot that places trades. The core product is a self-improving agentic system where worker output stays searchable, comparable, and publishable enough to improve safely in public.
+
+In this repo, Elastic is the shared substrate for:
+
+- **System memory.** Trading workers, JJ-N, and the finance control plane write artifacts, traces, telemetry, and operator context into a searchable evidence layer instead of leaving state trapped in local logs.
+- **Evaluation.** Signal quality, blocked claims, kill rules, confidence labels, and promotion decisions stay tied to labeled artifacts instead of drifting into blended dashboards or vague summaries.
+- **Observability.** Elastic APM, dashboards, and ML/anomaly jobs make it possible to inspect latency, execution quality, workflow health, and abnormal regimes without changing runtime behavior.
+- **Publishing.** The public site, operator docs, and GitHub narrative can all point back to the same evidence surfaces, keeping public claims narrower than raw internal state when they need to be.
+
+### Shared Evidence Layer
+
+```text
+Trading workers ---\
+JJ-N workers ------+--> Elastic-backed evidence layer --> evaluation + observability --> README, /live/, /elastic/, docs
+Finance control ---/
+```
+
+Shared layer contents: artifacts, traces, telemetry. Shared outputs: scorecards, kill rules, blocked claims, dashboards.
+
+That is why the trading sleeve, JJ-N launch-prep work, and the repo's public surfaces can stay separate without becoming contradictory. They share one evidence substrate.
+
+### Why An Elastic Employee Should Care
+
+This repo is a credible public proof surface for Search AI, system memory, observability, evaluation, and workflow control working together in one agentic system. It stays paper-mode safe in public by separating sleeve-level proof from fund-level blocked claims and by reading only sanitized checked-in artifacts from the browser side.
+
+Start with [/elastic/](https://elastifund.io/elastic/) for the employee-facing route, [docs/ELASTIC_INTEGRATION.md](docs/ELASTIC_INTEGRATION.md) for the operator-facing integration details, and [docs/FORK_AND_RUN.md](docs/FORK_AND_RUN.md) for the shortest repo run path.
 
 ---
 
@@ -37,7 +71,8 @@ This is the autoresearch-style improvement log. Each entry represents a validate
 
 **Deployed improvements:**
 
-- **BTC 5-minute maker validated as primary edge.** 56 live fills at +$91.79 cumulative. DOWN direction dominant (41 fills, +$72.40). Average profit per fill: +$1.64. This is the only strategy with statistically meaningful live evidence.
+- **BTC 5-minute maker is now the public performance engine.** March 10, 2026 artifacts show 123 live-filled rows and +$108.86 live-filled P&L. The README now headlines a conservative 4,000%+ forecast ARR while preserving the raw selected BTC5 forecast, run-rate, and confidence labels in the public metrics surface.
+- **DOWN and sub-0.49 quotes remain the live-winning structure.** `reports/runtime_truth_latest.json` still shows DOWN as the strongest direction (+$89.46) and `<0.49` as the strongest price bucket (+$50.90).
 - **Maker-only execution enforced.** 100% post-only orders. Zero taker fees. Maker rebates on every fill. This single change (Dispatch #75) eliminated the fee drag that killed earlier strategies.
 - **Six signal sources wired into the live loop.** LLM probability estimation, smart wallet flow detection, LMSR Bayesian pricing, cross-platform arbitrage, VPIN/OFI microstructure, and semantic lead-lag. Each can be independently enabled or disabled per runtime profile.
 - **Multi-category trading live.** The system is actively trading weather, geopolitical, central bank, and crypto markets. Category gates control which signal lanes are eligible per market type.
@@ -66,10 +101,11 @@ This is the autoresearch-style improvement log. Each entry represents a validate
 
 ## Architecture
 
-The system runs two families of workers sharing a common data, evaluation, and improvement layer:
+The system runs two worker families plus one finance control plane sharing an Elastic-backed evidence layer for memory, evaluation, observability, and publishing:
 
 - **Trading workers** — research, simulate, rank, and execute market strategies under policy (Polymarket, Kalshi)
 - **Non-trading workers (JJ-N)** — create economic value through business development, research, services, and customer acquisition
+- **Finance control plane** — rank personal cash, subscriptions, tool spend, trading capital, and experiment budgets as one allocation problem
 
 The live trading loop:
 
@@ -90,6 +126,7 @@ Around this sits the research flywheel: `research -> implement -> test -> record
 
 | I want to... | Start here |
 |---|---|
+| See the employee-facing Elastic route | [/elastic/](https://elastifund.io/elastic/) |
 | Boot the repo with the least friction | [docs/FORK_AND_RUN.md](docs/FORK_AND_RUN.md) |
 | Hand one root packet to Deep Research | [COMMAND_NODE.md](COMMAND_NODE.md) |
 | Understand the Elastic observability layer | [docs/ELASTIC_INTEGRATION.md](docs/ELASTIC_INTEGRATION.md) |
@@ -130,13 +167,19 @@ All commands pass in this repo state: `scripts/doctor.py`, `scripts/quickstart.p
 
 ## Velocity Charts
 
-These charts track the BTC5 maker sleeve improvement trajectory. The system continuously evaluates parameter configurations and promotes the best-performing package.
+These charts now separate three ideas cleanly:
+
+- the conservative public ARR headline
+- the raw BTC5 machine forecast surface
+- the live-filled velocity behind the forecast
 
 ![Improvement velocity](improvement_velocity.svg)
 
 ![ARR estimate](arr_estimate.svg)
 
 Machine-readable dataset: [improvement_velocity.json](improvement_velocity.json)
+
+The charts are generated from the March 10, 2026 public metrics contract, not hand-drawn marketing copy. The `4,000%+` headline is a conservative public cap; the raw forecast series and sleeve run-rate remain visible alongside it.
 
 ## Tech Stack
 
@@ -194,7 +237,7 @@ For the current implementation state, use [docs/NON_TRADING_STATUS.md](docs/NON_
 | `strategies/` + `signals/` | strategy-specific logic and shared signal helpers |
 | `src/`, `backtest/`, `simulator/` | edge-discovery and validation pipeline |
 | `hub/`, `data_layer/`, `orchestration/` | APIs, persistence, flywheel/control-plane plumbing |
-| `nontrading/` | non-trading revenue automation, Phase 0 CRM/approval/telemetry foundations, and digital-product discovery |
+| `nontrading/` | non-trading revenue automation, Phase 0 CRM/approval/telemetry foundations, digital-product discovery, and the finance control plane |
 | `polymarket-bot/` | self-contained trading bot subproject with dashboard and tests |
 | `inventory/` | benchmark lane for comparing external systems cleanly |
 | `docs/` + `research/` | durable docs, ADRs, prompts, dispatches, and findings |
