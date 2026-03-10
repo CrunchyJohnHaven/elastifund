@@ -1,0 +1,230 @@
+{
+  "artifact": "instance2_btc5_package_freeze",
+  "authoritative": true,
+  "instance": 2,
+  "generated_at": "2026-03-10T22:28:06Z",
+  "objective": "Freeze one BTC5 post-upgrade shadow champion, keep the stale open_et package comparison-only, and define the exact shadow sequence before any live-size change.",
+  "status": "upgrade_blocked",
+  "source_artifacts": {
+    "runtime_truth": "reports/runtime_truth_latest.json",
+    "state_improvement": "reports/state_improvement_latest.json",
+    "public_runtime_snapshot": "reports/public_runtime_snapshot.json",
+    "improvement_velocity": "improvement_velocity.json",
+    "finance_latest": "reports/finance/latest.json",
+    "finance_action_queue": "reports/finance/action_queue.json",
+    "btc5_selected_package": "reports/btc5_autoresearch/latest.json",
+    "btc5_current_probe": "reports/btc5_autoresearch_current_probe/latest.json",
+    "strategy_scale_comparison": "reports/strategy_scale_comparison.json",
+    "signal_source_audit": "reports/signal_source_audit.json"
+  },
+  "decision_scope": {
+    "applies_to": "first clean post-upgrade shadow cycle on the 8 GB / 2 vCPU / 160 GB SSD box",
+    "does_not_authorize": [
+      "service restart on the full old box",
+      "runtime package load on the old box",
+      "new live scaling",
+      "capital widening from the incoming 2000 USD"
+    ]
+  },
+  "truth_snapshot": {
+    "launch_posture": "blocked",
+    "service_status": "stopped",
+    "allow_order_submission": false,
+    "agent_run_mode": "shadow",
+    "btc5_live_filled_rows": 138,
+    "btc5_live_filled_pnl_usd": 85.3018,
+    "btc5_intraday_pnl_usd": -25.8918,
+    "btc5_recent_12_live_filled_pnl_usd": -8.5465,
+    "btc5_recent_20_live_filled_pnl_usd": -28.1442,
+    "btc5_allowed_stage": 0,
+    "btc5_can_trade_now": false,
+    "runtime_package_loaded": false,
+    "selected_package_confidence_label": "medium",
+    "polymarket_candidates_total": 2,
+    "kalshi_candidates_total": 0,
+    "executed_notional_usd_last_hour": 0.0,
+    "candidate_to_trade_conversion_last_hour": 0.0,
+    "order_failed_rate_recent_40": 0.025,
+    "finance_gate_pass": true,
+    "last_executed_trading_allocation_usd": 250.0,
+    "last_executed_trading_allocation_at": "2026-03-10T21:15:01+00:00"
+  },
+  "package_freeze": {
+    "champion_lane": "btc_5m",
+    "post_upgrade_shadow_package": {
+      "package_id": "btc5:grid_d0.00005_up0.48_down0.51",
+      "activation_mode": "shadow_only",
+      "source": "reports/state_improvement_latest.json",
+      "reason": "Fresh state-improvement ranking puts this tighter recovery package on top while runtime truth still shows the older selected package load pending.",
+      "operator_rule": "Load this package first on the new box and treat it as the only BTC5 champion until two clean utilization cycles are observed."
+    },
+    "comparison_only_package": {
+      "package_id": "policy_current_live_profile__open_et__grid_d0.00015_up0.51_down0.51",
+      "source": "reports/runtime_truth_latest.json,reports/btc5_autoresearch/latest.json",
+      "reason": "The older open_et package remains comparison-only because short-window BTC5 quality is negative and current runtime truth still shows runtime_package_load_pending=true."
+    },
+    "comparison_only_lanes": [
+      "btc_15m",
+      "eth_intraday",
+      "btc_4h"
+    ],
+    "non_btc_lane_policy": "comparison_only",
+    "size_policy": "no_size_increase_beyond_current_proof_size"
+  },
+  "post_upgrade_shadow_sequence": [
+    {
+      "step": 1,
+      "name": "package_load",
+      "status": "pending_upgrade",
+      "goal": "Load the frozen BTC5 recovery package first on the new box in shadow mode.",
+      "required_state": {
+        "allow_order_submission": false,
+        "agent_run_mode": "shadow",
+        "selected_package": "btc5:grid_d0.00005_up0.48_down0.51"
+      },
+      "pass_now": false,
+      "current_observation": {
+        "runtime_package_loaded": false,
+        "selected_best_profile_name": "policy_current_live_profile__open_et__grid_d0.00015_up0.51_down0.51"
+      }
+    },
+    {
+      "step": 2,
+      "name": "candidate_scan",
+      "status": "pending_upgrade",
+      "goal": "Run the first clean post-upgrade shadow scan and confirm the BTC5 package is the active champion lane.",
+      "required_state": {
+        "polymarket_candidates_total_min": 1,
+        "champion_lane": "btc_5m"
+      },
+      "pass_now": false,
+      "current_observation": {
+        "polymarket_candidates_total": 2,
+        "champion_lane": "btc_5m",
+        "frozen_package_id": "btc5:grid_d0.00005_up0.48_down0.51"
+      }
+    },
+    {
+      "step": 3,
+      "name": "order_failure_check",
+      "status": "guardrail_configured",
+      "goal": "Verify post-upgrade shadow execution keeps BTC5 order failures below the stage gate.",
+      "required_state": {
+        "order_failed_rate_recent_40_max": 0.25
+      },
+      "pass_now": true,
+      "current_observation": {
+        "order_failed_rate_recent_40": 0.025,
+        "source": "reports/strategy_scale_comparison.json"
+      }
+    },
+    {
+      "step": 4,
+      "name": "executed_notional_check",
+      "status": "blocked_until_utilization_returns",
+      "goal": "Require candidate scan conversion and real executed notional before any size change.",
+      "required_state": {
+        "executed_notional_usd_last_hour_gt": 0.0,
+        "candidate_to_trade_conversion_last_hour_gt": 0.0,
+        "consecutive_cycles_required": 2
+      },
+      "pass_now": false,
+      "current_observation": {
+        "executed_notional_usd_last_hour": 0.0,
+        "candidate_to_trade_conversion_last_hour": 0.0
+      }
+    }
+  ],
+  "release_gates": {
+    "pre_shadow_requirements": [
+      "new_box_disk_and_service_health_validated",
+      "runtime_truth_regenerated_on_new_box",
+      "package_loaded_matches_btc5:grid_d0.00005_up0.48_down0.51"
+    ],
+    "pre_scale_requirements": [
+      "package_loaded",
+      "order_failed_rate_recent_40_lte_0.25",
+      "executed_notional_usd_last_hour_gt_0_for_two_consecutive_cycles",
+      "candidate_to_trade_conversion_gt_0_for_two_consecutive_cycles"
+    ],
+    "current_gate_state": {
+      "package_loaded": false,
+      "order_failed_rate_recent_40_lte_0.25": true,
+      "executed_notional_positive_two_cycles": false,
+      "candidate_to_trade_conversion_positive_two_cycles": false
+    }
+  },
+  "release_schedule": [
+    {
+      "phase": 0,
+      "status": "upgrade_blocked",
+      "action": "Do nothing live on the old box beyond hold_repair.",
+      "exit_criteria": [
+        "remote_runtime_storage_blocked_cleared",
+        "service_not_running_cleared",
+        "new_box_ready"
+      ]
+    },
+    {
+      "phase": 1,
+      "status": "shadow_ready_after_upgrade",
+      "action": "Load btc5:grid_d0.00005_up0.48_down0.51 on the new box in shadow and regenerate runtime truth.",
+      "exit_criteria": [
+        "package_loaded",
+        "runtime_truth_confirms_loaded_package",
+        "candidate_scan_completed"
+      ]
+    },
+    {
+      "phase": 2,
+      "status": "shadow_ready_after_upgrade",
+      "action": "Run the exact shadow sequence: package-load, candidate scan, order-failure check, then executed-notional and conversion checks.",
+      "exit_criteria": [
+        "order_failed_rate_recent_40_lte_0.25",
+        "executed_notional_usd_last_hour_gt_0_for_two_consecutive_cycles",
+        "candidate_to_trade_conversion_gt_0_for_two_consecutive_cycles",
+        "btc5_recent_12_live_filled_pnl_usd_not_negative_across_two_cycles"
+      ]
+    }
+  ],
+  "capital_release_policy": {
+    "current_250_usd_allocation": "sufficient_for_next_proof_window",
+    "incoming_2000_usd": "park_in_reserve",
+    "reason_additional_capital_remains_parked": "Capital is not the unlock while the service is blocked, the chosen package is not loaded, executed notional is 0.0 in the last hour, candidate-to-trade conversion is 0.0, and the recent 12/20 BTC5 windows are negative.",
+    "non_champion_lanes": "comparison_only",
+    "widen_runtime_size_now": false
+  },
+  "inference_notes": [
+    "candidate_delta_arr_bps uses the freshest quantified BTC5 package delta from reports/btc5_autoresearch/latest.json because the state-improvement ranking selects the tighter recovery package but does not emit a separate ARR delta for that exact package id.",
+    "arr_confidence_score carries forward the freshest cycle-level champion-lane confidence score already derived from the current runtime and state artifacts.",
+    "order-failure gating is inferred from the current stage-readiness check in reports/strategy_scale_comparison.json, which is the repo's explicit execution-quality source."
+  ],
+  "required_outputs": {
+    "candidate_delta_arr_bps": 248262402,
+    "candidate_delta_arr_bps_basis": "reports/btc5_autoresearch/latest.json arr_tracking.median_arr_delta_pct",
+    "expected_improvement_velocity_delta": 0.0,
+    "arr_confidence_score": 0.49,
+    "block_reasons": [
+      "Remote service is stopped (inactive).",
+      "Remote runtime validation hit `No space left on device`; the VPS root filesystem is full and launch-control changes cannot be validated safely.",
+      "Latest flywheel decision is hold.",
+      "service_not_running",
+      "remote_runtime_storage_blocked",
+      "flywheel_not_green",
+      "selected_runtime_package_not_promote",
+      "runtime_package_load_pending",
+      "validated_runtime_package_not_loaded",
+      "btc5_forecast_not_promote_high",
+      "trailing_12_live_filled_not_positive",
+      "trailing_40_live_filled_not_positive",
+      "wallet_flow_vs_llm_not_ready",
+      "confirmation_coverage_insufficient",
+      "wallet_flow:source_window_rows 2 < required 3",
+      "lmsr:source_window_rows 1 < required 3",
+      "executed_notional_zero_last_hour",
+      "candidate_to_trade_conversion_zero_last_hour"
+    ],
+    "finance_gate_pass": true,
+    "one_next_cycle_action": "After the new 8 GB / 2 vCPU / 160 GB box validates cleanly, load btc5:grid_d0.00005_up0.48_down0.51 in shadow, regenerate runtime truth, run the first candidate scan, confirm order_failed_rate_recent_40 <= 0.25, and then require two consecutive cycles with executed_notional_usd > 0 and candidate_to_trade_conversion > 0 before any live-size change."
+  }
+}
