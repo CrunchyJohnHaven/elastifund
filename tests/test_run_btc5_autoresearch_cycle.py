@@ -3,15 +3,20 @@ from __future__ import annotations
 from pathlib import Path
 
 from scripts.run_btc5_autoresearch_cycle import (
+    _capital_stage_recommendation,
     _build_hypothesis_candidate,
     _capital_scale_recommendation,
+    _current_probe_payload_fields,
     _deploy_recommendation,
     _execution_drag_context,
     _fund_reconciliation_blocked,
     _live_fill_windows,
     _one_sided_bias_recommendation,
+    _probe_feedback_adjustment,
     _rank_candidate_packages,
+    _select_runtime_payload,
     _select_public_forecast,
+    _size_aware_deployment_summary,
     _runtime_session_policy_from_overrides,
     _load_env_file,
     _merged_strategy_env,
@@ -273,6 +278,25 @@ def test_write_reports_keeps_artifacts_in_both_json_outputs(tmp_path: Path) -> N
             "service_restart_requested": False,
             "service_restart_state": None,
         },
+        "size_aware_deployment": {
+            "available": True,
+            "capacity_profile_label": "best_candidate",
+            "capacity_profile_name": "best_candidate_profile",
+            "match_reason": "exact_global_best_candidate_match",
+            "recommended_live_stage_cap": 2,
+            "recommended_live_trade_size_cap_usd": 20,
+        },
+        "capital_scale_recommendation": {
+            "status": "test_add",
+            "recommended_tranche_usd": 100,
+            "reason": "high_confidence_and_trailing12_positive_but_fund_reconciliation_blocks_full_scale",
+        },
+        "capital_stage_recommendation": {
+            "recommended_stage": 2,
+            "recommended_max_trade_usd": 20,
+            "stage_reason": "stage2_guardrails_passed_trailing40_12_positive_and_order_failure_below_25pct",
+            "promotion_guardrails_passed": True,
+        },
         "simulation_summary": {"input": {"observed_window_rows": 75, "live_filled_rows": 45}},
     }
     artifacts = _write_reports(tmp_path, payload)
@@ -282,8 +306,12 @@ def test_write_reports_keeps_artifacts_in_both_json_outputs(tmp_path: Path) -> N
     assert '"artifacts"' in cycle_text
     assert '"artifacts"' in latest_text
     assert '"runtime_load_status"' in latest_text
+    assert '"size_aware_deployment"' in latest_text
+    assert '"capital_stage_recommendation"' in latest_text
     assert "Runtime Load Status" in latest_md
+    assert "Size-Aware Deployment" in latest_md
     assert "Override env written" in latest_md
+    assert "Capital stage recommendation" in latest_md
 
 
 def test_deploy_recommendation_promote_shadow_hold() -> None:
@@ -323,7 +351,7 @@ def test_deploy_recommendation_promote_shadow_hold() -> None:
 
 def test_select_public_forecast_prefers_confidence_then_deploy_then_recency() -> None:
     standard = {
-        "generated_at": "2026-03-09T18:00:00+00:00",
+        "generated_at": "2026-03-10T11:00:00+00:00",
         "arr_tracking": {
             "current_median_arr_pct": 100.0,
             "best_median_arr_pct": 140.0,
@@ -335,9 +363,14 @@ def test_select_public_forecast_prefers_confidence_then_deploy_then_recency() ->
         "active_runtime_package": {"profile": {"name": "standard_active"}, "session_policy": []},
         "validation_live_filled_rows": 10,
         "generalization_ratio": 0.8,
+        "runtime_load_status": {"override_env_written": True},
+        "capital_stage_recommendation": {"recommended_stage": 1},
+        "best_live_package": {"source": "global_best_candidate"},
+        "execution_drag_summary": {"order_failed_count": 1},
+        "size_aware_deployment": {"available": True, "recommended_live_stage_cap": 1},
     }
     probe = {
-        "generated_at": "2026-03-09T18:30:00+00:00",
+        "generated_at": "2026-03-10T11:30:00+00:00",
         "arr_tracking": {
             "current_median_arr_pct": 100.0,
             "best_median_arr_pct": 130.0,
@@ -349,6 +382,11 @@ def test_select_public_forecast_prefers_confidence_then_deploy_then_recency() ->
         "active_runtime_package": {"profile": {"name": "probe_active"}, "session_policy": []},
         "validation_live_filled_rows": 12,
         "generalization_ratio": 0.9,
+        "runtime_load_status": {"override_env_written": False},
+        "capital_stage_recommendation": {"recommended_stage": 2},
+        "best_live_package": {"source": "probe_candidate"},
+        "execution_drag_summary": {"order_failed_count": 0},
+        "size_aware_deployment": {"available": True, "recommended_live_stage_cap": 2},
     }
 
     selected = _select_public_forecast(
@@ -360,6 +398,243 @@ def test_select_public_forecast_prefers_confidence_then_deploy_then_recency() ->
     chosen = selected["selected"]
     assert chosen["source_artifact"] == "reports/btc5_autoresearch_current_probe/latest.json"
     assert chosen["package_confidence_label"] == "high"
+    assert chosen["runtime_load_status"]["override_env_written"] is False
+    assert chosen["capital_stage_recommendation"]["recommended_stage"] == 2
+    assert chosen["best_live_package"]["source"] == "probe_candidate"
+    assert chosen["execution_drag_summary"]["order_failed_count"] == 0
+    assert chosen["size_aware_deployment"]["recommended_live_stage_cap"] == 2
+    assert selected["selection_reason"].startswith("selected_from_fresh_pool_by_probe_feedback")
+
+
+def test_current_probe_contract_tracks_mix_growth_and_loss_clusters() -> None:
+    rows = [
+        {
+            "updated_at": "2026-03-10T12:00:00+00:00",
+            "window_start_ts": 1_710_072_000,
+            "direction": "DOWN",
+            "session_name": "open_et",
+            "order_price": 0.48,
+            "abs_delta": 0.00004,
+            "order_status": "live_filled",
+            "pnl_usd": 4.5,
+        },
+        {
+            "updated_at": "2026-03-10T12:05:00+00:00",
+            "window_start_ts": 1_710_072_300,
+            "direction": "DOWN",
+            "session_name": "open_et",
+            "order_price": 0.48,
+            "abs_delta": 0.00004,
+            "order_status": "live_filled",
+            "pnl_usd": -1.2,
+        },
+        {
+            "updated_at": "2026-03-10T12:10:00+00:00",
+            "window_start_ts": 1_710_072_600,
+            "direction": "UP",
+            "session_name": "midday_et",
+            "order_price": 0.51,
+            "abs_delta": 0.00011,
+            "order_status": "live_order_failed",
+            "pnl_usd": 0.0,
+        },
+    ]
+    probe = _current_probe_payload_fields(
+        rows=rows,
+        prior_probe_payload={
+            "validation_live_filled_rows": 8,
+            "current_probe": {"live_filled_row_count": 1},
+        },
+        hypothesis_summary={},
+        regime_policy_summary={
+            "loss_cluster_filters": [
+                {
+                    "filter_name": "down_open_lt_0.49_le_0.00005",
+                    "direction": "DOWN",
+                    "session_name": "open_et",
+                    "price_bucket": "lt_0.49",
+                    "delta_bucket": "le_0.00005",
+                    "severity": "high",
+                    "filter_action": "shadow_block_until_revalidated",
+                    "revalidation_gate": "requires_fresh_positive_cluster_and_capacity_agreement",
+                }
+            ]
+        },
+        validation_live_filled_rows=10,
+        package_missing_evidence=[],
+        decision={"action": "promote"},
+    )
+
+    assert probe["validation_live_filled_rows_delta"] == 2
+    assert probe["live_filled_rows_delta"] == 1
+    assert probe["recent_order_failed_rate"] > 0.0
+    assert probe["recent_direction_mix"]["dominant_label"] == "DOWN"
+    assert probe["recent_price_bucket_mix"]["dominant_label"] == "lt_0.49"
+    assert probe["recent_loss_cluster_flags"][0]["filter_name"] == "down_open_lt_0.49_le_0.00005"
+    assert "candidate_scoring_promote_ready" in probe["stage_ready_reason_tags"]
+    assert "recent_loss_cluster_flags_present" in probe["stage_not_ready_reason_tags"]
+
+
+def test_probe_feedback_adjustment_reduces_confidence_for_stale_probe() -> None:
+    feedback = _probe_feedback_adjustment(
+        package_confidence_label="high",
+        deploy_recommendation="promote",
+        current_probe={
+            "probe_freshness_hours": 14.0,
+            "live_fill_freshness_hours": 14.0,
+            "validation_live_filled_rows_delta": 0,
+            "live_filled_rows_delta": 0,
+            "recent_order_failed_rate": 0.41,
+            "recent_loss_cluster_flags": [{"filter_name": "open_cluster"}],
+            "stage_not_ready_reason_tags": ["trailing_12_live_filled_non_positive"],
+        },
+    )
+
+    assert feedback["effective_package_confidence_label"] == "low"
+    assert feedback["effective_deploy_recommendation"] == "hold"
+    assert "probe_stale_gt_12h" in feedback["adjustment_reasons"]
+    assert "validation_rows_flat" in feedback["adjustment_reasons"]
+
+
+def test_select_public_forecast_prefers_fresh_probe_over_stale_nominally_better_package() -> None:
+    standard = {
+        "generated_at": "2026-03-09T00:00:00+00:00",
+        "arr_tracking": {
+            "current_median_arr_pct": 100.0,
+            "best_median_arr_pct": 220.0,
+            "median_arr_delta_pct": 120.0,
+        },
+        "package_confidence_label": "high",
+        "deploy_recommendation": "promote",
+        "validation_live_filled_rows": 30,
+        "generalization_ratio": 1.2,
+    }
+    probe = {
+        "generated_at": "2026-03-10T12:30:00+00:00",
+        "arr_tracking": {
+            "current_median_arr_pct": 100.0,
+            "best_median_arr_pct": 150.0,
+            "median_arr_delta_pct": 50.0,
+        },
+        "package_confidence_label": "medium",
+        "deploy_recommendation": "shadow_only",
+        "validation_live_filled_rows": 14,
+        "generalization_ratio": 0.92,
+        "current_probe": {
+            "probe_freshness_hours": 0.25,
+            "validation_live_filled_rows_delta": 2,
+            "live_filled_rows_delta": 1,
+        },
+        "probe_feedback": {
+            "selection_score_bonus": 20.0,
+            "selection_score_penalty": 0.0,
+        },
+    }
+
+    selected = _select_public_forecast(
+        standard_payload=standard,
+        current_probe_payload=probe,
+        standard_source="reports/btc5_autoresearch/latest.json",
+        current_probe_source="reports/btc5_autoresearch_current_probe/latest.json",
+    )
+
+    assert selected["selected"]["source_artifact"] == "reports/btc5_autoresearch_current_probe/latest.json"
+
+
+def test_select_runtime_payload_prefers_probe_adjusted_package_for_deployment() -> None:
+    standard = {
+        "deploy_recommendation": "promote",
+        "package_confidence_label": "high",
+        "package_confidence_reasons": ["validation_live_filled_rows=18"],
+        "best_runtime_package": {"profile": {"name": "standard_best"}, "session_policy": []},
+        "active_runtime_package": {"profile": {"name": "standard_active"}, "session_policy": []},
+    }
+    current_probe = {
+        **standard,
+        "deploy_recommendation": "hold",
+        "package_confidence_label": "low",
+        "package_confidence_reasons": [
+            "validation_live_filled_rows=18",
+            "probe_stale_gt_12h",
+            "validation_rows_flat",
+        ],
+        "current_probe": {"probe_freshness_hours": 14.0, "validation_live_filled_rows_delta": 0},
+    }
+
+    selected = _select_runtime_payload(
+        standard_payload=standard,
+        current_probe_payload=current_probe,
+    )
+
+    assert selected["source"] == "current_probe"
+    assert selected["selection_reason"] == "current_probe_feedback_authoritative_for_runtime_selection"
+    assert selected["payload"]["deploy_recommendation"] == "hold"
+    assert selected["payload"]["package_confidence_label"] == "low"
+
+
+def test_size_aware_deployment_summary_uses_exact_best_candidate_capacity_profile() -> None:
+    best_candidate = {
+        "profile": {"name": "best_profile", "max_abs_delta": 0.0001, "up_max_buy_price": 0.48, "down_max_buy_price": 0.49},
+        "base_profile": {"name": "best_profile", "max_abs_delta": 0.0001, "up_max_buy_price": 0.48, "down_max_buy_price": 0.49},
+        "session_overrides": [],
+    }
+    current_candidate = {
+        "profile": {"name": "current_live_profile", "max_abs_delta": 0.00015, "up_max_buy_price": 0.49, "down_max_buy_price": 0.51},
+        "base_profile": {"name": "current_live_profile", "max_abs_delta": 0.00015, "up_max_buy_price": 0.49, "down_max_buy_price": 0.51},
+        "session_overrides": [],
+    }
+    simulation_summary = {
+        "capacity_stress_summary": {
+            "profiles": {
+                "best_candidate": {
+                    "profile_name": "best_profile",
+                    "size_sweeps": [
+                        {
+                            "trade_size_usd": 10.0,
+                            "expected_fill_retention_ratio": 0.6,
+                            "expected_p05_arr_pct": 100.0,
+                            "expected_median_arr_pct": 200.0,
+                            "expected_profit_probability": 0.95,
+                            "expected_loss_limit_hit_probability": 0.1,
+                            "expected_p95_max_drawdown_usd": 8.0,
+                        },
+                        {
+                            "trade_size_usd": 20.0,
+                            "expected_fill_retention_ratio": 0.3,
+                            "expected_p05_arr_pct": 80.0,
+                            "expected_median_arr_pct": 180.0,
+                            "expected_profit_probability": 0.92,
+                            "expected_loss_limit_hit_probability": 0.18,
+                            "expected_p95_max_drawdown_usd": 12.0,
+                        },
+                        {
+                            "trade_size_usd": 50.0,
+                            "expected_fill_retention_ratio": 0.1,
+                            "expected_p05_arr_pct": -10.0,
+                            "expected_median_arr_pct": 90.0,
+                            "expected_profit_probability": 0.75,
+                            "expected_loss_limit_hit_probability": 0.65,
+                            "expected_p95_max_drawdown_usd": 25.0,
+                        },
+                    ],
+                }
+            }
+        }
+    }
+
+    summary = _size_aware_deployment_summary(
+        candidate=best_candidate,
+        simulation_summary=simulation_summary,
+        current_candidate=current_candidate,
+        global_best_candidate=best_candidate,
+    )
+
+    assert summary["available"] is True
+    assert summary["capacity_profile_label"] == "best_candidate"
+    assert summary["recommended_live_stage_cap"] == 2
+    assert summary["recommended_live_trade_size_cap_usd"] == 20
+    assert summary["live_stage_assessments"][0]["gate_passed"] is True
+    assert summary["live_stage_assessments"][2]["gate_passed"] is False
 
 
 def test_runtime_session_policy_from_overrides_matches_contract() -> None:
@@ -428,11 +703,13 @@ def test_live_fill_windows_and_capital_scale_recommendation() -> None:
     assert trailing["trailing_12"]["fills"] == 12
     assert trailing["trailing_20"]["fills"] == 20
     recommendation = _capital_scale_recommendation(
+        deploy_recommendation="promote",
         package_confidence_label="high",
         trailing=trailing,
         promoted_package_selected=True,
         fund_reconciliation_blocked=False,
         fund_block_reasons=[],
+        size_aware_deployment={"available": True, "recommended_live_stage_cap": 1, "recommended_live_trade_size_cap_usd": 10},
     )
     assert recommendation["status"] == "scale_add"
     assert recommendation["recommended_tranche_usd"] == 1000
@@ -445,14 +722,123 @@ def test_capital_scale_recommendation_test_add_when_fund_blocked() -> None:
         "trailing_20": {"fills": 20, "pnl_usd": -1.0, "hours": 6.0, "net_positive": False},
     }
     recommendation = _capital_scale_recommendation(
+        deploy_recommendation="promote",
         package_confidence_label="high",
         trailing=trailing,
         promoted_package_selected=True,
         fund_reconciliation_blocked=True,
         fund_block_reasons=["accounting_reconciliation_drift"],
+        size_aware_deployment={"available": True, "recommended_live_stage_cap": 1, "recommended_live_trade_size_cap_usd": 10},
     )
     assert recommendation["status"] == "test_add"
     assert recommendation["recommended_tranche_usd"] == 100
+
+
+def test_capital_scale_recommendation_can_scale_before_runtime_load_when_promote_is_selected() -> None:
+    trailing = {
+        "trailing_5": {"fills": 5, "pnl_usd": 2.0, "hours": 1.0, "net_positive": True},
+        "trailing_12": {"fills": 12, "pnl_usd": 4.0, "hours": 2.0, "net_positive": True},
+        "trailing_20": {"fills": 20, "pnl_usd": 7.0, "hours": 5.0, "net_positive": True},
+    }
+    recommendation = _capital_scale_recommendation(
+        deploy_recommendation="promote",
+        package_confidence_label="high",
+        trailing=trailing,
+        promoted_package_selected=False,
+        fund_reconciliation_blocked=False,
+        fund_block_reasons=[],
+        size_aware_deployment={"available": True, "recommended_live_stage_cap": 1, "recommended_live_trade_size_cap_usd": 10},
+    )
+    assert recommendation["status"] == "scale_add"
+    assert recommendation["runtime_load_required"] is True
+    assert recommendation["reason"].endswith("runtime_load_required_before_scale_add")
+
+
+def test_capital_scale_recommendation_hold_when_deploy_hold() -> None:
+    trailing = {
+        "trailing_5": {"fills": 5, "pnl_usd": 2.0, "hours": 1.0, "net_positive": True},
+        "trailing_12": {"fills": 12, "pnl_usd": 4.0, "hours": 2.0, "net_positive": True},
+        "trailing_20": {"fills": 20, "pnl_usd": 7.0, "hours": 5.0, "net_positive": True},
+    }
+    recommendation = _capital_scale_recommendation(
+        deploy_recommendation="hold",
+        package_confidence_label="high",
+        trailing=trailing,
+        promoted_package_selected=True,
+        fund_reconciliation_blocked=False,
+        fund_block_reasons=[],
+        size_aware_deployment={"available": True, "recommended_live_stage_cap": 1, "recommended_live_trade_size_cap_usd": 10},
+    )
+    assert recommendation["status"] == "hold"
+    assert recommendation["recommended_tranche_usd"] == 0
+    assert recommendation["reason"] == "deploy_recommendation_hold_blocks_capital_add"
+
+
+def test_capital_stage_recommendation_stage2_from_fresh_positive_fills() -> None:
+    trailing = {
+        "trailing_5": {"fills": 5, "pnl_usd": 3.0, "hours": 1.0, "net_positive": True},
+        "trailing_12": {"fills": 12, "pnl_usd": 8.0, "hours": 3.0, "net_positive": True},
+        "trailing_20": {"fills": 20, "pnl_usd": 6.0, "hours": 6.0, "net_positive": True},
+        "trailing_40": {"fills": 40, "pnl_usd": 10.0, "hours": 12.0, "net_positive": True},
+        "trailing_120": {"fills": 80, "pnl_usd": 15.0, "hours": 30.0, "net_positive": True},
+    }
+    recommendation = _capital_stage_recommendation(
+        deploy_recommendation="shadow_only",
+        package_confidence_label="high",
+        trailing=trailing,
+        execution_drag_summary={"order_failure_rate": 0.2},
+        promoted_package_selected=False,
+        latest_live_fill_age_hours=1.5,
+        size_aware_deployment={"available": True, "recommended_live_stage_cap": 2, "recommended_live_trade_size_cap_usd": 20},
+    )
+    assert recommendation["recommended_stage"] == 2
+    assert recommendation["recommended_max_trade_usd"] == 20
+    assert recommendation["promotion_guardrails_passed"] is True
+
+
+def test_capital_stage_recommendation_stage3_requires_120_and_promote_path() -> None:
+    trailing = {
+        "trailing_5": {"fills": 5, "pnl_usd": 3.0, "hours": 1.0, "net_positive": True},
+        "trailing_12": {"fills": 12, "pnl_usd": 8.0, "hours": 3.0, "net_positive": True},
+        "trailing_20": {"fills": 20, "pnl_usd": 6.0, "hours": 6.0, "net_positive": True},
+        "trailing_40": {"fills": 40, "pnl_usd": 10.0, "hours": 12.0, "net_positive": True},
+        "trailing_120": {"fills": 120, "pnl_usd": 25.0, "hours": 36.0, "net_positive": True},
+    }
+    recommendation = _capital_stage_recommendation(
+        deploy_recommendation="promote",
+        package_confidence_label="high",
+        trailing=trailing,
+        execution_drag_summary={"order_failure_rate": 0.1},
+        promoted_package_selected=False,
+        latest_live_fill_age_hours=0.5,
+        size_aware_deployment={"available": True, "recommended_live_stage_cap": 3, "recommended_live_trade_size_cap_usd": 50},
+    )
+    assert recommendation["recommended_stage"] == 3
+    assert recommendation["recommended_max_trade_usd"] == 50
+    assert recommendation["runtime_load_required"] is True
+    assert recommendation["promotion_guardrails_passed"] is True
+
+
+def test_capital_stage_recommendation_caps_stage_using_size_summary() -> None:
+    trailing = {
+        "trailing_5": {"fills": 5, "pnl_usd": 3.0, "hours": 1.0, "net_positive": True},
+        "trailing_12": {"fills": 12, "pnl_usd": 8.0, "hours": 3.0, "net_positive": True},
+        "trailing_20": {"fills": 20, "pnl_usd": 6.0, "hours": 6.0, "net_positive": True},
+        "trailing_40": {"fills": 40, "pnl_usd": 10.0, "hours": 12.0, "net_positive": True},
+        "trailing_120": {"fills": 120, "pnl_usd": 25.0, "hours": 36.0, "net_positive": True},
+    }
+    recommendation = _capital_stage_recommendation(
+        deploy_recommendation="promote",
+        package_confidence_label="high",
+        trailing=trailing,
+        execution_drag_summary={"order_failure_rate": 0.1},
+        promoted_package_selected=True,
+        latest_live_fill_age_hours=0.5,
+        size_aware_deployment={"available": True, "recommended_live_stage_cap": 2, "recommended_live_trade_size_cap_usd": 20},
+    )
+    assert recommendation["recommended_stage"] == 2
+    assert recommendation["recommended_max_trade_usd"] == 20
+    assert recommendation["stage_reason"].endswith("size_aware_stage_cap_2")
 
 
 def test_fund_reconciliation_blocked_reads_runtime_truth_checks() -> None:

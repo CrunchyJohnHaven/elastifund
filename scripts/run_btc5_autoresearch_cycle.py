@@ -34,6 +34,10 @@ DEFAULT_HYPOTHESIS_SUMMARY = Path("reports/btc5_hypothesis_lab/summary.json")
 DEFAULT_REGIME_POLICY_SUMMARY = Path("reports/btc5_regime_policy_lab/summary.json")
 DEFAULT_CURRENT_PROBE_LATEST = Path("reports/btc5_autoresearch_current_probe/latest.json")
 DEFAULT_RUNTIME_TRUTH = Path("reports/runtime_truth_latest.json")
+LIVE_STAGE_MAX_TRADE_USD = {1: 10.0, 2: 20.0, 3: 50.0}
+SHADOW_TRADE_SIZES_USD = (100.0, 200.0)
+PROBE_STALE_HOURS = 6.0
+PROBE_HARD_STALE_HOURS = 12.0
 
 
 def _now_utc() -> datetime:
@@ -90,13 +94,468 @@ def _deploy_rank(label: str) -> int:
     return {"promote": 3, "shadow_only": 2, "hold": 1}.get(str(label).strip().lower(), 0)
 
 
+def _confidence_label_from_rank(rank: int) -> str:
+    if rank >= 3:
+        return "high"
+    if rank == 2:
+        return "medium"
+    return "low"
+
+
+def _deploy_label_from_rank(rank: int) -> str:
+    if rank >= 3:
+        return "promote"
+    if rank == 2:
+        return "shadow_only"
+    return "hold"
+
+
+def _price_bucket(order_price: Any) -> str:
+    price = _safe_float(order_price, 0.0)
+    if price < 0.49:
+        return "lt_0.49"
+    if price <= 0.51:
+        return "0.49_to_0.51"
+    return "gt_0.51"
+
+
+def _delta_bucket(abs_delta: Any) -> str:
+    delta = abs(_safe_float(abs_delta, 0.0))
+    if delta <= 0.00005:
+        return "le_0.00005"
+    if delta <= 0.00010:
+        return "0.00005_to_0.00010"
+    return "gt_0.00010"
+
+
+def _row_timestamp(row: dict[str, Any]) -> datetime | None:
+    for raw in (
+        row.get("updated_at"),
+        row.get("created_at"),
+    ):
+        parsed = _parse_iso_timestamp(raw)
+        if parsed is not None:
+            return parsed
+    ts = int(_safe_float(row.get("window_start_ts"), 0.0) or 0)
+    if ts <= 0:
+        return None
+    try:
+        return datetime.fromtimestamp(ts, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _recent_rows(
+    rows: list[dict[str, Any]],
+    *,
+    limit: int,
+    predicate: Any = None,
+) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        if callable(predicate) and not predicate(row):
+            continue
+        filtered.append(row)
+    filtered.sort(key=lambda row: _row_timestamp(row) or datetime.fromtimestamp(0, tz=timezone.utc))
+    return filtered[-max(1, int(limit)) :]
+
+
+def _mix_summary(rows: list[dict[str, Any]], *, labeler: Any) -> dict[str, Any]:
+    buckets: dict[str, dict[str, Any]] = {}
+    total = len(rows)
+    for row in rows:
+        label = str(labeler(row) or "unknown")
+        bucket = buckets.setdefault(label, {"label": label, "rows": 0, "pnl_usd": 0.0})
+        bucket["rows"] = int(bucket["rows"]) + 1
+        bucket["pnl_usd"] = _safe_float(bucket["pnl_usd"], 0.0) + _safe_float(row.get("pnl_usd"), 0.0)
+    ranked = sorted(
+        (
+            {
+                "label": label,
+                "rows": int(bucket.get("rows") or 0),
+                "ratio": round((int(bucket.get("rows") or 0) / float(total)), 4) if total else 0.0,
+                "pnl_usd": round(_safe_float(bucket.get("pnl_usd"), 0.0), 4),
+            }
+            for label, bucket in buckets.items()
+        ),
+        key=lambda item: (
+            int(item.get("rows") or 0),
+            _safe_float(item.get("pnl_usd"), 0.0),
+            str(item.get("label") or ""),
+        ),
+        reverse=True,
+    )
+    return {
+        "sample_size_rows": total,
+        "buckets": ranked,
+        "dominant_label": ranked[0]["label"] if ranked else None,
+    }
+
+
+def _normalized_loss_cluster_filters(
+    hypothesis_summary: dict[str, Any] | None,
+    regime_policy_summary: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+    for source_name, summary in (
+        ("hypothesis_lab", hypothesis_summary or {}),
+        ("regime_policy_lab", regime_policy_summary or {}),
+    ):
+        for item in (summary.get("loss_cluster_filters") or []):
+            if not isinstance(item, dict):
+                continue
+            key = (
+                source_name,
+                str(item.get("direction") or "UNKNOWN").upper(),
+                str(item.get("session_name") or "unknown"),
+                str(item.get("price_bucket") or "unknown"),
+                str(item.get("delta_bucket") or "unknown"),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(
+                {
+                    "source": source_name,
+                    "filter_name": str(item.get("filter_name") or ""),
+                    "direction": key[1],
+                    "session_name": key[2],
+                    "price_bucket": key[3],
+                    "delta_bucket": key[4],
+                    "severity": str(item.get("severity") or "medium"),
+                    "filter_action": str(item.get("filter_action") or ""),
+                    "revalidation_gate": str(item.get("revalidation_gate") or ""),
+                }
+            )
+    return normalized
+
+
+def _recent_loss_cluster_flags(
+    rows: list[dict[str, Any]],
+    *,
+    loss_filters: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    flags: list[dict[str, Any]] = []
+    for item in loss_filters:
+        matched_rows: list[dict[str, Any]] = []
+        for row in rows:
+            direction = str(row.get("direction") or "UNKNOWN").strip().upper()
+            session_name = str(row.get("session_name") or "unknown")
+            price_bucket = _price_bucket(row.get("order_price"))
+            delta_bucket = _delta_bucket(row.get("abs_delta") or row.get("delta"))
+            if (
+                direction == str(item.get("direction") or "UNKNOWN").upper()
+                and session_name == str(item.get("session_name") or "unknown")
+                and price_bucket == str(item.get("price_bucket") or "unknown")
+                and delta_bucket == str(item.get("delta_bucket") or "unknown")
+            ):
+                matched_rows.append(row)
+        if not matched_rows:
+            continue
+        matched_live_fills = [
+            row
+            for row in matched_rows
+            if str(row.get("order_status") or "").strip().lower() == "live_filled"
+        ]
+        flags.append(
+            {
+                "source": str(item.get("source") or ""),
+                "filter_name": str(item.get("filter_name") or ""),
+                "direction": str(item.get("direction") or "UNKNOWN").upper(),
+                "session_name": str(item.get("session_name") or "unknown"),
+                "price_bucket": str(item.get("price_bucket") or "unknown"),
+                "delta_bucket": str(item.get("delta_bucket") or "unknown"),
+                "severity": str(item.get("severity") or "medium"),
+                "matched_rows": len(matched_rows),
+                "matched_live_filled_rows": len(matched_live_fills),
+                "matched_negative_live_filled_rows": sum(
+                    1 for row in matched_live_fills if _safe_float(row.get("pnl_usd"), 0.0) < 0.0
+                ),
+                "recent_pnl_usd": round(
+                    sum(_safe_float(row.get("pnl_usd"), 0.0) for row in matched_live_fills),
+                    4,
+                ),
+                "filter_action": str(item.get("filter_action") or ""),
+                "revalidation_gate": str(item.get("revalidation_gate") or ""),
+            }
+        )
+    flags.sort(
+        key=lambda item: (
+            int(item.get("matched_negative_live_filled_rows") or 0),
+            int(item.get("matched_rows") or 0),
+            -_safe_float(item.get("recent_pnl_usd"), 0.0),
+        ),
+        reverse=True,
+    )
+    return flags
+
+
+def _stage_readiness_tags(
+    *,
+    trailing_windows: dict[str, dict[str, float]],
+    live_fill_freshness_hours: float | None,
+    recent_order_failed_rate: float,
+    recent_loss_cluster_flags: list[dict[str, Any]],
+    validation_live_filled_rows_delta: int,
+    package_missing_evidence: list[str],
+    decision: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    ready: list[str] = []
+    not_ready: list[str] = []
+    trailing_12 = trailing_windows.get("trailing_12") or {}
+    trailing_40 = trailing_windows.get("trailing_40") or {}
+    trailing_120 = trailing_windows.get("trailing_120") or {}
+    if live_fill_freshness_hours is not None and live_fill_freshness_hours <= PROBE_STALE_HOURS:
+        ready.append("live_fills_fresh_lte_6h")
+    else:
+        not_ready.append("live_fills_stale_gt_6h")
+    if bool(trailing_12.get("net_positive")):
+        ready.append("trailing_12_live_filled_positive")
+    else:
+        not_ready.append("trailing_12_live_filled_non_positive")
+    if bool(trailing_40.get("net_positive")):
+        ready.append("trailing_40_live_filled_positive")
+    else:
+        not_ready.append("trailing_40_live_filled_non_positive")
+    if bool(trailing_120.get("net_positive")):
+        ready.append("trailing_120_live_filled_positive")
+    else:
+        not_ready.append("trailing_120_live_filled_non_positive")
+    if recent_order_failed_rate < 0.25:
+        ready.append("recent_order_failed_rate_below_0.25")
+    else:
+        not_ready.append("recent_order_failed_rate_above_0.25")
+    if validation_live_filled_rows_delta > 0:
+        ready.append("validation_rows_growing")
+    else:
+        not_ready.append("validation_rows_flat")
+    if recent_loss_cluster_flags:
+        not_ready.append("recent_loss_cluster_flags_present")
+    else:
+        ready.append("no_recent_loss_cluster_flags")
+    if str(decision.get("action") or "").strip().lower() == "promote":
+        ready.append("candidate_scoring_promote_ready")
+    else:
+        not_ready.append("candidate_scoring_not_promote_ready")
+    for reason in package_missing_evidence:
+        not_ready.append(str(reason))
+    return ready, not_ready
+
+
+def _current_probe_payload_fields(
+    *,
+    rows: list[dict[str, Any]],
+    prior_probe_payload: dict[str, Any] | None,
+    hypothesis_summary: dict[str, Any] | None,
+    regime_policy_summary: dict[str, Any] | None,
+    validation_live_filled_rows: int,
+    package_missing_evidence: list[str],
+    decision: dict[str, Any],
+) -> dict[str, Any]:
+    trailing = _live_fill_windows(rows)
+    recent_rows = _recent_rows(rows, limit=40)
+    recent_live_fills = _recent_rows(
+        rows,
+        limit=40,
+        predicate=lambda row: str(row.get("order_status") or "").strip().lower() == "live_filled",
+    )
+    recent_priced_rows = [
+        row
+        for row in (recent_live_fills or recent_rows)
+        if _safe_float(row.get("order_price"), 0.0) > 0.0
+    ]
+    recent_rows_for_price = recent_priced_rows or list(recent_live_fills or recent_rows)
+    recent_drag = _execution_drag_context(recent_rows)
+    latest_decision_timestamp = _row_timestamp(recent_rows[-1]) if recent_rows else None
+    latest_live_fill_timestamp = _row_timestamp(recent_live_fills[-1]) if recent_live_fills else None
+    probe_freshness_hours = (
+        round(max(0.0, (_now_utc() - latest_decision_timestamp).total_seconds() / 3600.0), 4)
+        if latest_decision_timestamp is not None
+        else None
+    )
+    live_fill_freshness_hours = (
+        round(max(0.0, (_now_utc() - latest_live_fill_timestamp).total_seconds() / 3600.0), 4)
+        if latest_live_fill_timestamp is not None
+        else None
+    )
+    prior_probe = prior_probe_payload or {}
+    prior_current_probe = prior_probe.get("current_probe") if isinstance(prior_probe.get("current_probe"), dict) else {}
+    prior_validation_rows = int(
+        _safe_float(
+            prior_probe.get("validation_live_filled_rows"),
+            _safe_float(prior_current_probe.get("validation_live_filled_rows"), 0.0),
+        )
+        or 0
+    )
+    live_filled_row_count = sum(
+        1
+        for row in rows
+        if str(row.get("order_status") or "").strip().lower() == "live_filled"
+    )
+    prior_live_filled_row_count = int(
+        _safe_float(
+            prior_current_probe.get("live_filled_row_count"),
+            _safe_float(
+                ((prior_probe.get("simulation_summary") or {}).get("input") or {}).get("live_filled_rows"),
+                0.0,
+            ),
+        )
+        or 0
+    )
+    validation_delta = int(validation_live_filled_rows) - prior_validation_rows
+    live_fill_delta = int(live_filled_row_count) - prior_live_filled_row_count
+    loss_filters = _normalized_loss_cluster_filters(hypothesis_summary, regime_policy_summary)
+    recent_loss_flags = _recent_loss_cluster_flags(recent_rows, loss_filters=loss_filters)
+    stage_ready_tags, stage_not_ready_tags = _stage_readiness_tags(
+        trailing_windows=trailing,
+        live_fill_freshness_hours=live_fill_freshness_hours,
+        recent_order_failed_rate=_safe_float(recent_drag.get("order_failure_rate"), 0.0),
+        recent_loss_cluster_flags=recent_loss_flags,
+        validation_live_filled_rows_delta=validation_delta,
+        package_missing_evidence=package_missing_evidence,
+        decision=decision,
+    )
+    current_probe = {
+        "contract_version": 2,
+        "latest_decision_timestamp": latest_decision_timestamp.isoformat() if latest_decision_timestamp else None,
+        "latest_live_fill_timestamp": latest_live_fill_timestamp.isoformat() if latest_live_fill_timestamp else None,
+        "probe_freshness_hours": probe_freshness_hours,
+        "live_fill_freshness_hours": live_fill_freshness_hours,
+        "live_filled_row_count": int(live_filled_row_count),
+        "live_filled_rows_delta": int(live_fill_delta),
+        "validation_live_filled_rows": int(validation_live_filled_rows),
+        "validation_live_filled_rows_delta": int(validation_delta),
+        "validation_rows_flat": bool(validation_delta <= 0),
+        "trailing_live_filled_windows": {
+            key: trailing.get(key) or {}
+            for key in ("trailing_12", "trailing_40", "trailing_120")
+        },
+        "trailing_12_live_filled_pnl_usd": round(_safe_float((trailing.get("trailing_12") or {}).get("pnl_usd"), 0.0), 4),
+        "trailing_40_live_filled_pnl_usd": round(_safe_float((trailing.get("trailing_40") or {}).get("pnl_usd"), 0.0), 4),
+        "trailing_120_live_filled_pnl_usd": round(_safe_float((trailing.get("trailing_120") or {}).get("pnl_usd"), 0.0), 4),
+        "recent_window_rows": len(recent_rows),
+        "recent_order_failed_count": int(recent_drag.get("order_failed_count") or 0),
+        "recent_order_failed_rate": round(_safe_float(recent_drag.get("order_failure_rate"), 0.0), 6),
+        "recent_direction_mix": _mix_summary(
+            list(recent_live_fills or recent_rows),
+            labeler=lambda row: str(row.get("direction") or "UNKNOWN").upper(),
+        ),
+        "recent_price_bucket_mix": _mix_summary(
+            list(recent_rows_for_price),
+            labeler=lambda row: _price_bucket(row.get("order_price")),
+        ),
+        "recent_loss_cluster_flags": recent_loss_flags,
+        "stage_ready_reason_tags": stage_ready_tags,
+        "stage_not_ready_reason_tags": stage_not_ready_tags,
+    }
+    return current_probe
+
+
+def _probe_feedback_adjustment(
+    *,
+    package_confidence_label: str,
+    deploy_recommendation: str,
+    current_probe: dict[str, Any],
+) -> dict[str, Any]:
+    base_conf_rank = _confidence_rank(package_confidence_label)
+    base_deploy_rank = _deploy_rank(deploy_recommendation)
+    probe_freshness_hours = _safe_float(current_probe.get("probe_freshness_hours"), 9999.0)
+    live_fill_freshness_hours = _safe_float(current_probe.get("live_fill_freshness_hours"), 9999.0)
+    validation_delta = int(_safe_float(current_probe.get("validation_live_filled_rows_delta"), 0.0) or 0)
+    live_fill_delta = int(_safe_float(current_probe.get("live_filled_rows_delta"), 0.0) or 0)
+    order_failed_rate = _safe_float(current_probe.get("recent_order_failed_rate"), 0.0)
+    loss_cluster_count = len(current_probe.get("recent_loss_cluster_flags") or [])
+    stage_not_ready_tags = list(current_probe.get("stage_not_ready_reason_tags") or [])
+    confidence_decay_steps = 0
+    deploy_rank_penalty = 0
+    reasons: list[str] = []
+
+    if probe_freshness_hours > PROBE_HARD_STALE_HOURS or live_fill_freshness_hours > PROBE_HARD_STALE_HOURS:
+        confidence_decay_steps += 2
+        deploy_rank_penalty = max(deploy_rank_penalty, 2)
+        reasons.append("probe_stale_gt_12h")
+    elif probe_freshness_hours > PROBE_STALE_HOURS or live_fill_freshness_hours > PROBE_STALE_HOURS:
+        confidence_decay_steps += 1
+        deploy_rank_penalty = max(deploy_rank_penalty, 1)
+        reasons.append("probe_stale_gt_6h")
+
+    if validation_delta <= 0:
+        confidence_decay_steps += 1
+        deploy_rank_penalty = max(deploy_rank_penalty, 1 if base_deploy_rank >= 3 else deploy_rank_penalty)
+        reasons.append("validation_rows_flat")
+    if order_failed_rate >= 0.35:
+        confidence_decay_steps += 1
+        deploy_rank_penalty = max(deploy_rank_penalty, 1)
+        reasons.append("recent_order_failed_rate_high")
+    if loss_cluster_count > 0:
+        confidence_decay_steps += 1
+        deploy_rank_penalty = max(deploy_rank_penalty, 1)
+        reasons.append("recent_loss_cluster_flags_present")
+    if any("trailing_12_live_filled_non_positive" == str(tag) for tag in stage_not_ready_tags):
+        confidence_decay_steps += 1
+        deploy_rank_penalty = max(deploy_rank_penalty, 1)
+        reasons.append("trailing_12_non_positive")
+
+    evidence_growth_bonus = 0
+    if validation_delta > 0:
+        evidence_growth_bonus += 1
+        reasons.append("validation_rows_growing")
+    if live_fill_delta > 0:
+        evidence_growth_bonus += 1
+        reasons.append("fresh_live_fills_arrived")
+
+    effective_conf_rank = max(1, base_conf_rank - confidence_decay_steps + evidence_growth_bonus)
+    effective_deploy_rank = max(1, base_deploy_rank - max(0, deploy_rank_penalty - (1 if evidence_growth_bonus >= 2 else 0)))
+    if confidence_decay_steps == 0 and evidence_growth_bonus == 0:
+        reasons.append("probe_feedback_neutral")
+
+    selection_bonus = float(evidence_growth_bonus) * 20.0
+    selection_penalty = float(confidence_decay_steps) * 15.0
+    if probe_freshness_hours > PROBE_STALE_HOURS:
+        selection_penalty += min(30.0, (probe_freshness_hours - PROBE_STALE_HOURS) * 3.0)
+    if live_fill_freshness_hours > PROBE_STALE_HOURS:
+        selection_penalty += min(25.0, (live_fill_freshness_hours - PROBE_STALE_HOURS) * 2.5)
+
+    return {
+        "base_package_confidence_label": package_confidence_label,
+        "base_deploy_recommendation": deploy_recommendation,
+        "effective_package_confidence_label": _confidence_label_from_rank(effective_conf_rank),
+        "effective_deploy_recommendation": _deploy_label_from_rank(effective_deploy_rank),
+        "confidence_decay_steps": int(max(0, confidence_decay_steps)),
+        "deploy_rank_penalty": int(max(0, deploy_rank_penalty)),
+        "evidence_growth_bonus": int(max(0, evidence_growth_bonus)),
+        "selection_score_bonus": round(selection_bonus, 4),
+        "selection_score_penalty": round(selection_penalty, 4),
+        "adjustment_reasons": reasons,
+    }
+
+
+def _attach_current_probe_fields(payload: dict[str, Any], current_probe: dict[str, Any]) -> dict[str, Any]:
+    payload["current_probe"] = current_probe
+    payload["latest_decision_timestamp"] = current_probe.get("latest_decision_timestamp")
+    payload["latest_live_fill_timestamp"] = current_probe.get("latest_live_fill_timestamp")
+    payload["probe_freshness_hours"] = current_probe.get("probe_freshness_hours")
+    payload["live_fill_freshness_hours"] = current_probe.get("live_fill_freshness_hours")
+    payload["trailing_12_live_filled_pnl_usd"] = current_probe.get("trailing_12_live_filled_pnl_usd")
+    payload["trailing_40_live_filled_pnl_usd"] = current_probe.get("trailing_40_live_filled_pnl_usd")
+    payload["trailing_120_live_filled_pnl_usd"] = current_probe.get("trailing_120_live_filled_pnl_usd")
+    payload["recent_order_failed_rate"] = current_probe.get("recent_order_failed_rate")
+    payload["recent_direction_mix"] = current_probe.get("recent_direction_mix") or {}
+    payload["recent_price_bucket_mix"] = current_probe.get("recent_price_bucket_mix") or {}
+    payload["recent_loss_cluster_flags"] = current_probe.get("recent_loss_cluster_flags") or []
+    payload["stage_ready_reason_tags"] = current_probe.get("stage_ready_reason_tags") or []
+    payload["stage_not_ready_reason_tags"] = current_probe.get("stage_not_ready_reason_tags") or []
+    return payload
+
+
 def _extract_forecast_candidate(payload: dict[str, Any] | None, *, source_artifact: str) -> dict[str, Any] | None:
     if not isinstance(payload, dict):
         return None
     arr = payload.get("arr_tracking") or {}
     generated_at = _parse_iso_timestamp(payload.get("generated_at"))
-    confidence_label = str(payload.get("package_confidence_label") or "low")
-    deploy_recommendation = str(payload.get("deploy_recommendation") or "hold")
+    confidence_label = str(payload.get("selected_package_confidence_label") or payload.get("package_confidence_label") or "low")
+    deploy_recommendation = str(payload.get("selected_deploy_recommendation") or payload.get("deploy_recommendation") or "hold")
     return {
         "source_artifact": source_artifact,
         "generated_at": generated_at.isoformat() if generated_at else "",
@@ -108,9 +567,65 @@ def _extract_forecast_candidate(payload: dict[str, Any] | None, *, source_artifa
         "deploy_recommendation": deploy_recommendation,
         "validation_live_filled_rows": int(payload.get("validation_live_filled_rows") or 0),
         "generalization_ratio": _safe_float(payload.get("generalization_ratio"), 0.0),
-        "best_runtime_package": payload.get("best_runtime_package") or {},
-        "active_runtime_package": payload.get("active_runtime_package") or {},
+        "best_runtime_package": payload.get("selected_best_runtime_package") or payload.get("best_runtime_package") or {},
+        "active_runtime_package": payload.get("selected_active_runtime_package") or payload.get("active_runtime_package") or {},
+        "capital_scale_recommendation": payload.get("capital_scale_recommendation") or {},
+        "capital_stage_recommendation": payload.get("capital_stage_recommendation") or {},
+        "runtime_load_status": payload.get("runtime_load_status") or {},
+        "best_live_package": payload.get("best_live_package") or {},
+        "execution_drag_summary": payload.get("execution_drag_summary") or {},
+        "size_aware_deployment": payload.get("size_aware_deployment") or {},
+        "current_probe": payload.get("current_probe") or {},
+        "probe_feedback": payload.get("probe_feedback") or {},
+        "probe_freshness_hours": payload.get("probe_freshness_hours"),
+        "recent_order_failed_rate": payload.get("recent_order_failed_rate"),
+        "recent_direction_mix": payload.get("recent_direction_mix") or {},
+        "recent_price_bucket_mix": payload.get("recent_price_bucket_mix") or {},
+        "recent_loss_cluster_flags": payload.get("recent_loss_cluster_flags") or [],
+        "stage_ready_reason_tags": payload.get("stage_ready_reason_tags") or [],
+        "stage_not_ready_reason_tags": payload.get("stage_not_ready_reason_tags") or [],
     }
+
+
+def _forecast_candidate_selection_score(candidate: dict[str, Any]) -> float:
+    current_probe = candidate.get("current_probe") if isinstance(candidate.get("current_probe"), dict) else {}
+    probe_feedback = candidate.get("probe_feedback") if isinstance(candidate.get("probe_feedback"), dict) else {}
+    validation_rows = int(candidate.get("validation_live_filled_rows") or 0)
+    generalization_ratio = _safe_float(candidate.get("generalization_ratio"), 0.0)
+    base_score = (
+        (_confidence_rank(str(candidate.get("package_confidence_label") or "")) * 100.0)
+        + (_deploy_rank(str(candidate.get("deploy_recommendation") or "")) * 35.0)
+        + min(50.0, float(validation_rows))
+        + min(30.0, generalization_ratio * 10.0)
+    )
+    age_hours = _safe_float(candidate.get("age_hours"), 9999.0)
+    freshness_hours = _safe_float(
+        current_probe.get("probe_freshness_hours"),
+        _safe_float(candidate.get("probe_freshness_hours"), age_hours),
+    )
+    validation_delta = int(
+        _safe_float(
+            current_probe.get("validation_live_filled_rows_delta"),
+            (probe_feedback.get("evidence_growth_bonus") or 0),
+        )
+        or 0
+    )
+    live_fill_delta = int(_safe_float(current_probe.get("live_filled_rows_delta"), 0.0) or 0)
+    selection_bonus = _safe_float(probe_feedback.get("selection_score_bonus"), 0.0)
+    selection_penalty = _safe_float(probe_feedback.get("selection_score_penalty"), 0.0)
+    if freshness_hours > PROBE_STALE_HOURS:
+        selection_penalty += min(80.0, (freshness_hours - PROBE_STALE_HOURS) * 5.0)
+    elif freshness_hours <= 1.0:
+        selection_bonus += 10.0
+    if validation_delta > 0:
+        selection_bonus += min(30.0, float(validation_delta) * 6.0)
+    if live_fill_delta > 0:
+        selection_bonus += min(18.0, float(live_fill_delta) * 3.0)
+    if validation_delta <= 0:
+        selection_penalty += 12.0
+    if candidate.get("stage_not_ready_reason_tags"):
+        selection_penalty += min(24.0, 4.0 * len(candidate.get("stage_not_ready_reason_tags") or []))
+    return round(base_score + selection_bonus - selection_penalty, 4)
 
 
 def _select_public_forecast(
@@ -140,11 +655,13 @@ def _select_public_forecast(
         age_hours = ((now - generated).total_seconds() / 3600.0) if generated else 9999.0
         candidate["age_hours"] = round(max(0.0, age_hours), 4)
         candidate["is_fresh_6h"] = bool(generated and age_hours <= 6.0)
+        candidate["selection_score"] = _forecast_candidate_selection_score(candidate)
 
     fresh = [item for item in candidates if item.get("is_fresh_6h")]
     pool = fresh or candidates
     pool.sort(
         key=lambda item: (
+            _safe_float(item.get("selection_score"), float("-inf")),
             _confidence_rank(str(item.get("package_confidence_label") or "")),
             _deploy_rank(str(item.get("deploy_recommendation") or "")),
             _parse_iso_timestamp(item.get("generated_at")) or datetime.fromtimestamp(0, tz=timezone.utc),
@@ -153,9 +670,9 @@ def _select_public_forecast(
     )
     selected = pool[0]
     selection_reason = (
-        "selected_from_fresh_pool_by_confidence_then_deploy_then_generated_at"
+        "selected_from_fresh_pool_by_probe_feedback_then_confidence_then_deploy_then_generated_at"
         if fresh
-        else "no_fresh_artifacts_within_6h_selected_best_available"
+        else "no_fresh_artifacts_within_6h_selected_best_available_with_probe_feedback"
     )
     return {
         "selected": selected,
@@ -164,10 +681,233 @@ def _select_public_forecast(
     }
 
 
+def _select_runtime_payload(
+    *,
+    standard_payload: dict[str, Any] | None,
+    current_probe_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    probe_payload = current_probe_payload if isinstance(current_probe_payload, dict) else None
+    if probe_payload and isinstance(probe_payload.get("current_probe"), dict) and probe_payload.get("current_probe"):
+        return {
+            "source": "current_probe",
+            "selection_reason": "current_probe_feedback_authoritative_for_runtime_selection",
+            "payload": probe_payload,
+        }
+    standard = standard_payload if isinstance(standard_payload, dict) else None
+    if standard:
+        return {
+            "source": "standard",
+            "selection_reason": "standard_cycle_payload_used_for_runtime_selection",
+            "payload": standard,
+        }
+    return {
+        "source": "none",
+        "selection_reason": "no_runtime_payload_available",
+        "payload": {},
+    }
+
+
 def _merged_strategy_env(base_env: Path, override_env: Path) -> dict[str, str]:
     merged = _load_env_file(base_env)
     merged.update(_load_env_file(override_env))
     return merged
+
+
+def _profile_signature(profile: dict[str, Any] | None) -> tuple[float | None, float | None, float | None]:
+    if not isinstance(profile, dict):
+        return (None, None, None)
+    values: list[float | None] = []
+    for key in ("max_abs_delta", "up_max_buy_price", "down_max_buy_price"):
+        raw = profile.get(key)
+        values.append(None if raw is None else _safe_float(raw, 0.0))
+    return tuple(values)  # type: ignore[return-value]
+
+
+def _size_trade_key(value: Any) -> float:
+    return round(_safe_float(value, 0.0), 4)
+
+
+def _candidate_capacity_profile_label(
+    candidate: dict[str, Any] | None,
+    *,
+    current_candidate: dict[str, Any] | None,
+    global_best_candidate: dict[str, Any] | None,
+) -> tuple[str | None, bool, str]:
+    if not isinstance(candidate, dict):
+        return None, False, "missing_candidate"
+    if _candidate_identity(candidate) == _candidate_identity(current_candidate):
+        return "current_live_profile", False, "exact_current_live_profile_match"
+    if _candidate_identity(candidate) == _candidate_identity(global_best_candidate):
+        return "best_candidate", False, "exact_global_best_candidate_match"
+
+    candidate_base = (
+        candidate.get("base_profile")
+        if isinstance(candidate.get("base_profile"), dict)
+        else candidate.get("profile")
+    )
+    current_base = (
+        (current_candidate or {}).get("base_profile")
+        if isinstance((current_candidate or {}).get("base_profile"), dict)
+        else (current_candidate or {}).get("profile")
+    )
+    global_best_base = (
+        (global_best_candidate or {}).get("base_profile")
+        if isinstance((global_best_candidate or {}).get("base_profile"), dict)
+        else (global_best_candidate or {}).get("profile")
+    )
+    candidate_sig = _profile_signature(candidate_base if isinstance(candidate_base, dict) else None)
+    current_sig = _profile_signature(current_base if isinstance(current_base, dict) else None)
+    global_best_sig = _profile_signature(global_best_base if isinstance(global_best_base, dict) else None)
+    if candidate_sig == current_sig and any(value is not None for value in candidate_sig):
+        return "current_live_profile", True, "matched_base_profile_to_current_live_profile"
+    if candidate_sig == global_best_sig and any(value is not None for value in candidate_sig):
+        return "best_candidate", True, "matched_base_profile_to_global_best_candidate"
+    return None, False, "no_capacity_profile_match"
+
+
+def _capacity_size_index(profile_payload: dict[str, Any] | None) -> dict[float, dict[str, Any]]:
+    if not isinstance(profile_payload, dict):
+        return {}
+    indexed: dict[float, dict[str, Any]] = {}
+    for collection_name in ("stage_sweeps", "size_sweeps"):
+        for item in profile_payload.get(collection_name) or []:
+            if not isinstance(item, dict):
+                continue
+            key = _size_trade_key(item.get("trade_size_usd"))
+            if key <= 0.0:
+                continue
+            indexed[key] = dict(item)
+    return indexed
+
+
+def _size_aware_deployment_summary(
+    *,
+    candidate: dict[str, Any] | None,
+    simulation_summary: dict[str, Any] | None,
+    current_candidate: dict[str, Any] | None,
+    global_best_candidate: dict[str, Any] | None,
+) -> dict[str, Any]:
+    label, approximate_match, match_reason = _candidate_capacity_profile_label(
+        candidate,
+        current_candidate=current_candidate,
+        global_best_candidate=global_best_candidate,
+    )
+    profiles = (
+        ((simulation_summary or {}).get("capacity_stress_summary") or {}).get("profiles")
+        if isinstance((simulation_summary or {}).get("capacity_stress_summary"), dict)
+        else {}
+    ) or {}
+    profile_payload = profiles.get(label) if label else None
+    if not isinstance(profile_payload, dict):
+        return {
+            "available": False,
+            "capacity_profile_label": label,
+            "capacity_profile_name": None,
+            "approximate_match": approximate_match,
+            "match_reason": match_reason,
+            "recommended_live_stage_cap": 0,
+            "recommended_live_trade_size_cap_usd": 0,
+            "live_stage_assessments": [],
+            "shadow_trade_size_assessments": [],
+        }
+
+    sweeps_by_size = _capacity_size_index(profile_payload)
+    live_stage_assessments: list[dict[str, Any]] = []
+    recommended_live_stage_cap = 0
+    for capital_stage, trade_size_usd in LIVE_STAGE_MAX_TRADE_USD.items():
+        sweep = sweeps_by_size.get(_size_trade_key(trade_size_usd))
+        if not isinstance(sweep, dict):
+            live_stage_assessments.append(
+                {
+                    "capital_stage": int(capital_stage),
+                    "trade_size_usd": float(trade_size_usd),
+                    "available": False,
+                    "gate_passed": False,
+                    "gate_reason": "missing_capacity_sweep",
+                }
+            )
+            continue
+
+        expected_fill_retention_ratio = _safe_float(sweep.get("expected_fill_retention_ratio"), 0.0)
+        expected_p05_arr_pct = _safe_float(sweep.get("expected_p05_arr_pct"), 0.0)
+        expected_loss_limit_hit_probability = _safe_float(
+            sweep.get("expected_loss_limit_hit_probability"),
+            0.0,
+        )
+        fill_threshold = {1: 0.45, 2: 0.25, 3: 0.15}.get(int(capital_stage), 0.15)
+        loss_limit_ceiling = {1: 0.35, 2: 0.45, 3: 0.55}.get(int(capital_stage), 0.55)
+        gate_passed = (
+            expected_fill_retention_ratio >= fill_threshold
+            and expected_p05_arr_pct > 0.0
+            and expected_loss_limit_hit_probability <= loss_limit_ceiling
+        )
+        gate_reason = "size_ready_for_live_stage" if gate_passed else "size_sweep_blocks_live_stage_upgrade"
+        if gate_passed:
+            recommended_live_stage_cap = int(capital_stage)
+        live_stage_assessments.append(
+            {
+                "capital_stage": int(capital_stage),
+                "trade_size_usd": float(trade_size_usd),
+                "available": True,
+                "gate_passed": gate_passed,
+                "gate_reason": gate_reason,
+                "expected_fill_retention_ratio": round(expected_fill_retention_ratio, 4),
+                "expected_p05_arr_pct": round(expected_p05_arr_pct, 4),
+                "expected_median_arr_pct": round(_safe_float(sweep.get("expected_median_arr_pct"), 0.0), 4),
+                "expected_profit_probability": round(_safe_float(sweep.get("expected_profit_probability"), 0.0), 4),
+                "expected_loss_limit_hit_probability": round(expected_loss_limit_hit_probability, 4),
+                "expected_p95_max_drawdown_usd": round(
+                    _safe_float(sweep.get("expected_p95_max_drawdown_usd"), 0.0),
+                    4,
+                ),
+            }
+        )
+
+    shadow_trade_size_assessments: list[dict[str, Any]] = []
+    for trade_size_usd in SHADOW_TRADE_SIZES_USD:
+        sweep = sweeps_by_size.get(_size_trade_key(trade_size_usd))
+        assessment = {
+            "trade_size_usd": float(trade_size_usd),
+            "available": isinstance(sweep, dict),
+            "deployment_mode": "shadow_only",
+        }
+        if isinstance(sweep, dict):
+            assessment.update(
+                {
+                    "expected_fill_retention_ratio": round(
+                        _safe_float(sweep.get("expected_fill_retention_ratio"), 0.0),
+                        4,
+                    ),
+                    "expected_p05_arr_pct": round(_safe_float(sweep.get("expected_p05_arr_pct"), 0.0), 4),
+                    "expected_median_arr_pct": round(_safe_float(sweep.get("expected_median_arr_pct"), 0.0), 4),
+                    "expected_loss_limit_hit_probability": round(
+                        _safe_float(sweep.get("expected_loss_limit_hit_probability"), 0.0),
+                        4,
+                    ),
+                    "expected_p95_max_drawdown_usd": round(
+                        _safe_float(sweep.get("expected_p95_max_drawdown_usd"), 0.0),
+                        4,
+                    ),
+                }
+            )
+        else:
+            assessment["gate_reason"] = "missing_capacity_sweep"
+        shadow_trade_size_assessments.append(assessment)
+
+    recommended_live_trade_size_cap_usd = int(
+        LIVE_STAGE_MAX_TRADE_USD.get(recommended_live_stage_cap, 0.0)
+    )
+    return {
+        "available": True,
+        "capacity_profile_label": label,
+        "capacity_profile_name": str(profile_payload.get("profile_name") or ""),
+        "approximate_match": approximate_match,
+        "match_reason": match_reason,
+        "recommended_live_stage_cap": int(recommended_live_stage_cap),
+        "recommended_live_trade_size_cap_usd": recommended_live_trade_size_cap_usd,
+        "live_stage_assessments": live_stage_assessments,
+        "shadow_trade_size_assessments": shadow_trade_size_assessments,
+    }
 
 
 def _profile_from_env(name: str, env: dict[str, str]) -> GuardrailProfile:
@@ -413,7 +1153,35 @@ def _live_fill_windows(rows: list[dict[str, Any]]) -> dict[str, dict[str, float]
         "trailing_5": summarize(5),
         "trailing_12": summarize(12),
         "trailing_20": summarize(20),
+        "trailing_40": summarize(40),
+        "trailing_120": summarize(120),
     }
+
+
+def _latest_live_fill_age_hours(rows: list[dict[str, Any]]) -> float | None:
+    latest_ts: datetime | None = None
+    for row in rows:
+        if str(row.get("order_status") or "").strip().lower() != "live_filled":
+            continue
+        parsed = None
+        for raw in (
+            row.get("updated_at"),
+            row.get("created_at"),
+        ):
+            if parsed is None:
+                parsed = _parse_iso_timestamp(raw)
+        if parsed is None:
+            ts = int(_safe_float(row.get("window_start_ts"), 0.0) or 0)
+            if ts > 0:
+                parsed = datetime.fromtimestamp(ts, tz=timezone.utc)
+        if parsed is None:
+            continue
+        if latest_ts is None or parsed > latest_ts:
+            latest_ts = parsed
+    if latest_ts is None:
+        return None
+    age_hours = (_now_utc() - latest_ts).total_seconds() / 3600.0
+    return round(max(0.0, age_hours), 4)
 
 
 def _fund_reconciliation_blocked(runtime_truth: dict[str, Any] | None) -> tuple[bool, list[str]]:
@@ -426,16 +1194,24 @@ def _fund_reconciliation_blocked(runtime_truth: dict[str, Any] | None) -> tuple[
 
 def _capital_scale_recommendation(
     *,
+    deploy_recommendation: str,
     package_confidence_label: str,
     trailing: dict[str, dict[str, float]],
     promoted_package_selected: bool,
     fund_reconciliation_blocked: bool,
     fund_block_reasons: list[str],
+    size_aware_deployment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     trailing_5 = trailing.get("trailing_5") or {}
     trailing_12 = trailing.get("trailing_12") or {}
     trailing_20 = trailing.get("trailing_20") or {}
     conf_high = str(package_confidence_label).strip().lower() == "high"
+    deploy_label = str(deploy_recommendation).strip().lower()
+    size_summary = size_aware_deployment if isinstance(size_aware_deployment, dict) else {}
+    size_summary_available = bool(size_summary.get("available"))
+    size_aware_live_stage_cap = int(_safe_float(size_summary.get("recommended_live_stage_cap"), 0.0) or 0)
+    size_aware_trade_size_cap_usd = int(_safe_float(size_summary.get("recommended_live_trade_size_cap_usd"), 0.0) or 0)
+    runtime_load_required = deploy_label in {"promote", "shadow_only"} and not promoted_package_selected
     positive_12 = bool(trailing_12.get("net_positive"))
     positive_20 = bool(trailing_20.get("net_positive"))
 
@@ -444,21 +1220,43 @@ def _capital_scale_recommendation(
     basis = trailing_5
     reason = "confidence_or_live_fill_window_not_sufficient_for_capital_add"
 
-    if conf_high and positive_12 and positive_20 and promoted_package_selected and not fund_reconciliation_blocked:
+    if (
+        conf_high
+        and deploy_label == "promote"
+        and positive_12
+        and positive_20
+        and (not size_summary_available or size_aware_live_stage_cap >= 1)
+        and not fund_reconciliation_blocked
+    ):
         status = "scale_add"
         tranche = 1000
         basis = trailing_20
-        reason = "high_confidence_and_trailing20_12_positive_with_promoted_package_selected"
-    elif conf_high and positive_12 and fund_reconciliation_blocked:
+        reason = "high_confidence_and_trailing20_12_positive_with_size_ready_package"
+        if runtime_load_required:
+            reason = f"{reason};runtime_load_required_before_scale_add"
+    elif (
+        conf_high
+        and deploy_label in {"promote", "shadow_only"}
+        and positive_12
+        and (not size_summary_available or size_aware_live_stage_cap >= 1)
+        and fund_reconciliation_blocked
+    ):
         status = "test_add"
         tranche = 100
         basis = trailing_12
         reason = "high_confidence_and_trailing12_positive_but_fund_reconciliation_blocks_full_scale"
-    elif conf_high and positive_12 and not promoted_package_selected:
+        if runtime_load_required:
+            reason = f"{reason};runtime_load_required_before_test_add"
+    elif deploy_label == "hold":
         status = "hold"
         tranche = 0
         basis = trailing_12
-        reason = "promoted_package_not_currently_selected"
+        reason = "deploy_recommendation_hold_blocks_capital_add"
+    elif size_summary_available and size_aware_live_stage_cap < 1:
+        status = "hold"
+        tranche = 0
+        basis = trailing_12
+        reason = "size_aware_stage_cap_below_stage1"
 
     return {
         "status": status,
@@ -467,10 +1265,119 @@ def _capital_scale_recommendation(
         "basis_window_pnl_usd": round(_safe_float(basis.get("pnl_usd"), 0.0), 4),
         "basis_window_hours": round(_safe_float(basis.get("hours"), 0.0), 4),
         "reason": reason,
+        "deploy_recommendation": deploy_label,
         "promoted_package_selected": bool(promoted_package_selected),
+        "runtime_package_loaded": bool(promoted_package_selected),
+        "runtime_load_required": bool(runtime_load_required),
+        "size_aware_summary_available": bool(size_summary_available),
+        "size_aware_live_stage_cap": int(size_aware_live_stage_cap),
+        "size_aware_trade_size_cap_usd": int(size_aware_trade_size_cap_usd),
         "fund_reconciliation_blocked": bool(fund_reconciliation_blocked),
         "fund_blocking_checks": list(fund_block_reasons),
         "trailing_windows": trailing,
+    }
+
+
+def _capital_stage_recommendation(
+    *,
+    deploy_recommendation: str,
+    package_confidence_label: str,
+    trailing: dict[str, dict[str, float]],
+    execution_drag_summary: dict[str, Any],
+    promoted_package_selected: bool,
+    latest_live_fill_age_hours: float | None,
+    size_aware_deployment: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    confidence = str(package_confidence_label).strip().lower()
+    deploy_label = str(deploy_recommendation).strip().lower()
+    order_failed_rate = _safe_float(execution_drag_summary.get("order_failure_rate"), 0.0)
+    trailing_12 = trailing.get("trailing_12") or {}
+    trailing_40 = trailing.get("trailing_40") or {}
+    trailing_120 = trailing.get("trailing_120") or {}
+    size_summary = size_aware_deployment if isinstance(size_aware_deployment, dict) else {}
+    size_summary_available = bool(size_summary.get("available"))
+    size_aware_live_stage_cap = int(_safe_float(size_summary.get("recommended_live_stage_cap"), 0.0) or 0)
+    size_aware_trade_size_cap_usd = int(_safe_float(size_summary.get("recommended_live_trade_size_cap_usd"), 0.0) or 0)
+    fresh_realized_fills = latest_live_fill_age_hours is not None and latest_live_fill_age_hours <= 6.0
+    trailing_12_positive = bool(trailing_12.get("net_positive"))
+    trailing_40_positive = bool(trailing_40.get("net_positive"))
+    trailing_120_positive = bool(trailing_120.get("net_positive"))
+    order_failure_ok = order_failed_rate < 0.25
+
+    recommended_stage = 1
+    recommended_max_trade_usd = int(LIVE_STAGE_MAX_TRADE_USD[1])
+    stage_reason = "default_stage1_pending_stage_guardrails"
+
+    if deploy_label == "hold":
+        recommended_stage = 1
+        recommended_max_trade_usd = int(LIVE_STAGE_MAX_TRADE_USD[1])
+        stage_reason = "hold_stage1_deploy_recommendation_is_hold"
+    elif (
+        confidence == "high"
+        and fresh_realized_fills
+        and trailing_12_positive
+        and trailing_120_positive
+        and order_failure_ok
+        and deploy_label == "promote"
+    ):
+        recommended_stage = 3
+        recommended_max_trade_usd = int(LIVE_STAGE_MAX_TRADE_USD[3])
+        stage_reason = "stage3_guardrails_passed_high_confidence_trailing120_positive"
+    elif (
+        confidence in {"high", "medium"}
+        and fresh_realized_fills
+        and trailing_12_positive
+        and trailing_40_positive
+        and order_failure_ok
+    ):
+        recommended_stage = 2
+        recommended_max_trade_usd = int(LIVE_STAGE_MAX_TRADE_USD[2])
+        stage_reason = "stage2_guardrails_passed_trailing40_12_positive_and_order_failure_below_25pct"
+    elif fresh_realized_fills and trailing_12_positive:
+        stage_reason = "stage1_confirmed_fresh_realized_fills_and_trailing12_positive"
+    elif not fresh_realized_fills:
+        stage_reason = "hold_stage1_realized_fills_not_fresh"
+    elif not trailing_12_positive:
+        stage_reason = "hold_stage1_trailing12_not_positive"
+
+    if size_summary_available:
+        effective_size_stage_cap = max(1, int(size_aware_live_stage_cap))
+        if recommended_stage > effective_size_stage_cap:
+            recommended_stage = effective_size_stage_cap
+            recommended_max_trade_usd = int(LIVE_STAGE_MAX_TRADE_USD[recommended_stage])
+            stage_reason = f"{stage_reason};size_aware_stage_cap_{effective_size_stage_cap}"
+
+    promotion_guardrails_passed = bool(
+        fresh_realized_fills
+        and trailing_12_positive
+        and order_failure_ok
+        and confidence in {"high", "medium"}
+        and (not size_summary_available or max(1, size_aware_live_stage_cap) >= 1)
+    )
+    return {
+        "recommended_stage": int(recommended_stage),
+        "recommended_max_trade_usd": int(recommended_max_trade_usd),
+        "stage_reason": stage_reason,
+        "promotion_guardrails_passed": promotion_guardrails_passed,
+        "fresh_realized_fills": bool(fresh_realized_fills),
+        "latest_live_fill_age_hours": latest_live_fill_age_hours,
+        "order_failed_rate": round(order_failed_rate, 6),
+        "deploy_recommendation": deploy_label,
+        "confidence_label": confidence,
+        "promoted_package_selected": bool(promoted_package_selected),
+        "runtime_package_loaded": bool(promoted_package_selected),
+        "runtime_load_required": bool(deploy_label in {"promote", "shadow_only"} and not promoted_package_selected),
+        "trailing_12_net_positive": trailing_12_positive,
+        "trailing_40_net_positive": trailing_40_positive,
+        "trailing_120_net_positive": trailing_120_positive,
+        "size_aware_summary_available": bool(size_summary_available),
+        "size_aware_live_stage_cap": int(size_aware_live_stage_cap),
+        "size_aware_trade_size_cap_usd": int(size_aware_trade_size_cap_usd),
+        "live_stage_trade_sizes_usd": {
+            f"stage_{capital_stage}": int(trade_size_usd)
+            for capital_stage, trade_size_usd in LIVE_STAGE_MAX_TRADE_USD.items()
+        },
+        "shadow_trade_sizes_usd": [int(trade_size_usd) for trade_size_usd in SHADOW_TRADE_SIZES_USD],
     }
 
 
@@ -1100,8 +2007,12 @@ def _write_reports(report_dir: Path, payload: dict[str, Any]) -> dict[str, str]:
         f"- Active profile: `{payload['active_profile']['name']}`",
         f"- Best profile: `{payload['best_candidate']['profile']['name'] if payload.get('best_candidate') else 'none'}`",
         f"- Package confidence: `{payload.get('package_confidence_label', 'low')}`",
+        f"- Selected package confidence: `{payload.get('selected_package_confidence_label', payload.get('package_confidence_label', 'low'))}`",
         f"- Package confidence reasons: `{'; '.join(payload.get('package_confidence_reasons') or ['none'])}`",
+        f"- Selected package confidence reasons: `{'; '.join(payload.get('selected_package_confidence_reasons') or payload.get('package_confidence_reasons') or ['none'])}`",
         f"- Capital scale recommendation: `{(payload.get('capital_scale_recommendation') or {}).get('status', 'hold')}`",
+        f"- Capital stage recommendation: `stage {(payload.get('capital_stage_recommendation') or {}).get('recommended_stage', 1)}`",
+        f"- Size-aware live stage cap: `{((payload.get('size_aware_deployment') or {}).get('recommended_live_stage_cap') or 0)}`",
         f"- Best live package source: `{(payload.get('best_live_package') or {}).get('source', 'none')}`",
         f"- Best raw package source: `{(payload.get('best_raw_research_package') or {}).get('source', 'none')}`",
         f"- One-sided bias recommendation: `{(payload.get('one_sided_bias_recommendation') or {}).get('recommendation', 'balanced_directional_bias')}`",
@@ -1132,11 +2043,13 @@ def _write_reports(report_dir: Path, payload: dict[str, Any]) -> dict[str, str]:
         "",
         f"- Active package profile: `{((payload.get('active_runtime_package') or {}).get('profile') or {}).get('name', 'none')}`",
         f"- Active package session-policy records: `{len(((payload.get('active_runtime_package') or {}).get('session_policy') or []))}`",
+        f"- Selected active package profile: `{((payload.get('selected_active_runtime_package') or {}).get('profile') or {}).get('name', 'none')}`",
         f"- Best package profile: `{((payload.get('best_runtime_package') or {}).get('profile') or {}).get('name', 'none')}`",
         f"- Best package session-policy records: `{len(((payload.get('best_runtime_package') or {}).get('session_policy') or []))}`",
+        f"- Selected best package profile: `{((payload.get('selected_best_runtime_package') or {}).get('profile') or {}).get('name', 'none')}`",
         f"- Validation live-filled rows: `{payload.get('validation_live_filled_rows', 0)}`",
         f"- Generalization ratio: `{payload.get('generalization_ratio', 0.0):.4f}`",
-        f"- Promoted package selected: `{((payload.get('capital_scale_recommendation') or {}).get('promoted_package_selected'))}`",
+        f"- Promoted package selected: `{payload.get('promoted_package_selected')}`",
         "",
         "## Execution Drag",
         "",
@@ -1156,6 +2069,15 @@ def _write_reports(report_dir: Path, payload: dict[str, Any]) -> dict[str, str]:
         f"- Service restart requested: `{((payload.get('runtime_load_status') or {}).get('service_restart_requested'))}`",
         f"- Service restart state: `{((payload.get('runtime_load_status') or {}).get('service_restart_state') or 'none')}`",
         "",
+        "## Size-Aware Deployment",
+        "",
+        f"- Size summary available: `{((payload.get('size_aware_deployment') or {}).get('available', False))}`",
+        f"- Capacity profile label: `{((payload.get('size_aware_deployment') or {}).get('capacity_profile_label') or 'none')}`",
+        f"- Capacity profile name: `{((payload.get('size_aware_deployment') or {}).get('capacity_profile_name') or 'none')}`",
+        f"- Match reason: `{((payload.get('size_aware_deployment') or {}).get('match_reason') or 'none')}`",
+        f"- Recommended live stage cap: `{((payload.get('size_aware_deployment') or {}).get('recommended_live_stage_cap') or 0)}`",
+        f"- Recommended live trade-size cap (USD): `{((payload.get('size_aware_deployment') or {}).get('recommended_live_trade_size_cap_usd') or 0)}`",
+        "",
         "## Package Decision",
         "",
         f"- Deploy recommendation: `{payload.get('deploy_recommendation', 'hold')}`",
@@ -1163,6 +2085,10 @@ def _write_reports(report_dir: Path, payload: dict[str, Any]) -> dict[str, str]:
         f"- Recommendation explanation: `{payload.get('decision', {}).get('reason', 'none')}`",
         f"- Capital tranche recommendation: `{((payload.get('capital_scale_recommendation') or {}).get('recommended_tranche_usd', 0))}` USD",
         f"- Capital reason: `{((payload.get('capital_scale_recommendation') or {}).get('reason') or 'none')}`",
+        f"- Capital stage: `{((payload.get('capital_stage_recommendation') or {}).get('recommended_stage', 1))}`",
+        f"- Capital stage max trade (USD): `{((payload.get('capital_stage_recommendation') or {}).get('recommended_max_trade_usd', 10))}`",
+        f"- Stage guardrails passed: `{((payload.get('capital_stage_recommendation') or {}).get('promotion_guardrails_passed', False))}`",
+        f"- Stage reason: `{((payload.get('capital_stage_recommendation') or {}).get('stage_reason') or 'none')}`",
         "",
         "## Best Candidate",
         "",
@@ -1355,6 +2281,27 @@ def main() -> int:
     if _safe_float(decision.get("p95_drawdown_delta_usd"), 0.0) > 3.0:
         package_missing_evidence.append("p95_drawdown_delta_above_3.0")
 
+    current_probe = _current_probe_payload_fields(
+        rows=rows,
+        prior_probe_payload=current_probe_latest,
+        hypothesis_summary=hypothesis_summary,
+        regime_policy_summary=latest_regime_summary,
+        validation_live_filled_rows=validation_live_filled_rows,
+        package_missing_evidence=package_missing_evidence,
+        decision=decision,
+    )
+    probe_feedback = _probe_feedback_adjustment(
+        package_confidence_label=package_confidence_label,
+        deploy_recommendation=deploy_recommendation,
+        current_probe=current_probe,
+    )
+    size_aware_deployment = _size_aware_deployment_summary(
+        candidate=best_candidate,
+        simulation_summary=global_summary,
+        current_candidate=current_candidate,
+        global_best_candidate=global_best_candidate,
+    )
+
     payload = {
         "generated_at": _now_utc().isoformat(),
         "base_strategy_env": str(args.strategy_env),
@@ -1410,6 +2357,7 @@ def main() -> int:
         "ranked_runtime_packages": ranked_packages,
         "execution_drag_summary": execution_drag_summary,
         "one_sided_bias_recommendation": _one_sided_bias_recommendation(rows),
+        "size_aware_deployment": size_aware_deployment,
         "simulation_summary": global_summary,
         "regime_policy_summary": regime_policy_summary,
         "service_restart": restart_result,
@@ -1419,39 +2367,121 @@ def main() -> int:
             decision_action=str(decision.get("action") or ""),
             restart_result=restart_result,
         ),
+        "probe_feedback": probe_feedback,
+        "current_probe_path": str(args.current_probe_latest),
     }
+    payload = _attach_current_probe_fields(payload, current_probe)
+    trailing_windows = _live_fill_windows(rows)
+    latest_live_fill_age_hours = _latest_live_fill_age_hours(rows)
+    fund_blocked, fund_block_reasons = _fund_reconciliation_blocked(runtime_truth)
+
+    current_probe_payload = dict(payload)
+    current_probe_payload["package_confidence_label"] = str(
+        probe_feedback.get("effective_package_confidence_label") or payload.get("package_confidence_label") or "low"
+    )
+    current_probe_payload["package_confidence_reasons"] = list(payload.get("package_confidence_reasons") or []) + [
+        str(reason) for reason in (probe_feedback.get("adjustment_reasons") or [])
+    ]
+    current_probe_payload["deploy_recommendation"] = str(
+        probe_feedback.get("effective_deploy_recommendation") or payload.get("deploy_recommendation") or "hold"
+    )
+    current_probe_payload["package_missing_evidence"] = list(payload.get("package_missing_evidence") or []) + [
+        str(tag) for tag in (current_probe.get("stage_not_ready_reason_tags") or [])
+    ]
+    current_probe_payload["capital_scale_recommendation"] = _capital_scale_recommendation(
+        deploy_recommendation=str(current_probe_payload.get("deploy_recommendation") or "hold"),
+        package_confidence_label=str(current_probe_payload.get("package_confidence_label") or "low"),
+        trailing=trailing_windows,
+        promoted_package_selected=False,
+        fund_reconciliation_blocked=fund_blocked,
+        fund_block_reasons=fund_block_reasons,
+        size_aware_deployment=size_aware_deployment,
+    )
+    current_probe_payload["capital_stage_recommendation"] = _capital_stage_recommendation(
+        deploy_recommendation=str(current_probe_payload.get("deploy_recommendation") or "hold"),
+        package_confidence_label=str(current_probe_payload.get("package_confidence_label") or "low"),
+        trailing=trailing_windows,
+        execution_drag_summary=execution_drag_summary,
+        promoted_package_selected=False,
+        latest_live_fill_age_hours=latest_live_fill_age_hours,
+        size_aware_deployment=size_aware_deployment,
+    )
     public_forecast_selection = _select_public_forecast(
         standard_payload=payload,
-        current_probe_payload=current_probe_latest,
+        current_probe_payload=current_probe_payload,
         standard_source=str(args.report_dir / "latest.json"),
         current_probe_source=str(args.current_probe_latest),
     )
     if not (public_forecast_selection.get("selected")) and prior_standard_latest:
         public_forecast_selection = _select_public_forecast(
             standard_payload=prior_standard_latest,
-            current_probe_payload=current_probe_latest,
+            current_probe_payload=current_probe_payload,
             standard_source=str(args.report_dir / "latest.json"),
             current_probe_source=str(args.current_probe_latest),
         )
     selected_public = public_forecast_selection.get("selected") or {}
     payload["public_forecast_selection"] = public_forecast_selection
     payload["public_forecast_source_artifact"] = selected_public.get("source_artifact")
-    payload["selected_best_runtime_package"] = selected_public.get("best_runtime_package") or payload.get("best_runtime_package") or {}
-    promoted_package_selected = _package_signature(payload.get("selected_best_runtime_package")) == _package_signature(
-        payload.get("active_runtime_package")
+    runtime_selection = _select_runtime_payload(
+        standard_payload=payload,
+        current_probe_payload=current_probe_payload,
     )
-    fund_blocked, fund_block_reasons = _fund_reconciliation_blocked(runtime_truth)
-    trailing_windows = _live_fill_windows(rows)
+    runtime_source = str(runtime_selection.get("source") or "none")
+    selected_runtime_payload = runtime_selection.get("payload") if isinstance(runtime_selection.get("payload"), dict) else {}
+    payload["runtime_package_selection"] = {
+        "source": runtime_source,
+        "source_artifact": (
+            str(args.current_probe_latest)
+            if runtime_source == "current_probe"
+            else (str(args.report_dir / "latest.json") if runtime_source == "standard" else None)
+        ),
+        "selection_reason": str(runtime_selection.get("selection_reason") or "no_runtime_payload_available"),
+    }
+    selected_best_runtime_package = selected_runtime_payload.get("best_runtime_package") or payload.get("best_runtime_package") or {}
+    selected_active_runtime_package = selected_runtime_payload.get("active_runtime_package") or payload.get("active_runtime_package") or {}
+    selected_deploy_recommendation = str(
+        selected_runtime_payload.get("deploy_recommendation") or payload.get("deploy_recommendation") or "hold"
+    )
+    selected_package_confidence_label = str(
+        selected_runtime_payload.get("package_confidence_label") or payload.get("package_confidence_label") or "low"
+    )
+    selected_package_confidence_reasons = list(
+        selected_runtime_payload.get("package_confidence_reasons") or payload.get("package_confidence_reasons") or []
+    )
+    selected_size_aware_deployment = selected_runtime_payload.get("size_aware_deployment") or payload.get("size_aware_deployment") or {}
+    payload["selected_best_runtime_package"] = selected_best_runtime_package
+    payload["selected_active_runtime_package"] = selected_active_runtime_package
+    payload["selected_deploy_recommendation"] = selected_deploy_recommendation
+    payload["selected_package_confidence_label"] = selected_package_confidence_label
+    payload["selected_package_confidence_reasons"] = selected_package_confidence_reasons
+    payload["selected_size_aware_deployment"] = selected_size_aware_deployment
+    promoted_package_selected = _package_signature(selected_best_runtime_package) == _package_signature(
+        selected_active_runtime_package
+    )
+    payload["promoted_package_selected"] = promoted_package_selected
     payload["capital_scale_recommendation"] = _capital_scale_recommendation(
-        package_confidence_label=str(payload.get("package_confidence_label") or "low"),
+        deploy_recommendation=selected_deploy_recommendation,
+        package_confidence_label=selected_package_confidence_label,
         trailing=trailing_windows,
         promoted_package_selected=promoted_package_selected,
         fund_reconciliation_blocked=fund_blocked,
         fund_block_reasons=fund_block_reasons,
+        size_aware_deployment=selected_size_aware_deployment,
+    )
+    payload["capital_stage_recommendation"] = _capital_stage_recommendation(
+        deploy_recommendation=selected_deploy_recommendation,
+        package_confidence_label=selected_package_confidence_label,
+        trailing=trailing_windows,
+        execution_drag_summary=execution_drag_summary,
+        promoted_package_selected=promoted_package_selected,
+        latest_live_fill_age_hours=latest_live_fill_age_hours,
+        size_aware_deployment=selected_size_aware_deployment,
     )
 
     artifacts = _write_reports(args.report_dir, payload)
     payload["artifacts"] = artifacts
+    probe_artifacts = _write_reports(args.current_probe_latest.parent, current_probe_payload)
+    current_probe_payload["artifacts"] = probe_artifacts
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 
