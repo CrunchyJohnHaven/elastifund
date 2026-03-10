@@ -1,182 +1,117 @@
 {
+  "schema_version": "instance3_output.v2",
   "instance": 3,
-  "role": "Claude Code / Sonnet",
-  "objective": "Queue the first credible micro-live BTC5 window without forcing a bad current-session launch",
-  "generated_at": "2026-03-10T21:20:00Z",
-  "cycle_window": "2026-03-10T21:00:00Z to 2026-03-10T21:20:00Z",
+  "instance_role": "Claude Code / Sonnet — JJ-N manual-close activation + automated-checkout env checklist",
+  "generated_at": "2026-03-10T22:30:00Z",
+  "cycle_window": "2026-03-10T22:00:00Z to 2026-03-10T22:30:00Z",
 
-  "gate_assessment": {
-    "service_running": false,
-    "service_running_note": "jj-live.service is inactive/stopped. jj-live and btc-5min-maker both stopped.",
-    "vps_storage_clear": false,
-    "vps_storage_note": "VPS root filesystem is full. Remote runtime validation hit 'No space left on device'. No service restart is safe until disk is freed.",
-    "instance1_runtime_coherent": true,
-    "instance1_runtime_coherent_note": "Runtime truth is coherent: launch_posture=blocked, service_state=stopped, allow_order_submission=false — no contradiction. Safe blocked baseline.",
-    "instance2_blockers_within_threshold": false,
-    "instance2_blockers_within_threshold_note": "Multiple structural blockers remain: trailing_12_not_positive, trailing_40_not_positive, forecast_not_promote_high, package_load_pending. Instance 2 has defaulted to tighter guardrail package (max_abs_delta=0.00005) per dispatch protocol because recent 5/12/20/40 windows are all negative.",
-    "session_window_active": false,
-    "session_window_note": "Current time is ~16:20 ET. ET 9-11 window closed for today. Next eligible window: Wednesday March 11 09:00 ET.",
-    "live_activation_permitted": false,
-    "live_activation_reason": "Service stopped + VPS storage full + trailing windows negative + package load pending. No activation conditions are met this cycle. This is a staging cycle.",
-    "shadow_activation_permitted": false,
-    "shadow_activation_reason": "Shadow requires running service. Service cannot be safely restarted until disk is freed on VPS."
+  "verdict": "manual_close_ready_now",
+  "verdict_detail": "Manual close gate is open per first_dollar.py lines 268-271 (launchable_gate_keys = manual_close_ready + fulfillment_surface_ready — both true). Automated checkout blocked on 3 env vars post-migration only. No code changes needed. This is a pure operator execution problem.",
+
+  "code_truth": {
+    "launchable_gate_keys": ["manual_close_ready", "fulfillment_surface_ready"],
+    "manual_close_ready": true,
+    "fulfillment_surface_ready": true,
+    "launchable_now_per_code": true,
+    "artifact_status": "setup_only (stale — pre-migration)",
+    "code_would_produce_when_fresh": "launchable",
+    "ignored_by_launchable_gate": ["checkout_surface_not_ready", "billing_webhook_not_ready"],
+    "note": "Artifacts regenerate after new box is live. Trust first_dollar.py, not stale JSON."
   },
 
-  "guardrail_update": {
-    "previous_package_guardrails": {
-      "max_abs_delta": 0.00015,
-      "up_max_buy_price": 0.51,
-      "down_max_buy_price": 0.51
-    },
-    "new_tighter_guardrails": {
-      "max_abs_delta": 0.00005,
-      "up_max_buy_price": 0.48,
-      "down_max_buy_price": 0.51,
-      "source": "runtime_truth_latest.json guardrail_recommendation",
-      "rationale": "Instance 2 dispatch protocol: recent 5/12/20/40 windows all negative. Default to tighter guardrail package for shadow. Delta band tightened 3x (0.00015 → 0.00005). UP ceiling lowered (0.51 → 0.48). DOWN ceiling unchanged (0.51)."
-    },
-    "package_name": "policy_current_live_profile__open_et__grid_d0.00005_up0.48_down0.51",
-    "source_profile": "policy_current_live_profile__open_et__grid_d0.00015_up0.51_down0.51",
-    "guardrail_mode": "tighter_always_on"
+  "path_1_manual_close": {
+    "status": "OPEN — execute now",
+    "requires_new_box": false,
+    "requires_stripe": false,
+    "requires_domain_auth": false,
+    "prospect_count": 10,
+    "prospect_source": "reports/nontrading/revenue_audit_launch_batch_seed.json",
+    "priority_order": [
+      {"rank": 1, "segment": "hvac", "fit_score": 84.23, "estimated_value_usd": 2500},
+      {"rank": 2, "segment": "landscaping", "fit_score": 82.15, "estimated_value_usd": 2500},
+      {"rank": 3, "segment": "pest_control", "fit_score": 70.74, "estimated_value_usd": 2000}
+    ],
+    "payment_options": [
+      "Stripe Payment Link (dashboard.stripe.com > Payment links) — no server needed",
+      "Bank transfer / ACH",
+      "PayPal / Venmo"
+    ],
+    "active_wedge": "Website Growth Audit — $500/$1,500/$2,500 tiers"
   },
 
-  "package_state": {
-    "best_available_package": "policy_current_live_profile__open_et__grid_d0.00015_up0.51_down0.51",
-    "selected_package_for_shadow": "tighter_guardrail_overlay (max_abs_delta=0.00005, up_max=0.48, down_max=0.51)",
-    "package_confidence_label": "medium",
-    "promoted_package_selected": false,
-    "runtime_package_loaded": false,
-    "deploy_recommendation": "shadow_only",
-    "session_policy": [{"name": "open_et", "et_hours": [9, 10, 11], "max_abs_delta": 0.00005, "up_max_buy_price": 0.48, "down_max_buy_price": 0.51}],
-    "trailing_windows": {
-      "trailing_5_pnl_usd": -4.3814,
-      "trailing_12_pnl_usd": -8.5465,
-      "trailing_40_pnl_usd": -24.0875,
-      "trailing_120_pnl_usd": 91.4902,
-      "net_positive_120": true,
-      "net_positive_40": false,
-      "net_positive_12": false,
-      "net_positive_5": false
-    },
-    "all_time": {
-      "live_filled_rows": 138,
-      "live_filled_pnl_usd": 85.3018,
-      "avg_pnl_per_fill": 0.6181
-    }
-  },
-
-  "activation_decision": {
-    "status": "hold_repair_storage_first_then_shadow_then_wednesday_probe",
-    "current_cycle_action": "staging_only",
-    "disk_repair_required_first": {
-      "action": "Free VPS disk space before any other action",
-      "priority": "BLOCKER — no service restart is safe while VPS is storage-blocked",
-      "retry_cadence_minutes": 10,
-      "operator_commands": [
-        "ssh ubuntu@52.208.155.0 'df -h / && du -sh /home/ubuntu/polymarket-trading-bot/logs/* | sort -rh | head -20'",
-        "ssh ubuntu@52.208.155.0 'sudo journalctl --vacuum-size=200M && sudo apt-get clean'",
-        "ssh ubuntu@52.208.155.0 'find /home/ubuntu/polymarket-trading-bot -name \"*.log\" -mtime +7 -delete'"
-      ]
-    },
-    "shadow_activation": {
-      "eligible_after_disk_repair": true,
-      "config_source": "state/btc5_capital_stage.env",
-      "config": {
-        "BTC5_DEPLOY_MODE": "shadow_probe",
-        "BTC5_PAPER_TRADING": "true",
-        "BTC5_CAPITAL_STAGE": 1,
-        "BTC5_MAX_TRADE_USD": 10,
-        "BTC5_DAILY_LOSS_LIMIT_USD": 250,
-        "BTC5_MAX_ABS_DELTA": 0.00005,
-        "BTC5_UP_MAX_BUY_PRICE": 0.48,
-        "BTC5_DOWN_MAX_BUY_PRICE": 0.51
+  "path_2_automated_checkout": {
+    "status": "BLOCKED — requires post-migration VPS",
+    "requires_new_box": true,
+    "env_vars_needed": 3,
+    "env_vars_set": 0,
+    "checklist": [
+      {
+        "rank": 1,
+        "key": "PUBLIC_BASE_URL",
+        "env_var": "JJ_N_WEBSITE_GROWTH_AUDIT_PUBLIC_BASE_URL",
+        "current": "https://example.invalid",
+        "action": "Set to live HTTPS URL after new box migration"
       },
-      "deploy_command_after_disk_repair": "ssh ubuntu@52.208.155.0 'sudo systemctl start btc-5min-maker && sudo systemctl status btc-5min-maker'",
-      "guardrail_mode": "tighter_always_on — tighter than previous open_et package, safer while short windows are negative"
-    },
-    "next_live_window": {
-      "label": "micro-live probe",
-      "condition": "one clean shadow pass required (trailing_12 turns positive with tighter guardrails)",
-      "window_date": "Wednesday, March 11, 2026",
-      "window_start_et": "2026-03-11T09:00:00-05:00",
-      "window_end_et": "2026-03-11T11:59:59-05:00",
-      "window_start_utc": "2026-03-11T14:00:00Z",
-      "window_end_utc": "2026-03-11T16:59:59Z",
-      "package": "tighter_guardrail_overlay",
-      "session_policy_name": "open_et",
-      "et_hours": [9, 10, 11],
-      "max_abs_delta": 0.00005,
-      "up_max_buy_price": 0.48,
-      "down_max_buy_price": 0.51,
-      "max_probe_size_usd": 5.0,
-      "max_fills_first_window": 2,
-      "ttl_et": "2026-03-11T12:00:00-05:00",
-      "rollback_triggers": [
-        "first_fill_loss_exceeds_usd_5",
-        "two_consecutive_negative_fills",
-        "three_order_failures_in_window",
-        "trailing_5_turns_negative_after_positive_entry",
-        "service_error_or_crash"
-      ],
-      "pre_window_gate_check_et": "2026-03-11T08:00:00-05:00",
-      "pre_window_gate_check_actions": [
-        "Run scripts/run_btc5_autoresearch_cycle.py on VPS",
-        "Check trailing_12.net_positive = true",
-        "Check service_state = running",
-        "Check finance_gate allows at minimum shadow execution"
-      ]
-    },
-    "thursday_fallback": {
-      "window_start_et": "2026-03-12T09:00:00-05:00",
-      "condition": "If Wednesday gates do not clear"
-    }
+      {
+        "rank": 2,
+        "key": "STRIPE_SECRET_KEY",
+        "env_var": "STRIPE_SECRET_KEY",
+        "current": "",
+        "action": "Stripe Dashboard > Developers > API keys"
+      },
+      {
+        "rank": 3,
+        "key": "STRIPE_WEBHOOK_SECRET",
+        "env_var": "STRIPE_WEBHOOK_SECRET",
+        "current": "",
+        "action": "Stripe Dashboard > Webhooks > Add endpoint: POST https://<PUBLIC_BASE_URL>/v1/nontrading/webhooks/stripe"
+      }
+    ],
+    "auto_derived_no_action": [
+      "JJ_N_WEBSITE_GROWTH_AUDIT_SUCCESS_URL",
+      "JJ_N_WEBSITE_GROWTH_AUDIT_CANCEL_URL"
+    ]
   },
 
-  "go_conditions_wednesday": [
-    {"gate": "disk_repaired_vps_not_storage_blocked", "current": false, "required": true},
-    {"gate": "service_running_shadow_pass_complete", "current": false, "required": true},
-    {"gate": "trailing_12_net_positive_with_tighter_guardrails", "current": false, "required": true},
-    {"gate": "package_class_not_suppress", "current": "suppress", "required": "promote or neutral"},
-    {"gate": "finance_gate_allows_execution", "current": "shadow_only", "required": "shadow_only minimum"}
-  ],
-
-  "lane_bounds": {
-    "sleeve": "btc-5min-maker only",
-    "package": "tighter_guardrail_overlay (one package, no A/B)",
-    "ttl": "2026-03-11T12:00:00-05:00 (3-hour window only)",
-    "rollback_policy": "immediate on first loss cluster or order failure burst",
-    "scale_up_blocked": "no size increase beyond $5 probe during first window",
-    "a6_b1": "hold_no_action — kill at March 14 deadline, no compute spent here"
+  "what_does_not_change": {
+    "active_wedge": "Website Growth Audit only",
+    "pricing": "$500/$1,500/$2,500 frozen",
+    "prospect_scope": "10 existing staged prospects before expansion",
+    "no_new_code": true,
+    "parked": [
+      "recurring_monitor_expansion",
+      "new_offer_research",
+      "better_monitor_upsell_experiment",
+      "openclaw_comparison"
+    ]
   },
 
   "required_outputs": {
-    "candidate_delta_arr_bps": 0,
-    "candidate_delta_arr_bps_note": "No activation this cycle. Expected delta from Wednesday micro-live probe if gates clear and tighter guardrails hold: +5 to +20 bps/day (bounded $5 probe, 2 max fills). Tighter guardrails reduce both upside and downside.",
-    "expected_improvement_velocity_delta": "+1 blocker resolved per step: disk repair → service restart → shadow pass → trailing_12 positive → Wednesday probe",
-    "arr_confidence_score": 0.15,
-    "arr_confidence_score_note": "Stage readiness 0.15. Short windows negative. Tighter guardrails reduce risk but cannot improve confidence score until trailing windows recover.",
+    "candidate_delta_arr_bps": 6900,
+    "candidate_delta_arr_bps_notes": "p50 ARR $260.77/yr vs $0 current. Against $377 portfolio: 260/377 = 6,900 bps. Confidence 0.28.",
+    "expected_improvement_velocity_delta": "+1.0 gate per operator action. Manual close gate ALREADY OPEN — 0 additional actions for first contact. 3 actions unlock automated checkout post-migration.",
+    "arr_confidence_score": 0.28,
+    "arr_confidence_label": "low_to_medium",
     "block_reasons": [
-      "vps_storage_full_service_restart_unsafe",
-      "service_stopped",
-      "trailing_12_live_filled_not_positive",
-      "trailing_40_live_filled_not_positive",
-      "btc5_forecast_not_promote_high",
-      "runtime_package_load_pending",
-      "confirmation_coverage_missing",
-      "session_window_closed_until_wednesday_0900_et"
+      "automated_checkout_blocked: PUBLIC_BASE_URL placeholder, STRIPE_SECRET_KEY empty",
+      "billing_webhook_blocked: STRIPE_WEBHOOK_SECRET empty, endpoint not registered",
+      "automated_email_blocked: sender domain placeholder — blocks automation only, not manual close",
+      "new_box_prerequisite: PUBLIC_BASE_URL requires post-migration VPS with HTTPS"
     ],
-    "finance_gate_pass": "shadow_only",
-    "finance_gate_pass_note": "Finance gate: shadow-eligible. Live treasury requires polymarket_runtime whitelist clearance (currently destination_not_whitelisted).",
-    "one_next_cycle_action": "Free VPS disk space first (journalctl vacuum + old log cleanup). Then restart btc-5min-maker in shadow mode with tighter guardrails. Gate-check trailing_12 at Wednesday 08:00 ET before opening micro-live window."
+    "finance_gate_pass": true,
+    "finance_gate_notes": "finance/latest.json shows finance_gate_pass=true. $12 budget approved. No new capital needed for manual close.",
+    "one_next_cycle_action": "Contact HVAC prospect (fit_score=84.23, $2,500 estimated value) from reports/nontrading/revenue_audit_launch_batch_seed.json. Manual close gate is ALREADY OPEN. After migration: set PUBLIC_BASE_URL + STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET in new VPS .env."
   },
 
-  "retry_schedule": {
-    "disk_repair": "immediate (John action — ssh to VPS and free space)",
-    "service_restart_shadow": "immediately after disk repair, +10 min retry if still blocked",
-    "shadow_fill_check": "+6h from service restart",
-    "wednesday_gate_check": "2026-03-11T08:00:00-05:00",
-    "wednesday_micro_live_probe": "2026-03-11T09:00:00-05:00 (conditional on all gates)",
-    "thursday_fallback": "2026-03-12T09:00:00-05:00",
-    "a6_b1_kill_deadline": "2026-03-14"
+  "failsafe_rules": {
+    "no_new_wedge": "No new offer until first dollar",
+    "no_prospect_expansion": "No new prospects until 10 existing are contacted",
+    "no_automated_checkout_claim": "No checkout claims until all 3 env vars are live on new box",
+    "no_capital_required": "Manual close path requires $0 additional capital",
+    "retry_cadence": {
+      "manual_close_status": "+10m",
+      "docs_sync": "+30m",
+      "automated_checkout": "post-migration only"
+    }
   }
 }

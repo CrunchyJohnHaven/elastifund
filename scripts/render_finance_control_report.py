@@ -172,6 +172,41 @@ def _allocation_summary(allocation: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _load_release_context(root: Path) -> dict[str, Any]:
+    launch_packet = _load_optional_json(root / "reports" / "launch_packet_latest.json") or {}
+    state_improvement = _load_optional_json(root / "reports" / "state_improvement_latest.json") or {}
+    nontrading_cycle = _load_optional_json(root / "reports" / "nontrading_cycle_packet.json") or {}
+
+    trading_blockers: list[str] = []
+    contract = launch_packet.get("contract") if isinstance(launch_packet.get("contract"), dict) else {}
+    launch_state = launch_packet.get("launch_state") if isinstance(launch_packet.get("launch_state"), dict) else {}
+    storage = launch_state.get("storage") if isinstance(launch_state.get("storage"), dict) else {}
+    package_load = launch_state.get("package_load") if isinstance(launch_state.get("package_load"), dict) else {}
+    if contract and str(contract.get("service_state") or "").lower() != "running":
+        trading_blockers.append("service_not_running")
+    if bool(storage.get("blocked")):
+        trading_blockers.append("remote_runtime_storage_blocked")
+    if package_load.get("runtime_package_loaded") is False:
+        trading_blockers.append("runtime_package_load_pending")
+
+    metrics = state_improvement.get("metrics") if isinstance(state_improvement.get("metrics"), dict) else {}
+    executed_notional = _safe_float(
+        (state_improvement.get("per_venue_executed_notional_usd") or {}).get("combined_hourly"),
+        _safe_float(metrics.get("executed_notional_usd"), 0.0),
+    )
+    conversion = _safe_float(metrics.get("candidate_to_trade_conversion"), 0.0)
+    if executed_notional <= 0 and state_improvement:
+        trading_blockers.append("executed_notional_zero_across_current_cycle")
+    if conversion <= 0 and state_improvement:
+        trading_blockers.append("candidate_to_trade_conversion_zero_across_current_cycle")
+
+    manual_close_ready_now = str(nontrading_cycle.get("cycle_verdict") or "").lower() == "manual_close_ready_now"
+    return {
+        "trading_blockers": list(dict.fromkeys(trading_blockers)),
+        "manual_close_ready_now": manual_close_ready_now,
+    }
+
+
 def build_finance_control_report(
     *,
     policy: FinancePolicy,
@@ -192,6 +227,8 @@ def build_finance_control_report(
     subscription_audit = _load_optional_json(subscription_audit_path)
     action_queue = _load_optional_json(action_queue_path)
     workflow_mining = _load_optional_json(workflow_mining_summary_path)
+    workspace_root = runtime_truth_path.parent.parent
+    release_context = _load_release_context(workspace_root)
 
     gaps: list[dict[str, str]] = []
     if finance_snapshot is None:
@@ -249,6 +286,12 @@ def build_finance_control_report(
                 model_tier="structured_ranking",
                 model_minutes=12.0,
                 model_provider="general_llm",
+                allocation_cap_usd=required_budget,
+                decision_reason=(
+                    "Manual close is open now; keep JJ-N budget pinned to the small control-plane amount and do not widen spend before automated checkout is healthy."
+                    if release_context["manual_close_ready_now"]
+                    else ""
+                ),
             )
         )
     maker = runtime_truth.get("btc_5min_maker", {})
@@ -273,6 +316,8 @@ def build_finance_control_report(
                 model_tier="structured_ranking",
                 model_minutes=18.0,
                 model_provider="general_llm",
+                hard_blockers=tuple(release_context["trading_blockers"]),
+                decision_reason="Hold incremental trading capital until service health, package load, executed notional, and conversion all recover.",
             )
         )
 

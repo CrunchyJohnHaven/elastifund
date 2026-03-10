@@ -224,3 +224,72 @@ def test_finance_report_preserves_last_execute_and_names_next_queued_action(tmp_
         "checkout_surface_not_ready",
         "billing_webhook_not_ready",
     ]
+
+
+def test_finance_report_holds_trading_candidate_when_launch_and_utilization_are_blocked(tmp_path: Path) -> None:
+    runtime_truth = {
+        "btc_5min_maker": {
+            "live_filled_rows": 138,
+            "fill_attribution": {
+                "recent_live_filled_summary": {"fills": 12, "pnl_usd": -8.55},
+            },
+        }
+    }
+    state_improvement = {
+        "metrics": {"candidate_to_trade_conversion": 0.0},
+        "per_venue_executed_notional_usd": {"combined_hourly": 0.0},
+    }
+    nontrading_report = {
+        "allocator_input": {
+            "required_budget": 12.0,
+            "confidence": 0.28,
+            "expected_net_cash_30d": 0.0,
+        }
+    }
+    launch_packet = {
+        "contract": {"service_state": "stopped"},
+        "launch_state": {
+            "storage": {"blocked": True},
+            "package_load": {"runtime_package_loaded": False},
+        },
+    }
+
+    runtime_truth_path = tmp_path / "reports" / "runtime_truth_latest.json"
+    state_improvement_path = tmp_path / "reports" / "state_improvement_latest.json"
+    nontrading_report_path = tmp_path / "reports" / "nontrading_public_report.json"
+    write_json_artifact(runtime_truth, runtime_truth_path)
+    write_json_artifact(state_improvement, state_improvement_path)
+    write_json_artifact(nontrading_report, nontrading_report_path)
+    write_json_artifact(launch_packet, tmp_path / "reports" / "launch_packet_latest.json")
+    write_json_artifact({"cycle_verdict": "manual_close_ready_now"}, tmp_path / "reports" / "nontrading_cycle_packet.json")
+    write_json_artifact(
+        {
+            "totals": {
+                "capital_ready_to_deploy_usd": 1000.0,
+                "monthly_burn_usd": 0.0,
+                "startup_equity_usd": 0.0,
+            }
+        },
+        tmp_path / "reports" / "finance" / "latest.json",
+    )
+
+    latest, allocation = build_finance_control_report(
+        policy=FinancePolicy(single_action_cap_usd=250.0, min_cash_reserve_months=1.0),
+        runtime_truth_path=runtime_truth_path,
+        state_improvement_path=state_improvement_path,
+        nontrading_report_path=nontrading_report_path,
+        nontrading_status_path=tmp_path / "reports" / "nontrading_first_dollar_status.json",
+        finance_snapshot_path=tmp_path / "reports" / "finance" / "latest.json",
+        subscription_audit_path=tmp_path / "reports" / "finance" / "subscription_audit.json",
+        action_queue_path=tmp_path / "reports" / "finance" / "action_queue.json",
+        workflow_mining_summary_path=tmp_path / "reports" / "agent_workflow_mining" / "summary.json",
+    )
+
+    trading_row = next(item for item in allocation["ranked_actions"] if item["candidate_id"] == "fund_trading_runtime")
+    nontrading_row = next(item for item in allocation["ranked_actions"] if item["candidate_id"] == "fund_nontrading_control_plane")
+
+    assert trading_row["decision"] == "ask"
+    assert trading_row["recommended_amount_usd"] == 0.0
+    assert "service_not_running" in trading_row["constraint_hits"]
+    assert "executed_notional_zero_across_current_cycle" in trading_row["constraint_hits"]
+    assert nontrading_row["recommended_amount_usd"] == 12.0
