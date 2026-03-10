@@ -8,10 +8,16 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from nontrading.models import Account, ApprovalRequest, Meeting, Message, Opportunity, Outcome, Proposal
+from inventory.systems.openclaw.adapter import build_openclaw_benchmark_packet
+from nontrading.models import Account, ApprovalRequest, Contact, Lead, Meeting, Message, Opportunity, Outcome, Proposal
 from nontrading.store import RevenueStore
 from nontrading.telemetry import NonTradingTelemetry
-from scripts.generate_nontrading_public_report import build_public_report, write_report
+from scripts.generate_nontrading_public_report import (
+    build_public_report,
+    resolve_optional_input_path,
+    write_report,
+    write_sidecar_artifacts,
+)
 
 
 def _seed_public_report_fixture(tmp_path: Path) -> RevenueStore:
@@ -112,6 +118,80 @@ def _seed_public_report_fixture(tmp_path: Path) -> RevenueStore:
     return store
 
 
+def _configure_launch_env(monkeypatch, db_path: Path) -> None:
+    monkeypatch.setenv("JJ_REVENUE_DB_PATH", str(db_path))
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_launch_ready")
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_launch_ready")
+    monkeypatch.setenv(
+        "JJ_N_WEBSITE_GROWTH_AUDIT_SUCCESS_URL",
+        "https://elastifund.io/jjn/checkout/success?session_id={CHECKOUT_SESSION_ID}",
+    )
+    monkeypatch.setenv(
+        "JJ_N_WEBSITE_GROWTH_AUDIT_CANCEL_URL",
+        "https://elastifund.io/jjn/checkout/cancel",
+    )
+    monkeypatch.setenv("JJ_REVENUE_PUBLIC_BASE_URL", "https://elastifund.io")
+    monkeypatch.setenv("JJ_REVENUE_PROVIDER", "sendgrid")
+    monkeypatch.setenv("JJ_REVENUE_FROM_NAME", "JJ-N")
+    monkeypatch.setenv("JJ_REVENUE_FROM_EMAIL", "ops@elastifund.io")
+    monkeypatch.setenv("JJ_REVENUE_SENDER_DOMAIN_VERIFIED", "1")
+    monkeypatch.setenv("SENDGRID_API_KEY", "sg_test_launch_ready")
+
+
+def _seed_launch_ready_manual_close_fixture(store: RevenueStore) -> None:
+    lead, _ = store.upsert_lead(
+        Lead(
+            email="owner@launch-ready-roofing.com",
+            company_name="Launch Ready Roofing",
+            country_code="US",
+            source="manual_csv",
+            explicit_opt_in=True,
+            metadata={
+                "curated_launch_batch": True,
+                "website_url": "https://launch-ready-roofing.com",
+                "website_findings": "the quote CTA is buried below the fold on mobile",
+                "quick_win": "move the quote CTA into the hero and service pages",
+            },
+        )
+    )
+    account = store.create_account(
+        Account(
+            name="Launch Ready Roofing",
+            domain="launch-ready-roofing.com",
+            website_url="https://launch-ready-roofing.com",
+            metadata={"lead_email": lead.email, "country_code": "US"},
+        )
+    )
+    contact = store.create_contact(
+        Contact(
+            account_id=account.id or 0,
+            full_name="Pat Owner",
+            email=lead.email,
+            role="owner",
+            metadata={"country_code": "US"},
+        )
+    )
+    store.create_opportunity(
+        Opportunity(
+            account_id=account.id or 0,
+            name="Website Growth Audit for Launch Ready Roofing",
+            offer_name="Website Growth Audit",
+            stage="qualified",
+            status="open",
+            score=88.0,
+            estimated_value=1800.0,
+            next_action="launch_bridge",
+            metadata={
+                "contact_id": contact.id or 0,
+                "curated_launch_batch": True,
+                "website_findings": "the quote CTA is buried below the fold on mobile",
+                "quick_win": "move the quote CTA into the hero and service pages",
+                "website_url": "https://launch-ready-roofing.com",
+            },
+        )
+    )
+
+
 def test_public_report_snapshot_exposes_claim_safe_metrics(tmp_path: Path) -> None:
     store = _seed_public_report_fixture(tmp_path)
 
@@ -139,7 +219,208 @@ def test_generator_writes_public_safe_report_artifact(tmp_path: Path) -> None:
     payload = json.loads(output_path.read_text(encoding="utf-8"))
 
     assert payload["headline"]["title"] == "JJ-N Website Growth Audit"
+    assert payload["schema_version"] == "nontrading_public_report.v2"
     assert payload["wedge"]["offer_name"] == "Website Growth Audit"
     assert payload["wedge"]["status"] == "revenue_evidence"
     assert payload["commercial"]["time_to_first_dollar_status"] == "observed"
+    assert payload["first_dollar_readiness"]["status"] == "first_dollar_observed"
+    assert payload["first_dollar_readiness"]["expected_net_cash_30d"] == 1600.0
+    assert payload["first_dollar_scoreboard"]["status"] == "first_dollar_observed"
+    assert payload["allocator_input"]["engine_family"] == "revenue_audit"
+    assert payload["allocator_input"]["expected_net_cash_30d"] == 1600.0
+    assert payload["comparison_artifact"]["items"][1]["comparison_only"] is True
+    assert payload["comparison_artifact"]["items"][1]["excluded_from_allocator"] is True
     assert payload["source_artifacts"]["report_artifact"].endswith("reports/nontrading_public_report.json")
+
+
+def test_generator_builds_launch_summary_from_real_surfaces(monkeypatch, tmp_path: Path) -> None:
+    db_path = tmp_path / "revenue_agent.db"
+    _configure_launch_env(monkeypatch, db_path)
+    store = RevenueStore(db_path)
+    telemetry = NonTradingTelemetry(store)
+    account = store.create_account(Account(name="Launch Ready Co", domain="launch-ready.example"))
+    telemetry.account_researched(account, source="fixture", notes="launchable")
+    _seed_launch_ready_manual_close_fixture(store)
+
+    report_path = tmp_path / "nontrading_public_report.json"
+    launch_summary_path = tmp_path / "nontrading_launch_summary.json"
+    status_path = tmp_path / "nontrading_first_dollar_status.json"
+    allocator_path = tmp_path / "nontrading_allocator_input.json"
+    comparison_path = tmp_path / "nontrading_benchmark_comparison.json"
+    report = build_public_report(
+        store,
+        report_path=report_path,
+        launch_summary_path=launch_summary_path,
+        status_path=status_path,
+        allocator_path=allocator_path,
+        comparison_path=comparison_path,
+    )
+    write_sidecar_artifacts(
+        report,
+        launch_summary_path=launch_summary_path,
+        status_path=status_path,
+        allocator_path=allocator_path,
+        comparison_path=comparison_path,
+    )
+
+    launch_payload = json.loads(launch_summary_path.read_text(encoding="utf-8"))
+
+    assert report["launch_summary"]["checkout_ready"] is True
+    assert report["launch_summary"]["webhook_ready"] is True
+    assert report["launch_summary"]["manual_close_ready"] is True
+    assert report["launch_summary"]["fulfillment_ready"] is True
+    assert report["launch_summary"]["launchable"] is True
+    assert report["first_dollar_readiness"]["status"] == "launchable"
+    assert report["first_dollar_readiness"]["launchable"] is True
+    assert report["first_dollar_scoreboard"]["live_offer_url"] == "https://elastifund.io/v1/nontrading/offers/website-growth-audit"
+    assert launch_payload["selected_prospects"] == 1
+    assert launch_payload["source_artifact"] == str(launch_summary_path)
+
+
+def test_generator_derives_launchable_and_paid_order_states_from_launch_inputs(tmp_path: Path) -> None:
+    store = RevenueStore(tmp_path / "revenue_agent.db")
+    telemetry = NonTradingTelemetry(store)
+    account = store.create_account(Account(name="Launch Ready Co", domain="launch.example"))
+    launch_summary_path = tmp_path / "nontrading_launch_summary.json"
+    store.create_opportunity(
+        Opportunity(
+            account_id=account.id or 0,
+            name="Website Growth Audit",
+            offer_name="Website Growth Audit",
+            stage="qualified",
+            status="open",
+            score=78.0,
+        )
+    )
+    telemetry.account_researched(account, source="fixture", notes="launchable")
+
+    launchable_report = build_public_report(
+        store,
+        launch_summary_path=launch_summary_path,
+        launch_summary={
+            "checkout_ready": True,
+            "webhook_ready": True,
+            "manual_close_ready": True,
+            "fulfillment_ready": True,
+            "checkout_sessions_created": 3,
+            "orders_recorded": 1,
+        },
+    )
+
+    assert launchable_report["first_dollar_readiness"]["status"] == "launchable"
+    assert launchable_report["first_dollar_readiness"]["launchable"] is True
+    assert launchable_report["first_dollar_readiness"]["expected_net_cash_30d"] == 315.0
+    assert launchable_report["allocator_input"]["compliance_status"] == "pass"
+
+    paid_report = build_public_report(
+        store,
+        launch_summary_path=launch_summary_path,
+        launch_summary={
+            "checkout_ready": True,
+            "webhook_ready": True,
+            "manual_close_ready": True,
+            "fulfillment_ready": True,
+            "checkout_sessions_created": 3,
+            "orders_recorded": 1,
+            "paid_orders_seen": 1,
+            "paid_revenue_usd": 500.0,
+            "delivery_artifacts_generated": 1,
+        },
+        benchmark_payload={
+            "status": "comparison_ready",
+            "decision_count": "9",
+            "cost_usd": "14.5",
+            "outcome_value_usd": "42.0",
+        },
+    )
+
+    status_path = tmp_path / "nontrading_first_dollar_status.json"
+    allocator_path = tmp_path / "nontrading_allocator_input.json"
+    comparison_path = tmp_path / "nontrading_benchmark_comparison.json"
+    write_sidecar_artifacts(
+        paid_report,
+        launch_summary_path=launch_summary_path,
+        status_path=status_path,
+        allocator_path=allocator_path,
+        comparison_path=comparison_path,
+    )
+
+    launch_payload = json.loads(launch_summary_path.read_text(encoding="utf-8"))
+    status_payload = json.loads(status_path.read_text(encoding="utf-8"))
+    allocator_payload = json.loads(allocator_path.read_text(encoding="utf-8"))
+    comparison_payload = json.loads(comparison_path.read_text(encoding="utf-8"))
+
+    assert paid_report["first_dollar_readiness"]["status"] == "paid_order_seen"
+    assert paid_report["first_dollar_readiness"]["paid_orders_seen"] == 1
+    assert launch_payload["paid_orders_seen"] == 1
+    assert status_payload["status"] == "paid_order_seen"
+    assert allocator_payload["revenue_audit"]["metadata"]["first_dollar_status"] == "paid_order_seen"
+    assert comparison_payload["items"][1]["comparison_only"] is True
+    assert comparison_payload["items"][1]["excluded_from_allocator"] is True
+    assert comparison_payload["items"][1]["metrics"]["decision_count"] == 9
+    assert comparison_payload["items"][1]["metrics"]["cost_usd"] == 14.5
+
+
+def test_generator_normalizes_openclaw_evidence_packet_into_comparison_artifact(tmp_path: Path) -> None:
+    store = RevenueStore(tmp_path / "revenue_agent.db")
+    telemetry = NonTradingTelemetry(store)
+    account = store.create_account(Account(name="Benchmark Ready Co", domain="benchmark.example"))
+    store.create_opportunity(
+        Opportunity(
+            account_id=account.id or 0,
+            name="Website Growth Audit",
+            offer_name="Website Growth Audit",
+            stage="qualified",
+            status="open",
+            score=74.0,
+        )
+    )
+    telemetry.account_researched(account, source="fixture", notes="benchmark bridge")
+
+    packet = build_openclaw_benchmark_packet(
+        run_id="openclaw-cycle3-comparison-only",
+        diagnostics_events=[
+            {"ts": 1_000, "type": "message.processed", "outcome": "completed", "durationMs": 300},
+            {"ts": 2_000, "type": "message.processed", "outcome": "completed", "durationMs": 500},
+            {"ts": 3_000, "type": "model.usage", "costUsd": 0.08, "durationMs": 420},
+        ],
+        outcome_comparisons=[
+            {
+                "case_id": "cta-coverage",
+                "elastifund_value": {"issues_found": 3},
+                "openclaw_value": {"issues_found": 2},
+                "winner": "elastifund",
+            }
+        ],
+        source_artifacts=["tests/fixtures/openclaw/diagnostics.jsonl"],
+    )
+
+    report = build_public_report(
+        store,
+        benchmark_payload=packet.to_dict(),
+    )
+
+    benchmark_row = report["comparison_artifact"]["items"][1]
+
+    assert report["comparison_artifact"]["state"] == "comparison_ready"
+    assert benchmark_row["status"] == "comparison_ready"
+    assert benchmark_row["comparison_mode"] == "comparison_only"
+    assert benchmark_row["comparison_only"] is True
+    assert benchmark_row["excluded_from_allocator"] is True
+    assert benchmark_row["allocator_eligible"] is False
+    assert benchmark_row["metrics"]["decision_count"] == 2
+    assert benchmark_row["metrics"]["cycle_time_seconds"] == 0.4
+    assert benchmark_row["metrics"]["cost_usd"] == 0.08
+    assert benchmark_row["isolation"]["wallet_access"] == "none"
+    assert benchmark_row["isolation"]["shared_state_access"] == "none"
+    assert benchmark_row["metadata"]["comparison_case_count"] == 1
+    assert benchmark_row["metadata"]["upstream_commit"]
+    assert benchmark_row["notes"][0] == "OpenClaw comparison is isolated and excluded from live allocator decisions."
+    assert benchmark_row["source_artifact"] == "tests/fixtures/openclaw/diagnostics.jsonl"
+
+
+def test_resolve_optional_input_path_uses_existing_fallback(tmp_path: Path) -> None:
+    fallback = tmp_path / "openclaw.json"
+    fallback.write_text("{}", encoding="utf-8")
+
+    assert resolve_optional_input_path(None, fallback=fallback) == fallback

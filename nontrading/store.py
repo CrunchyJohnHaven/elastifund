@@ -33,6 +33,16 @@ from nontrading.models import (
     normalize_email,
     utc_now,
 )
+from nontrading.revenue_audit.models import (
+    AuditBundle,
+    CheckoutSession,
+    FirstDollarReadiness,
+    FulfillmentJob,
+    IssueEvidence,
+    MonitorRun,
+    PaymentEvent,
+    ProspectProfile,
+)
 
 logger = logging.getLogger("nontrading.store")
 UTC = timezone.utc
@@ -84,6 +94,13 @@ DEFAULT_TABLES = {
     "outcomes": "crm_outcomes",
     "approval_requests": "approval_requests",
     "telemetry_events": "telemetry_events",
+    "prospect_profiles": "prospect_profiles",
+    "issue_evidence": "issue_evidence",
+    "audit_bundles": "audit_bundles",
+    "checkout_sessions": "checkout_sessions",
+    "payment_events": "payment_events",
+    "fulfillment_jobs": "fulfillment_jobs",
+    "monitor_runs": "monitor_runs",
 }
 
 COMPAT_TABLES = {
@@ -104,6 +121,13 @@ COMPAT_TABLES = {
     "outcomes": "nt_crm_outcomes",
     "approval_requests": "nt_approval_requests",
     "telemetry_events": "nt_telemetry_events",
+    "prospect_profiles": "nt_prospect_profiles",
+    "issue_evidence": "nt_issue_evidence",
+    "audit_bundles": "nt_audit_bundles",
+    "checkout_sessions": "nt_checkout_sessions",
+    "payment_events": "nt_payment_events",
+    "fulfillment_jobs": "nt_fulfillment_jobs",
+    "monitor_runs": "nt_monitor_runs",
 }
 
 REQUIRED_DEFAULT_COLUMNS = {
@@ -124,6 +148,13 @@ REQUIRED_DEFAULT_COLUMNS = {
     "outcomes": {"id", "account_id", "opportunity_id", "updated_at"},
     "approval_requests": {"id", "action_type", "entity_id", "updated_at"},
     "telemetry_events": {"id", "event_type", "entity_type", "created_at"},
+    "prospect_profiles": {"id", "company_name", "domain_normalized", "updated_at"},
+    "issue_evidence": {"id", "prospect_id", "issue_key", "updated_at"},
+    "audit_bundles": {"id", "prospect_id", "bundle_kind", "issue_ids_json", "updated_at"},
+    "checkout_sessions": {"id", "provider", "status", "order_id", "updated_at"},
+    "payment_events": {"id", "provider", "event_type", "status", "updated_at"},
+    "fulfillment_jobs": {"id", "opportunity_id", "payment_event_id", "status", "updated_at"},
+    "monitor_runs": {"id", "opportunity_id", "baseline_bundle_id", "current_bundle_id", "updated_at"},
 }
 
 
@@ -463,6 +494,184 @@ class RevenueStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_{t['telemetry_events']}_event
                     ON {t['telemetry_events']}(event_type, created_at);
+
+                CREATE TABLE IF NOT EXISTS {t['prospect_profiles']} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    account_id INTEGER,
+                    opportunity_id INTEGER,
+                    company_name TEXT NOT NULL,
+                    domain TEXT NOT NULL DEFAULT '',
+                    domain_normalized TEXT NOT NULL DEFAULT '',
+                    website_url TEXT NOT NULL DEFAULT '',
+                    source TEXT NOT NULL DEFAULT 'public_web',
+                    segment TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'discovered',
+                    country_code TEXT NOT NULL DEFAULT 'US',
+                    score REAL NOT NULL DEFAULT 0.0,
+                    metadata_json TEXT NOT NULL DEFAULT '{{}}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(account_id) REFERENCES {t['accounts']}(id),
+                    FOREIGN KEY(opportunity_id) REFERENCES {t['opportunities']}(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_{t['prospect_profiles']}_opportunity
+                    ON {t['prospect_profiles']}(opportunity_id, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_{t['prospect_profiles']}_domain
+                    ON {t['prospect_profiles']}(domain_normalized, updated_at);
+
+                CREATE TABLE IF NOT EXISTS {t['issue_evidence']} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    prospect_id INTEGER NOT NULL,
+                    issue_key TEXT NOT NULL,
+                    detector_key TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    summary TEXT NOT NULL DEFAULT '',
+                    severity TEXT NOT NULL DEFAULT 'medium',
+                    confidence REAL NOT NULL DEFAULT 0.0,
+                    impact_score REAL NOT NULL DEFAULT 0.0,
+                    source_url TEXT NOT NULL DEFAULT '',
+                    evidence_text TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'open',
+                    metadata_json TEXT NOT NULL DEFAULT '{{}}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(prospect_id) REFERENCES {t['prospect_profiles']}(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_{t['issue_evidence']}_prospect
+                    ON {t['issue_evidence']}(prospect_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_{t['issue_evidence']}_issue_key
+                    ON {t['issue_evidence']}(issue_key, detector_key);
+
+                CREATE TABLE IF NOT EXISTS {t['audit_bundles']} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    prospect_id INTEGER NOT NULL,
+                    opportunity_id INTEGER,
+                    proposal_id INTEGER,
+                    order_id TEXT NOT NULL DEFAULT '',
+                    bundle_kind TEXT NOT NULL DEFAULT 'baseline',
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    offer_slug TEXT NOT NULL DEFAULT 'website-growth-audit',
+                    summary TEXT NOT NULL DEFAULT '',
+                    score REAL NOT NULL DEFAULT 0.0,
+                    issue_ids_json TEXT NOT NULL DEFAULT '[]',
+                    artifact_path TEXT NOT NULL DEFAULT '',
+                    metadata_json TEXT NOT NULL DEFAULT '{{}}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(prospect_id) REFERENCES {t['prospect_profiles']}(id),
+                    FOREIGN KEY(opportunity_id) REFERENCES {t['opportunities']}(id),
+                    FOREIGN KEY(proposal_id) REFERENCES {t['proposals']}(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_{t['audit_bundles']}_opportunity
+                    ON {t['audit_bundles']}(opportunity_id, bundle_kind, updated_at);
+
+                CREATE TABLE IF NOT EXISTS {t['checkout_sessions']} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    prospect_id INTEGER,
+                    opportunity_id INTEGER,
+                    proposal_id INTEGER,
+                    offer_slug TEXT NOT NULL DEFAULT 'website-growth-audit',
+                    provider TEXT NOT NULL DEFAULT 'stripe',
+                    status TEXT NOT NULL DEFAULT 'created',
+                    amount REAL NOT NULL DEFAULT 0.0,
+                    currency TEXT NOT NULL DEFAULT 'USD',
+                    order_id TEXT NOT NULL DEFAULT '',
+                    provider_session_id TEXT NOT NULL DEFAULT '',
+                    success_url TEXT NOT NULL DEFAULT '',
+                    cancel_url TEXT NOT NULL DEFAULT '',
+                    metadata_json TEXT NOT NULL DEFAULT '{{}}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(prospect_id) REFERENCES {t['prospect_profiles']}(id),
+                    FOREIGN KEY(opportunity_id) REFERENCES {t['opportunities']}(id),
+                    FOREIGN KEY(proposal_id) REFERENCES {t['proposals']}(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_{t['checkout_sessions']}_status
+                    ON {t['checkout_sessions']}(status, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_{t['checkout_sessions']}_order
+                    ON {t['checkout_sessions']}(order_id, provider_session_id);
+
+                CREATE TABLE IF NOT EXISTS {t['payment_events']} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    checkout_session_id INTEGER,
+                    prospect_id INTEGER,
+                    opportunity_id INTEGER,
+                    proposal_id INTEGER,
+                    provider TEXT NOT NULL DEFAULT 'stripe',
+                    event_type TEXT NOT NULL DEFAULT 'checkout.session.completed',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    amount REAL NOT NULL DEFAULT 0.0,
+                    currency TEXT NOT NULL DEFAULT 'USD',
+                    order_id TEXT NOT NULL DEFAULT '',
+                    provider_event_id TEXT NOT NULL DEFAULT '',
+                    customer_email TEXT NOT NULL DEFAULT '',
+                    metadata_json TEXT NOT NULL DEFAULT '{{}}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(checkout_session_id) REFERENCES {t['checkout_sessions']}(id),
+                    FOREIGN KEY(prospect_id) REFERENCES {t['prospect_profiles']}(id),
+                    FOREIGN KEY(opportunity_id) REFERENCES {t['opportunities']}(id),
+                    FOREIGN KEY(proposal_id) REFERENCES {t['proposals']}(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_{t['payment_events']}_status
+                    ON {t['payment_events']}(status, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_{t['payment_events']}_order
+                    ON {t['payment_events']}(order_id, provider_event_id);
+
+                CREATE TABLE IF NOT EXISTS {t['fulfillment_jobs']} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    opportunity_id INTEGER NOT NULL,
+                    proposal_id INTEGER,
+                    prospect_id INTEGER,
+                    payment_event_id INTEGER NOT NULL,
+                    audit_bundle_id INTEGER,
+                    offer_slug TEXT NOT NULL DEFAULT 'website-growth-audit',
+                    status TEXT NOT NULL DEFAULT 'queued',
+                    current_step TEXT NOT NULL DEFAULT 'provisioning',
+                    order_id TEXT NOT NULL DEFAULT '',
+                    artifact_path TEXT NOT NULL DEFAULT '',
+                    checklist_json TEXT NOT NULL DEFAULT '[]',
+                    metadata_json TEXT NOT NULL DEFAULT '{{}}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    FOREIGN KEY(opportunity_id) REFERENCES {t['opportunities']}(id),
+                    FOREIGN KEY(proposal_id) REFERENCES {t['proposals']}(id),
+                    FOREIGN KEY(prospect_id) REFERENCES {t['prospect_profiles']}(id),
+                    FOREIGN KEY(payment_event_id) REFERENCES {t['payment_events']}(id),
+                    FOREIGN KEY(audit_bundle_id) REFERENCES {t['audit_bundles']}(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_{t['fulfillment_jobs']}_status
+                    ON {t['fulfillment_jobs']}(status, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_{t['fulfillment_jobs']}_payment
+                    ON {t['fulfillment_jobs']}(payment_event_id, updated_at);
+
+                CREATE TABLE IF NOT EXISTS {t['monitor_runs']} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    opportunity_id INTEGER NOT NULL,
+                    fulfillment_job_id INTEGER,
+                    baseline_bundle_id INTEGER NOT NULL,
+                    current_bundle_id INTEGER NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'queued',
+                    delta_artifact_path TEXT NOT NULL DEFAULT '',
+                    new_issue_count INTEGER NOT NULL DEFAULT 0,
+                    resolved_issue_count INTEGER NOT NULL DEFAULT 0,
+                    persistent_issue_count INTEGER NOT NULL DEFAULT 0,
+                    metadata_json TEXT NOT NULL DEFAULT '{{}}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    FOREIGN KEY(opportunity_id) REFERENCES {t['opportunities']}(id),
+                    FOREIGN KEY(fulfillment_job_id) REFERENCES {t['fulfillment_jobs']}(id),
+                    FOREIGN KEY(baseline_bundle_id) REFERENCES {t['audit_bundles']}(id),
+                    FOREIGN KEY(current_bundle_id) REFERENCES {t['audit_bundles']}(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_{t['monitor_runs']}_status
+                    ON {t['monitor_runs']}(status, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_{t['monitor_runs']}_opportunity
+                    ON {t['monitor_runs']}(opportunity_id, updated_at);
                 """
             )
             conn.execute(
@@ -667,6 +876,142 @@ class RevenueStore:
             status=row["status"],
             payload=json.loads(row["payload_json"]),
             created_at=row["created_at"],
+        )
+
+    def _prospect_profile_from_row(self, row: sqlite3.Row) -> ProspectProfile:
+        return ProspectProfile(
+            id=row["id"],
+            account_id=row["account_id"],
+            opportunity_id=row["opportunity_id"],
+            company_name=row["company_name"],
+            domain=row["domain"],
+            website_url=row["website_url"],
+            source=row["source"],
+            segment=row["segment"],
+            status=row["status"],
+            country_code=row["country_code"],
+            score=float(row["score"]),
+            metadata=json.loads(row["metadata_json"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _issue_evidence_from_row(self, row: sqlite3.Row) -> IssueEvidence:
+        return IssueEvidence(
+            id=row["id"],
+            prospect_id=row["prospect_id"],
+            issue_key=row["issue_key"],
+            detector_key=row["detector_key"],
+            title=row["title"],
+            summary=row["summary"],
+            severity=row["severity"],
+            confidence=float(row["confidence"]),
+            impact_score=float(row["impact_score"]),
+            source_url=row["source_url"],
+            evidence_text=row["evidence_text"],
+            status=row["status"],
+            metadata=json.loads(row["metadata_json"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _audit_bundle_from_row(self, row: sqlite3.Row) -> AuditBundle:
+        return AuditBundle(
+            id=row["id"],
+            prospect_id=row["prospect_id"],
+            opportunity_id=row["opportunity_id"],
+            proposal_id=row["proposal_id"],
+            order_id=row["order_id"],
+            bundle_kind=row["bundle_kind"],
+            status=row["status"],
+            offer_slug=row["offer_slug"],
+            summary=row["summary"],
+            score=float(row["score"]),
+            issue_ids=tuple(int(item) for item in json.loads(row["issue_ids_json"])),
+            artifact_path=row["artifact_path"],
+            metadata=json.loads(row["metadata_json"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _checkout_session_from_row(self, row: sqlite3.Row) -> CheckoutSession:
+        return CheckoutSession(
+            id=row["id"],
+            prospect_id=row["prospect_id"],
+            opportunity_id=row["opportunity_id"],
+            proposal_id=row["proposal_id"],
+            offer_slug=row["offer_slug"],
+            provider=row["provider"],
+            status=row["status"],
+            amount=float(row["amount"]),
+            currency=row["currency"],
+            order_id=row["order_id"],
+            provider_session_id=row["provider_session_id"],
+            success_url=row["success_url"],
+            cancel_url=row["cancel_url"],
+            metadata=json.loads(row["metadata_json"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _payment_event_from_row(self, row: sqlite3.Row) -> PaymentEvent:
+        return PaymentEvent(
+            id=row["id"],
+            checkout_session_id=row["checkout_session_id"],
+            prospect_id=row["prospect_id"],
+            opportunity_id=row["opportunity_id"],
+            proposal_id=row["proposal_id"],
+            provider=row["provider"],
+            event_type=row["event_type"],
+            status=row["status"],
+            amount=float(row["amount"]),
+            currency=row["currency"],
+            order_id=row["order_id"],
+            provider_event_id=row["provider_event_id"],
+            customer_email=row["customer_email"],
+            metadata=json.loads(row["metadata_json"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _fulfillment_job_from_row(self, row: sqlite3.Row) -> FulfillmentJob:
+        return FulfillmentJob(
+            id=row["id"],
+            opportunity_id=row["opportunity_id"],
+            proposal_id=row["proposal_id"],
+            prospect_id=row["prospect_id"],
+            payment_event_id=row["payment_event_id"],
+            audit_bundle_id=row["audit_bundle_id"],
+            offer_slug=row["offer_slug"],
+            status=row["status"],
+            current_step=row["current_step"],
+            order_id=row["order_id"],
+            artifact_path=row["artifact_path"],
+            checklist=tuple(json.loads(row["checklist_json"])),
+            metadata=json.loads(row["metadata_json"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            started_at=row["started_at"],
+            completed_at=row["completed_at"],
+        )
+
+    def _monitor_run_from_row(self, row: sqlite3.Row) -> MonitorRun:
+        return MonitorRun(
+            id=row["id"],
+            opportunity_id=row["opportunity_id"],
+            fulfillment_job_id=row["fulfillment_job_id"],
+            baseline_bundle_id=row["baseline_bundle_id"],
+            current_bundle_id=row["current_bundle_id"],
+            status=row["status"],
+            delta_artifact_path=row["delta_artifact_path"],
+            new_issue_count=int(row["new_issue_count"]),
+            resolved_issue_count=int(row["resolved_issue_count"]),
+            persistent_issue_count=int(row["persistent_issue_count"]),
+            metadata=json.loads(row["metadata_json"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            started_at=row["started_at"],
+            completed_at=row["completed_at"],
         )
 
     def get_agent_state(self) -> AgentState:
@@ -1639,6 +1984,774 @@ class RevenueStore:
             rows = conn.execute(sql, params).fetchall()
         return [self._contact_from_row(row) for row in rows]
 
+    def prospect_profile_from_account(self, account: Account, opportunity_id: int | None = None) -> ProspectProfile:
+        return ProspectProfile(
+            account_id=account.id,
+            opportunity_id=opportunity_id,
+            company_name=account.name,
+            domain=account.domain,
+            website_url=account.website_url,
+            source="account_record",
+            segment=account.industry,
+            status="discovered",
+            score=float(account.metadata.get("fit_score", 0.0) or 0.0),
+            metadata={
+                "account_id": account.id,
+                "account_status": account.status,
+            },
+        )
+
+    def create_prospect_profile(self, profile: ProspectProfile) -> ProspectProfile:
+        now = utc_now()
+        t = self.tables
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"""
+                INSERT INTO {t['prospect_profiles']} (
+                    account_id,
+                    opportunity_id,
+                    company_name,
+                    domain,
+                    domain_normalized,
+                    website_url,
+                    source,
+                    segment,
+                    status,
+                    country_code,
+                    score,
+                    metadata_json,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    profile.account_id,
+                    profile.opportunity_id,
+                    profile.company_name.strip(),
+                    profile.domain.strip(),
+                    normalize_domain(profile.domain),
+                    profile.website_url.strip(),
+                    profile.source.strip() or "public_web",
+                    profile.segment.strip(),
+                    profile.status,
+                    normalize_country(profile.country_code),
+                    float(profile.score),
+                    json.dumps(profile.metadata, sort_keys=True),
+                    now,
+                    now,
+                ),
+            )
+            profile_id = int(cursor.lastrowid)
+        return ProspectProfile(
+            id=profile_id,
+            account_id=profile.account_id,
+            opportunity_id=profile.opportunity_id,
+            company_name=profile.company_name.strip(),
+            domain=profile.domain.strip(),
+            website_url=profile.website_url.strip(),
+            source=profile.source.strip() or "public_web",
+            segment=profile.segment.strip(),
+            status=profile.status,
+            country_code=normalize_country(profile.country_code),
+            score=float(profile.score),
+            metadata=profile.metadata,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def get_prospect_profile(self, profile_id: int) -> ProspectProfile | None:
+        t = self.tables
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT * FROM {t['prospect_profiles']} WHERE id = ?",
+                (profile_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._prospect_profile_from_row(row)
+
+    def list_prospect_profiles(
+        self,
+        *,
+        account_id: int | None = None,
+        opportunity_id: int | None = None,
+        status: str | None = None,
+    ) -> list[ProspectProfile]:
+        t = self.tables
+        sql = f"SELECT * FROM {t['prospect_profiles']}"
+        params: list[Any] = []
+        clauses: list[str] = []
+        if account_id is not None:
+            clauses.append("account_id = ?")
+            params.append(account_id)
+        if opportunity_id is not None:
+            clauses.append("opportunity_id = ?")
+            params.append(opportunity_id)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY updated_at ASC, id ASC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._prospect_profile_from_row(row) for row in rows]
+
+    def create_issue_evidence(self, evidence: IssueEvidence) -> IssueEvidence:
+        now = utc_now()
+        t = self.tables
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"""
+                INSERT INTO {t['issue_evidence']} (
+                    prospect_id,
+                    issue_key,
+                    detector_key,
+                    title,
+                    summary,
+                    severity,
+                    confidence,
+                    impact_score,
+                    source_url,
+                    evidence_text,
+                    status,
+                    metadata_json,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    evidence.prospect_id,
+                    evidence.issue_key,
+                    evidence.detector_key,
+                    evidence.title,
+                    evidence.summary,
+                    evidence.severity,
+                    float(evidence.confidence),
+                    float(evidence.impact_score),
+                    evidence.source_url,
+                    evidence.evidence_text,
+                    evidence.status,
+                    json.dumps(evidence.metadata, sort_keys=True),
+                    now,
+                    now,
+                ),
+            )
+            evidence_id = int(cursor.lastrowid)
+        return IssueEvidence(
+            id=evidence_id,
+            prospect_id=evidence.prospect_id,
+            issue_key=evidence.issue_key,
+            detector_key=evidence.detector_key,
+            title=evidence.title,
+            summary=evidence.summary,
+            severity=evidence.severity,
+            confidence=float(evidence.confidence),
+            impact_score=float(evidence.impact_score),
+            source_url=evidence.source_url,
+            evidence_text=evidence.evidence_text,
+            status=evidence.status,
+            metadata=evidence.metadata,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def get_issue_evidence(self, evidence_id: int) -> IssueEvidence | None:
+        t = self.tables
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT * FROM {t['issue_evidence']} WHERE id = ?",
+                (evidence_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._issue_evidence_from_row(row)
+
+    def list_issue_evidence(
+        self,
+        *,
+        prospect_id: int | None = None,
+        bundle_id: int | None = None,
+        status: str | None = None,
+    ) -> list[IssueEvidence]:
+        t = self.tables
+        if bundle_id is not None:
+            bundle = self.get_audit_bundle(bundle_id)
+            if bundle is None or not bundle.issue_ids:
+                return []
+            placeholders = ",".join("?" for _ in bundle.issue_ids)
+            sql = f"SELECT * FROM {t['issue_evidence']} WHERE id IN ({placeholders})"
+            params: list[Any] = list(bundle.issue_ids)
+            if status:
+                sql += " AND status = ?"
+                params.append(status)
+            sql += " ORDER BY impact_score DESC, id ASC"
+            with self._connect() as conn:
+                rows = conn.execute(sql, params).fetchall()
+            return [self._issue_evidence_from_row(row) for row in rows]
+
+        sql = f"SELECT * FROM {t['issue_evidence']}"
+        params = []
+        clauses: list[str] = []
+        if prospect_id is not None:
+            clauses.append("prospect_id = ?")
+            params.append(prospect_id)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY impact_score DESC, created_at ASC, id ASC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._issue_evidence_from_row(row) for row in rows]
+
+    def create_audit_bundle(self, bundle: AuditBundle) -> AuditBundle:
+        now = utc_now()
+        t = self.tables
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"""
+                INSERT INTO {t['audit_bundles']} (
+                    prospect_id,
+                    opportunity_id,
+                    proposal_id,
+                    order_id,
+                    bundle_kind,
+                    status,
+                    offer_slug,
+                    summary,
+                    score,
+                    issue_ids_json,
+                    artifact_path,
+                    metadata_json,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    bundle.prospect_id,
+                    bundle.opportunity_id,
+                    bundle.proposal_id,
+                    bundle.order_id,
+                    bundle.bundle_kind,
+                    bundle.status,
+                    bundle.offer_slug,
+                    bundle.summary,
+                    float(bundle.score),
+                    json.dumps(list(bundle.issue_ids), sort_keys=True),
+                    bundle.artifact_path,
+                    json.dumps(bundle.metadata, sort_keys=True),
+                    now,
+                    now,
+                ),
+            )
+            bundle_id = int(cursor.lastrowid)
+        return AuditBundle(
+            id=bundle_id,
+            prospect_id=bundle.prospect_id,
+            opportunity_id=bundle.opportunity_id,
+            proposal_id=bundle.proposal_id,
+            order_id=bundle.order_id,
+            bundle_kind=bundle.bundle_kind,
+            status=bundle.status,
+            offer_slug=bundle.offer_slug,
+            summary=bundle.summary,
+            score=float(bundle.score),
+            issue_ids=tuple(int(item) for item in bundle.issue_ids),
+            artifact_path=bundle.artifact_path,
+            metadata=bundle.metadata,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def get_audit_bundle(self, bundle_id: int) -> AuditBundle | None:
+        t = self.tables
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT * FROM {t['audit_bundles']} WHERE id = ?",
+                (bundle_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._audit_bundle_from_row(row)
+
+    def list_audit_bundles(
+        self,
+        *,
+        prospect_id: int | None = None,
+        opportunity_id: int | None = None,
+        bundle_kind: str | None = None,
+        status: str | None = None,
+    ) -> list[AuditBundle]:
+        t = self.tables
+        sql = f"SELECT * FROM {t['audit_bundles']}"
+        params: list[Any] = []
+        clauses: list[str] = []
+        if prospect_id is not None:
+            clauses.append("prospect_id = ?")
+            params.append(prospect_id)
+        if opportunity_id is not None:
+            clauses.append("opportunity_id = ?")
+            params.append(opportunity_id)
+        if bundle_kind:
+            clauses.append("bundle_kind = ?")
+            params.append(bundle_kind)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY created_at ASC, id ASC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._audit_bundle_from_row(row) for row in rows]
+
+    def create_checkout_session(self, session: CheckoutSession) -> CheckoutSession:
+        now = utc_now()
+        t = self.tables
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"""
+                INSERT INTO {t['checkout_sessions']} (
+                    prospect_id,
+                    opportunity_id,
+                    proposal_id,
+                    offer_slug,
+                    provider,
+                    status,
+                    amount,
+                    currency,
+                    order_id,
+                    provider_session_id,
+                    success_url,
+                    cancel_url,
+                    metadata_json,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session.prospect_id,
+                    session.opportunity_id,
+                    session.proposal_id,
+                    session.offer_slug,
+                    session.provider,
+                    session.status,
+                    float(session.amount),
+                    session.currency,
+                    session.order_id,
+                    session.provider_session_id,
+                    session.success_url,
+                    session.cancel_url,
+                    json.dumps(session.metadata, sort_keys=True),
+                    now,
+                    now,
+                ),
+            )
+            session_id = int(cursor.lastrowid)
+        return CheckoutSession(
+            id=session_id,
+            prospect_id=session.prospect_id,
+            opportunity_id=session.opportunity_id,
+            proposal_id=session.proposal_id,
+            offer_slug=session.offer_slug,
+            provider=session.provider,
+            status=session.status,
+            amount=float(session.amount),
+            currency=session.currency,
+            order_id=session.order_id,
+            provider_session_id=session.provider_session_id,
+            success_url=session.success_url,
+            cancel_url=session.cancel_url,
+            metadata=session.metadata,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def get_checkout_session(self, session_id: int) -> CheckoutSession | None:
+        t = self.tables
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT * FROM {t['checkout_sessions']} WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._checkout_session_from_row(row)
+
+    def list_checkout_sessions(
+        self,
+        *,
+        opportunity_id: int | None = None,
+        status: str | None = None,
+    ) -> list[CheckoutSession]:
+        t = self.tables
+        sql = f"SELECT * FROM {t['checkout_sessions']}"
+        params: list[Any] = []
+        clauses: list[str] = []
+        if opportunity_id is not None:
+            clauses.append("opportunity_id = ?")
+            params.append(opportunity_id)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY created_at ASC, id ASC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._checkout_session_from_row(row) for row in rows]
+
+    def create_payment_event(self, event: PaymentEvent) -> PaymentEvent:
+        now = utc_now()
+        t = self.tables
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"""
+                INSERT INTO {t['payment_events']} (
+                    checkout_session_id,
+                    prospect_id,
+                    opportunity_id,
+                    proposal_id,
+                    provider,
+                    event_type,
+                    status,
+                    amount,
+                    currency,
+                    order_id,
+                    provider_event_id,
+                    customer_email,
+                    metadata_json,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event.checkout_session_id,
+                    event.prospect_id,
+                    event.opportunity_id,
+                    event.proposal_id,
+                    event.provider,
+                    event.event_type,
+                    event.status,
+                    float(event.amount),
+                    event.currency,
+                    event.order_id,
+                    event.provider_event_id,
+                    event.customer_email,
+                    json.dumps(event.metadata, sort_keys=True),
+                    now,
+                    now,
+                ),
+            )
+            event_id = int(cursor.lastrowid)
+        return PaymentEvent(
+            id=event_id,
+            checkout_session_id=event.checkout_session_id,
+            prospect_id=event.prospect_id,
+            opportunity_id=event.opportunity_id,
+            proposal_id=event.proposal_id,
+            provider=event.provider,
+            event_type=event.event_type,
+            status=event.status,
+            amount=float(event.amount),
+            currency=event.currency,
+            order_id=event.order_id,
+            provider_event_id=event.provider_event_id,
+            customer_email=event.customer_email,
+            metadata=event.metadata,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def get_payment_event(self, event_id: int) -> PaymentEvent | None:
+        t = self.tables
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT * FROM {t['payment_events']} WHERE id = ?",
+                (event_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._payment_event_from_row(row)
+
+    def list_payment_events(
+        self,
+        *,
+        opportunity_id: int | None = None,
+        status: str | None = None,
+    ) -> list[PaymentEvent]:
+        t = self.tables
+        sql = f"SELECT * FROM {t['payment_events']}"
+        params: list[Any] = []
+        clauses: list[str] = []
+        if opportunity_id is not None:
+            clauses.append("opportunity_id = ?")
+            params.append(opportunity_id)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY created_at ASC, id ASC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._payment_event_from_row(row) for row in rows]
+
+    def create_fulfillment_job(self, job: FulfillmentJob) -> FulfillmentJob:
+        now = utc_now()
+        t = self.tables
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"""
+                INSERT INTO {t['fulfillment_jobs']} (
+                    opportunity_id,
+                    proposal_id,
+                    prospect_id,
+                    payment_event_id,
+                    audit_bundle_id,
+                    offer_slug,
+                    status,
+                    current_step,
+                    order_id,
+                    artifact_path,
+                    checklist_json,
+                    metadata_json,
+                    created_at,
+                    updated_at,
+                    started_at,
+                    completed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    job.opportunity_id,
+                    job.proposal_id,
+                    job.prospect_id,
+                    job.payment_event_id,
+                    job.audit_bundle_id,
+                    job.offer_slug,
+                    job.status,
+                    job.current_step,
+                    job.order_id,
+                    job.artifact_path,
+                    json.dumps(list(job.checklist), sort_keys=True),
+                    json.dumps(job.metadata, sort_keys=True),
+                    now,
+                    now,
+                    job.started_at,
+                    job.completed_at,
+                ),
+            )
+            job_id = int(cursor.lastrowid)
+        return FulfillmentJob(
+            id=job_id,
+            opportunity_id=job.opportunity_id,
+            proposal_id=job.proposal_id,
+            prospect_id=job.prospect_id,
+            payment_event_id=job.payment_event_id,
+            audit_bundle_id=job.audit_bundle_id,
+            offer_slug=job.offer_slug,
+            status=job.status,
+            current_step=job.current_step,
+            order_id=job.order_id,
+            artifact_path=job.artifact_path,
+            checklist=tuple(job.checklist),
+            metadata=job.metadata,
+            created_at=now,
+            updated_at=now,
+            started_at=job.started_at,
+            completed_at=job.completed_at,
+        )
+
+    def get_fulfillment_job(self, job_id: int) -> FulfillmentJob | None:
+        t = self.tables
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT * FROM {t['fulfillment_jobs']} WHERE id = ?",
+                (job_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._fulfillment_job_from_row(row)
+
+    def list_fulfillment_jobs(
+        self,
+        *,
+        opportunity_id: int | None = None,
+        payment_event_id: int | None = None,
+        status: str | None = None,
+    ) -> list[FulfillmentJob]:
+        t = self.tables
+        sql = f"SELECT * FROM {t['fulfillment_jobs']}"
+        params: list[Any] = []
+        clauses: list[str] = []
+        if opportunity_id is not None:
+            clauses.append("opportunity_id = ?")
+            params.append(opportunity_id)
+        if payment_event_id is not None:
+            clauses.append("payment_event_id = ?")
+            params.append(payment_event_id)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY created_at ASC, id ASC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._fulfillment_job_from_row(row) for row in rows]
+
+    def update_fulfillment_job(
+        self,
+        job_id: int,
+        *,
+        status: str | None = None,
+        current_step: str | None = None,
+        audit_bundle_id: int | None = None,
+        order_id: str | None = None,
+        artifact_path: str | None = None,
+        checklist: tuple[dict[str, Any], ...] | list[dict[str, Any]] | None = None,
+        metadata: dict[str, Any] | None = None,
+        started_at: str | None = None,
+        completed_at: str | None = None,
+    ) -> FulfillmentJob:
+        existing = self.get_fulfillment_job(job_id)
+        if existing is None:
+            raise RuntimeError(f"Fulfillment job {job_id} disappeared")
+        now = utc_now()
+        merged_metadata = dict(existing.metadata)
+        if metadata:
+            merged_metadata.update(metadata)
+        t = self.tables
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                UPDATE {t['fulfillment_jobs']}
+                SET status = ?,
+                    current_step = ?,
+                    audit_bundle_id = ?,
+                    order_id = ?,
+                    artifact_path = ?,
+                    checklist_json = ?,
+                    metadata_json = ?,
+                    updated_at = ?,
+                    started_at = ?,
+                    completed_at = ?
+                WHERE id = ?
+                """,
+                (
+                    status or existing.status,
+                    current_step or existing.current_step,
+                    audit_bundle_id if audit_bundle_id is not None else existing.audit_bundle_id,
+                    order_id if order_id is not None else existing.order_id,
+                    artifact_path if artifact_path is not None else existing.artifact_path,
+                    json.dumps(list(checklist if checklist is not None else existing.checklist), sort_keys=True),
+                    json.dumps(merged_metadata, sort_keys=True),
+                    now,
+                    started_at if started_at is not None else existing.started_at,
+                    completed_at if completed_at is not None else existing.completed_at,
+                    job_id,
+                ),
+            )
+        updated = self.get_fulfillment_job(job_id)
+        if updated is None:
+            raise RuntimeError(f"Fulfillment job {job_id} disappeared")
+        return updated
+
+    def create_monitor_run(self, run: MonitorRun) -> MonitorRun:
+        now = utc_now()
+        t = self.tables
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"""
+                INSERT INTO {t['monitor_runs']} (
+                    opportunity_id,
+                    fulfillment_job_id,
+                    baseline_bundle_id,
+                    current_bundle_id,
+                    status,
+                    delta_artifact_path,
+                    new_issue_count,
+                    resolved_issue_count,
+                    persistent_issue_count,
+                    metadata_json,
+                    created_at,
+                    updated_at,
+                    started_at,
+                    completed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run.opportunity_id,
+                    run.fulfillment_job_id,
+                    run.baseline_bundle_id,
+                    run.current_bundle_id,
+                    run.status,
+                    run.delta_artifact_path,
+                    int(run.new_issue_count),
+                    int(run.resolved_issue_count),
+                    int(run.persistent_issue_count),
+                    json.dumps(run.metadata, sort_keys=True),
+                    now,
+                    now,
+                    run.started_at,
+                    run.completed_at,
+                ),
+            )
+            run_id = int(cursor.lastrowid)
+        return MonitorRun(
+            id=run_id,
+            opportunity_id=run.opportunity_id,
+            fulfillment_job_id=run.fulfillment_job_id,
+            baseline_bundle_id=run.baseline_bundle_id,
+            current_bundle_id=run.current_bundle_id,
+            status=run.status,
+            delta_artifact_path=run.delta_artifact_path,
+            new_issue_count=int(run.new_issue_count),
+            resolved_issue_count=int(run.resolved_issue_count),
+            persistent_issue_count=int(run.persistent_issue_count),
+            metadata=run.metadata,
+            created_at=now,
+            updated_at=now,
+            started_at=run.started_at,
+            completed_at=run.completed_at,
+        )
+
+    def get_monitor_run(self, run_id: int) -> MonitorRun | None:
+        t = self.tables
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT * FROM {t['monitor_runs']} WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._monitor_run_from_row(row)
+
+    def list_monitor_runs(
+        self,
+        *,
+        opportunity_id: int | None = None,
+        status: str | None = None,
+    ) -> list[MonitorRun]:
+        t = self.tables
+        sql = f"SELECT * FROM {t['monitor_runs']}"
+        params: list[Any] = []
+        clauses: list[str] = []
+        if opportunity_id is not None:
+            clauses.append("opportunity_id = ?")
+            params.append(opportunity_id)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY created_at ASC, id ASC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._monitor_run_from_row(row) for row in rows]
+
     def create_opportunity(self, opportunity: Opportunity) -> Opportunity:
         now = utc_now()
         t = self.tables
@@ -2491,7 +3604,114 @@ class RevenueStore:
             "table_namespace": "compat" if t != DEFAULT_TABLES else "default",
         }
 
+    def first_dollar_readiness(self) -> FirstDollarReadiness:
+        from nontrading.revenue_audit.store import RevenueAuditStore
+
+        telemetry_events = self.list_telemetry_events()
+        audit_store = RevenueAuditStore(self.db_path)
+        orders = audit_store.list_orders()
+        checkout_sessions = audit_store.list_checkout_sessions()
+        payment_events = [
+            event
+            for event in audit_store.list_payment_events()
+            if str(event.status).strip().lower() in {"paid", "succeeded", "completed"}
+        ]
+        outcomes = self.list_outcomes()
+        real_revenue_outcomes = [
+            outcome
+            for outcome in outcomes
+            if not bool(outcome.metadata.get("simulated"))
+            and outcome.status in ACTUAL_REVENUE_OUTCOME_STATUSES
+            and float(outcome.revenue) > 0.0
+        ]
+        fulfillment_jobs = audit_store.list_fulfillment_jobs()
+        delivered_jobs = [
+            job
+            for job in fulfillment_jobs
+            if str(job.status).strip().lower() in {"completed", "delivered"}
+        ]
+        monitor_runs = [
+            run for run in audit_store.list_monitor_runs() if str(run.status).strip().lower() == "completed"
+        ]
+
+        first_research_at = min(
+            (
+                event.created_at
+                for event in telemetry_events
+                if event.event_type == "account_researched" and event.created_at
+            ),
+            default=None,
+        )
+        first_paid_at = min((event.created_at for event in payment_events if event.created_at), default=None)
+        first_revenue_at = min(
+            (outcome.created_at for outcome in real_revenue_outcomes if outcome.created_at),
+            default=None,
+        )
+        observed_at = first_revenue_at or first_paid_at
+        time_to_first_dollar_hours = _hours_between(first_research_at, observed_at)
+
+        payments_collected_usd = round(sum(float(event.amount_total_usd) for event in payment_events), 2)
+        first_paid_datetime = _parse_timestamp(first_paid_at)
+        last_paid_datetime = _parse_timestamp(
+            max((event.created_at for event in payment_events if event.created_at), default=None)
+        )
+        expected_30d_cashflow_usd = 0.0
+        if payment_events:
+            observed_days = 1.0
+            if first_paid_datetime is not None and last_paid_datetime is not None:
+                observed_days = max((last_paid_datetime - first_paid_datetime).total_seconds() / 86400.0, 1.0)
+            expected_30d_cashflow_usd = round((payments_collected_usd / observed_days) * 30.0, 2)
+
+        paid_orders = [order for order in orders if str(order.status).strip().lower() == "paid"]
+        if real_revenue_outcomes:
+            status = "first_dollar_observed"
+        elif payment_events:
+            status = "paid_order_seen"
+        elif checkout_sessions or orders:
+            status = "launchable"
+        else:
+            status = "setup_only"
+
+        readiness_score = {
+            "setup_only": 25.0,
+            "launchable": 55.0,
+            "paid_order_seen": 80.0,
+            "first_dollar_observed": 100.0,
+        }[status]
+        blockers: list[str] = []
+        if status == "setup_only":
+            blockers.append("checkout_not_ready")
+        if status in {"setup_only", "launchable"}:
+            blockers.append("paid_order_not_observed")
+        if payment_events and not delivered_jobs:
+            blockers.append("fulfillment_delivery_pending")
+        if payment_events and not monitor_runs:
+            blockers.append("monitor_run_not_completed")
+
+        return FirstDollarReadiness(
+            status=status,
+            launchable=bool(checkout_sessions or orders or real_revenue_outcomes),
+            readiness_score=readiness_score,
+            paid_orders_seen=len(paid_orders),
+            cash_collected_usd=payments_collected_usd,
+            time_to_first_dollar_hours=time_to_first_dollar_hours,
+            blockers=tuple(blockers),
+            metrics={
+                "checkout_sessions_created": len(checkout_sessions),
+                "paid_order_seen": bool(payment_events),
+                "first_dollar_observed": bool(real_revenue_outcomes),
+                "fulfillment_jobs_total": len(fulfillment_jobs),
+                "delivered_jobs_total": len(delivered_jobs),
+                "completed_monitor_runs": len(monitor_runs),
+                "expected_30d_cashflow_usd": expected_30d_cashflow_usd,
+                "first_paid_at": first_paid_at,
+                "first_revenue_at": first_revenue_at,
+            },
+        )
+
     def public_report_snapshot(self) -> dict[str, Any]:
+        from nontrading.revenue_audit.store import RevenueAuditStore
+
         snapshot = self.status_snapshot()
         telemetry_events = self.list_telemetry_events()
         opportunities = self.list_opportunities()
@@ -2501,6 +3721,12 @@ class RevenueStore:
         outcomes = self.list_outcomes()
         approval_requests = self.list_approval_requests()
         outbox_messages = self.list_outbox_messages()
+        audit_store = RevenueAuditStore(self.db_path)
+        checkout_sessions = audit_store.list_checkout_sessions()
+        payment_events = audit_store.list_payment_events()
+        fulfillment_jobs = audit_store.list_fulfillment_jobs()
+        monitor_runs = audit_store.list_monitor_runs()
+        readiness = self.first_dollar_readiness()
 
         account_researched_events = [event for event in telemetry_events if event.event_type == "account_researched"]
         cycle_events = [event for event in telemetry_events if event.event_type == "cycle_complete"]
@@ -2532,6 +3758,11 @@ class RevenueStore:
             outcome
             for outcome in actual_outcomes
             if outcome.status in ACTUAL_REVENUE_OUTCOME_STATUSES and float(outcome.revenue) > 0.0
+        ]
+        paid_payment_events = [
+            event
+            for event in payment_events
+            if str(event.status).strip().lower() in {"paid", "succeeded", "completed"}
         ]
 
         revenue_won_usd = round(sum(float(outcome.revenue) for outcome in revenue_outcomes), 2)
@@ -2567,6 +3798,10 @@ class RevenueStore:
             current_phase = "phase_0_revenue_evidence"
             claim_status = "actual_revenue_recorded"
             claim_reason = "Closed-won JJ-N revenue is recorded in repo-tracked outcomes."
+        elif paid_payment_events:
+            current_phase = "phase_0_revenue_evidence"
+            claim_status = "payment_recorded"
+            claim_reason = "A paid JJ-N order is recorded and fulfillment can proceed without manual DB edits."
         elif proposals_sent or actual_outcomes:
             current_phase = "phase_0_offer_ready"
             claim_status = "pipeline_only_no_revenue"
@@ -2620,6 +3855,11 @@ class RevenueStore:
             },
             "commercial": {
                 "revenue_won_usd": revenue_won_usd,
+                "payments_collected_usd": round(
+                    sum(float(event.amount_total_usd) for event in paid_payment_events),
+                    2,
+                ),
+                "paid_orders_count": len(paid_payment_events),
                 "gross_margin_usd": gross_margin_usd,
                 "gross_margin_pct": gross_margin_pct,
                 "time_to_first_dollar_hours": time_to_first_dollar_hours,
@@ -2637,6 +3877,15 @@ class RevenueStore:
             "fulfillment": {
                 "events_recorded": len(fulfillment_events),
                 "status_counts": fulfillment_status_counts,
+                "jobs_total": len(fulfillment_jobs),
+                "delivered_jobs": sum(
+                    1
+                    for job in fulfillment_jobs
+                    if str(job.status).strip().lower() in {"completed", "delivered"}
+                ),
+                "monitor_runs_completed": sum(
+                    1 for run in monitor_runs if str(run.status).strip().lower() == "completed"
+                ),
                 "latest_status": (
                     str(
                         (latest_fulfillment_event.payload.get("fulfillment_status") if latest_fulfillment_event else "")
@@ -2666,5 +3915,14 @@ class RevenueStore:
                 "crm_opportunities": snapshot["crm_opportunities"],
                 "approval_requests": snapshot["approval_requests"],
                 "telemetry_events": snapshot["telemetry_events"],
+                "checkout_sessions": len(checkout_sessions),
+                "payment_events": len(payment_events),
+            },
+            "first_dollar_readiness": readiness.to_dict(),
+            "operations": {
+                "checkout_sessions_created": len(checkout_sessions),
+                "payment_events_recorded": len(payment_events),
+                "fulfillment_jobs_total": len(fulfillment_jobs),
+                "monitor_runs_total": len(monitor_runs),
             },
         }

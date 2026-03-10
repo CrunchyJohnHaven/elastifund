@@ -1,0 +1,66 @@
+{
+  "blocking_reasons": [
+    "checkout_surface_not_ready",
+    "billing_webhook_not_ready",
+    "manual_close_lane_not_ready"
+  ],
+  "checkout_ready": false,
+  "checkout_sessions_created": 0,
+  "curated_candidates": 0,
+  "delivery_artifacts_generated": 0,
+  "fulfillment_ready": true,
+  "generated_at": "2026-03-10T15:06:04+00:00",
+  "launch_mode": "manual_close_only",
+  "launchable": false,
+  "live_offer_url": null,
+  "manual_close_ready": false,
+  "monitor_runs_completed": 0,
+  "orders_recorded": 0,
+  "paid_orders_seen": 0,
+  "paid_revenue_usd": 0,
+  "schema_version": "revenue_audit_launch_summary.v1",
+  "selected_prospects": 0,
+  "selection_overflow": 0,
+  "selection_skips": {
+    "missing_contact": 0,
+    "missing_evidence": 0,
+    "non_us": 0,
+    "uncurated": 3
+  },
+  "sender_verification": {
+    "live_send_eligible": false,
+    "provider": "dry_run",
+    "reason": "provider_dry_run",
+    "sender_domain": "example.invalid",
+    "sender_domain_verified": false,
+    "sender_email": "partnerships@example.invalid"
+  },
+  "source_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_launch_summary.json",
+  "surface_checks": {
+    "checkout_config": {
+      "cancel_url_ready": false,
+      "pricing_configured": true,
+      "public_base_url_ready": false,
+      "stripe_secret_configured": false,
+      "success_url_ready": false
+    },
+    "fulfillment": {
+      "artifact_root": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading",
+      "fulfillment_ready": true,
+      "method_checks": {
+        "fulfill_order": true,
+        "run_monitor": true
+      }
+    },
+    "routes": {
+      "checkout_session": true,
+      "offer": true,
+      "order_status": true,
+      "webhook": true
+    },
+    "webhook_config": {
+      "stripe_webhook_secret_configured": false
+    }
+  },
+  "webhook_ready": false
+}
