@@ -7,28 +7,35 @@
       "send_quota": 10
     },
     "compliance_status": "warning",
-    "confidence": 0.1,
+    "confidence": 0.312,
     "domain_health_penalty": 0.0,
     "engine_family": "revenue_audit",
     "expected_net_cash_30d": 0.0,
     "fulfillment_penalty": 0.0,
     "metadata": {
+      "arr_lab": {
+        "forecast_arr_usd_p50": 0.0,
+        "forecast_confidence": 0.48,
+        "forecast_confidence_label": "medium",
+        "forecast_net_cash_30d_p50": 1488.0,
+        "recommended_experiment": "better_monitor_upsell"
+      },
       "blocking_reasons": [
         "checkout_surface_not_ready",
-        "billing_webhook_not_ready",
-        "manual_close_lane_not_ready"
+        "billing_webhook_not_ready"
       ],
       "comparison_only": false,
       "deliverability_status": "green",
       "excluded_from_allocator": false,
       "first_dollar_status": "setup_only",
       "gross_margin_usd": 0.0,
+      "launch_checklist_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_launch_operator_checklist.json",
       "launch_gates": {
         "billing_webhook_ready": false,
         "checkout_surface_ready": false,
         "compliance_clear": true,
         "fulfillment_surface_ready": true,
-        "manual_close_ready": false,
+        "manual_close_ready": true,
         "offer_defined": true,
         "pipeline_available": true
       },

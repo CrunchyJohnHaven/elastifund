@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import json
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -27,10 +28,13 @@ from nontrading.store import RevenueStore
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT_PATH = PROJECT_ROOT / "reports" / "nontrading_launch_summary.json"
+DEFAULT_OPERATOR_CHECKLIST_PATH = PROJECT_ROOT / "reports" / "nontrading_launch_operator_checklist.json"
 CHECKOUT_SESSION_PATH = "/v1/nontrading/checkout/session"
 WEBHOOK_PATH = "/v1/nontrading/webhooks/stripe"
+ORDER_LOOKUP_PATH = "/v1/nontrading/orders/lookup"
 ORDER_STATUS_PATH = "/v1/nontrading/orders/{order_id}"
 SCHEMA_VERSION = "revenue_audit_launch_summary.v1"
+OPERATOR_CHECKLIST_SCHEMA_VERSION = "revenue_audit_launch_operator_checklist.v1"
 DELIVERED_JOB_STATUSES = {"completed", "delivered"}
 COMPLETED_MONITOR_STATUS = "completed"
 
@@ -53,6 +57,26 @@ def _is_live_http_url(value: str | None) -> bool:
     if not host or host in {"example.com", "example.invalid", "localhost"}:
         return False
     return not host.endswith(".invalid")
+
+
+def _success_url_ready(value: str | None) -> bool:
+    text = str(value or "").strip()
+    return _is_live_http_url(text) and (
+        "{CHECKOUT_SESSION_ID}" in text or "session_id=" in text
+    )
+
+
+def _absolute_url(base_url: str, path: str) -> str:
+    return urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
+
+
+def _mask_secret(value: str | None) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if len(text) <= 8:
+        return "*" * len(text)
+    return f"{text[:4]}...{text[-4:]}"
 
 
 def _route_paths() -> set[str]:
@@ -85,8 +109,12 @@ def _manual_close_surface(
     launch_mode = "approval_queue_only" if sender_verification.live_send_eligible else "manual_close_only"
     selection = bridge._collect_candidates(launch_mode=launch_mode)
     selected_prospects = min(len(selection.candidates), bridge.max_prospects)
+    lane_method_checks = {
+        "collect_candidates": callable(getattr(RevenueAuditAcquisitionBridge, "_collect_candidates", None)),
+        "build_artifact": callable(getattr(RevenueAuditAcquisitionBridge, "build_artifact", None)),
+    }
     return {
-        "manual_close_ready": selected_prospects > 0,
+        "manual_close_ready": all(lane_method_checks.values()),
         "launch_mode": launch_mode,
         "curated_candidates": len(selection.candidates),
         "selected_prospects": selected_prospects,
@@ -97,6 +125,7 @@ def _manual_close_surface(
             "missing_contact": selection.skipped_missing_contact,
             "missing_evidence": selection.skipped_missing_evidence,
         },
+        "lane_method_checks": lane_method_checks,
         "sender_verification": sender_verification.to_dict(),
     }
 
@@ -128,11 +157,62 @@ def _blocking_reasons(summary: Mapping[str, Any]) -> list[str]:
     return blockers
 
 
+def _fallback_operator_checklist(
+    summary: Mapping[str, Any],
+    *,
+    output_path: Path,
+) -> dict[str, Any]:
+    missing: list[dict[str, Any]] = []
+    if not bool(summary.get("checkout_ready")):
+        missing.append(
+            {
+                "key": "checkout_surface",
+                "surface": "checkout",
+                "detail": "Checkout surface is still missing one or more route or config requirements.",
+            }
+        )
+    if not bool(summary.get("webhook_ready")):
+        missing.append(
+            {
+                "key": "billing_webhook",
+                "surface": "webhook",
+                "detail": "Stripe webhook surface is still missing route or secret configuration.",
+            }
+        )
+    if not bool(summary.get("manual_close_ready")):
+        missing.append(
+            {
+                "key": "manual_close_lane",
+                "surface": "manual_close",
+                "detail": "Manual-close staging lane is not available.",
+            }
+        )
+    if not bool(summary.get("fulfillment_ready")):
+        missing.append(
+            {
+                "key": "fulfillment_surface",
+                "surface": "fulfillment",
+                "detail": "Fulfillment service is not callable or the artifact root is unavailable.",
+            }
+        )
+    return {
+        "schema_version": OPERATOR_CHECKLIST_SCHEMA_VERSION,
+        "generated_at": str(summary.get("generated_at") or utc_now()),
+        "source_artifact": str(output_path),
+        "status": "ready" if not missing else "blocked",
+        "launchable": bool(summary.get("launchable")),
+        "blocking_reasons": list(summary.get("blocking_reasons") or ()),
+        "live_offer_url": summary.get("live_offer_url"),
+        "missing_requirements": missing,
+    }
+
+
 def coerce_launch_summary(
     payload: Mapping[str, Any] | None,
     *,
     output_path: Path = DEFAULT_OUTPUT_PATH,
     input_artifact: Path | None = None,
+    operator_checklist_path: Path = DEFAULT_OPERATOR_CHECKLIST_PATH,
 ) -> dict[str, Any]:
     raw = dict(payload or {})
     normalized = normalize_launch_summary(raw)
@@ -155,6 +235,26 @@ def coerce_launch_summary(
         )
     )
     summary["blocking_reasons"] = list(raw.get("blocking_reasons") or _blocking_reasons(summary))
+    raw_operator_checklist = raw.get("operator_checklist")
+    if isinstance(raw_operator_checklist, Mapping):
+        summary["operator_checklist"] = {
+            **raw_operator_checklist,
+            "schema_version": str(
+                raw_operator_checklist.get("schema_version") or OPERATOR_CHECKLIST_SCHEMA_VERSION
+            ),
+            "generated_at": str(raw_operator_checklist.get("generated_at") or summary["generated_at"]),
+            "source_artifact": str(raw_operator_checklist.get("source_artifact") or operator_checklist_path),
+            "status": str(raw_operator_checklist.get("status") or ("ready" if summary["launchable"] else "blocked")),
+            "launchable": bool(raw_operator_checklist.get("launchable", summary["launchable"])),
+            "blocking_reasons": list(raw_operator_checklist.get("blocking_reasons") or summary["blocking_reasons"]),
+            "live_offer_url": raw_operator_checklist.get("live_offer_url", summary.get("live_offer_url")),
+            "missing_requirements": list(raw_operator_checklist.get("missing_requirements") or ()),
+        }
+    else:
+        summary["operator_checklist"] = _fallback_operator_checklist(
+            summary,
+            output_path=operator_checklist_path,
+        )
     return summary
 
 
@@ -162,6 +262,7 @@ def build_launch_summary(
     *,
     db_path: Path,
     output_path: Path = DEFAULT_OUTPUT_PATH,
+    operator_checklist_path: Path = DEFAULT_OPERATOR_CHECKLIST_PATH,
 ) -> dict[str, Any]:
     _load_repo_dotenv()
     audit_settings = RevenueAuditSettings.from_env()
@@ -187,30 +288,46 @@ def build_launch_summary(
     )
     fulfillment_surface = _fulfillment_surface()
 
-    live_offer_url = None
-    if _is_live_http_url(revenue_settings.public_base_url) and CHECKOUT_PATH_HINT in route_paths:
-        live_offer_url = urljoin(
-            revenue_settings.public_base_url.rstrip("/") + "/",
-            CHECKOUT_PATH_HINT.lstrip("/"),
-        )
+    offer_page_url = None
+    offer_api_url = None
+    if audit_settings.public_base_url_ready and audit_settings.offer_path in route_paths:
+        offer_page_url = _absolute_url(audit_settings.public_base_url, audit_settings.offer_path)
+    if audit_settings.public_base_url_ready and CHECKOUT_PATH_HINT in route_paths:
+        offer_api_url = _absolute_url(audit_settings.public_base_url, CHECKOUT_PATH_HINT)
+    live_offer_url = offer_api_url or offer_page_url
 
-    checkout_route_ready = (
-        CHECKOUT_PATH_HINT in route_paths
-        and CHECKOUT_SESSION_PATH in route_paths
-        and ORDER_STATUS_PATH in route_paths
-    )
+    route_checks = {
+        "offer_page": audit_settings.offer_path in route_paths,
+        "offer_api": CHECKOUT_PATH_HINT in route_paths,
+        "checkout_session": CHECKOUT_SESSION_PATH in route_paths,
+        "webhook": WEBHOOK_PATH in route_paths,
+        "order_lookup": ORDER_LOOKUP_PATH in route_paths,
+        "order_status": ORDER_STATUS_PATH in route_paths,
+        "success_page": f"{audit_settings.offer_path.rstrip('/')}/success" in route_paths,
+        "cancel_page": f"{audit_settings.offer_path.rstrip('/')}/cancel" in route_paths,
+    }
+    checkout_config = {
+        "stripe_secret_configured": _has_value(audit_settings.stripe_secret_key),
+        "pricing_configured": bool(audit_settings.pricing),
+        "success_url_ready": _success_url_ready(audit_settings.stripe_success_url),
+        "cancel_url_ready": _is_live_http_url(audit_settings.stripe_cancel_url),
+        "public_base_url_ready": audit_settings.public_base_url_ready,
+    }
+    webhook_config = {
+        "stripe_webhook_secret_configured": _has_value(audit_settings.stripe_webhook_secret),
+    }
+    checkout_route_ready = bool(route_checks["offer_api"] and route_checks["checkout_session"])
     checkout_ready = bool(
         checkout_route_ready
-        and _has_value(audit_settings.stripe_secret_key)
-        and _is_live_http_url(audit_settings.stripe_success_url)
-        and _is_live_http_url(audit_settings.stripe_cancel_url)
+        and checkout_config["stripe_secret_configured"]
+        and checkout_config["success_url_ready"]
+        and checkout_config["cancel_url_ready"]
         and live_offer_url
-        and audit_settings.pricing
+        and checkout_config["pricing_configured"]
     )
     webhook_ready = bool(
-        WEBHOOK_PATH in route_paths
-        and ORDER_STATUS_PATH in route_paths
-        and _has_value(audit_settings.stripe_webhook_secret)
+        route_checks["webhook"]
+        and webhook_config["stripe_webhook_secret_configured"]
     )
 
     summary = {
@@ -235,21 +352,21 @@ def build_launch_summary(
         "selection_skips": manual_close_surface["selection_skips"],
         "sender_verification": manual_close_surface["sender_verification"],
         "surface_checks": {
-            "routes": {
-                "offer": CHECKOUT_PATH_HINT in route_paths,
-                "checkout_session": CHECKOUT_SESSION_PATH in route_paths,
-                "webhook": WEBHOOK_PATH in route_paths,
-                "order_status": ORDER_STATUS_PATH in route_paths,
+            "routes": route_checks,
+            "offer_surface": {
+                "offer_page_url": offer_page_url,
+                "offer_api_url": offer_api_url,
+                "live_offer_url": live_offer_url,
             },
-            "checkout_config": {
-                "stripe_secret_configured": _has_value(audit_settings.stripe_secret_key),
-                "pricing_configured": bool(audit_settings.pricing),
-                "success_url_ready": _is_live_http_url(audit_settings.stripe_success_url),
-                "cancel_url_ready": _is_live_http_url(audit_settings.stripe_cancel_url),
-                "public_base_url_ready": _is_live_http_url(revenue_settings.public_base_url),
-            },
-            "webhook_config": {
-                "stripe_webhook_secret_configured": _has_value(audit_settings.stripe_webhook_secret),
+            "checkout_config": checkout_config,
+            "webhook_config": webhook_config,
+            "manual_close": {
+                "lane_method_checks": manual_close_surface["lane_method_checks"],
+                "launch_mode": manual_close_surface["launch_mode"],
+                "curated_candidates": manual_close_surface["curated_candidates"],
+                "selected_prospects": manual_close_surface["selected_prospects"],
+                "selection_overflow": manual_close_surface["selection_overflow"],
+                "selection_skips": manual_close_surface["selection_skips"],
             },
             "fulfillment": fulfillment_surface,
         },
@@ -261,10 +378,118 @@ def build_launch_summary(
         and summary["fulfillment_ready"]
     )
     summary["blocking_reasons"] = _blocking_reasons(summary)
+
+    missing_requirements: list[dict[str, Any]] = []
+    if not route_checks["offer_api"]:
+        missing_requirements.append(
+            {
+                "key": "offer_api_route",
+                "surface": "checkout",
+                "path": CHECKOUT_PATH_HINT,
+                "detail": "Mount the JSON offer route on the hub router.",
+            }
+        )
+    if not route_checks["checkout_session"]:
+        missing_requirements.append(
+            {
+                "key": "checkout_session_route",
+                "surface": "checkout",
+                "path": CHECKOUT_SESSION_PATH,
+                "detail": "Mount the checkout-session POST route on the hub router.",
+            }
+        )
+    if not route_checks["webhook"]:
+        missing_requirements.append(
+            {
+                "key": "stripe_webhook_route",
+                "surface": "webhook",
+                "path": WEBHOOK_PATH,
+                "detail": "Mount the Stripe webhook route on the hub router.",
+            }
+        )
+    if not checkout_config["public_base_url_ready"]:
+        missing_requirements.append(
+            {
+                "key": "public_base_url",
+                "surface": "checkout",
+                "env": "JJ_N_WEBSITE_GROWTH_AUDIT_PUBLIC_BASE_URL or JJ_REVENUE_PUBLIC_BASE_URL",
+                "current_value": audit_settings.public_base_url,
+                "detail": "Set a non-placeholder HTTPS base URL that serves the Website Growth Audit offer surface.",
+            }
+        )
+    if not checkout_config["stripe_secret_configured"]:
+        missing_requirements.append(
+            {
+                "key": "stripe_secret_key",
+                "surface": "checkout",
+                "env": "STRIPE_SECRET_KEY",
+                "current_value": _mask_secret(audit_settings.stripe_secret_key),
+                "detail": "Configure a Stripe secret key so the offer page can create hosted checkout sessions.",
+            }
+        )
+    if not checkout_config["success_url_ready"]:
+        missing_requirements.append(
+            {
+                "key": "success_url",
+                "surface": "checkout",
+                "env": "JJ_N_WEBSITE_GROWTH_AUDIT_SUCCESS_URL",
+                "current_value": audit_settings.stripe_success_url,
+                "detail": "Use an absolute HTTPS success URL on the public host and include {CHECKOUT_SESSION_ID} or session_id=.",
+            }
+        )
+    if not checkout_config["cancel_url_ready"]:
+        missing_requirements.append(
+            {
+                "key": "cancel_url",
+                "surface": "checkout",
+                "env": "JJ_N_WEBSITE_GROWTH_AUDIT_CANCEL_URL",
+                "current_value": audit_settings.stripe_cancel_url,
+                "detail": "Use an absolute HTTPS cancel URL on the public host.",
+            }
+        )
+    if not webhook_config["stripe_webhook_secret_configured"]:
+        missing_requirements.append(
+            {
+                "key": "stripe_webhook_secret",
+                "surface": "webhook",
+                "env": "STRIPE_WEBHOOK_SECRET",
+                "current_value": _mask_secret(audit_settings.stripe_webhook_secret),
+                "detail": "Configure the Stripe webhook signing secret so paid orders can be verified.",
+            }
+        )
+    summary["operator_checklist"] = {
+        "schema_version": OPERATOR_CHECKLIST_SCHEMA_VERSION,
+        "generated_at": summary["generated_at"],
+        "source_artifact": str(operator_checklist_path),
+        "status": "ready" if not missing_requirements else "blocked",
+        "launchable": summary["launchable"],
+        "blocking_reasons": list(summary["blocking_reasons"]),
+        "live_offer_url": live_offer_url,
+        "offer_page_url": offer_page_url,
+        "offer_api_url": offer_api_url,
+        "missing_requirements": missing_requirements,
+        "manual_close_context": {
+            "launch_mode": manual_close_surface["launch_mode"],
+            "curated_candidates": manual_close_surface["curated_candidates"],
+            "selected_prospects": manual_close_surface["selected_prospects"],
+        },
+    }
     return summary
 
 
 def write_launch_summary_artifact(payload: Mapping[str, Any], output_path: Path = DEFAULT_OUTPUT_PATH) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(dict(payload), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return output_path
+
+
+def write_launch_operator_checklist_artifact(
+    payload: Mapping[str, Any],
+    output_path: Path = DEFAULT_OPERATOR_CHECKLIST_PATH,
+) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(dict(payload), indent=2, sort_keys=True) + "\n",

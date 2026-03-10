@@ -10,6 +10,7 @@ if str(ROOT) not in sys.path:
 
 from inventory.systems.openclaw.adapter import build_openclaw_benchmark_packet
 from nontrading.models import Account, ApprovalRequest, Contact, Lead, Meeting, Message, Opportunity, Outcome, Proposal
+from nontrading.revenue_audit.launch_summary import build_launch_summary
 from nontrading.store import RevenueStore
 from nontrading.telemetry import NonTradingTelemetry
 from scripts.generate_nontrading_public_report import (
@@ -226,11 +227,20 @@ def test_generator_writes_public_safe_report_artifact(tmp_path: Path) -> None:
     assert payload["first_dollar_readiness"]["status"] == "first_dollar_observed"
     assert payload["first_dollar_readiness"]["expected_net_cash_30d"] == 1600.0
     assert payload["first_dollar_scoreboard"]["status"] == "first_dollar_observed"
+    assert payload["first_dollar_scoreboard"]["forecast_arr_usd_p50"] == payload["arr_lab"]["summary"]["p50_arr_usd"]
+    assert payload["first_dollar_scoreboard"]["recommended_experiment"] == payload["arr_lab"]["recommended_next_experiment"]["experiment_key"]
     assert payload["allocator_input"]["engine_family"] == "revenue_audit"
     assert payload["allocator_input"]["expected_net_cash_30d"] == 1600.0
+    assert payload["allocator_input"]["metadata"]["arr_lab"]["forecast_arr_usd_p50"] == payload["arr_lab"]["summary"]["p50_arr_usd"]
+    assert payload["arr_lab"]["schema_version"] == "nontrading_arr_lab.v1"
+    assert payload["recurring_monitor"]["schema_version"] in {
+        "revenue_audit_recurring_monitor.v1",
+        "nontrading_recurring_monitor.v1",
+    }
     assert payload["comparison_artifact"]["items"][1]["comparison_only"] is True
     assert payload["comparison_artifact"]["items"][1]["excluded_from_allocator"] is True
     assert payload["source_artifacts"]["report_artifact"].endswith("reports/nontrading_public_report.json")
+    assert payload["source_artifacts"]["arr_lab_artifact"].endswith("nontrading_arr_lab/latest.json")
 
 
 def test_generator_builds_launch_summary_from_real_surfaces(monkeypatch, tmp_path: Path) -> None:
@@ -244,26 +254,36 @@ def test_generator_builds_launch_summary_from_real_surfaces(monkeypatch, tmp_pat
 
     report_path = tmp_path / "nontrading_public_report.json"
     launch_summary_path = tmp_path / "nontrading_launch_summary.json"
+    launch_checklist_path = tmp_path / "nontrading_launch_operator_checklist.json"
     status_path = tmp_path / "nontrading_first_dollar_status.json"
     allocator_path = tmp_path / "nontrading_allocator_input.json"
     comparison_path = tmp_path / "nontrading_benchmark_comparison.json"
+    arr_lab_path = tmp_path / "nontrading_arr_lab" / "latest.json"
+    recurring_monitor_path = tmp_path / "nontrading_recurring_monitor" / "latest.json"
     report = build_public_report(
         store,
         report_path=report_path,
         launch_summary_path=launch_summary_path,
+        launch_checklist_path=launch_checklist_path,
         status_path=status_path,
         allocator_path=allocator_path,
         comparison_path=comparison_path,
+        arr_lab_path=arr_lab_path,
+        recurring_monitor_path=recurring_monitor_path,
     )
     write_sidecar_artifacts(
         report,
         launch_summary_path=launch_summary_path,
+        launch_checklist_path=launch_checklist_path,
         status_path=status_path,
         allocator_path=allocator_path,
         comparison_path=comparison_path,
+        arr_lab_path=arr_lab_path,
+        recurring_monitor_path=recurring_monitor_path,
     )
 
     launch_payload = json.loads(launch_summary_path.read_text(encoding="utf-8"))
+    checklist_payload = json.loads(launch_checklist_path.read_text(encoding="utf-8"))
 
     assert report["launch_summary"]["checkout_ready"] is True
     assert report["launch_summary"]["webhook_ready"] is True
@@ -273,8 +293,48 @@ def test_generator_builds_launch_summary_from_real_surfaces(monkeypatch, tmp_pat
     assert report["first_dollar_readiness"]["status"] == "launchable"
     assert report["first_dollar_readiness"]["launchable"] is True
     assert report["first_dollar_scoreboard"]["live_offer_url"] == "https://elastifund.io/v1/nontrading/offers/website-growth-audit"
+    assert report["allocator_input"]["metadata"]["arr_lab"]["recommended_experiment"] == report["arr_lab"]["recommended_next_experiment"]["experiment_key"]
     assert launch_payload["selected_prospects"] == 1
+    assert launch_payload["operator_checklist"]["status"] == "ready"
+    assert checklist_payload["status"] == "ready"
+    assert checklist_payload["source_artifact"] == str(launch_checklist_path)
     assert launch_payload["source_artifact"] == str(launch_summary_path)
+    assert arr_lab_path.exists()
+    assert recurring_monitor_path.exists()
+
+
+def test_launch_summary_uses_audit_public_base_url_and_does_not_require_curated_prospects(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "revenue_agent.db"
+    _configure_launch_env(monkeypatch, db_path)
+    monkeypatch.setenv("JJ_REVENUE_PUBLIC_BASE_URL", "https://example.invalid")
+    monkeypatch.setenv("JJ_N_WEBSITE_GROWTH_AUDIT_PUBLIC_BASE_URL", "https://offers.elastifund.io")
+    monkeypatch.setenv(
+        "JJ_N_WEBSITE_GROWTH_AUDIT_SUCCESS_URL",
+        "https://offers.elastifund.io/nontrading/website-growth-audit/success?session_id={CHECKOUT_SESSION_ID}",
+    )
+    monkeypatch.setenv(
+        "JJ_N_WEBSITE_GROWTH_AUDIT_CANCEL_URL",
+        "https://offers.elastifund.io/nontrading/website-growth-audit/cancel",
+    )
+
+    summary = build_launch_summary(
+        db_path=db_path,
+        output_path=tmp_path / "nontrading_launch_summary.json",
+        operator_checklist_path=tmp_path / "nontrading_launch_operator_checklist.json",
+    )
+
+    assert summary["checkout_ready"] is True
+    assert summary["webhook_ready"] is True
+    assert summary["manual_close_ready"] is True
+    assert summary["launchable"] is True
+    assert summary["selected_prospects"] == 0
+    assert summary["surface_checks"]["checkout_config"]["public_base_url_ready"] is True
+    assert summary["live_offer_url"] == "https://offers.elastifund.io/v1/nontrading/offers/website-growth-audit"
+    assert summary["operator_checklist"]["status"] == "ready"
+    assert "manual_close_lane_not_ready" not in summary["blocking_reasons"]
 
 
 def test_generator_derives_launchable_and_paid_order_states_from_launch_inputs(tmp_path: Path) -> None:
@@ -282,6 +342,7 @@ def test_generator_derives_launchable_and_paid_order_states_from_launch_inputs(t
     telemetry = NonTradingTelemetry(store)
     account = store.create_account(Account(name="Launch Ready Co", domain="launch.example"))
     launch_summary_path = tmp_path / "nontrading_launch_summary.json"
+    launch_checklist_path = tmp_path / "nontrading_launch_operator_checklist.json"
     store.create_opportunity(
         Opportunity(
             account_id=account.id or 0,
@@ -297,6 +358,7 @@ def test_generator_derives_launchable_and_paid_order_states_from_launch_inputs(t
     launchable_report = build_public_report(
         store,
         launch_summary_path=launch_summary_path,
+        launch_checklist_path=launch_checklist_path,
         launch_summary={
             "checkout_ready": True,
             "webhook_ready": True,
@@ -315,6 +377,7 @@ def test_generator_derives_launchable_and_paid_order_states_from_launch_inputs(t
     paid_report = build_public_report(
         store,
         launch_summary_path=launch_summary_path,
+        launch_checklist_path=launch_checklist_path,
         launch_summary={
             "checkout_ready": True,
             "webhook_ready": True,
@@ -343,16 +406,20 @@ def test_generator_derives_launchable_and_paid_order_states_from_launch_inputs(t
         status_path=status_path,
         allocator_path=allocator_path,
         comparison_path=comparison_path,
+        launch_checklist_path=launch_checklist_path,
     )
 
     launch_payload = json.loads(launch_summary_path.read_text(encoding="utf-8"))
+    checklist_payload = json.loads(launch_checklist_path.read_text(encoding="utf-8"))
     status_payload = json.loads(status_path.read_text(encoding="utf-8"))
     allocator_payload = json.loads(allocator_path.read_text(encoding="utf-8"))
     comparison_payload = json.loads(comparison_path.read_text(encoding="utf-8"))
 
     assert paid_report["first_dollar_readiness"]["status"] == "paid_order_seen"
     assert paid_report["first_dollar_readiness"]["paid_orders_seen"] == 1
+    assert paid_report["allocator_input"]["metadata"]["arr_lab"]["forecast_confidence"] == paid_report["arr_lab"]["confidence"]["score"]
     assert launch_payload["paid_orders_seen"] == 1
+    assert checklist_payload["source_artifact"] == str(launch_checklist_path)
     assert status_payload["status"] == "paid_order_seen"
     assert allocator_payload["revenue_audit"]["metadata"]["first_dollar_status"] == "paid_order_seen"
     assert comparison_payload["items"][1]["comparison_only"] is True

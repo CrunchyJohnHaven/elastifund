@@ -129,6 +129,7 @@ def build_operations_summary(
 def normalize_launch_summary(payload: Mapping[str, Any] | None) -> dict[str, Any]:
     raw = dict(payload or {})
     metrics = raw.get("metrics") if isinstance(raw.get("metrics"), Mapping) else {}
+    operator_checklist = raw.get("operator_checklist") if isinstance(raw.get("operator_checklist"), Mapping) else {}
     source = {**metrics, **raw}
     normalized = {
         "checkout_ready": _safe_bool(_pick_value(source, "checkout_ready", "checkout_surface_ready")),
@@ -154,6 +155,14 @@ def normalize_launch_summary(payload: Mapping[str, Any] | None) -> dict[str, Any
         ),
         "operating_cost_usd_30d": round(_safe_float(_pick_value(source, "operating_cost_usd_30d")), 2),
         "live_offer_url": _pick_value(source, "live_offer_url", "offer_url"),
+        "launch_checklist_artifact": (
+            str(
+                _pick_value(source, "launch_checklist_artifact")
+                or operator_checklist.get("source_artifact")
+                or ""
+            ).strip()
+            or None
+        ),
         "source_artifact": str(_pick_value(source, "source_artifact") or "").strip() or None,
     }
     if normalized["paid_orders_seen"] > 0:
@@ -204,12 +213,24 @@ def _confidence_for_status(
     return round(_clamp(base + bonus - deliverability_penalty), 6)
 
 
+def _arr_lab_confidence(payload: Mapping[str, Any] | None) -> float | None:
+    if not isinstance(payload, Mapping):
+        return None
+    confidence = payload.get("confidence")
+    if isinstance(confidence, Mapping):
+        score = confidence.get("score")
+        if score is not None:
+            return round(_clamp(_safe_float(score)), 6)
+    return None
+
+
 def build_first_dollar_readiness(
     *,
     snapshot: Mapping[str, Any],
     offer: Any,
     operations: Mapping[str, Any],
     launch_summary: Mapping[str, Any] | None = None,
+    arr_lab: Mapping[str, Any] | None = None,
     source_artifacts: Mapping[str, str] | None = None,
 ) -> FirstDollarReadiness:
     funnel = dict(snapshot.get("funnel") or {})
@@ -243,7 +264,13 @@ def build_first_dollar_readiness(
         "compliance_clear": not bool(operations.get("global_kill_switch"))
         and _safe_int(operations.get("engine_kill_switches")) == 0,
     }
-    launchable_now = all(launch_gates.values())
+    launchable_gate_keys = (
+        "checkout_surface_ready",
+        "billing_webhook_ready",
+        "manual_close_ready",
+        "fulfillment_surface_ready",
+    )
+    launchable_now = all(bool(launch_gates[key]) for key in launchable_gate_keys)
 
     if revenue_won_usd > 0.0 or first_dollar_at:
         status = "first_dollar_observed"
@@ -283,18 +310,15 @@ def build_first_dollar_readiness(
     else:
         launchable = False
         gate_labels = {
-            "offer_defined": "offer_definition_missing",
-            "pipeline_available": "pipeline_state_missing",
             "checkout_surface_ready": "checkout_surface_not_ready",
             "billing_webhook_ready": "billing_webhook_not_ready",
             "manual_close_ready": "manual_close_lane_not_ready",
             "fulfillment_surface_ready": "fulfillment_surface_not_ready",
-            "compliance_clear": "compliance_block_active",
         }
         blocking_reasons = tuple(
             gate_labels[key]
-            for key, value in launch_gates.items()
-            if not value
+            for key in launchable_gate_keys
+            if not launch_gates[key]
         )
 
     artifacts = {
@@ -304,6 +328,18 @@ def build_first_dollar_readiness(
     }
     if launch.get("source_artifact"):
         artifacts["launch_summary"] = str(launch["source_artifact"])
+    if launch.get("launch_checklist_artifact"):
+        artifacts["launch_checklist_artifact"] = str(launch["launch_checklist_artifact"])
+
+    confidence = _confidence_for_status(
+        status=status,
+        funnel=funnel,
+        operations=operations,
+        launch=launch,
+    )
+    arr_lab_confidence = _arr_lab_confidence(arr_lab)
+    if arr_lab_confidence is not None:
+        confidence = round(_clamp((confidence * 0.6) + (arr_lab_confidence * 0.4)), 6)
 
     return FirstDollarReadiness(
         status=status,
@@ -318,12 +354,7 @@ def build_first_dollar_readiness(
         delivery_artifacts_generated=_safe_int(launch.get("delivery_artifacts_generated")),
         monitor_runs_completed=_safe_int(launch.get("monitor_runs_completed")),
         expected_net_cash_30d=expected_net_cash_30d,
-        confidence=_confidence_for_status(
-            status=status,
-            funnel=funnel,
-            operations=operations,
-            launch=launch,
-        ),
+        confidence=confidence,
         launch_gates=launch_gates,
         blocking_reasons=blocking_reasons,
         source_artifacts=artifacts,
@@ -336,6 +367,7 @@ def build_allocator_input(
     readiness: FirstDollarReadiness,
     operations: Mapping[str, Any],
     launch_summary: Mapping[str, Any] | None = None,
+    arr_lab: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     commercial = dict(snapshot.get("commercial") or {})
     launch = normalize_launch_summary(launch_summary)
@@ -361,6 +393,17 @@ def build_allocator_input(
         "red": 0.15,
     }.get(deliverability_status, 0.02)
 
+    arr_lab_summary = (
+        {
+            "forecast_net_cash_30d_p50": arr_lab.get("summary", {}).get("p50_net_cash_30d"),
+            "forecast_arr_usd_p50": arr_lab.get("summary", {}).get("p50_arr_usd"),
+            "forecast_confidence": arr_lab.get("confidence", {}).get("score"),
+            "forecast_confidence_label": arr_lab.get("confidence", {}).get("label"),
+            "recommended_experiment": arr_lab.get("recommended_next_experiment", {}).get("experiment_key"),
+        }
+        if isinstance(arr_lab, Mapping)
+        else {}
+    )
     return {
         "engine_family": REVENUE_AUDIT_ENGINE,
         "agent_name": NON_TRADING_AGENT,
@@ -381,6 +424,7 @@ def build_allocator_input(
             "launchable": readiness.launchable,
             "launch_gates": dict(readiness.launch_gates),
             "blocking_reasons": list(readiness.blocking_reasons),
+            "launch_checklist_artifact": launch.get("launch_checklist_artifact"),
             "paid_orders_seen": readiness.paid_orders_seen,
             "paid_revenue_usd": readiness.paid_revenue_usd,
             "revenue_won_usd": round(_safe_float(commercial.get("revenue_won_usd")), 2),
@@ -389,6 +433,7 @@ def build_allocator_input(
             "deliverability_status": deliverability_status,
             "comparison_only": False,
             "excluded_from_allocator": False,
+            "arr_lab": {key: value for key, value in arr_lab_summary.items() if value is not None},
         },
     }
 
@@ -399,6 +444,7 @@ def build_first_dollar_scoreboard(
     readiness: FirstDollarReadiness,
     allocator_input: Mapping[str, Any],
     launch_summary: Mapping[str, Any] | None = None,
+    arr_lab: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     funnel = dict(snapshot.get("funnel") or {})
     commercial = dict(snapshot.get("commercial") or {})
@@ -429,6 +475,26 @@ def build_first_dollar_scoreboard(
         "allocator_confidence": allocator_input.get("confidence"),
         "allocator_required_budget": allocator_input.get("required_budget"),
         "allocator_compliance_status": allocator_input.get("compliance_status"),
+        "forecast_net_cash_30d_p50": (
+            arr_lab.get("summary", {}).get("p50_net_cash_30d")
+            if isinstance(arr_lab, Mapping)
+            else None
+        ),
+        "forecast_arr_usd_p50": (
+            arr_lab.get("summary", {}).get("p50_arr_usd")
+            if isinstance(arr_lab, Mapping)
+            else None
+        ),
+        "forecast_confidence_label": (
+            arr_lab.get("confidence", {}).get("label")
+            if isinstance(arr_lab, Mapping)
+            else None
+        ),
+        "recommended_experiment": (
+            arr_lab.get("recommended_next_experiment", {}).get("experiment_key")
+            if isinstance(arr_lab, Mapping)
+            else None
+        ),
         "blocking_reasons": list(readiness.blocking_reasons),
         "live_offer_url": launch.get("live_offer_url"),
     }

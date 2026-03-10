@@ -1,26 +1,81 @@
 {
   "blocking_reasons": [
     "checkout_surface_not_ready",
-    "billing_webhook_not_ready",
-    "manual_close_lane_not_ready"
+    "billing_webhook_not_ready"
   ],
   "checkout_ready": false,
   "checkout_sessions_created": 0,
-  "curated_candidates": 0,
+  "curated_candidates": 14,
   "delivery_artifacts_generated": 0,
   "fulfillment_ready": true,
-  "generated_at": "2026-03-10T15:06:04+00:00",
+  "generated_at": "2026-03-10T16:08:39+00:00",
   "launch_mode": "manual_close_only",
   "launchable": false,
   "live_offer_url": null,
-  "manual_close_ready": false,
+  "manual_close_ready": true,
   "monitor_runs_completed": 0,
+  "operator_checklist": {
+    "blocking_reasons": [
+      "checkout_surface_not_ready",
+      "billing_webhook_not_ready"
+    ],
+    "generated_at": "2026-03-10T16:08:39+00:00",
+    "launchable": false,
+    "live_offer_url": null,
+    "manual_close_context": {
+      "curated_candidates": 14,
+      "launch_mode": "manual_close_only",
+      "selected_prospects": 10
+    },
+    "missing_requirements": [
+      {
+        "current_value": "https://example.invalid",
+        "detail": "Set a non-placeholder HTTPS base URL that serves the Website Growth Audit offer surface.",
+        "env": "JJ_N_WEBSITE_GROWTH_AUDIT_PUBLIC_BASE_URL or JJ_REVENUE_PUBLIC_BASE_URL",
+        "key": "public_base_url",
+        "surface": "checkout"
+      },
+      {
+        "current_value": "",
+        "detail": "Configure a Stripe secret key so the offer page can create hosted checkout sessions.",
+        "env": "STRIPE_SECRET_KEY",
+        "key": "stripe_secret_key",
+        "surface": "checkout"
+      },
+      {
+        "current_value": "https://example.invalid/nontrading/website-growth-audit/success?session_id={CHECKOUT_SESSION_ID}",
+        "detail": "Use an absolute HTTPS success URL on the public host and include {CHECKOUT_SESSION_ID} or session_id=.",
+        "env": "JJ_N_WEBSITE_GROWTH_AUDIT_SUCCESS_URL",
+        "key": "success_url",
+        "surface": "checkout"
+      },
+      {
+        "current_value": "https://example.invalid/nontrading/website-growth-audit/cancel",
+        "detail": "Use an absolute HTTPS cancel URL on the public host.",
+        "env": "JJ_N_WEBSITE_GROWTH_AUDIT_CANCEL_URL",
+        "key": "cancel_url",
+        "surface": "checkout"
+      },
+      {
+        "current_value": "",
+        "detail": "Configure the Stripe webhook signing secret so paid orders can be verified.",
+        "env": "STRIPE_WEBHOOK_SECRET",
+        "key": "stripe_webhook_secret",
+        "surface": "webhook"
+      }
+    ],
+    "offer_api_url": null,
+    "offer_page_url": null,
+    "schema_version": "revenue_audit_launch_operator_checklist.v1",
+    "source_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_launch_operator_checklist.json",
+    "status": "blocked"
+  },
   "orders_recorded": 0,
   "paid_orders_seen": 0,
   "paid_revenue_usd": 0,
   "schema_version": "revenue_audit_launch_summary.v1",
-  "selected_prospects": 0,
-  "selection_overflow": 0,
+  "selected_prospects": 10,
+  "selection_overflow": 4,
   "selection_skips": {
     "missing_contact": 0,
     "missing_evidence": 0,
@@ -52,10 +107,35 @@
         "run_monitor": true
       }
     },
+    "manual_close": {
+      "curated_candidates": 14,
+      "lane_method_checks": {
+        "build_artifact": true,
+        "collect_candidates": true
+      },
+      "launch_mode": "manual_close_only",
+      "selected_prospects": 10,
+      "selection_overflow": 4,
+      "selection_skips": {
+        "missing_contact": 0,
+        "missing_evidence": 0,
+        "non_us": 0,
+        "uncurated": 3
+      }
+    },
+    "offer_surface": {
+      "live_offer_url": null,
+      "offer_api_url": null,
+      "offer_page_url": null
+    },
     "routes": {
+      "cancel_page": true,
       "checkout_session": true,
-      "offer": true,
+      "offer_api": true,
+      "offer_page": true,
+      "order_lookup": true,
       "order_status": true,
+      "success_page": true,
       "webhook": true
     },
     "webhook_config": {

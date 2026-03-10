@@ -7,28 +7,35 @@
       "send_quota": 10
     },
     "compliance_status": "warning",
-    "confidence": 0.1,
+    "confidence": 0.312,
     "domain_health_penalty": 0.0,
     "engine_family": "revenue_audit",
     "expected_net_cash_30d": 0.0,
     "fulfillment_penalty": 0.0,
     "metadata": {
+      "arr_lab": {
+        "forecast_arr_usd_p50": 0.0,
+        "forecast_confidence": 0.48,
+        "forecast_confidence_label": "medium",
+        "forecast_net_cash_30d_p50": 1488.0,
+        "recommended_experiment": "better_monitor_upsell"
+      },
       "blocking_reasons": [
         "checkout_surface_not_ready",
-        "billing_webhook_not_ready",
-        "manual_close_lane_not_ready"
+        "billing_webhook_not_ready"
       ],
       "comparison_only": false,
       "deliverability_status": "green",
       "excluded_from_allocator": false,
       "first_dollar_status": "setup_only",
       "gross_margin_usd": 0.0,
+      "launch_checklist_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_launch_operator_checklist.json",
       "launch_gates": {
         "billing_webhook_ready": false,
         "checkout_surface_ready": false,
         "compliance_clear": true,
         "fulfillment_surface_ready": true,
-        "manual_close_ready": false,
+        "manual_close_ready": true,
         "offer_defined": true,
         "pipeline_available": true
       },
@@ -48,6 +55,300 @@
     "pending_requests": 0,
     "rejected_requests": 0
   },
+  "arr_lab": {
+    "allocator_metadata": {
+      "forecast_arr_usd_p50": 0.0,
+      "forecast_confidence": 0.48,
+      "forecast_confidence_label": "medium",
+      "forecast_net_cash_30d_p50": 1488.0,
+      "recommended_experiment": "better_monitor_upsell"
+    },
+    "assumptions": {
+      "gross_margin_pct": {
+        "p05": 0.54,
+        "p50": 0.6,
+        "p95": 0.63
+      },
+      "launch_delay_days": {
+        "p05": 3.0,
+        "p50": 4.0,
+        "p95": 5.0
+      },
+      "monitor_churn_rate_30d": {
+        "p05": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "monitor_monthly_price_usd": {
+        "p05": 254.15,
+        "p50": 299.0,
+        "p95": 343.85
+      },
+      "monitor_upsell_rate": {
+        "p05": 0.03,
+        "p50": 0.05,
+        "p95": 0.075
+      },
+      "operating_cost_usd_30d": {
+        "p05": 12.0,
+        "p50": 12.0,
+        "p95": 13.2
+      },
+      "proposal_rate": {
+        "p05": 0.20928,
+        "p50": 0.32197,
+        "p95": 0.402462
+      },
+      "proposal_to_payment_rate": {
+        "p05": 0.240127,
+        "p50": 0.343038,
+        "p95": 0.428797
+      },
+      "refund_rate": {
+        "p05": 0.025,
+        "p50": 0.05,
+        "p95": 0.075
+      },
+      "time_to_cash_days": {
+        "p05": 5.4,
+        "p50": 9.0,
+        "p95": 13.5
+      }
+    },
+    "confidence": {
+      "drivers": [
+        "10 staged prospects are already in the bridge artifact.",
+        "97 cycle reports anchor the funnel-rate assumptions.",
+        "2 launch blockers still widen the time-to-cash spread.",
+        "No paid checkout evidence exists yet, so conversion remains partially assumption-driven."
+      ],
+      "label": "medium",
+      "score": 0.48
+    },
+    "experiments": [
+      {
+        "expected_arr_lift_usd": 186.27,
+        "expected_net_cash_lift_usd_30d": 15.52,
+        "experiment_key": "better_monitor_upsell",
+        "information_gain": 0.38,
+        "label": "Strengthen the recurring-monitor upsell",
+        "rank": 1,
+        "reason": "Recurring-monitor ARR remains the least proven part of the wedge, so even small win-rate improvements compound into ARR quickly."
+      },
+      {
+        "expected_arr_lift_usd": 136.77,
+        "expected_net_cash_lift_usd_30d": 814.12,
+        "experiment_key": "more_prospects",
+        "information_gain": 0.48,
+        "label": "Expand the staged prospect pool",
+        "rank": 2,
+        "reason": "More curated prospects increase order surface area without changing the current offer."
+      },
+      {
+        "expected_arr_lift_usd": 116.15,
+        "expected_net_cash_lift_usd_30d": 672.73,
+        "experiment_key": "better_conversion_packet",
+        "information_gain": 0.72,
+        "label": "Tighten the teaser and proposal packet",
+        "rank": 3,
+        "reason": "The current bridge already has evidence-backed prospects, so better pre-payment packaging has the shortest path to first cash."
+      },
+      {
+        "expected_arr_lift_usd": 70.13,
+        "expected_net_cash_lift_usd_30d": 897.83,
+        "experiment_key": "better_segment",
+        "information_gain": 0.64,
+        "label": "Concentrate on the strongest segment",
+        "rank": 4,
+        "reason": "Current seeds suggest hvac is the strongest segment to double down on."
+      },
+      {
+        "expected_arr_lift_usd": -26.84,
+        "expected_net_cash_lift_usd_30d": 35.14,
+        "experiment_key": "better_price_mix",
+        "information_gain": 0.34,
+        "label": "Improve the price mix",
+        "rank": 5,
+        "reason": "Moving more wins into premium pricing grows cash faster but slightly tests close-rate elasticity."
+      }
+    ],
+    "generated_at": "2026-03-10T16:08:39+00:00",
+    "inputs": {
+      "cycle_history": {
+        "accounts_researched": 201,
+        "cycles_observed": 97,
+        "meeting_rate_observed": 0.333333,
+        "meetings_booked": 30,
+        "outcomes_won": 30,
+        "outreach_sent": 90,
+        "proposal_rate_observed": 0.333333,
+        "proposals_sent": 30,
+        "qualified_accounts": 90,
+        "scanned_leads": 222,
+        "skipped_existing": 21,
+        "win_rate_observed": 1.0
+      },
+      "launch_truth": {
+        "blocking_reasons": [
+          "checkout_surface_not_ready",
+          "billing_webhook_not_ready"
+        ],
+        "launch_delay_days": 4.0,
+        "launch_mode": "manual_close_only",
+        "launchable": false,
+        "status": "setup_only"
+      },
+      "operations": {
+        "deliverability_status": "green",
+        "latest_cycle_time_seconds": 0.0,
+        "monitor_runs_completed": 0
+      },
+      "prospect_pool": {
+        "average_estimated_value_usd": 1828.06,
+        "average_fit_score": 69.32,
+        "average_price_usd": 1800.0,
+        "curated_candidates": 14,
+        "price_mix": {
+          "premium": {
+            "count": 3,
+            "share": 0.3
+          },
+          "standard": {
+            "count": 7,
+            "share": 0.7
+          }
+        },
+        "segment_mix": [
+          {
+            "avg_estimated_value_usd": 1500.0,
+            "avg_fit_score": 61.39,
+            "count": 1,
+            "segment": "concrete",
+            "share": 0.1
+          },
+          {
+            "avg_estimated_value_usd": 1500.0,
+            "avg_fit_score": 61.39,
+            "count": 1,
+            "segment": "fencing",
+            "share": 0.1
+          },
+          {
+            "avg_estimated_value_usd": 2500.0,
+            "avg_fit_score": 84.23,
+            "count": 1,
+            "segment": "hvac",
+            "share": 0.1
+          },
+          {
+            "avg_estimated_value_usd": 1530.0,
+            "avg_fit_score": 64.69,
+            "count": 2,
+            "segment": "junk_removal",
+            "share": 0.2
+          },
+          {
+            "avg_estimated_value_usd": 2500.0,
+            "avg_fit_score": 82.15,
+            "count": 1,
+            "segment": "landscaping",
+            "share": 0.1
+          },
+          {
+            "avg_estimated_value_usd": 2000.0,
+            "avg_fit_score": 70.74,
+            "count": 2,
+            "segment": "pest_control",
+            "share": 0.2
+          },
+          {
+            "avg_estimated_value_usd": 1610.28,
+            "avg_fit_score": 66.59,
+            "count": 2,
+            "segment": "pool_service",
+            "share": 0.2
+          }
+        ],
+        "selected_prospects": 10
+      },
+      "recurring_monitor": {
+        "current_arr_usd": 0.0,
+        "monthly_price_usd": 299.0,
+        "status": "not_started"
+      }
+    },
+    "recommended_next_experiment": {
+      "expected_arr_lift_usd": 186.27,
+      "expected_net_cash_lift_usd_30d": 15.52,
+      "experiment_key": "better_monitor_upsell",
+      "information_gain": 0.38,
+      "label": "Strengthen the recurring-monitor upsell",
+      "rank": 1,
+      "reason": "Recurring-monitor ARR remains the least proven part of the wedge, so even small win-rate improvements compound into ARR quickly."
+    },
+    "schema_version": "nontrading_arr_lab.v1",
+    "simulation": {
+      "expected": {
+        "arr_usd": 260.77,
+        "monitor_signups": 0.07,
+        "mrr_usd": 21.73,
+        "net_cash_30d": 1436.83,
+        "one_time_cash_30d": 1427.1,
+        "orders": 1.3,
+        "recurring_cash_30d": 21.73
+      },
+      "scenarios": {
+        "p05": {
+          "arr_usd": 0.0,
+          "monitor_signups": 0.0,
+          "mrr_usd": 0.0,
+          "net_cash_30d": -12.0,
+          "one_time_cash_30d": 0.0,
+          "orders": 0.0,
+          "recurring_cash_30d": 0.0
+        },
+        "p50": {
+          "arr_usd": 0.0,
+          "monitor_signups": 0.0,
+          "mrr_usd": 0.0,
+          "net_cash_30d": 1488.0,
+          "one_time_cash_30d": 1500.0,
+          "orders": 1.0,
+          "recurring_cash_30d": 0.0
+        },
+        "p95": {
+          "arr_usd": 3444.88,
+          "monitor_signups": 1.0,
+          "mrr_usd": 287.07,
+          "net_cash_30d": 3888.0,
+          "one_time_cash_30d": 3900.0,
+          "orders": 3.0,
+          "recurring_cash_30d": 287.07
+        }
+      },
+      "seed": 20260310,
+      "trials": 2000
+    },
+    "source_artifacts": {
+      "arr_lab": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_arr_lab/latest.json",
+      "cycle_reports": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading/website_growth_audit_cycle_reports.jsonl",
+      "launch_bridge": "reports/nontrading/revenue_audit_launch_batch_seed.json",
+      "launch_summary": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_launch_summary.json",
+      "public_report": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_public_report.json",
+      "recurring_monitor": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_recurring_monitor/latest.json"
+    },
+    "status": "forecast_ready",
+    "summary": {
+      "p05_arr_usd": 0.0,
+      "p05_net_cash_30d": -12.0,
+      "p50_arr_usd": 0.0,
+      "p50_net_cash_30d": 1488.0,
+      "p95_arr_usd": 3444.88,
+      "p95_net_cash_30d": 3888.0,
+      "recommended_experiment": "better_monitor_upsell"
+    },
+    "window_days": 30
+  },
   "commercial": {
     "gross_margin_pct": null,
     "gross_margin_usd": 0,
@@ -60,7 +361,7 @@
   "comparison_artifact": {
     "allocator_guardrail": "comparison_only rows are excluded from live allocator decisions.",
     "evaluation_contract": "inventory/metrics/README.md",
-    "generated_at": "2026-03-10T15:06:04+00:00",
+    "generated_at": "2026-03-10T16:08:39+00:00",
     "items": [
       {
         "comparison_only": false,
@@ -68,7 +369,7 @@
         "excluded_from_allocator": false,
         "label": "Elastifund JJ-N",
         "metrics": {
-          "confidence": 0.1,
+          "confidence": 0.312,
           "cost_usd": 0.0,
           "cycle_time_seconds": 0.0,
           "decision_count": 3,
@@ -139,22 +440,21 @@
   "first_dollar_readiness": {
     "blocking_reasons": [
       "checkout_surface_not_ready",
-      "billing_webhook_not_ready",
-      "manual_close_lane_not_ready"
+      "billing_webhook_not_ready"
     ],
     "checkout_sessions_created": 0,
-    "confidence": 0.1,
+    "confidence": 0.312,
     "delivery_artifacts_generated": 0,
     "expected_net_cash_30d": 0.0,
     "first_dollar_at": null,
     "first_paid_order_at": null,
-    "generated_at": "2026-03-10T15:06:04+00:00",
+    "generated_at": "2026-03-10T16:08:39+00:00",
     "launch_gates": {
       "billing_webhook_ready": false,
       "checkout_surface_ready": false,
       "compliance_clear": true,
       "fulfillment_surface_ready": true,
-      "manual_close_ready": false,
+      "manual_close_ready": true,
       "offer_defined": true,
       "pipeline_available": true
     },
@@ -166,9 +466,12 @@
     "schema_version": "first_dollar_readiness.v1",
     "source_artifacts": {
       "allocator_input_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_allocator_input.json",
+      "arr_lab": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_arr_lab/latest.json",
       "benchmark_comparison_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_benchmark_comparison.json",
+      "launch_checklist_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_launch_operator_checklist.json",
       "launch_summary": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_launch_summary.json",
       "public_report": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_public_report.json",
+      "recurring_monitor": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_recurring_monitor/latest.json",
       "status_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_first_dollar_status.json"
     },
     "status": "setup_only",
@@ -176,16 +479,18 @@
   },
   "first_dollar_scoreboard": {
     "allocator_compliance_status": "warning",
-    "allocator_confidence": 0.1,
+    "allocator_confidence": 0.312,
     "allocator_required_budget": 12.0,
     "blocking_reasons": [
       "checkout_surface_not_ready",
-      "billing_webhook_not_ready",
-      "manual_close_lane_not_ready"
+      "billing_webhook_not_ready"
     ],
     "checkout_sessions_created": 0,
     "delivery_artifacts_generated": 0,
     "expected_net_cash_30d": 0.0,
+    "forecast_arr_usd_p50": 0.0,
+    "forecast_confidence_label": "medium",
+    "forecast_net_cash_30d_p50": 1488.0,
     "gross_margin_pct": null,
     "gross_margin_usd": 0.0,
     "launchable": false,
@@ -197,7 +502,8 @@
     "paid_orders_seen": 0,
     "paid_revenue_usd": 0.0,
     "proposals_sent": 0,
-    "qualified_accounts": 0,
+    "qualified_accounts": 14,
+    "recommended_experiment": "better_monitor_upsell",
     "revenue_won_usd": 0.0,
     "status": "setup_only",
     "time_to_first_dollar_hours": null,
@@ -223,41 +529,96 @@
     "meetings_booked": 0,
     "outcomes_recorded": 0,
     "proposals_sent": 0,
-    "qualified_accounts": 0,
+    "qualified_accounts": 14,
     "reply_rate": null,
     "researched_accounts": 3,
     "simulated_outcomes_recorded": 0
   },
-  "generated_at": "2026-03-10T15:06:04+00:00",
+  "generated_at": "2026-03-10T16:08:39+00:00",
   "headline": {
-    "claim_status": "research_only",
-    "current_phase": "phase_0_research_active",
-    "summary": "JJ-N has researched accounts and a visible first wedge, but qualification, outreach, and revenue claims remain pre-launch.",
+    "claim_status": "qualification_only",
+    "current_phase": "phase_0_pipeline_seeded",
+    "summary": "JJ-N is qualifying targets and instrumenting the first revenue wedge before live launch.",
     "title": "JJ-N Website Growth Audit"
   },
   "launch_summary": {
     "blocking_reasons": [
       "checkout_surface_not_ready",
-      "billing_webhook_not_ready",
-      "manual_close_lane_not_ready"
+      "billing_webhook_not_ready"
     ],
     "checkout_ready": false,
     "checkout_sessions_created": 0,
-    "curated_candidates": 0,
+    "curated_candidates": 14,
     "delivery_artifacts_generated": 0,
     "fulfillment_ready": true,
-    "generated_at": "2026-03-10T15:06:04+00:00",
+    "generated_at": "2026-03-10T16:08:39+00:00",
     "launch_mode": "manual_close_only",
     "launchable": false,
     "live_offer_url": null,
-    "manual_close_ready": false,
+    "manual_close_ready": true,
     "monitor_runs_completed": 0,
+    "operator_checklist": {
+      "blocking_reasons": [
+        "checkout_surface_not_ready",
+        "billing_webhook_not_ready"
+      ],
+      "generated_at": "2026-03-10T16:08:39+00:00",
+      "launchable": false,
+      "live_offer_url": null,
+      "manual_close_context": {
+        "curated_candidates": 14,
+        "launch_mode": "manual_close_only",
+        "selected_prospects": 10
+      },
+      "missing_requirements": [
+        {
+          "current_value": "https://example.invalid",
+          "detail": "Set a non-placeholder HTTPS base URL that serves the Website Growth Audit offer surface.",
+          "env": "JJ_N_WEBSITE_GROWTH_AUDIT_PUBLIC_BASE_URL or JJ_REVENUE_PUBLIC_BASE_URL",
+          "key": "public_base_url",
+          "surface": "checkout"
+        },
+        {
+          "current_value": "",
+          "detail": "Configure a Stripe secret key so the offer page can create hosted checkout sessions.",
+          "env": "STRIPE_SECRET_KEY",
+          "key": "stripe_secret_key",
+          "surface": "checkout"
+        },
+        {
+          "current_value": "https://example.invalid/nontrading/website-growth-audit/success?session_id={CHECKOUT_SESSION_ID}",
+          "detail": "Use an absolute HTTPS success URL on the public host and include {CHECKOUT_SESSION_ID} or session_id=.",
+          "env": "JJ_N_WEBSITE_GROWTH_AUDIT_SUCCESS_URL",
+          "key": "success_url",
+          "surface": "checkout"
+        },
+        {
+          "current_value": "https://example.invalid/nontrading/website-growth-audit/cancel",
+          "detail": "Use an absolute HTTPS cancel URL on the public host.",
+          "env": "JJ_N_WEBSITE_GROWTH_AUDIT_CANCEL_URL",
+          "key": "cancel_url",
+          "surface": "checkout"
+        },
+        {
+          "current_value": "",
+          "detail": "Configure the Stripe webhook signing secret so paid orders can be verified.",
+          "env": "STRIPE_WEBHOOK_SECRET",
+          "key": "stripe_webhook_secret",
+          "surface": "webhook"
+        }
+      ],
+      "offer_api_url": null,
+      "offer_page_url": null,
+      "schema_version": "revenue_audit_launch_operator_checklist.v1",
+      "source_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_launch_operator_checklist.json",
+      "status": "blocked"
+    },
     "orders_recorded": 0,
     "paid_orders_seen": 0,
     "paid_revenue_usd": 0,
     "schema_version": "revenue_audit_launch_summary.v1",
-    "selected_prospects": 0,
-    "selection_overflow": 0,
+    "selected_prospects": 10,
+    "selection_overflow": 4,
     "selection_skips": {
       "missing_contact": 0,
       "missing_evidence": 0,
@@ -289,10 +650,35 @@
           "run_monitor": true
         }
       },
+      "manual_close": {
+        "curated_candidates": 14,
+        "lane_method_checks": {
+          "build_artifact": true,
+          "collect_candidates": true
+        },
+        "launch_mode": "manual_close_only",
+        "selected_prospects": 10,
+        "selection_overflow": 4,
+        "selection_skips": {
+          "missing_contact": 0,
+          "missing_evidence": 0,
+          "non_us": 0,
+          "uncurated": 3
+        }
+      },
+      "offer_surface": {
+        "live_offer_url": null,
+        "offer_api_url": null,
+        "offer_page_url": null
+      },
       "routes": {
+        "cancel_page": true,
         "checkout_session": true,
-        "offer": true,
+        "offer_api": true,
+        "offer_page": true,
+        "order_lookup": true,
         "order_status": true,
+        "success_page": true,
         "webhook": true
       },
       "webhook_config": {
@@ -364,26 +750,81 @@
     ]
   },
   "phase": {
-    "claim_reason": "JJ-N has researched accounts in repo-tracked telemetry, but qualification and revenue proof remain pre-launch.",
-    "claim_status": "research_only",
-    "current_phase": "phase_0_research_active"
+    "claim_reason": "JJ-N is qualifying targets, but outreach and revenue proof remain pre-launch.",
+    "claim_status": "qualification_only",
+    "current_phase": "phase_0_pipeline_seeded"
+  },
+  "recurring_monitor": {
+    "active_enrollments": 0,
+    "artifacts": {
+      "monitor_run_count": 0,
+      "order_count": 0,
+      "payment_event_count": 0
+    },
+    "assumptions": {
+      "churn_rate_30d": 0.0,
+      "upsell_rate": 0.0
+    },
+    "current_arr_usd": 0.0,
+    "current_mrr_usd": 0,
+    "delivered_audits": 0,
+    "enrollments": [],
+    "generated_at": "2026-03-10T16:05:44+00:00",
+    "monitor_runs_completed": 0,
+    "monthly_price_usd": 299.0,
+    "offer": {
+      "billing_interval": "month",
+      "cadence_days": 30,
+      "deliverables": [
+        "rerun cadence",
+        "delta report",
+        "severity-change summary",
+        "quick-win refresh"
+      ],
+      "name": "Website Growth Audit Recurring Monitor",
+      "parent_offer_slug": "website-growth-audit",
+      "slug": "website-growth-audit-recurring-monitor"
+    },
+    "schema_version": "revenue_audit_recurring_monitor.v1",
+    "source_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_recurring_monitor/latest.json",
+    "source_db_path": "/Users/johnbradley/Desktop/Elastifund/data/revenue_agent.db",
+    "status": "not_started",
+    "summary": {
+      "active_arr_usd": 0.0,
+      "active_enrollments": 0,
+      "active_mrr_usd": 0,
+      "canceled_enrollments": 0,
+      "checkout_pending_enrollments": 0,
+      "churned_enrollments": 0,
+      "delta_reports_completed": 0,
+      "one_time_audit_cash_excluded_usd": 0,
+      "paused_enrollments": 0,
+      "recurring_cash_collected_usd": 0,
+      "refunded_enrollments": 0,
+      "staged_enrollments": 0
+    }
   },
   "schema_version": "nontrading_public_report.v2",
   "source_artifacts": {
     "allocator_input_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_allocator_input.json",
+    "arr_lab_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_arr_lab/latest.json",
     "benchmark_comparison_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_benchmark_comparison.json",
     "benchmark_input": "/Users/johnbradley/Desktop/Elastifund/reports/openclaw/normalized/latest.json",
+    "cycle_report_input": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading/website_growth_audit_cycle_reports.jsonl",
+    "launch_bridge_input": "reports/nontrading/revenue_audit_launch_batch_seed.json",
+    "launch_checklist_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_launch_operator_checklist.json",
     "launch_summary": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_launch_summary.json",
     "primary_store": "/Users/johnbradley/Desktop/Elastifund/data/revenue_agent.db",
+    "recurring_monitor_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_recurring_monitor/latest.json",
     "report_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_public_report.json",
     "status_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_first_dollar_status.json",
     "telemetry_dataset": "elastifund.nontrading"
   },
   "source_snapshot": {
-    "accounts": 3,
+    "accounts": 17,
     "approval_requests": 0,
     "checkout_sessions": 0,
-    "crm_opportunities": 3,
+    "crm_opportunities": 17,
     "db_path": "/Users/johnbradley/Desktop/Elastifund/data/revenue_agent.db",
     "payment_events": 0,
     "table_namespace": "compat",
@@ -391,7 +832,7 @@
     "telemetry_events": 4
   },
   "wedge": {
-    "claim_status": "research_only",
+    "claim_status": "qualification_only",
     "delivery_days": 5,
     "description": "A five-day expert-led website audit for SMBs with clear search, conversion, and competitor-gap findings, packaged into a prioritized action plan.",
     "fulfillment_type": "hybrid",
@@ -417,6 +858,6 @@
       "delivery_packet": "pending",
       "workspace": "pending"
     },
-    "status": "launch_prep"
+    "status": "qualified_pipeline_seeded"
   }
 }
