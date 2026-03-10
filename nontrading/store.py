@@ -1842,9 +1842,9 @@ class RevenueStore:
         normalized_email = normalize_email(contact.email)
         now = utc_now()
         t = self.tables
-        existing = None
+        existing = self.get_contact(contact.id) if contact.id is not None else None
         if normalized_email:
-            existing = self.get_contact_by_email(contact.account_id, contact.email)
+            existing = existing or self.get_contact_by_email(contact.account_id, contact.email)
 
         if existing is None:
             with self._connect() as conn:
