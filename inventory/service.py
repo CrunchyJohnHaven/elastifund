@@ -145,6 +145,12 @@ def runs_payload(bot_id: str | None = None, status: str | None = None) -> dict[s
         runs = [run for run in runs if run["system_id"] == bot_id]
     if status:
         runs = [run for run in runs if run["status"] == status]
+    if bot_id is None:
+        runs = [
+            run
+            for run in runs
+            if not bool(run.get("comparison_mode") == "comparison_only" or run.get("allocator_eligible") is False)
+        ]
     return {
         "as_of": runs_metadata()["as_of"],
         "state": runs_metadata()["state"],

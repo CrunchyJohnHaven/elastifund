@@ -49,6 +49,16 @@ def test_runs_endpoint_exposes_planned_tier1_runs():
     }
 
 
+def test_runs_endpoint_keeps_comparison_only_runs_on_bot_specific_queries():
+    response = client.get("/api/v1/runs", params={"bot_id": "openclaw", "status": "planned"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["items"][0]["system_id"] == "openclaw"
+    assert body["items"][0]["track"] == "comparison_only"
+
+
 def test_paper_status_endpoint_reflects_methodology_first_state():
     response = client.get("/api/v1/paper-status", params={"bot_id": "freqtrade"})
 
