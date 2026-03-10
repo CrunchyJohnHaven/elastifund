@@ -11,13 +11,6 @@ from nontrading.store import RevenueStore
 from scripts.refresh_revenue_audit_launch_batch import main as refresh_launch_batch_main
 
 
-FIXTURE_DIR = Path(__file__).with_name("fixtures") / "revenue_audit"
-
-
-def _fixture(name: str) -> str:
-    return (FIXTURE_DIR / name).read_text(encoding="utf-8")
-
-
 def _write_seed_file(tmp_path: Path, rows: list[dict[str, str]]) -> Path:
     source_path = tmp_path / "launch_batch_seed.json"
     source_path.write_text(json.dumps(rows), encoding="utf-8")
@@ -114,6 +107,47 @@ def _curated_fetcher() -> StaticPageFetcher:
       </body>
     </html>
     """
+    strong_home = """
+    <html>
+      <head>
+        <title>Lone Star Fence Repair | Austin Fence Repair</title>
+        <meta
+          name="description"
+          content="Fence repair and installation in Austin with same-day estimates and clear next steps."
+        />
+        <script type="application/ld+json">
+          {"@context":"https://schema.org","@type":"LocalBusiness","name":"Lone Star Fence Repair"}
+        </script>
+      </head>
+      <body>
+        <h1>Austin Fence Repair and Installation</h1>
+        <a href="/services/fence-repair">Fence Repair</a>
+        <a href="/contact">Contact</a>
+        <a href="mailto:owner@lonestarfence.test">Email</a>
+        <a href="tel:5125550199">Call</a>
+        <button>Request Estimate</button>
+      </body>
+    </html>
+    """
+    strong_services = """
+    <html>
+      <head><title>Fence Repair Services</title></head>
+      <body>
+        <h1>Fence Repair Services</h1>
+        <button>Request Estimate</button>
+      </body>
+    </html>
+    """
+    strong_contact = """
+    <html>
+      <head><title>Contact</title></head>
+      <body>
+        <form action="/submit"></form>
+        <a href="mailto:owner@lonestarfence.test">Email</a>
+        <a href="tel:5125550199">Call</a>
+      </body>
+    </html>
+    """
     return StaticPageFetcher(
         {
             "https://growth-gap.test/": good_home,
@@ -125,9 +159,9 @@ def _curated_fetcher() -> StaticPageFetcher:
             "https://contactless-gap.test/": contactless_home,
             "https://contactless-gap.test/services": contactless_services,
             "https://contactless-gap.test/about": contactless_about,
-            "https://lonestarfence.test/": _fixture("strong_home.html"),
-            "https://lonestarfence.test/services/fence-repair": _fixture("strong_services.html"),
-            "https://lonestarfence.test/contact": _fixture("strong_contact.html"),
+            "https://lonestarfence.test/": strong_home,
+            "https://lonestarfence.test/services/fence-repair": strong_services,
+            "https://lonestarfence.test/contact": strong_contact,
         }
     )
 
