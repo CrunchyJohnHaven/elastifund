@@ -76,6 +76,31 @@
         "last_error": null
       },
       "artifacts": []
+    },
+    {
+      "id": "openclaw-cycle3-comparison-only",
+      "system_id": "openclaw",
+      "spec_version": "2026.03-candidate1",
+      "track": "comparison_only",
+      "execution_label": "internal_simulation",
+      "strategy_mode": "native",
+      "status": "planned",
+      "scheduled_cycle": "cycle3",
+      "tests": [
+        "T0",
+        "T1",
+        "T2",
+        "T3"
+      ],
+      "comparison_mode": "comparison_only",
+      "allocator_eligible": false,
+      "status_note": "Sibling AWS benchmark scaffold is ready. Deploy only into the isolated openclaw-benchmark namespace with separate secrets, separate state, and no live wallet or allocator access.",
+      "paper_status": {
+        "state": "not_started",
+        "last_heartbeat": null,
+        "last_error": null
+      },
+      "artifacts": []
     }
   ]
 }

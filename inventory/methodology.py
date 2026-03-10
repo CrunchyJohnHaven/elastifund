@@ -189,6 +189,7 @@ def methodology_payload() -> dict[str, Any]:
             "Disclose whether a run used internal simulation, exchange sandbox, or deterministic simulation.",
             "Label every run as native strategy or translated strategy.",
             "Do not publish profitability rankings before operational evidence exists.",
+            "Systems tagged comparison_only must remain allocator-ineligible and cannot access live wallets or shared state.",
         ],
         "initial_cohort": [
             "freqtrade",
@@ -197,5 +198,8 @@ def methodology_payload() -> dict[str, Any]:
             "octobot",
             "nautilustrader",
             "lean",
+        ],
+        "comparison_only_systems": [
+            "openclaw",
         ],
     }

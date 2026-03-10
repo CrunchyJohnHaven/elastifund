@@ -48,3 +48,11 @@ def test_paper_status_payload_can_filter_by_bot():
     assert payload["state"] == "not_started"
     assert len(payload["items"]) == 1
     assert payload["items"][0]["bot_id"] == "hummingbot"
+
+
+def test_bot_detail_payload_exposes_comparison_only_system() -> None:
+    payload = bot_detail_payload("openclaw")
+
+    assert payload["bot"]["benchmark_status"] == "comparison_only"
+    assert payload["latest_run"]["id"] == "openclaw-cycle3-comparison-only"
+    assert payload["latest_run"]["comparison_mode"] == "comparison_only"

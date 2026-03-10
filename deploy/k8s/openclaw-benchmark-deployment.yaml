@@ -1,0 +1,125 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: openclaw-benchmark-state
+  namespace: openclaw-benchmark
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openclaw-benchmark
+  namespace: openclaw-benchmark
+  labels:
+    app: openclaw-benchmark
+    elastifund.io/comparison_mode: comparison_only
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openclaw-benchmark
+  template:
+    metadata:
+      labels:
+        app: openclaw-benchmark
+        elastifund.io/comparison_mode: comparison_only
+        elastifund.io/allocator_access: deny
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: gateway
+          image: openclaw-benchmark:59bc3c6
+          imagePullPolicy: IfNotPresent
+          command:
+            - node
+            - openclaw.mjs
+            - gateway
+            - --bind
+            - lan
+            - --port
+            - "18789"
+            - --allow-unconfigured
+          env:
+            - name: OPENCLAW_STATE_DIR
+              value: /var/lib/openclaw/state
+            - name: OPENCLAW_CONFIG_PATH
+              value: /etc/openclaw/openclaw.json
+            - name: OPENCLAW_GATEWAY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: openclaw-benchmark-secrets
+                  key: OPENCLAW_GATEWAY_TOKEN
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openclaw-benchmark-secrets
+                  key: OPENAI_API_KEY
+                  optional: true
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openclaw-benchmark-secrets
+                  key: ANTHROPIC_API_KEY
+                  optional: true
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: service.namespace=openclaw-benchmark,service.name=openclaw-benchmark,elastifund.comparison_mode=comparison_only
+            - name: ELASTIFUND_BENCHMARK_LOG_INDEX
+              valueFrom:
+                configMapKeyRef:
+                  name: openclaw-benchmark-config
+                  key: ELASTIFUND_BENCHMARK_LOG_INDEX
+            - name: ELASTIFUND_BENCHMARK_METRICS_INDEX
+              valueFrom:
+                configMapKeyRef:
+                  name: openclaw-benchmark-config
+                  key: ELASTIFUND_BENCHMARK_METRICS_INDEX
+          ports:
+            - containerPort: 18789
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 18789
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 18789
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+          volumeMounts:
+            - name: config
+              mountPath: /etc/openclaw
+              readOnly: true
+            - name: state
+              mountPath: /var/lib/openclaw/state
+      volumes:
+        - name: config
+          configMap:
+            name: openclaw-benchmark-config
+            items:
+              - key: openclaw.json
+                path: openclaw.json
+        - name: state
+          persistentVolumeClaim:
+            claimName: openclaw-benchmark-state

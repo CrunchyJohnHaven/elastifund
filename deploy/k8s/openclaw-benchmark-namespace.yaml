@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openclaw-benchmark
+  labels:
+    elastifund.io/lane: comparison_only
+    elastifund.io/allocator_access: deny
+    elastifund.io/shared_state: isolated

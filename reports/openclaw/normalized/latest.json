@@ -1,0 +1,94 @@
+{
+  "spec_version": "2026.03-openclaw1",
+  "system_id": "openclaw",
+  "system_name": "OpenClaw",
+  "run_id": "openclaw-cycle3-comparison-only",
+  "comparison_mode": "comparison_only",
+  "allocator_eligible": false,
+  "upstream_repo": "https://github.com/openclaw/openclaw.git",
+  "upstream_commit": "59bc3c66300ba93a71b4220146e7135950387770",
+  "execution_label": "internal_simulation",
+  "evaluation_track": "comparison_only",
+  "captured_at": "2025-03-10T12:00:04Z",
+  "started_at": "2025-03-10T12:00:00Z",
+  "finished_at": "2025-03-10T12:00:04Z",
+  "telemetry": {
+    "decision_count": 3,
+    "completed_decision_count": 2,
+    "skipped_decision_count": 1,
+    "error_decision_count": 0,
+    "webhook_count": 1,
+    "model_usage_events": 2,
+    "avg_cycle_time_ms": 513.333,
+    "p95_cycle_time_ms": 610.0,
+    "avg_model_duration_ms": 400.0,
+    "total_cost_usd": 0.07,
+    "max_lane_queue_size": 2,
+    "heartbeat_max_active": 1,
+    "heartbeat_max_waiting": 0,
+    "heartbeat_max_queued": 1
+  },
+  "isolation": {
+    "namespace": "openclaw-benchmark",
+    "secrets_scope": "isolated",
+    "state_scope": "isolated",
+    "wallet_access": "none",
+    "shared_state_access": "none",
+    "log_index_prefix": "elastifund-openclaw-benchmark",
+    "metadata": {
+      "aws_stack_mode": "sibling",
+      "allocator_access": "denied"
+    }
+  },
+  "outcome_comparisons": [
+    {
+      "case_id": "cta-clarity",
+      "reference_system_id": "elastifund",
+      "comparison_system_id": "openclaw",
+      "reference_value": {
+        "issues_found": 3,
+        "quick_win": "Replace the buried phone number CTA with a sticky call button."
+      },
+      "comparison_value": {
+        "issues_found": 2,
+        "quick_win": "Shorten the lead form."
+      },
+      "comparator": "manual_review",
+      "winner": "reference",
+      "notes": "OpenClaw missed the stale hero CTA.",
+      "metadata": {}
+    },
+    {
+      "case_id": "contact-friction",
+      "reference_system_id": "elastifund",
+      "comparison_system_id": "openclaw",
+      "reference_value": {
+        "issues_found": 2
+      },
+      "comparison_value": {
+        "issues_found": 2
+      },
+      "comparator": "manual_review",
+      "winner": "tie",
+      "notes": "Both systems identified the duplicated footer form.",
+      "metadata": {}
+    }
+  ],
+  "source_artifacts": [
+    "tests/fixtures/openclaw/diagnostics.jsonl",
+    "tests/fixtures/openclaw/outcomes.json"
+  ],
+  "metadata": {
+    "upstream_version": "2026.3.9",
+    "comparison_reason": "sibling benchmark only",
+    "comparison_only": true,
+    "raw_event_type_counts": {
+      "message.processed": 3,
+      "model.usage": 2,
+      "queue.lane.enqueue": 1,
+      "webhook.processed": 1,
+      "diagnostic.heartbeat": 1
+    },
+    "comparison_count": 2
+  }
+}

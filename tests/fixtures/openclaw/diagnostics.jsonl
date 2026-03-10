@@ -1,0 +1,8 @@
+{"ts": 1741608000000, "type": "message.processed", "outcome": "completed", "durationMs": 420}
+{"ts": 1741608000500, "type": "model.usage", "costUsd": 0.04, "durationMs": 360}
+{"ts": 1741608001000, "type": "queue.lane.enqueue", "queueSize": 2}
+{"ts": 1741608002000, "type": "message.processed", "outcome": "completed", "durationMs": 610}
+{"ts": 1741608002500, "type": "webhook.processed", "durationMs": 55}
+{"ts": 1741608003000, "type": "diagnostic.heartbeat", "active": 1, "waiting": 0, "queued": 1}
+{"ts": 1741608004000, "type": "message.processed", "outcome": "skipped", "durationMs": 510}
+{"ts": 1741608004500, "type": "model.usage", "costUsd": 0.03, "durationMs": 440}

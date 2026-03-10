@@ -1,0 +1,28 @@
+{
+  "comparisons": [
+    {
+      "case_id": "cta-clarity",
+      "elastifund_value": {
+        "issues_found": 3,
+        "quick_win": "Replace the buried phone number CTA with a sticky call button."
+      },
+      "openclaw_value": {
+        "issues_found": 2,
+        "quick_win": "Shorten the lead form."
+      },
+      "winner": "elastifund",
+      "notes": "OpenClaw missed the stale hero CTA."
+    },
+    {
+      "case_id": "contact-friction",
+      "elastifund_value": {
+        "issues_found": 2
+      },
+      "openclaw_value": {
+        "issues_found": 2
+      },
+      "winner": "draw",
+      "notes": "Both systems identified the duplicated footer form."
+    }
+  ]
+}

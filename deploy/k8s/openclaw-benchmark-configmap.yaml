@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openclaw-benchmark-config
+  namespace: openclaw-benchmark
+data:
+  openclaw.json: |
+    {
+      "gateway": {
+        "bind": "lan",
+        "auth": {
+          "mode": "token"
+        }
+      },
+      "logging": {
+        "level": "info",
+        "file": "/var/lib/openclaw/state/logs/openclaw-benchmark.jsonl",
+        "consoleStyle": "json"
+      },
+      "plugins": {
+        "allow": [
+          "diagnostics-otel"
+        ],
+        "entries": {
+          "diagnostics-otel": {
+            "enabled": true
+          }
+        }
+      },
+      "diagnostics": {
+        "enabled": true,
+        "otel": {
+          "enabled": true,
+          "endpoint": "http://otel-collector.observability.svc.cluster.local:4318",
+          "protocol": "http/protobuf",
+          "serviceName": "openclaw-benchmark",
+          "traces": true,
+          "metrics": true,
+          "logs": true,
+          "sampleRate": 1.0,
+          "flushIntervalMs": 10000
+        }
+      }
+    }
+  ELASTIFUND_BENCHMARK_LOG_INDEX: elastifund-openclaw-benchmark-logs
+  ELASTIFUND_BENCHMARK_METRICS_INDEX: elastifund-openclaw-benchmark-metrics
+  ELASTIFUND_BENCHMARK_ARTIFACT_PREFIX: reports/openclaw-benchmark

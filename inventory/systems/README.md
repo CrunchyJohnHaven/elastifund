@@ -14,5 +14,6 @@ Each benchmarked external system gets a subdirectory here.
 - Freqtrade
 - Hummingbot
 - NautilusTrader
+- OpenClaw (comparison-only sibling benchmark)
 
 Keep these adapters reproducible. The goal is to let another operator rerun the same clean-room benchmark without folklore.
