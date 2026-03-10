@@ -123,6 +123,13 @@ class SequenceDelivery:
     next_state: SequenceState
 
 
+@dataclass(frozen=True)
+class SequencePlan:
+    planned_step: PlannedSequenceStep
+    selection: TemplateSelection
+    next_state: SequenceState
+
+
 class SequenceRunner:
     def __init__(
         self,
@@ -138,7 +145,7 @@ class SequenceRunner:
         self.selector = selector or TemplateSelector(settings)
         self.sequence = sequence
 
-    def send_due_step(
+    def plan_due_step(
         self,
         lead: Lead,
         offer: ServiceOffer,
@@ -146,7 +153,7 @@ class SequenceRunner:
         *,
         days_since_start: int,
         state: SequenceState,
-    ) -> SequenceDelivery | None:
+    ) -> SequencePlan | None:
         planned_step = self.sequence.next_step(
             lead,
             offer,
@@ -163,21 +170,45 @@ class SequenceRunner:
             preferred_angle=planned_step.angle,
             campaign_name=campaign.name,
         )
+        return SequencePlan(
+            planned_step=planned_step,
+            selection=selection,
+            next_state=state.advance(planned_step.angle),
+        )
+
+    def send_due_step(
+        self,
+        lead: Lead,
+        offer: ServiceOffer,
+        campaign: Campaign,
+        *,
+        days_since_start: int,
+        state: SequenceState,
+    ) -> SequenceDelivery | None:
+        plan = self.plan_due_step(
+            lead,
+            offer,
+            campaign,
+            days_since_start=days_since_start,
+            state=state,
+        )
+        if plan is None:
+            return None
+
         message = self.store.queue_outbox_message(
             campaign=campaign,
             lead=lead,
-            subject=selection.rendered_email.subject,
-            body=selection.rendered_email.body,
-            headers=selection.rendered_email.headers,
+            subject=plan.selection.rendered_email.subject,
+            body=plan.selection.rendered_email.body,
+            headers=plan.selection.rendered_email.headers,
             from_email=self.settings.from_email,
             provider=self.sender.provider_name,
         )
         delivery = self.sender.send(message)
-        next_state = state.advance(planned_step.angle)
         return SequenceDelivery(
-            planned_step=planned_step,
-            selection=selection,
+            planned_step=plan.planned_step,
+            selection=plan.selection,
             message=message,
             delivery=delivery,
-            next_state=next_state,
+            next_state=plan.next_state,
         )
