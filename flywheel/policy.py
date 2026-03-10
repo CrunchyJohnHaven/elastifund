@@ -9,6 +9,19 @@ from data_layer.schema import DailySnapshot
 
 ENV_LADDER = ("sim", "paper", "shadow", "micro_live", "scaled_live", "core_live")
 
+# Lane-level kill registry.  Lanes listed here are permanently blocked from
+# receiving new capital or progressing beyond their current stage.  Existing
+# positions are held to settlement only.
+#
+# Format: {lane_id: kill_reason}
+KILLED_LANES: dict[str, str] = {
+    "kalshi_weather_bracket": (
+        "Killed 2026-03-11. Model accuracy 27-35% vs NWS settlement, "
+        "forecast precision 15x too imprecise, negative EV at realistic entry. "
+        "Successor: binary_daily_weather (paper-only until 4 evidence gates pass)."
+    ),
+}
+
 
 @dataclass(frozen=True)
 class PolicyOutcome:
@@ -86,6 +99,7 @@ def _previous_stage(stage: str) -> str:
 
 
 def _metrics(snapshot: DailySnapshot) -> dict[str, Any]:
+    metadata = snapshot.metrics if isinstance(snapshot.metrics, dict) else {}
     return {
         "snapshot_date": snapshot.snapshot_date,
         "realized_pnl": snapshot.realized_pnl,
@@ -99,7 +113,28 @@ def _metrics(snapshot: DailySnapshot) -> dict[str, Any]:
         "rolling_ece": snapshot.rolling_ece,
         "max_drawdown_pct": snapshot.max_drawdown_pct,
         "kill_events": snapshot.kill_events,
+        "control_context": metadata.get("control_context") if isinstance(metadata.get("control_context"), dict) else metadata,
+        "candidate_source": str(metadata.get("candidate_source") or "").strip().lower(),
+        "comparison_only": bool(metadata.get("comparison_only")),
+        "stale_reasons": metadata.get("stale_reasons"),
+        "packet_age_minutes": metadata.get("packet_age_minutes"),
+        "openclaw_age_minutes": metadata.get("openclaw_age_minutes"),
+        "expected_arr_delta": metadata.get("expected_arr_delta"),
     }
+
+
+def _safe_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def is_lane_killed(lane_id: str) -> bool:
+    """Return True if the lane is in the permanent kill registry."""
+    return lane_id in KILLED_LANES
 
 
 def evaluate_snapshot(snapshot: DailySnapshot) -> PolicyOutcome:
@@ -107,6 +142,99 @@ def evaluate_snapshot(snapshot: DailySnapshot) -> PolicyOutcome:
 
     stage = snapshot.environment
     metrics = _metrics(snapshot)
+
+    # Check lane-level kill registry before any other evaluation.
+    lane_id = str(metrics.get("candidate_source") or "").strip().lower()
+    if lane_id in KILLED_LANES:
+        return PolicyOutcome(
+            decision="hold",
+            from_stage=stage,
+            to_stage=stage,
+            reason_code="lane_killed",
+            notes=KILLED_LANES[lane_id],
+            priority=100,
+            metrics=metrics,
+        )
+
+    candidate_source = str(metrics.get("candidate_source") or "").strip().lower()
+    control_context = metrics.get("control_context")
+    if isinstance(control_context, dict):
+        stale_reasons = [str(item).strip() for item in control_context.get("stale_reasons", []) if str(item).strip()]
+        if bool(control_context.get("read_only")) or stale_reasons:
+            return PolicyOutcome(
+                decision="hold",
+                from_stage=stage,
+                to_stage=stage,
+                reason_code="stale_inputs_blocked",
+                notes="Control-context refresh is stale or blocked; waiting for fresh pipeline data.",
+                priority=95,
+                metrics=metrics,
+            )
+
+        candidate_reasons = [str(item).strip() for item in (metrics.get("stale_reasons") or []) if str(item).strip()]
+        if candidate_reasons:
+            return PolicyOutcome(
+                decision="hold",
+                from_stage=stage,
+                to_stage=stage,
+                reason_code="candidate_stale_reasons",
+                notes="Candidate carries explicit staleness or freshness blockers.",
+                priority=94,
+                metrics=metrics,
+            )
+
+        if candidate_source == "openclaw":
+            packet_age = _safe_float(metrics.get("packet_age_minutes"))
+            openclaw_limit = _safe_float(control_context.get("openclaw_data_age_minutes"))
+            if packet_age is None:
+                return PolicyOutcome(
+                    decision="hold",
+                    from_stage=stage,
+                    to_stage=stage,
+                    reason_code="openclaw_packet_age_missing",
+                    notes="OpenClaw candidate has no packet timestamp and cannot be promoted while stale gating is active.",
+                    priority=93,
+                    metrics=metrics,
+                )
+            if openclaw_limit is not None and packet_age > openclaw_limit:
+                return PolicyOutcome(
+                    decision="hold",
+                    from_stage=stage,
+                    to_stage=stage,
+                    reason_code="openclaw_packet_stale",
+                    notes="OpenClaw packet age exceeds max age threshold.",
+                    priority=93,
+                    metrics=metrics,
+                )
+
+            openclaw_age = _safe_float(metrics.get("openclaw_age_minutes"))
+            if openclaw_age is not None and openclaw_limit is not None and openclaw_age > openclaw_limit:
+                return PolicyOutcome(
+                    decision="hold",
+                    from_stage=stage,
+                    to_stage=stage,
+                    reason_code="openclaw_evidence_stale",
+                    notes="OpenClaw freshness telemetry is stale versus configured threshold.",
+                    priority=93,
+                    metrics=metrics,
+                )
+
+        min_arr_bps = float(control_context.get("max_arr_improvement_bps") or 0.0)
+        expected_arr_delta = metrics.get("expected_arr_delta")
+        try:
+            expected_arr_delta_value = float(expected_arr_delta) if expected_arr_delta is not None else None
+        except (TypeError, ValueError):
+            expected_arr_delta_value = None
+        if candidate_source == "openclaw" and expected_arr_delta_value is not None and min_arr_bps > 0 and expected_arr_delta_value < min_arr_bps:
+            return PolicyOutcome(
+                decision="hold",
+                from_stage=stage,
+                to_stage=stage,
+                reason_code="arr_improvement_below_min",
+                notes="Expected ARR uplift is below policy minimum.",
+                priority=90,
+                metrics=metrics,
+            )
 
     if stage == "core_live":
         return PolicyOutcome(

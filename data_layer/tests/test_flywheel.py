@@ -25,7 +25,7 @@ from flywheel.improvement_exchange import (
     verify_knowledge_pack,
     verify_improvement_bundle,
 )
-from flywheel.policy import evaluate_snapshot
+from flywheel.policy import evaluate_snapshot, is_lane_killed, KILLED_LANES
 from flywheel.runner import build_scorecard_from_db, run_cycle
 
 
@@ -144,6 +144,40 @@ class TestFlywheelPolicy:
 
         assert outcome.decision == "kill"
         assert outcome.reason_code == "kill_events_present"
+
+
+    def test_killed_lane_blocks_promotion(self, session):
+        version = crud.create_strategy_version(
+            session,
+            strategy_key="weather-bracket",
+            version_label="v1",
+            lane="kalshi_weather",
+        )
+        deployment = crud.create_deployment(
+            session,
+            strategy_version_id=version.id,
+            environment="paper",
+            capital_cap_usd=100.0,
+        )
+        snapshot = crud.create_daily_snapshot(
+            session,
+            strategy_version_id=version.id,
+            deployment_id=deployment.id,
+            environment="paper",
+            **_snapshot_payload(
+                metrics={"candidate_source": "kalshi_weather_bracket"},
+            ),
+        )
+
+        outcome = evaluate_snapshot(snapshot)
+
+        assert outcome.decision == "hold"
+        assert outcome.reason_code == "lane_killed"
+        assert "kalshi_weather_bracket" not in outcome.to_stage
+
+    def test_is_lane_killed_utility(self):
+        assert is_lane_killed("kalshi_weather_bracket") is True
+        assert is_lane_killed("btc5_maker") is False
 
 
 class TestFlywheelRunner:
