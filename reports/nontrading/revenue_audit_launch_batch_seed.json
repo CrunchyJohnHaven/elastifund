@@ -1,0 +1,114 @@
+[
+  {
+    "company_name": "Carolinas Landscape",
+    "website_url": "https://carolinaslandscape.com/",
+    "country_code": "US",
+    "segment": "landscaping",
+    "city": "Charlotte",
+    "state": "NC"
+  },
+  {
+    "company_name": "Pure Pest Company",
+    "website_url": "https://purepestco.com/",
+    "country_code": "US",
+    "segment": "pest_control",
+    "city": "Denver",
+    "state": "CO"
+  },
+  {
+    "company_name": "Denver Pest Control Co",
+    "website_url": "https://denverpestco.com/",
+    "country_code": "US",
+    "segment": "pest_control",
+    "city": "Denver",
+    "state": "CO"
+  },
+  {
+    "company_name": "Nashville Fence & Deck",
+    "website_url": "https://www.nashvillefenceanddeck.com/",
+    "country_code": "US",
+    "segment": "fencing",
+    "city": "Nashville",
+    "state": "TN"
+  },
+  {
+    "company_name": "Tampa Overhead Doors",
+    "website_url": "https://www.tampaoverheaddoors.com/",
+    "country_code": "US",
+    "segment": "garage_doors",
+    "city": "Tampa",
+    "state": "FL"
+  },
+  {
+    "company_name": "Atlanta Pressure Washing",
+    "website_url": "https://www.atlanta-pressure-washing.com/",
+    "country_code": "US",
+    "segment": "pressure_washing",
+    "city": "Atlanta",
+    "state": "GA"
+  },
+  {
+    "company_name": "Raleigh Concrete",
+    "website_url": "https://www.raleigh-concrete.com/",
+    "country_code": "US",
+    "segment": "concrete",
+    "city": "Raleigh",
+    "state": "NC"
+  },
+  {
+    "company_name": "Professional Poolcare Orlando",
+    "website_url": "https://professionalpoolcareorlando.com/",
+    "country_code": "US",
+    "segment": "pool_service",
+    "city": "Orlando",
+    "state": "FL"
+  },
+  {
+    "company_name": "Sactown Junk Removal",
+    "website_url": "https://sactownjunkremoval.com/",
+    "country_code": "US",
+    "segment": "junk_removal",
+    "city": "Sacramento",
+    "state": "CA"
+  },
+  {
+    "company_name": "Sac Junk",
+    "website_url": "https://www.sacjunk.com/",
+    "country_code": "US",
+    "segment": "junk_removal",
+    "city": "Sacramento",
+    "state": "CA"
+  },
+  {
+    "company_name": "Houston Siding Companies",
+    "website_url": "https://www.sidingcompanieshouston.com/",
+    "country_code": "US",
+    "segment": "siding",
+    "city": "Houston",
+    "state": "TX"
+  },
+  {
+    "company_name": "PoolReady",
+    "website_url": "https://poolready.com/",
+    "country_code": "US",
+    "segment": "pool_service",
+    "city": "Orlando",
+    "state": "FL"
+  },
+  {
+    "company_name": "Fire and Ice HVAC",
+    "website_url": "https://www.fireandicehvac.com/",
+    "country_code": "US",
+    "segment": "hvac",
+    "city": "El Cajon",
+    "state": "CA"
+  },
+  {
+    "company_name": "Phoenix Plumbing LLC",
+    "website_url": "https://www.phoenixplumbingllc.com/",
+    "country_code": "US",
+    "segment": "plumbing",
+    "city": "Milford",
+    "state": "PA"
+  }
+]
