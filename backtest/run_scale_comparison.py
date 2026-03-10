@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import argparse
 import copy
+import csv
 import hashlib
 import json
 import logging
 import re
+import sqlite3
 import statistics
 import sys
 from dataclasses import dataclass, field
@@ -40,10 +42,14 @@ DEFAULT_SIGNAL_SOURCE_AUDIT_PATH = ROOT / "reports" / "signal_source_audit.json"
 DEFAULT_RUNTIME_TRUTH_PATH = ROOT / "reports" / "runtime_truth_latest.json"
 DEFAULT_PUBLIC_RUNTIME_SNAPSHOT_PATH = ROOT / "reports" / "public_runtime_snapshot.json"
 DEFAULT_BTC5_AUTORESEARCH_PATH = ROOT / "reports" / "btc5_autoresearch" / "latest.json"
+DEFAULT_BTC5_MONTE_CARLO_PATH = ROOT / "reports" / "btc5_monte_carlo_latest.json"
 DEFAULT_KALSHI_WEATHER_LANE_PATH = ROOT / "reports" / "parallel" / "instance05_weather_lane.json"
 DEFAULT_KALSHI_ORDERS_PATH = ROOT / "data" / "kalshi_weather_orders.jsonl"
 DEFAULT_KALSHI_SETTLEMENTS_PATH = ROOT / "data" / "kalshi_weather_settlements.jsonl"
 DEFAULT_KALSHI_DECISIONS_PATH = ROOT / "data" / "kalshi_weather_decisions.jsonl"
+DEFAULT_BTC5_PROBE_DB_PATH = ROOT / "data" / "btc_5min_maker.remote_probe.db"
+DEFAULT_WALLET_EXPORT_DIR = Path.home() / "Downloads"
+DEFAULT_WALLET_EXPORT_GLOB = "Polymarket-History-*.csv"
 
 LLM_KELLY_FRACTION = 0.25
 FAST_KELLY_FRACTION = 1.0 / 16.0
@@ -58,6 +64,7 @@ MIN_WALLET_FLOW_RESOLVED_SIGNALS = 3
 MIN_WALLET_FLOW_UNIQUE_MARKETS = 2
 TIMEFRAME_RE = re.compile(r"(?<!\d)(\d{1,3})\s*(m|min|minute|minutes|h|hr|hour|hours)\b", re.IGNORECASE)
 VENUE_STALE_HOURS = 6.0
+WALLET_EXPORT_STALE_HOURS = 24.0
 FUND_BLOCKING_CHECKS = {
     "polymarket_capital_truth_drift",
     "accounting_reconciliation_drift",
@@ -935,6 +942,229 @@ def _load_jsonl_rows(path: Path | None) -> list[dict[str, Any]]:
     return rows
 
 
+def _build_audit_capital_support(
+    audit_payload: dict[str, Any] | None,
+    *,
+    now: datetime,
+) -> dict[str, Any]:
+    if not audit_payload:
+        return {
+            "available": False,
+            "audit_generated_at": None,
+            "freshness_hours": None,
+            "fresh_for_capital_allocation": False,
+            "supports_live_capital_expansion": False,
+            "capital_expansion_support_status": "unknown",
+            "stage_upgrade_support_status": "unknown",
+            "wallet_flow_confirmation_ready": False,
+            "confirmation_support_status": "unknown",
+            "confirmation_sources_ready": [],
+            "best_confirmation_source": None,
+            "confirmation_coverage_ratio": None,
+            "confirmation_resolved_window_coverage": None,
+            "confirmation_executed_window_coverage": None,
+            "confirmation_false_suppression_cost_usd": None,
+            "confirmation_false_confirmation_cost_usd": None,
+            "confirmation_lift_avg_pnl_usd": None,
+            "confirmation_lift_win_rate": None,
+            "confirmation_contradiction_penalty": None,
+            "confirmation_blocking_checks": ["signal_source_audit_missing"],
+            "blocking_checks": ["signal_source_audit_missing"],
+            "reasons": ["Signal-source audit is missing, so BTC5 capital expansion stays blocked."],
+        }
+
+    capital_support = audit_payload.get("capital_ranking_support") or {}
+    generated_at = audit_payload.get("generated_at") or capital_support.get("audit_generated_at")
+    freshness_hours = _freshness_hours(generated_at, now=now)
+    fresh_for_capital_allocation = freshness_hours is not None and freshness_hours <= VENUE_STALE_HOURS
+    trade_attribution_ready = bool(capital_support.get("trade_attribution_ready"))
+    wallet_flow_confirmation_ready = bool(capital_support.get("wallet_flow_confirmation_ready"))
+    capital_expansion_support_status = str(
+        capital_support.get("capital_expansion_support_status")
+        or ("ready" if trade_attribution_ready else "blocked")
+    ).lower()
+    stage_upgrade_support_status = str(capital_support.get("stage_upgrade_support_status") or "unknown").lower()
+    confirmation_support_status = str(capital_support.get("confirmation_support_status") or "unknown").lower()
+    confirmation_sources_ready = [str(item) for item in capital_support.get("confirmation_sources_ready") or []]
+    best_confirmation_source = capital_support.get("best_confirmation_source")
+    confirmation_coverage_ratio = capital_support.get("confirmation_coverage_ratio")
+    confirmation_resolved_window_coverage = capital_support.get(
+        "confirmation_resolved_window_coverage",
+        confirmation_coverage_ratio,
+    )
+    confirmation_executed_window_coverage = capital_support.get("confirmation_executed_window_coverage")
+    confirmation_false_suppression_cost_usd = capital_support.get("confirmation_false_suppression_cost_usd")
+    confirmation_false_confirmation_cost_usd = capital_support.get("confirmation_false_confirmation_cost_usd")
+    confirmation_lift_avg_pnl_usd = capital_support.get("confirmation_lift_avg_pnl_usd")
+    confirmation_lift_win_rate = capital_support.get("confirmation_lift_win_rate")
+    confirmation_contradiction_penalty = capital_support.get("confirmation_contradiction_penalty")
+    confirmation_blocking_checks = [
+        str(check) for check in capital_support.get("confirmation_blocking_checks") or []
+    ]
+    supports_live_capital_expansion = bool(
+        trade_attribution_ready
+        and capital_expansion_support_status == "ready"
+        and fresh_for_capital_allocation
+    )
+    blocking_checks = [str(check) for check in capital_support.get("stage_upgrade_blocking_checks") or []]
+    reasons: list[str] = []
+    if not fresh_for_capital_allocation:
+        blocking_checks.append("signal_source_audit_stale")
+        reasons.append("Signal-source audit is stale, so live BTC5 capital expansion should not advance.")
+    if not supports_live_capital_expansion:
+        blocking_checks.append("signal_source_audit_capital_expansion_blocked")
+        reasons.append("Signal-source audit has not cleared live BTC5 capital expansion.")
+    if confirmation_support_status == "ready":
+        support_parts: list[str] = []
+        if best_confirmation_source:
+            support_parts.append(f"best source `{best_confirmation_source}`")
+        if confirmation_resolved_window_coverage is not None:
+            support_parts.append(
+                f"resolved coverage {_safe_float(confirmation_resolved_window_coverage, 0.0):.0%}"
+            )
+        if confirmation_executed_window_coverage is not None:
+            support_parts.append(
+                f"executed coverage {_safe_float(confirmation_executed_window_coverage, 0.0):.0%}"
+            )
+        if confirmation_false_suppression_cost_usd is not None:
+            support_parts.append(
+                "false suppression cost "
+                + f"${_safe_float(confirmation_false_suppression_cost_usd, 0.0):.2f}"
+            )
+        if confirmation_lift_avg_pnl_usd is not None:
+            support_parts.append(f"avg PnL lift ${_safe_float(confirmation_lift_avg_pnl_usd, 0.0):+.2f}")
+        if confirmation_contradiction_penalty is not None:
+            support_parts.append(
+                f"contradiction penalty {_safe_float(confirmation_contradiction_penalty, 0.0):.0%}"
+            )
+        if support_parts:
+            reasons.append("BTC fast-window confirmation is available: " + ", ".join(support_parts) + ".")
+    elif confirmation_support_status in {"limited", "blocked"} and confirmation_blocking_checks:
+        reasons.append(
+            "BTC fast-window confirmation is still limited: "
+            + ", ".join(f"`{check}`" for check in confirmation_blocking_checks[:3])
+            + "."
+        )
+
+    return {
+        "available": True,
+        "audit_generated_at": generated_at,
+        "freshness_hours": freshness_hours,
+        "fresh_for_capital_allocation": fresh_for_capital_allocation,
+        "supports_live_capital_expansion": supports_live_capital_expansion,
+        "capital_expansion_support_status": capital_expansion_support_status,
+        "stage_upgrade_support_status": stage_upgrade_support_status,
+        "wallet_flow_confirmation_ready": wallet_flow_confirmation_ready,
+        "confirmation_support_status": confirmation_support_status,
+        "confirmation_sources_ready": confirmation_sources_ready,
+        "best_confirmation_source": best_confirmation_source,
+        "confirmation_coverage_ratio": confirmation_coverage_ratio,
+        "confirmation_resolved_window_coverage": confirmation_resolved_window_coverage,
+        "confirmation_executed_window_coverage": confirmation_executed_window_coverage,
+        "confirmation_false_suppression_cost_usd": confirmation_false_suppression_cost_usd,
+        "confirmation_false_confirmation_cost_usd": confirmation_false_confirmation_cost_usd,
+        "confirmation_lift_avg_pnl_usd": confirmation_lift_avg_pnl_usd,
+        "confirmation_lift_win_rate": confirmation_lift_win_rate,
+        "confirmation_contradiction_penalty": confirmation_contradiction_penalty,
+        "confirmation_blocking_checks": confirmation_blocking_checks,
+        "blocking_checks": _dedupe_preserve_order(blocking_checks),
+        "reasons": reasons,
+    }
+
+
+def _select_capacity_stress_profile(
+    monte_carlo_payload: dict[str, Any] | None,
+    forecast_payload: dict[str, Any] | None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    candidates = [
+        ("btc5_monte_carlo_latest", (monte_carlo_payload or {}).get("capacity_stress_summary")),
+        (
+            "btc5_autoresearch.simulation_summary",
+            ((forecast_payload or {}).get("simulation_summary") or {}).get("capacity_stress_summary"),
+        ),
+        ("btc5_autoresearch", (forecast_payload or {}).get("capacity_stress_summary")),
+    ]
+    for source_label, summary in candidates:
+        if not isinstance(summary, dict):
+            continue
+        if isinstance(summary.get("size_sweeps"), list):
+            return summary, source_label
+        profiles = summary.get("profiles") or {}
+        recommended_reference = str(summary.get("recommended_reference") or "").strip()
+        preferred_profile = profiles.get(recommended_reference) if recommended_reference else None
+        if isinstance(preferred_profile, dict) and isinstance(preferred_profile.get("size_sweeps"), list):
+            return preferred_profile, source_label
+        for profile_name in ("best_candidate", "current_live_profile"):
+            profile_payload = profiles.get(profile_name)
+            if isinstance(profile_payload, dict) and isinstance(profile_payload.get("size_sweeps"), list):
+                return profile_payload, source_label
+    return None, None
+
+
+def _build_shadow_size_recommendation(
+    *,
+    trade_size_usd: float,
+    capacity_profile: dict[str, Any] | None,
+    capacity_source_label: str | None,
+    source_artifacts: list[str],
+) -> dict[str, Any]:
+    base_payload = {
+        "status": "hold",
+        "trade_size_usd": round(float(trade_size_usd), 4),
+        "shadow_only": True,
+        "blocking_checks": [],
+        "reasons": [],
+        "source_artifacts": list(source_artifacts),
+        "capacity_source": capacity_source_label,
+    }
+    if not capacity_profile:
+        return {
+            **base_payload,
+            "blocking_checks": ["capacity_stress_summary_missing"],
+            "reasons": [
+                f"No capacity-stress summary is available for ${trade_size_usd:.0f} BTC5 shadow sizing yet."
+            ],
+        }
+
+    size_sweeps = capacity_profile.get("size_sweeps") or []
+    target_size = round(float(trade_size_usd), 4)
+    sweep = next(
+        (
+            item
+            for item in size_sweeps
+            if round(_safe_float(item.get("trade_size_usd"), 0.0), 4) == target_size
+        ),
+        None,
+    )
+    if not isinstance(sweep, dict):
+        return {
+            **base_payload,
+            "blocking_checks": ["capacity_stress_sweep_missing"],
+            "reasons": [
+                f"Capacity-stress output does not include a ${trade_size_usd:.0f} BTC5 sizing sweep yet."
+            ],
+        }
+
+    return {
+        **base_payload,
+        "status": "shadow_only",
+        "blocking_checks": [],
+        "reasons": [
+            (
+                f"Monte Carlo capacity stress models ${trade_size_usd:.0f} sizing with expected fill retention "
+                f"{_safe_float(sweep.get('expected_fill_retention_ratio'), 0.0):.2%}."
+            ),
+            "Keep this size in shadow/simulation only until live BTC5 stage evidence explicitly promotes it.",
+        ],
+        "expected_fill_retention_ratio": sweep.get("expected_fill_retention_ratio"),
+        "expected_profit_probability": sweep.get("expected_profit_probability"),
+        "expected_loss_hit_probability": sweep.get("expected_loss_hit_probability"),
+        "expected_median_arr_pct": sweep.get("expected_median_arr_pct"),
+        "expected_p05_arr_pct": sweep.get("expected_p05_arr_pct"),
+        "expected_p95_max_drawdown_usd": sweep.get("expected_p95_max_drawdown_usd"),
+    }
+
+
 def _freshness_hours(timestamp: Any, *, now: datetime) -> float | None:
     parsed = _parse_timestamp(timestamp)
     if parsed is None:
@@ -947,6 +1177,367 @@ def _max_freshness_hours(timestamps: list[Any], *, now: datetime) -> float | Non
     if not ages:
         return None
     return round(max(ages), 4)
+
+
+def _latest_wallet_export_path(explicit_path: Path | None = None) -> Path | None:
+    if explicit_path is not None:
+        return explicit_path if explicit_path.exists() else None
+    if not DEFAULT_WALLET_EXPORT_DIR.exists():
+        return None
+    candidates = sorted(
+        DEFAULT_WALLET_EXPORT_DIR.glob(DEFAULT_WALLET_EXPORT_GLOB),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    return candidates[0] if candidates else None
+
+
+def _load_wallet_export_summary(wallet_export_path: Path | None, *, now: datetime) -> dict[str, Any]:
+    resolved_path = _latest_wallet_export_path(wallet_export_path)
+    empty = {
+        "available": False,
+        "path": str(wallet_export_path) if wallet_export_path is not None else None,
+        "latest_activity_at": None,
+        "freshness_hours": None,
+        "fresh_for_capital_allocation": False,
+        "btc_closed_markets": 0,
+        "btc_open_markets": 0,
+        "btc_closed_buy_notional_usd": 0.0,
+        "non_btc_open_markets": 0,
+        "non_btc_open_buy_notional_usd": 0.0,
+        "initial_deposit_usdc": 0.0,
+    }
+    if resolved_path is None:
+        return empty
+
+    with resolved_path.open(encoding="utf-8-sig", newline="") as handle:
+        reader = csv.reader(handle)
+        rows = list(reader)
+    if not rows:
+        return {**empty, "path": str(resolved_path)}
+
+    header = [str(cell).lstrip("\ufeff").strip().strip('"') for cell in rows[0]]
+    normalized_rows = [
+        {header[idx]: value for idx, value in enumerate(row[: len(header)])}
+        for row in rows[1:]
+        if len(row) >= len(header)
+    ]
+    if not normalized_rows:
+        return {**empty, "path": str(resolved_path)}
+
+    per_market: dict[str, dict[str, Any]] = {}
+    latest_activity_at: datetime | None = None
+    initial_deposit_usdc = 0.0
+    for row in normalized_rows:
+        market_name = str(row.get("marketName") or "").strip()
+        action = str(row.get("action") or "").strip()
+        usdc_amount = _safe_float(row.get("usdcAmount"), 0.0)
+        timestamp_value = row.get("timestamp")
+        parsed_activity = None
+        try:
+            parsed_activity = datetime.fromtimestamp(int(str(timestamp_value or "0")), tz=timezone.utc)
+        except (TypeError, ValueError, OSError):
+            parsed_activity = None
+        if parsed_activity is not None and (latest_activity_at is None or parsed_activity > latest_activity_at):
+            latest_activity_at = parsed_activity
+
+        if action == "Deposit":
+            initial_deposit_usdc += usdc_amount
+
+        if market_name in {"Deposited funds", "Maker rebate"}:
+            continue
+        bucket = per_market.setdefault(
+            market_name,
+            {
+                "buy_usdc": 0.0,
+                "actions": set(),
+            },
+        )
+        bucket["actions"].add(action)
+        if action == "Buy":
+            bucket["buy_usdc"] += usdc_amount
+
+    btc_closed_markets = 0
+    btc_open_markets = 0
+    btc_closed_buy_notional_usd = 0.0
+    non_btc_open_markets = 0
+    non_btc_open_buy_notional_usd = 0.0
+    for market_name, summary in per_market.items():
+        is_btc = market_name.startswith("Bitcoin Up or Down")
+        has_redeem = "Redeem" in summary["actions"]
+        if is_btc and has_redeem:
+            btc_closed_markets += 1
+            btc_closed_buy_notional_usd += _safe_float(summary["buy_usdc"], 0.0)
+        elif is_btc:
+            btc_open_markets += 1
+        elif not has_redeem:
+            non_btc_open_markets += 1
+            non_btc_open_buy_notional_usd += _safe_float(summary["buy_usdc"], 0.0)
+
+    latest_activity_text = latest_activity_at.isoformat() if latest_activity_at is not None else None
+    freshness_hours = _freshness_hours(latest_activity_text, now=now) if latest_activity_text is not None else None
+    return {
+        "available": True,
+        "path": str(resolved_path),
+        "latest_activity_at": latest_activity_text,
+        "freshness_hours": freshness_hours,
+        "fresh_for_capital_allocation": freshness_hours is not None and freshness_hours <= WALLET_EXPORT_STALE_HOURS,
+        "btc_closed_markets": btc_closed_markets,
+        "btc_open_markets": btc_open_markets,
+        "btc_closed_buy_notional_usd": round(btc_closed_buy_notional_usd, 4),
+        "non_btc_open_markets": non_btc_open_markets,
+        "non_btc_open_buy_notional_usd": round(non_btc_open_buy_notional_usd, 4),
+        "initial_deposit_usdc": round(initial_deposit_usdc, 6),
+    }
+
+
+def _load_btc5_probe_summary(probe_db_path: Path | None, *, now: datetime) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": str(probe_db_path) if probe_db_path is not None else None,
+        "latest_decision_at": None,
+        "freshness_hours": None,
+        "fresh_for_stage_upgrade": False,
+        "live_filled_rows": 0,
+        "trailing_12_live_filled_rows": 0,
+        "trailing_12_live_filled_pnl_usd": 0.0,
+        "trailing_12_live_filled_net_positive": False,
+        "trailing_40_live_filled_rows": 0,
+        "trailing_40_live_filled_pnl_usd": 0.0,
+        "trailing_40_live_filled_net_positive": False,
+        "trailing_120_live_filled_rows": 0,
+        "trailing_120_live_filled_pnl_usd": 0.0,
+        "trailing_120_live_filled_net_positive": False,
+        "order_failed_rate_recent_40": None,
+    }
+    resolved_path = probe_db_path if probe_db_path is not None else DEFAULT_BTC5_PROBE_DB_PATH
+    if resolved_path is None or not resolved_path.exists():
+        return empty
+
+    conn = sqlite3.connect(resolved_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT decision_ts, order_status, pnl_usd FROM window_trades ORDER BY decision_ts DESC"
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return {**empty, "path": str(resolved_path), "available": True}
+
+    latest_decision_at = datetime.fromtimestamp(int(rows[0]["decision_ts"]), tz=timezone.utc).isoformat()
+    freshness_hours = _freshness_hours(latest_decision_at, now=now)
+    live_rows = [row for row in rows if str(row["order_status"] or "").lower() == "live_filled"]
+    actionable_rows = [
+        row
+        for row in rows
+        if str(row["order_status"] or "").lower() in {"live_filled", "live_order_failed", "live_cancelled_unfilled"}
+    ]
+
+    def _subset_summary(limit: int) -> tuple[int, float, bool]:
+        subset = live_rows[:limit]
+        pnl = round(sum(_safe_float(row["pnl_usd"], 0.0) for row in subset), 4)
+        return len(subset), pnl, bool(subset) and pnl > 0.0
+
+    trailing_12_rows, trailing_12_pnl, trailing_12_positive = _subset_summary(12)
+    trailing_40_rows, trailing_40_pnl, trailing_40_positive = _subset_summary(40)
+    trailing_120_rows, trailing_120_pnl, trailing_120_positive = _subset_summary(120)
+    recent_actionable = actionable_rows[:40]
+    failed_recent_actionable = sum(
+        1 for row in recent_actionable if str(row["order_status"] or "").lower() == "live_order_failed"
+    )
+    order_failed_rate_recent_40 = None
+    if recent_actionable:
+        order_failed_rate_recent_40 = round(failed_recent_actionable / len(recent_actionable), 4)
+
+    return {
+        "available": True,
+        "path": str(resolved_path),
+        "latest_decision_at": latest_decision_at,
+        "freshness_hours": freshness_hours,
+        "fresh_for_stage_upgrade": freshness_hours is not None and freshness_hours <= VENUE_STALE_HOURS,
+        "live_filled_rows": len(live_rows),
+        "trailing_12_live_filled_rows": trailing_12_rows,
+        "trailing_12_live_filled_pnl_usd": trailing_12_pnl,
+        "trailing_12_live_filled_net_positive": trailing_12_positive,
+        "trailing_40_live_filled_rows": trailing_40_rows,
+        "trailing_40_live_filled_pnl_usd": trailing_40_pnl,
+        "trailing_40_live_filled_net_positive": trailing_40_positive,
+        "trailing_120_live_filled_rows": trailing_120_rows,
+        "trailing_120_live_filled_pnl_usd": trailing_120_pnl,
+        "trailing_120_live_filled_net_positive": trailing_120_positive,
+        "order_failed_rate_recent_40": order_failed_rate_recent_40,
+    }
+
+
+def _capital_efficiency_score(
+    *,
+    wallet_summary: dict[str, Any],
+    probe_summary: dict[str, Any],
+    deploy_recommendation: str,
+    confidence_label: str,
+) -> float:
+    score = 0.0
+    if wallet_summary.get("available"):
+        score += 10.0
+    if wallet_summary.get("fresh_for_capital_allocation"):
+        score += 10.0
+    elif wallet_summary.get("available"):
+        score -= 10.0
+    closed_btc_markets = int(wallet_summary.get("btc_closed_markets") or 0)
+    if closed_btc_markets >= 100:
+        score += 20.0
+    elif closed_btc_markets >= 40:
+        score += 10.0
+    if int(wallet_summary.get("btc_open_markets") or 0) == 0:
+        score += 10.0
+    if _safe_float(wallet_summary.get("non_btc_open_buy_notional_usd"), 0.0) <= 50.0:
+        score += 10.0
+    if deploy_recommendation == "promote":
+        score += 10.0
+    if confidence_label == "high":
+        score += 10.0
+    elif confidence_label == "medium":
+        score += 5.0
+    if probe_summary.get("trailing_12_live_filled_net_positive"):
+        score += 10.0
+    elif probe_summary.get("available"):
+        score -= 10.0
+    if probe_summary.get("trailing_40_live_filled_net_positive"):
+        score += 10.0
+    order_failed_rate_recent_40 = probe_summary.get("order_failed_rate_recent_40")
+    if order_failed_rate_recent_40 is not None and _safe_float(order_failed_rate_recent_40, 1.0) < 0.25:
+        score += 10.0
+    if not probe_summary.get("available"):
+        score -= 5.0
+    if probe_summary.get("available") and not probe_summary.get("fresh_for_stage_upgrade"):
+        score -= 30.0
+    return round(max(0.0, min(score, 100.0)), 4)
+
+
+def _build_stage_readiness(
+    *,
+    wallet_summary: dict[str, Any],
+    probe_summary: dict[str, Any],
+    deploy_recommendation: str,
+    confidence_label: str,
+) -> dict[str, Any]:
+    reasons: list[str] = []
+    blocking_checks: list[str] = []
+    wallet_available = bool(wallet_summary.get("available"))
+    wallet_fresh = bool(wallet_summary.get("fresh_for_capital_allocation"))
+    btc_closed_markets = int(wallet_summary.get("btc_closed_markets") or 0)
+    btc_open_markets = int(wallet_summary.get("btc_open_markets") or 0)
+    probe_available = bool(probe_summary.get("available"))
+    probe_fresh = bool(probe_summary.get("fresh_for_stage_upgrade"))
+    trailing_12_rows = int(probe_summary.get("trailing_12_live_filled_rows") or 0)
+    trailing_40_rows = int(probe_summary.get("trailing_40_live_filled_rows") or 0)
+    trailing_120_rows = int(probe_summary.get("trailing_120_live_filled_rows") or 0)
+    order_failed_rate_recent_40 = _safe_float(probe_summary.get("order_failed_rate_recent_40"), 1.0)
+    stage_1_probe_ready = bool(
+        probe_available
+        and probe_fresh
+        and trailing_12_rows >= 12
+        and probe_summary.get("trailing_12_live_filled_net_positive")
+        and order_failed_rate_recent_40 < 0.25
+    )
+    ready_for_stage_1 = bool(
+        wallet_fresh
+        and btc_closed_markets > 0
+        and btc_open_markets == 0
+        and deploy_recommendation == "promote"
+        and confidence_label == "high"
+        and stage_1_probe_ready
+    )
+    ready_for_stage_2 = bool(
+        ready_for_stage_1
+        and trailing_40_rows >= 40
+        and probe_summary.get("trailing_40_live_filled_net_positive")
+    )
+    ready_for_stage_3 = bool(
+        ready_for_stage_2
+        and trailing_120_rows >= 120
+        and probe_summary.get("trailing_120_live_filled_net_positive")
+        and confidence_label == "high"
+    )
+    if not wallet_available:
+        blocking_checks.append("wallet_export_missing")
+    elif not wallet_fresh:
+        blocking_checks.append("wallet_export_stale")
+        reasons.append("Wallet export truth is stale, so stage recommendations should not advance.")
+    elif btc_closed_markets <= 0:
+        blocking_checks.append("wallet_export_missing_closed_btc_markets")
+    elif btc_open_markets != 0:
+        blocking_checks.append("wallet_export_btc_open_markets_not_zero")
+    if ready_for_stage_1:
+        reasons.append("Wallet export shows the BTC sleeve fully closed with no remaining BTC open exposure.")
+    else:
+        blocking_checks.append("stage_1_wallet_reconciliation_not_ready")
+    if deploy_recommendation != "promote" or confidence_label != "high":
+        blocking_checks.append("btc5_forecast_not_promote_high")
+    if not probe_available:
+        blocking_checks.append("stage_1_probe_missing")
+        reasons.append("BTC5 probe telemetry is missing, so no live capital stage can be approved.")
+    elif not probe_fresh:
+        blocking_checks.append("stage_upgrade_probe_stale")
+        reasons.append("Live execution telemetry is stale, so stage transitions remain blocked.")
+    if probe_summary.get("trailing_12_live_filled_net_positive") and trailing_12_rows >= 12:
+        reasons.append("Trailing 12 live-filled BTC5 trades remain net positive.")
+    else:
+        blocking_checks.append("trailing_12_live_filled_not_positive")
+    if trailing_12_rows < 12:
+        blocking_checks.append("insufficient_trailing_12_live_fills")
+    if order_failed_rate_recent_40 >= 0.25:
+        blocking_checks.append("order_failed_rate_above_stage_1_limit")
+    elif stage_1_probe_ready:
+        reasons.append("Stage 1 guardrails pass: fresh probe telemetry, positive trailing 12 fills, and recent order-failed rate below 25%.")
+    if ready_for_stage_2:
+        reasons.append("Stage 2 guardrails pass: trailing 40 fills positive and recent order-failed rate is below 25%.")
+    elif trailing_40_rows < 40:
+        blocking_checks.append("insufficient_trailing_40_live_fills")
+    elif not probe_summary.get("trailing_40_live_filled_net_positive"):
+        blocking_checks.append("trailing_40_live_filled_not_positive")
+    elif order_failed_rate_recent_40 >= 0.25:
+        blocking_checks.append("order_failed_rate_above_stage_2_limit")
+    if ready_for_stage_3:
+        reasons.append("Stage 3 guardrails pass: trailing 120 fills stay positive with high forecast confidence.")
+    elif trailing_120_rows < 120:
+        blocking_checks.append("insufficient_trailing_120_live_fills")
+    elif not probe_summary.get("trailing_120_live_filled_net_positive"):
+        blocking_checks.append("trailing_120_live_filled_not_positive")
+
+    recommended_stage = 3 if ready_for_stage_3 else 2 if ready_for_stage_2 else 1 if ready_for_stage_1 else 0
+    if ready_for_stage_3:
+        stage_gate_reason = "Stage 3 guardrails pass with fresh wallet truth, fresh probe telemetry, and positive trailing fills."
+    elif ready_for_stage_2:
+        stage_gate_reason = "Stage 2 guardrails pass. Stage 3 remains blocked until 120 live-filled BTC5 trades stay positive."
+    elif ready_for_stage_1:
+        stage_gate_reason = (
+            "Stage 1 is eligible now. Keep stage 2 and stage 3 blocked until trailing 40 and trailing 120 fill "
+            "windows remain positive."
+        )
+    else:
+        stage_gate_reason = (
+            "No capital stage is eligible yet. Fresh wallet truth, fresh probe telemetry, trailing filled PnL, "
+            "and order-failed-rate checks must all pass before stage 1."
+        )
+    return {
+        "recommended_stage": recommended_stage,
+        "ready_for_stage_1": ready_for_stage_1,
+        "ready_for_stage_2": ready_for_stage_2,
+        "ready_for_stage_3": ready_for_stage_3,
+        "fresh_wallet_export": wallet_fresh,
+        "fresh_probe_summary": probe_fresh,
+        "trailing_12_live_filled_pnl_usd": probe_summary.get("trailing_12_live_filled_pnl_usd"),
+        "trailing_40_live_filled_pnl_usd": probe_summary.get("trailing_40_live_filled_pnl_usd"),
+        "trailing_120_live_filled_pnl_usd": probe_summary.get("trailing_120_live_filled_pnl_usd"),
+        "order_failed_rate_recent_40": probe_summary.get("order_failed_rate_recent_40"),
+        "wallet_export_freshness_hours": wallet_summary.get("freshness_hours"),
+        "probe_freshness_hours": probe_summary.get("freshness_hours"),
+        "stage_gate_reason": stage_gate_reason,
+        "blocking_checks": list(dict.fromkeys(blocking_checks)),
+        "reasons": reasons,
+    }
 
 
 def _source_evidence_from_audit(audit_payload: dict[str, Any] | None, lane: str) -> dict[str, Any]:
@@ -1022,15 +1613,28 @@ def _source_evidence_from_audit(audit_payload: dict[str, Any] | None, lane: str)
 
 def _build_btc5_venue_entry(
     *,
+    audit_payload: dict[str, Any] | None,
+    signal_source_audit_path: Path | None,
     runtime_truth_path: Path,
     public_runtime_snapshot_path: Path,
     btc5_autoresearch_path: Path,
+    btc5_monte_carlo_path: Path,
+    wallet_export_path: Path | None,
+    btc5_probe_db_path: Path | None,
     now: datetime,
 ) -> dict[str, Any]:
     runtime_truth = _load_json_dict(runtime_truth_path) or {}
     public_runtime_snapshot = _load_json_dict(public_runtime_snapshot_path) or {}
     forecast_payload = _load_json_dict(btc5_autoresearch_path) or {}
+    monte_carlo_payload = _load_json_dict(btc5_monte_carlo_path) or {}
     runtime_block = runtime_truth.get("runtime") or {}
+    wallet_summary = _load_wallet_export_summary(wallet_export_path, now=now)
+    probe_summary = _load_btc5_probe_summary(btc5_probe_db_path, now=now)
+    audit_support = _build_audit_capital_support(audit_payload, now=now)
+    capacity_profile, capacity_source_label = _select_capacity_stress_profile(
+        monte_carlo_payload,
+        forecast_payload,
+    )
     strategy_recommendations = (
         runtime_truth.get("state_improvement", {}).get("strategy_recommendations")
         or public_runtime_snapshot.get("state_improvement", {}).get("strategy_recommendations")
@@ -1042,20 +1646,6 @@ def _build_btc5_venue_entry(
     fund_blockers = [check for check in blocked_checks if check in FUND_BLOCKING_CHECKS]
     forecast_selected = (forecast_payload.get("public_forecast_selection") or {}).get("selected") or {}
     forecast_generated_at = forecast_selected.get("generated_at") or forecast_payload.get("generated_at")
-    latest_live_filled_at = (
-        runtime_block.get("latest_live_filled_at")
-        or runtime_truth.get("latest_live_filled_at")
-        or public_runtime_snapshot.get("latest_live_filled_at")
-    )
-    freshness_hours = _max_freshness_hours(
-        [
-            runtime_truth.get("generated_at") or public_runtime_snapshot.get("generated_at"),
-            latest_live_filled_at,
-            forecast_generated_at,
-        ],
-        now=now,
-    )
-    is_stale = freshness_hours is None or freshness_hours > VENUE_STALE_HOURS
     deploy_recommendation = str(
         forecast_payload.get("deploy_recommendation")
         or forecast_selected.get("deploy_recommendation")
@@ -1088,25 +1678,87 @@ def _build_btc5_venue_entry(
         or forecast_payload.get("validation_live_filled_rows")
         or 0
     )
-    trailing_window_positive = trailing_window_live_fills >= 12 and trailing_window_pnl_usd > 0.0
-
-    capital_status = "hold"
-    if not is_stale and deploy_recommendation == "promote" and confidence_label == "high" and trailing_window_positive:
-        capital_status = "ready_scale" if not fund_blockers else "ready_test_tranche"
+    capital_efficiency_score = _capital_efficiency_score(
+        wallet_summary=wallet_summary,
+        probe_summary=probe_summary,
+        deploy_recommendation=deploy_recommendation,
+        confidence_label=confidence_label,
+    )
+    stage_readiness = _build_stage_readiness(
+        wallet_summary=wallet_summary,
+        probe_summary=probe_summary,
+        deploy_recommendation=deploy_recommendation,
+        confidence_label=confidence_label,
+    )
+    recommended_stage = int(stage_readiness.get("recommended_stage") or 0)
+    live_scale_ready = recommended_stage >= 1 and audit_support.get("supports_live_capital_expansion")
+    capital_status = "ready_scale" if live_scale_ready else "hold"
+    freshness_hours = _max_freshness_hours(
+        [
+            wallet_summary.get("latest_activity_at"),
+            probe_summary.get("latest_decision_at"),
+            forecast_generated_at,
+            audit_support.get("audit_generated_at"),
+        ],
+        now=now,
+    )
+    monte_carlo_source_path = str(btc5_monte_carlo_path) if btc5_monte_carlo_path.exists() else None
+    shadow_source_artifacts = [
+        path
+        for path in (
+            str(btc5_autoresearch_path),
+            monte_carlo_source_path,
+        )
+        if path
+    ]
+    shadow_recommendations = {
+        "next_100_shadow": _build_shadow_size_recommendation(
+            trade_size_usd=100.0,
+            capacity_profile=capacity_profile,
+            capacity_source_label=capacity_source_label,
+            source_artifacts=shadow_source_artifacts,
+        ),
+        "next_200_shadow": _build_shadow_size_recommendation(
+            trade_size_usd=200.0,
+            capacity_profile=capacity_profile,
+            capacity_source_label=capacity_source_label,
+            source_artifacts=shadow_source_artifacts,
+        ),
+    }
+    confirmation_support = {
+        "status": audit_support.get("confirmation_support_status"),
+        "sources_ready": audit_support.get("confirmation_sources_ready") or [],
+        "best_source": audit_support.get("best_confirmation_source"),
+        "coverage_ratio": audit_support.get("confirmation_coverage_ratio"),
+        "resolved_window_coverage": audit_support.get(
+            "confirmation_resolved_window_coverage",
+            audit_support.get("confirmation_coverage_ratio"),
+        ),
+        "executed_window_coverage": audit_support.get("confirmation_executed_window_coverage"),
+        "false_suppression_cost_usd": audit_support.get("confirmation_false_suppression_cost_usd"),
+        "false_confirmation_cost_usd": audit_support.get("confirmation_false_confirmation_cost_usd"),
+        "lift_avg_pnl_usd": audit_support.get("confirmation_lift_avg_pnl_usd"),
+        "lift_win_rate": audit_support.get("confirmation_lift_win_rate"),
+        "contradiction_penalty": audit_support.get("confirmation_contradiction_penalty"),
+        "blocking_checks": audit_support.get("confirmation_blocking_checks") or [],
+    }
 
     reasons: list[str] = []
     blocking_checks: list[str] = []
-    if trailing_window_positive:
+    if wallet_summary.get("available"):
         reasons.append(
-            "Trailing 12 live-filled BTC5 rows are net positive "
-            f"({trailing_window_live_fills} fills, ${trailing_window_pnl_usd:.4f})."
+            "March 10 wallet export shows "
+            f"{int(wallet_summary.get('btc_closed_markets') or 0)} closed BTC markets, "
+            f"{int(wallet_summary.get('btc_open_markets') or 0)} BTC markets still open, and "
+            f"${_safe_float(wallet_summary.get('non_btc_open_buy_notional_usd'), 0.0):.4f} of remaining open non-BTC notional."
         )
     else:
-        blocking_checks.append("btc5_trailing_12_live_fills_not_positive")
-        reasons.append(
-            "Trailing 12 live-filled BTC5 rows are not net positive "
-            f"({trailing_window_live_fills} fills, ${trailing_window_pnl_usd:.4f})."
-        )
+        blocking_checks.append("wallet_export_missing")
+    if stage_readiness.get("ready_for_stage_1"):
+        reasons.append("BTC5 is ready for a stage 1 capital ramp with bounded trade sizing.")
+    else:
+        reasons.append("BTC5 does not yet have enough fresh wallet-truth evidence for a capital-stage recommendation.")
+        blocking_checks.extend(stage_readiness.get("blocking_checks") or [])
     if deploy_recommendation == "promote" and confidence_label == "high":
         reasons.append("BTC5 forecast remains `promote` with `high` confidence.")
     else:
@@ -1115,46 +1767,96 @@ def _build_btc5_venue_entry(
             "BTC5 forecast is not simultaneously `promote` and `high` confidence "
             f"(deploy_recommendation={deploy_recommendation}, confidence_label={confidence_label})."
         )
-    if is_stale:
-        blocking_checks.append("btc5_artifacts_stale")
-        reasons.append(
-            f"BTC5 runtime or forecast evidence is stale for venue allocation ({freshness_hours}h old)."
-        )
     if fund_blockers:
-        blocking_checks.extend(fund_blockers)
         reasons.append(
             "Fund capital truth is still blocked by "
             + ", ".join(f"`{check}`" for check in fund_blockers)
+            + ", so stage upgrades should wait for the runtime/public truth surfaces to catch up."
+        )
+    if audit_support.get("available"):
+        reasons.extend(audit_support.get("reasons") or [])
+        blocking_checks.extend(audit_support.get("blocking_checks") or [])
+    else:
+        reasons.extend(audit_support.get("reasons") or [])
+        blocking_checks.extend(audit_support.get("blocking_checks") or [])
+    if confirmation_support.get("status") == "ready":
+        support_parts: list[str] = []
+        if confirmation_support.get("best_source"):
+            support_parts.append(f"best source `{confirmation_support.get('best_source')}`")
+        if confirmation_support.get("resolved_window_coverage") is not None:
+            support_parts.append(
+                "resolved coverage "
+                + f"{_safe_float(confirmation_support.get('resolved_window_coverage'), 0.0):.0%}"
+            )
+        if confirmation_support.get("executed_window_coverage") is not None:
+            support_parts.append(
+                "executed coverage "
+                + f"{_safe_float(confirmation_support.get('executed_window_coverage'), 0.0):.0%}"
+            )
+        if confirmation_support.get("false_suppression_cost_usd") is not None:
+            support_parts.append(
+                "false suppression cost "
+                + f"${_safe_float(confirmation_support.get('false_suppression_cost_usd'), 0.0):.2f}"
+            )
+        if confirmation_support.get("lift_avg_pnl_usd") is not None:
+            support_parts.append(
+                f"avg PnL lift ${_safe_float(confirmation_support.get('lift_avg_pnl_usd'), 0.0):+.2f}"
+            )
+        if confirmation_support.get("contradiction_penalty") is not None:
+            support_parts.append(
+                "contradiction penalty "
+                + f"{_safe_float(confirmation_support.get('contradiction_penalty'), 0.0):.0%}"
+            )
+        if support_parts:
+            reasons.append("Confirmation archive supports BTC5: " + ", ".join(support_parts) + ".")
+    elif confirmation_support.get("blocking_checks"):
+        reasons.append(
+            "Confirmation archive still needs more evidence: "
+            + ", ".join(f"`{check}`" for check in list(confirmation_support.get("blocking_checks") or [])[:3])
             + "."
         )
+    reasons.extend(stage_readiness.get("reasons") or [])
+    blocking_checks.extend(
+        check for check in (stage_readiness.get("blocking_checks") or []) if check not in blocking_checks
+    )
 
-    ranking_score = 0.0
-    if not is_stale:
-        ranking_score += 30.0
-    if confidence_label == "high":
-        ranking_score += 30.0
-    elif confidence_label == "medium":
-        ranking_score += 18.0
+    ranking_score = capital_efficiency_score + min(max(trailing_window_pnl_usd, -25.0), 25.0)
+    if not live_scale_ready:
+        ranking_score -= 300.0
+    elif recommended_stage == 0:
+        ranking_score -= 80.0
     else:
-        ranking_score += 6.0
-    if deploy_recommendation == "promote":
-        ranking_score += 20.0
-    elif deploy_recommendation == "shadow_only":
-        ranking_score += 10.0
-    if trailing_window_positive:
-        ranking_score += 20.0
-    ranking_score += min(max(trailing_window_pnl_usd, -25.0), 25.0)
-    if fund_blockers:
-        ranking_score -= 15.0
+        ranking_score += 5.0 * recommended_stage
+    if wallet_summary.get("available") and not wallet_summary.get("fresh_for_capital_allocation"):
+        ranking_score -= 40.0
+    if probe_summary.get("available") and not probe_summary.get("fresh_for_stage_upgrade"):
+        ranking_score -= 60.0
+    if deploy_recommendation == "shadow_only":
+        ranking_score -= 10.0
+    if confirmation_support.get("status") == "ready":
+        ranking_score += 20.0 * _safe_float(confirmation_support.get("resolved_window_coverage"), 0.0)
+        ranking_score += 10.0 * _safe_float(confirmation_support.get("executed_window_coverage"), 0.0)
+        ranking_score += min(
+            max(_safe_float(confirmation_support.get("lift_avg_pnl_usd"), 0.0) * 4.0, -15.0),
+            20.0,
+        )
+        ranking_score += min(
+            max(_safe_float(confirmation_support.get("lift_win_rate"), 0.0) * 40.0, -10.0),
+            10.0,
+        )
+        ranking_score -= min(
+            max(_safe_float(confirmation_support.get("false_suppression_cost_usd"), 0.0) * 4.0, 0.0),
+            20.0,
+        )
+        ranking_score -= min(
+            max(_safe_float(confirmation_support.get("contradiction_penalty"), 0.0) * 25.0, 0.0),
+            25.0,
+        )
 
     return {
         "venue": "polymarket",
         "lane": "btc5",
-        "confidence_label": "high"
-        if capital_status in {"ready_test_tranche", "ready_scale"}
-        else "medium"
-        if not is_stale and trailing_window_positive
-        else "low",
+        "confidence_label": "high" if live_scale_ready else "low",
         "deployment_readiness": capital_status,
         "freshness_hours": freshness_hours,
         "sample_size_summary": {
@@ -1166,19 +1868,34 @@ def _build_btc5_venue_entry(
         "ranking_score": round(ranking_score, 6),
         "settlement_match_rate": None,
         "capital_status": capital_status,
-        "recommended_amount_usd": 100 if capital_status == "ready_test_tranche" else 1000 if capital_status == "ready_scale" else 0,
+        "capital_efficiency_score": capital_efficiency_score,
+        "stage_readiness": stage_readiness,
+        "audit_support": audit_support,
+        "confirmation_support": confirmation_support,
+        "recommended_amount_usd": 1000 if live_scale_ready else 0,
         "basis_window_fills": trailing_window_live_fills,
         "basis_window_pnl_usd": round(trailing_window_pnl_usd, 4),
         "basis_window_hours": trailing_window_hours,
         "live_filled_pnl_usd": round(live_filled_pnl_usd, 4),
         "deploy_recommendation": deploy_recommendation,
         "forecast_confidence_label": confidence_label,
-        "blocking_checks": blocking_checks,
+        "blocking_checks": _dedupe_preserve_order(blocking_checks),
         "reasons": reasons,
+        "wallet_export_summary": wallet_summary,
+        "probe_summary": probe_summary,
+        "shadow_recommendations": shadow_recommendations,
         "source_artifacts": [
-            str(runtime_truth_path),
-            str(public_runtime_snapshot_path),
-            str(btc5_autoresearch_path),
+            path
+            for path in (
+                str(runtime_truth_path),
+                str(public_runtime_snapshot_path),
+                str(btc5_autoresearch_path),
+                str(signal_source_audit_path) if signal_source_audit_path is not None else None,
+                monte_carlo_source_path,
+                wallet_summary.get("path"),
+                probe_summary.get("path"),
+            )
+            if path
         ],
     }
 
@@ -1281,6 +1998,15 @@ def _build_kalshi_weather_entry(
         ranking_score -= 25.0
     if is_stale:
         ranking_score -= 15.0
+    capital_efficiency_score = round(max(0.0, min(ranking_score, 100.0)), 4)
+    stage_readiness = {
+        "recommended_stage": 0,
+        "ready_for_stage_1": False,
+        "ready_for_stage_2": False,
+        "ready_for_stage_3": False,
+        "blocking_checks": blocking_checks,
+        "reasons": reasons,
+    }
 
     return {
         "venue": "kalshi",
@@ -1299,6 +2025,8 @@ def _build_kalshi_weather_entry(
         "ranking_score": round(ranking_score, 6),
         "settlement_match_rate": match_rate,
         "capital_status": "hold",
+        "capital_efficiency_score": capital_efficiency_score,
+        "stage_readiness": stage_readiness,
         "recommended_amount_usd": 0,
         "blocking_checks": blocking_checks,
         "reasons": reasons,
@@ -1321,35 +2049,49 @@ def _build_capital_allocation_recommendation(
 ) -> dict[str, Any]:
     best_first = sorted(
         venue_scoreboard,
-        key=lambda item: (_safe_float(item.get("ranking_score"), float("-inf")), item.get("venue"), item.get("lane")),
+        key=lambda item: (
+            int(item.get("capital_status") != "hold"),
+            int((item.get("stage_readiness") or {}).get("recommended_stage") or 0),
+            _safe_float(item.get("ranking_score"), float("-inf")),
+            item.get("venue"),
+            item.get("lane"),
+        ),
         reverse=True,
     )
     btc5_entry = next((item for item in best_first if item.get("venue") == "polymarket" and item.get("lane") == "btc5"), None)
     kalshi_entry = next((item for item in best_first if item.get("venue") == "kalshi" and item.get("lane") == "weather"), None)
+    shadow_recommendations = (btc5_entry or {}).get("shadow_recommendations") or {}
 
     next_100 = {
         "status": "hold",
         "venue": None,
         "lane": None,
         "recommended_amount_usd": 0,
+        "recommended_stage": 0,
         "confidence_label": "low",
         "reasons": ["No venue currently clears even the test-tranche bar."],
         "blocking_checks": [],
         "source_artifacts": [],
+        "stage_gate_reason": "No capital stage is eligible yet.",
     }
-    if btc5_entry and btc5_entry.get("capital_status") in {"ready_test_tranche", "ready_scale"}:
+    stage_readiness = (btc5_entry or {}).get("stage_readiness") or {}
+    recommended_stage = int(stage_readiness.get("recommended_stage") or 0)
+    if btc5_entry and btc5_entry.get("capital_status") == "ready_scale" and recommended_stage >= 1:
         next_100 = {
             "status": "ready_test_tranche",
             "venue": "polymarket",
             "lane": "btc5",
             "recommended_amount_usd": 100,
+            "recommended_stage": 1,
             "confidence_label": btc5_entry.get("confidence_label"),
             "reasons": [
-                "BTC5 is the top-ranked venue and the only lane that clears the current test-tranche bar.",
-                "Hold the full $1,000 until fund reconciliation and capital truth drift are resolved.",
+                "BTC5 is the top-ranked venue and the March 10 wallet export confirms the BTC sleeve is fully closed with no remaining BTC open markets.",
+                "Use the stage 1 ramp first: bankroll on BTC5, but keep `BTC5_MAX_TRADE_USD=10` until stage-up guardrails pass.",
             ],
             "blocking_checks": [],
             "source_artifacts": btc5_entry.get("source_artifacts") or [],
+            "stage_readiness": stage_readiness,
+            "stage_gate_reason": stage_readiness.get("stage_gate_reason"),
         }
 
     next_1000 = {
@@ -1357,48 +2099,89 @@ def _build_capital_allocation_recommendation(
         "venue": None,
         "lane": None,
         "recommended_amount_usd": 0,
+        "recommended_stage": 0,
         "confidence_label": btc5_entry.get("confidence_label") if btc5_entry else "low",
-        "reasons": ["Do not add the next $1,000 while fund-level capital truth is still blocked."],
+        "reasons": ["Do not add the next $1,000 while BTC5 lacks fresh closed-batch wallet truth or stage 1 guardrails."],
         "blocking_checks": list(btc5_entry.get("blocking_checks") or []) if btc5_entry else [],
         "source_artifacts": [
             str(runtime_truth_path),
             str(btc5_autoresearch_path),
             str(kalshi_weather_lane_path),
         ],
+        "stage_gate_reason": stage_readiness.get("stage_gate_reason") if stage_readiness else "No capital stage is eligible yet.",
     }
-    if btc5_entry and btc5_entry.get("capital_status") == "ready_scale":
+    if btc5_entry and btc5_entry.get("capital_status") == "ready_scale" and recommended_stage >= 1:
         next_1000 = {
             "status": "ready_scale",
             "venue": "polymarket",
             "lane": "btc5",
             "recommended_amount_usd": 1000,
+            "recommended_stage": 1,
             "confidence_label": btc5_entry.get("confidence_label"),
-            "reasons": ["BTC5 is top-ranked and fund capital truth no longer blocks scaling."],
+            "reasons": [
+                "Deploy the next $1,000 to BTC5 under the bounded stage 1 ramp, not as an immediate wider-size jump.",
+                "Keep stage 2 and stage 3 gated behind fresh trailing-fill and order-failed-rate checks.",
+            ],
             "blocking_checks": [],
             "source_artifacts": btc5_entry.get("source_artifacts") or [],
+            "stage_readiness": stage_readiness,
+            "stage_gate_reason": stage_readiness.get("stage_gate_reason"),
+            "capital_efficiency_score": btc5_entry.get("capital_efficiency_score"),
         }
 
+    next_100_shadow = shadow_recommendations.get("next_100_shadow") or {
+        "status": "hold",
+        "trade_size_usd": 100.0,
+        "shadow_only": True,
+        "blocking_checks": ["capacity_stress_summary_missing"],
+        "reasons": ["No $100 BTC5 shadow-size recommendation is available yet."],
+        "source_artifacts": [str(btc5_autoresearch_path)],
+    }
+    next_200_shadow = shadow_recommendations.get("next_200_shadow") or {
+        "status": "hold",
+        "trade_size_usd": 200.0,
+        "shadow_only": True,
+        "blocking_checks": ["capacity_stress_summary_missing"],
+        "reasons": ["No $200 BTC5 shadow-size recommendation is available yet."],
+        "source_artifacts": [str(btc5_autoresearch_path)],
+    }
+
     overall_recommendation = "hold_full_1000"
-    if next_100.get("status") == "ready_test_tranche":
-        overall_recommendation = "btc5_test_tranche_only"
     if next_1000.get("status") == "ready_scale":
-        overall_recommendation = "btc5_scale_add"
+        if recommended_stage == 1:
+            overall_recommendation = "btc5_stage1_capital_add"
+        elif recommended_stage == 2:
+            overall_recommendation = "btc5_stage2_capital_add"
+        else:
+            overall_recommendation = "btc5_stage3_capital_add"
+    elif next_100.get("status") == "ready_test_tranche":
+        overall_recommendation = "btc5_test_tranche_only"
+    elif next_100_shadow.get("status") == "shadow_only" or next_200_shadow.get("status") == "shadow_only":
+        overall_recommendation = "btc5_shadow_only"
 
     return {
         "overall_recommendation": overall_recommendation,
         "ranked_venues": [f"{item.get('venue')}:{item.get('lane')}" for item in best_first],
         "next_100_usd": next_100,
         "next_1000_usd": next_1000,
+        "next_100_shadow": next_100_shadow,
+        "next_200_shadow": next_200_shadow,
         "kalshi_weather_status": kalshi_entry.get("capital_status") if kalshi_entry else "hold",
+        "stage_readiness": stage_readiness,
     }
 
 
 def _attach_venue_scoreboard(
     report: dict[str, Any],
     *,
+    audit_payload: dict[str, Any] | None,
+    signal_source_audit_path: Path | None,
     runtime_truth_path: Path,
     public_runtime_snapshot_path: Path,
     btc5_autoresearch_path: Path,
+    btc5_monte_carlo_path: Path,
+    wallet_export_path: Path | None,
+    btc5_probe_db_path: Path | None,
     kalshi_weather_lane_path: Path,
     kalshi_orders_path: Path,
     kalshi_settlements_path: Path,
@@ -1407,9 +2190,14 @@ def _attach_venue_scoreboard(
     now = _utc_now()
     venue_scoreboard = [
         _build_btc5_venue_entry(
+            audit_payload=audit_payload,
+            signal_source_audit_path=signal_source_audit_path,
             runtime_truth_path=runtime_truth_path,
             public_runtime_snapshot_path=public_runtime_snapshot_path,
             btc5_autoresearch_path=btc5_autoresearch_path,
+            btc5_monte_carlo_path=btc5_monte_carlo_path,
+            wallet_export_path=wallet_export_path,
+            btc5_probe_db_path=btc5_probe_db_path,
             now=now,
         ),
         _build_kalshi_weather_entry(
@@ -1431,6 +2219,11 @@ def _attach_venue_scoreboard(
         btc5_autoresearch_path=btc5_autoresearch_path,
         kalshi_weather_lane_path=kalshi_weather_lane_path,
     )
+    recommendation = report["capital_allocation_recommendation"]
+    report["next_100_usd"] = recommendation.get("next_100_usd")
+    report["next_1000_usd"] = recommendation.get("next_1000_usd")
+    report["next_100_shadow"] = recommendation.get("next_100_shadow")
+    report["next_200_shadow"] = recommendation.get("next_200_shadow")
     return report
 
 
@@ -1486,6 +2279,7 @@ def _attach_scoreboard(
         "path": str(signal_source_audit_path) if signal_source_audit_path is not None else None,
         "ranking_snapshot": (audit_payload or {}).get("ranking_snapshot"),
         "capital_ranking_support": (audit_payload or {}).get("capital_ranking_support"),
+        "btc_fast_window_confirmation": (audit_payload or {}).get("btc_fast_window_confirmation"),
         "freshness_hours": _freshness_hours((audit_payload or {}).get("generated_at"), now=_utc_now()),
         "stale_for_venue_allocation": (
             _freshness_hours((audit_payload or {}).get("generated_at"), now=_utc_now()) is not None
@@ -1558,15 +2352,43 @@ def render_markdown(report: dict[str, Any]) -> str:
         )
         lines.append(f"- best_component_source: {source_evidence.get('best_component_source')}")
         lines.append(f"- best_source_combo: {source_evidence.get('best_source_combo')}")
+        confirmation_archive = ((report.get("source_audit") or {}).get("btc_fast_window_confirmation") or {})
+        confirmation_summary = confirmation_archive.get("summary") or {}
+        if confirmation_archive:
+            lines.append(f"- btc_fast_window_confirmation_status: {confirmation_archive.get('status')}")
+            lines.append(
+                "- confirmation_sources_ready: "
+                + ", ".join(confirmation_summary.get("ready_sources") or [])
+            )
+            lines.append(
+                "- confirmation_coverage_ratio: "
+                + str(confirmation_summary.get("confirmation_coverage_ratio"))
+            )
+            lines.append(
+                "- confirmation_executed_window_coverage: "
+                + str(confirmation_summary.get("confirmation_executed_window_coverage"))
+            )
+            lines.append(
+                "- confirmation_false_suppression_cost_usd: "
+                + str(confirmation_summary.get("confirmation_false_suppression_cost_usd"))
+            )
+            lines.append(
+                "- confirmation_lift_avg_pnl_usd: "
+                + str(confirmation_summary.get("confirmation_lift_avg_pnl_usd"))
+            )
+            lines.append(
+                "- confirmation_contradiction_penalty: "
+                + str(confirmation_summary.get("confirmation_contradiction_penalty"))
+            )
         lines.append("")
     venue_scoreboard = report.get("venue_scoreboard") or []
     if venue_scoreboard:
         lines.append("## Venue Capital Scoreboard")
         lines.append("")
         lines.append(
-            "| Venue | Lane | Capital Status | Confidence | Deployment Readiness | Freshness Hrs | Ranking Score | Settlement Match | Sample Size |"
+            "| Venue | Lane | Capital Status | Stage Readiness | Capital Efficiency | Confidence | Freshness Hrs | Ranking Score | Settlement Match | Sample Size |"
         )
-        lines.append("|---|---|---|---|---|---:|---:|---:|---|")
+        lines.append("|---|---|---|---|---:|---|---:|---:|---:|---|")
         for item in venue_scoreboard:
             freshness_text = (
                 f"{_safe_float(item.get('freshness_hours'), 0.0):.2f}"
@@ -1574,8 +2396,11 @@ def render_markdown(report: dict[str, Any]) -> str:
                 else "—"
             )
             ranking_text = f"{_safe_float(item.get('ranking_score'), 0.0):.2f}"
+            capital_efficiency_text = f"{_safe_float(item.get('capital_efficiency_score'), 0.0):.1f}"
             settlement_match = item.get("settlement_match_rate")
             settlement_text = f"{_safe_float(settlement_match, 0.0):.2%}" if settlement_match is not None else "—"
+            stage_readiness = item.get("stage_readiness") or {}
+            stage_text = f"stage_{int(stage_readiness.get('recommended_stage') or 0)}"
             sample_text = ", ".join(
                 f"{key}={value}"
                 for key, value in (item.get("sample_size_summary") or {}).items()
@@ -1583,7 +2408,7 @@ def render_markdown(report: dict[str, Any]) -> str:
             lines.append(
                 "| "
                 + f"{item.get('venue')} | {item.get('lane')} | {item.get('capital_status')} | "
-                + f"{item.get('confidence_label')} | {item.get('deployment_readiness')} | {freshness_text} | "
+                + f"{stage_text} | {capital_efficiency_text} | {item.get('confidence_label')} | {freshness_text} | "
                 + f"{ranking_text} | {settlement_text} | {sample_text} |"
             )
         lines.append("")
@@ -1593,6 +2418,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         lines.append("")
         next_100 = capital_allocation.get("next_100_usd") or {}
         next_1000 = capital_allocation.get("next_1000_usd") or {}
+        next_100_shadow = capital_allocation.get("next_100_shadow") or {}
+        next_200_shadow = capital_allocation.get("next_200_shadow") or {}
         lines.append(
             "- Where should the next $100 go? "
             + (
@@ -1604,6 +2431,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         )
         for reason in next_100.get("reasons") or []:
             lines.append(f"  - {reason}")
+        if next_100.get("stage_gate_reason"):
+            lines.append(f"  - Stage gate: {next_100.get('stage_gate_reason')}")
         lines.append(
             "- Where should the next $1,000 go? "
             + (
@@ -1614,6 +2443,25 @@ def render_markdown(report: dict[str, Any]) -> str:
             + "."
         )
         for reason in next_1000.get("reasons") or []:
+            lines.append(f"  - {reason}")
+        if next_1000.get("stage_gate_reason"):
+            lines.append(f"  - Stage gate: {next_1000.get('stage_gate_reason')}")
+        if (next_1000.get("stage_readiness") or {}).get("recommended_stage"):
+            lines.append(
+                "  - Recommended capital stage: "
+                f"{int((next_1000.get('stage_readiness') or {}).get('recommended_stage') or 0)}"
+            )
+        lines.append(
+            "- What should stay shadow-only at $100 trade size? "
+            + ("BTC5 shadow sizing." if next_100_shadow.get("status") == "shadow_only" else "hold.")
+        )
+        for reason in next_100_shadow.get("reasons") or []:
+            lines.append(f"  - {reason}")
+        lines.append(
+            "- What should stay shadow-only at $200 trade size? "
+            + ("BTC5 shadow sizing." if next_200_shadow.get("status") == "shadow_only" else "hold.")
+        )
+        for reason in next_200_shadow.get("reasons") or []:
             lines.append(f"  - {reason}")
         lines.append("")
     lines.append(f"- Generated: {report['generated_at']}")
@@ -1706,6 +2554,9 @@ def run_scale_comparison(
     runtime_truth_path: Path = DEFAULT_RUNTIME_TRUTH_PATH,
     public_runtime_snapshot_path: Path = DEFAULT_PUBLIC_RUNTIME_SNAPSHOT_PATH,
     btc5_autoresearch_path: Path = DEFAULT_BTC5_AUTORESEARCH_PATH,
+    btc5_monte_carlo_path: Path = DEFAULT_BTC5_MONTE_CARLO_PATH,
+    wallet_export_path: Path | None = None,
+    btc5_probe_db_path: Path | None = DEFAULT_BTC5_PROBE_DB_PATH,
     kalshi_weather_lane_path: Path = DEFAULT_KALSHI_WEATHER_LANE_PATH,
     kalshi_orders_path: Path = DEFAULT_KALSHI_ORDERS_PATH,
     kalshi_settlements_path: Path = DEFAULT_KALSHI_SETTLEMENTS_PATH,
@@ -1718,16 +2569,22 @@ def run_scale_comparison(
         [float(bankroll) for bankroll in bankrolls],
         wallet_flow_archive_path=wallet_flow_archive_path,
     )
+    audit_payload = _load_signal_source_audit(signal_source_audit_path)
     report = _attach_scoreboard(
         report,
-        _load_signal_source_audit(signal_source_audit_path),
+        audit_payload,
         signal_source_audit_path=signal_source_audit_path,
     )
     report = _attach_venue_scoreboard(
         report,
+        audit_payload=audit_payload,
+        signal_source_audit_path=signal_source_audit_path,
         runtime_truth_path=runtime_truth_path,
         public_runtime_snapshot_path=public_runtime_snapshot_path,
         btc5_autoresearch_path=btc5_autoresearch_path,
+        btc5_monte_carlo_path=btc5_monte_carlo_path,
+        wallet_export_path=wallet_export_path,
+        btc5_probe_db_path=btc5_probe_db_path,
         kalshi_weather_lane_path=kalshi_weather_lane_path,
         kalshi_orders_path=kalshi_orders_path,
         kalshi_settlements_path=kalshi_settlements_path,
@@ -1787,6 +2644,29 @@ def parse_args() -> argparse.Namespace:
             "When present, scoreboard includes wallet-flow-vs-LLM and combined-source evidence."
         ),
     )
+    parser.add_argument(
+        "--wallet-export",
+        type=Path,
+        default=None,
+        help=(
+            "Optional Polymarket wallet export CSV path. "
+            "When omitted, the newest export under ~/Downloads matching Polymarket-History-*.csv is used."
+        ),
+    )
+    parser.add_argument(
+        "--btc5-monte-carlo",
+        type=Path,
+        default=DEFAULT_BTC5_MONTE_CARLO_PATH,
+        help="Optional BTC5 Monte Carlo latest.json used for shadow-size recommendations.",
+    )
+    parser.add_argument(
+        "--btc5-probe-db",
+        type=Path,
+        default=DEFAULT_BTC5_PROBE_DB_PATH,
+        help=(
+            "Optional BTC5 probe SQLite path used for trailing-fill and order-failed-rate stage checks."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -1805,6 +2685,9 @@ def main() -> None:
         markdown_output_path=args.markdown_output,
         wallet_flow_archive_path=args.wallet_flow_archive,
         signal_source_audit_path=args.signal_source_audit,
+        btc5_monte_carlo_path=args.btc5_monte_carlo,
+        wallet_export_path=args.wallet_export,
+        btc5_probe_db_path=args.btc5_probe_db,
     )
     combined = report["lane_evidence"]["combined"]["evidence_summary"]
     included = ", ".join(combined.get("included_lanes", [])) or "none"
