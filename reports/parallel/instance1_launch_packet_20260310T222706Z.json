@@ -1,0 +1,283 @@
+{
+  "artifact": "instance1_canonical_launch_packet_dispatch",
+  "instance": 1,
+  "generated_at": "2026-03-10T22:27:06Z",
+  "objective": "Snapshot-state watch, cutover gate, and pre-upgrade launch lock",
+  "authoritative_statuses": {
+    "upgrade_blocked": {
+      "status": true,
+      "reason": "old_box_root_disk_full_and_service_stopped",
+      "evidence": {
+        "runtime_launch_posture": "blocked",
+        "service_state": "stopped",
+        "allow_order_submission": false,
+        "blocked_checks": [
+          "service_not_running",
+          "remote_runtime_storage_blocked",
+          "flywheel_not_green"
+        ],
+        "storage_state": "blocked",
+        "storage_reason": "Remote runtime validation hit `No space left on device`; the VPS root filesystem is full and launch-control changes cannot be validated safely.",
+        "validated_shell_snapshot": {
+          "as_of": "2026-03-10",
+          "mount": "/dev/root",
+          "used": "58G",
+          "available": "0",
+          "use_percent": "100%",
+          "inode_use_percent": "3%"
+        }
+      }
+    },
+    "shadow_ready_after_upgrade": {
+      "status": true,
+      "condition": "run_post_upgrade_validation_order_without_failures",
+      "reason": "storage_and_service_health_must_be_green_before_shadow_reentry"
+    },
+    "parked_lane": {
+      "status": true,
+      "lane": "kalshi_weather_bracket",
+      "reason": "comparison_or_research_only_until_binary_replay_evidence_exists"
+    },
+    "snapshot_pending": {
+      "status": true,
+      "reason": "snapshot_state_not_verified_available",
+      "evidence": {
+        "check_method": "aws_cli",
+        "cli_available": false,
+        "check_error": "aws command not found",
+        "checked_at": "2026-03-10T22:27:06Z"
+      }
+    },
+    "ready_for_cutover": {
+      "status": false,
+      "reason": "snapshot_not_available_or_unverified",
+      "required_preconditions": [
+        "snapshot_available",
+        "firewall_rules_recreated",
+        "static_ip_attached",
+        "disk_headroom_guardrail_pass",
+        "service_healthy",
+        "runtime_truth_regenerated",
+        "runtime_package_loaded"
+      ]
+    }
+  },
+  "cycle_lock": {
+    "status": "hold_repair",
+    "effective_until": "new_box_live_and_post_upgrade_validation_passed",
+    "live_actions_allowed": false,
+    "allowed_actions": [
+      "migration_build",
+      "storage_repair",
+      "artifact_regeneration",
+      "shadow_validation_after_cutover"
+    ],
+    "disallowed_actions": [
+      "launch_escalation",
+      "new_box_cutover_before_snapshot_available",
+      "old_box_live_trading",
+      "old_box_package_load",
+      "old_box_service_restart"
+    ]
+  },
+  "upgrade_target": {
+    "provider": "aws_lightsail",
+    "spec": {
+      "ram_gb": 8,
+      "vcpus": 2,
+      "root_ssd_gb": 160
+    },
+    "why_this_is_only_hard_prerequisite": [
+      "remote_runtime_storage_blocked_prevents_safe_runtime_validation",
+      "service_stopped_and_launch_posture_blocked_are_secondary_to_storage_blocker"
+    ]
+  },
+  "upgrade_blocker_list": [
+    {
+      "blocker": "remote_runtime_storage_blocked",
+      "severity": "hard",
+      "source": "reports/runtime_truth_latest.json",
+      "remediation": "complete_cutover_to_160gb_root_disk_and_revalidate_runtime"
+    },
+    {
+      "blocker": "service_not_running",
+      "severity": "hard",
+      "source": "reports/runtime_truth_latest.json",
+      "remediation": "start_service_only_after_storage_guardrail_and_runtime_truth_regeneration_pass"
+    },
+    {
+      "blocker": "flywheel_not_green",
+      "severity": "hard_for_live",
+      "source": "reports/runtime_truth_latest.json",
+      "remediation": "shadow_cycle_after_upgrade_then_require_flywheel_green_before_live"
+    }
+  ],
+  "post_upgrade_validation_order": [
+    {
+      "step": 1,
+      "name": "snapshot_gate",
+      "must_pass": true,
+      "check": "lightsail_snapshot_state",
+      "pass_condition": "snapshot_state == available"
+    },
+    {
+      "step": 2,
+      "name": "firewall_recreation",
+      "must_pass": true,
+      "check": "custom_firewall_rules",
+      "pass_condition": "required_custom_rules_present_and_verified"
+    },
+    {
+      "step": 3,
+      "name": "static_ip_attach",
+      "must_pass": true,
+      "check": "lightsail_static_ip_binding",
+      "pass_condition": "static_ip_attached_to_new_instance"
+    },
+    {
+      "step": 4,
+      "name": "disk_headroom",
+      "must_pass": true,
+      "check": "root_free_gb_and_root_use_percent",
+      "pass_condition": "root_free_gb >= 30 and root_use_percent < 82"
+    },
+    {
+      "step": 5,
+      "name": "service_start",
+      "must_pass": true,
+      "check": "systemd_state_and_health_paths",
+      "pass_condition": "jj-live.service active and no crash-loop"
+    },
+    {
+      "step": 6,
+      "name": "runtime_truth_regeneration",
+      "must_pass": true,
+      "check": "regenerate_runtime_truth_and_public_snapshot",
+      "pass_condition": "reports/runtime_truth_latest.json and reports/public_runtime_snapshot.json regenerated without storage errors"
+    },
+    {
+      "step": 7,
+      "name": "package_load_confirmation",
+      "must_pass": true,
+      "check": "selected_package_loaded",
+      "pass_condition": "runtime_package_load_pending=false and runtime_package_loaded=true"
+    }
+  ],
+  "durable_disk_guardrails": {
+    "root_free_space_threshold_gb": 30,
+    "rule": "if root_free_gb < 30 then emit storage_guardrail_alert and block launch escalation",
+    "alert_severity": "critical",
+    "launch_escalation_allowed_when_below_threshold": false,
+    "operator_action_when_triggered": "set hold_repair and retry runtime/storage truth in +10m",
+    "root_use_percent_max": 82,
+    "self_block_contract": {
+      "condition": "root_free_gb < 30 or root_use_percent >= 82",
+      "launch_packet_posture": "blocked",
+      "execution_mode": "blocked",
+      "allow_order_submission": false,
+      "one_next_cycle_action": "hold_repair: increase disk headroom, rerun runtime validation, and retry launch checks in +10m"
+    }
+  },
+  "truth_lock": {
+    "authoritative_sources": [
+      "reports/runtime_truth_latest.json",
+      "reports/public_runtime_snapshot.json",
+      "reports/remote_cycle_status.json",
+      "reports/launch_packet_latest.json"
+    ],
+    "non_authoritative_when_conflicting": [
+      "stale_prose_in_readme_or_docs",
+      "older_dispatch_summaries_without_matching_json_artifacts"
+    ]
+  },
+  "reconciliation_snapshot": {
+    "open_positions": 4,
+    "closed_positions": 50,
+    "capital_accounting_delta_usd": 0.0
+  },
+  "retry_timing_contract": {
+    "runtime_storage_truth_retry": "+10m",
+    "btc5_package_readiness_refresh": "+15m",
+    "finance_public_surface_sync": "+30m",
+    "kalshi_binary_replay_evidence_refresh": "+12h"
+  },
+  "launch_verdict": {
+    "posture": "blocked",
+    "allow_execution": false,
+    "live_launch_blocked": true,
+    "reason": "upgrade_blocked_until_new_box_validation_passes"
+  },
+  "runtime_mode_contract": {
+    "agent_run_mode": "shadow",
+    "execution_mode": "blocked",
+    "service_state": "stopped",
+    "allow_order_submission": false,
+    "order_submit_enabled": false,
+    "paper_trading": true
+  },
+  "finance_snapshot": {
+    "finance_gate_pass": true,
+    "generated_at": "2026-03-10T21:15:01+00:00"
+  },
+  "mandatory_output_contract": {
+    "candidate_delta_arr_bps": 248262402.09,
+    "expected_improvement_velocity_delta": 0.0,
+    "arr_confidence_score": 0.49,
+    "block_reasons": [
+      "Remote service is stopped (inactive).",
+      "Remote runtime validation hit `No space left on device`; the VPS root filesystem is full and launch-control changes cannot be validated safely.",
+      "Latest flywheel decision is hold.",
+      "service_not_running",
+      "remote_runtime_storage_blocked",
+      "flywheel_not_green"
+    ],
+    "finance_gate_pass": true,
+    "one_next_cycle_action": "hold_repair: keep old box blocked, verify snapshot reaches available, then run cutover checks (firewall -> static IP -> disk headroom -> service start -> runtime truth regen -> package load) with +10m retry cadence until clear."
+  },
+  "one_next_cycle_action": "hold_repair: keep old box blocked, verify snapshot reaches available, then run cutover checks (firewall -> static IP -> disk headroom -> service start -> runtime truth regen -> package load) with +10m retry cadence until clear.",
+  "sources": {
+    "runtime_truth_latest_json": "reports/runtime_truth_latest.json",
+    "public_runtime_snapshot_json": "reports/public_runtime_snapshot.json",
+    "remote_cycle_status_json": "reports/remote_cycle_status.json",
+    "launch_packet_latest_json": "reports/launch_packet_latest.json",
+    "finance_latest_json": "reports/finance/latest.json",
+    "nontrading_cycle_packet_json": "reports/nontrading_cycle_packet.json",
+    "weather_lane_json": "reports/parallel/instance05_weather_lane.json"
+  },
+  "snapshot_watch": {
+    "source": "aws_lightsail_snapshot",
+    "checked_at": "2026-03-10T22:27:06Z",
+    "cli_available": false,
+    "check_method": "aws_cli",
+    "check_error": "aws command not found",
+    "snapshot_status": "snapshot_pending",
+    "ready_for_cutover": false,
+    "blockers": [
+      "aws_cli_not_installed",
+      "snapshot_state_not_verified_available"
+    ],
+    "next_check_action": "Install/configure AWS CLI or confirm Lightsail snapshot state in console, then retry snapshot check in +10m."
+  },
+  "old_box_launch_lock": {
+    "status": "blocked",
+    "enforce_mode": "hard",
+    "allow_order_submission": false,
+    "allowed_actions": [
+      "snapshot_wait",
+      "cutover_prep",
+      "artifact_refresh"
+    ],
+    "disallowed_actions": [
+      "old_box_service_restart",
+      "old_box_live_trading",
+      "old_box_partial_recovery",
+      "old_box_package_load"
+    ]
+  },
+  "operator_packet_statuses": {
+    "snapshot_pending": "snapshot_pending",
+    "ready_for_cutover": "blocked_until_snapshot_available_and_cutover_checks_pass",
+    "manual_close_ready_now": "manual_close_ready_now",
+    "parked_lane": "kalshi_weather_bracket_parked"
+  }
+}
