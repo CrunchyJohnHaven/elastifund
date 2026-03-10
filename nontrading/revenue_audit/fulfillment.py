@@ -5,15 +5,18 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from nontrading.models import Opportunity, Outcome
+from nontrading.offers.website_growth_audit import website_growth_audit_recurring_monitor_offer
 from nontrading.revenue_audit.contracts import (
     AuditBundle,
     AuditOrder,
     FulfillmentJob,
     MonitorRun,
+    RecurringMonitorEnrollment,
     contract_to_dict,
     utc_now,
 )
@@ -30,6 +33,7 @@ DEFAULT_ARTIFACT_ROOT = Path("reports/nontrading")
 DEFAULT_FULFILLMENT_JOB_TYPE = "website_growth_audit"
 PAID_ORDER_STATUSES = {"paid"}
 SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+UTC = timezone.utc
 
 
 @dataclass(frozen=True)
@@ -40,6 +44,8 @@ class FulfillmentExecution:
     outcome: Outcome | None = None
     artifact_path: str = ""
     artifact_paths: tuple[str, ...] = field(default_factory=tuple)
+    delivery_checklist_path: str = ""
+    delivery_pack_path: str = ""
 
     def __post_init__(self) -> None:
         artifact_path = str(self.artifact_path).strip()
@@ -50,6 +56,8 @@ class FulfillmentExecution:
             artifact_paths = (artifact_path,)
         object.__setattr__(self, "artifact_path", artifact_path)
         object.__setattr__(self, "artifact_paths", artifact_paths)
+        object.__setattr__(self, "delivery_checklist_path", str(self.delivery_checklist_path).strip())
+        object.__setattr__(self, "delivery_pack_path", str(self.delivery_pack_path).strip())
 
 
 @dataclass(frozen=True)
@@ -116,6 +124,92 @@ def _bundle_from_metadata(payload: dict[str, Any] | None) -> AuditBundle | None:
     return AuditBundle(**current)
 
 
+def _add_days_iso(timestamp: str | None, days: int) -> str | None:
+    if not timestamp:
+        return None
+    parsed = str(timestamp).strip()
+    if parsed.endswith("Z"):
+        parsed = f"{parsed[:-1]}+00:00"
+    try:
+        current = datetime.fromisoformat(parsed)
+    except ValueError:
+        return None
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    return (current + timedelta(days=int(days))).replace(microsecond=0).isoformat()
+
+
+def _status_timeline(metadata: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not metadata:
+        return []
+    timeline = metadata.get("status_timeline")
+    if not isinstance(timeline, list):
+        return []
+    return [dict(item) for item in timeline if isinstance(item, dict)]
+
+
+def _artifact_catalog(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    if not metadata:
+        return {}
+    artifacts = metadata.get("artifacts")
+    if not isinstance(artifacts, dict):
+        return {}
+    return {str(key): value for key, value in artifacts.items()}
+
+
+def _timeline_entry(
+    *,
+    status: str,
+    occurred_at: str,
+    detail: str,
+    artifact_paths: tuple[str, ...] = (),
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    entry = {
+        "status": str(status).strip(),
+        "occurred_at": str(occurred_at).strip(),
+        "detail": str(detail).strip(),
+    }
+    cleaned_paths = [str(path).strip() for path in artifact_paths if str(path).strip()]
+    if cleaned_paths:
+        entry["artifact_paths"] = cleaned_paths
+    if metadata:
+        entry["metadata"] = contract_to_dict(metadata)
+    return entry
+
+
+def _append_timeline_entries(metadata: dict[str, Any] | None, *entries: dict[str, Any]) -> dict[str, Any]:
+    updated = dict(metadata or {})
+    timeline = _status_timeline(updated)
+    for entry in entries:
+        if not entry:
+            continue
+        if timeline and timeline[-1] == entry:
+            continue
+        timeline.append(entry)
+    updated["status_timeline"] = timeline
+    return updated
+
+
+def _merge_artifacts(metadata: dict[str, Any] | None, **artifacts: Any) -> dict[str, Any]:
+    updated = dict(metadata or {})
+    catalog = _artifact_catalog(updated)
+    for key, value in artifacts.items():
+        if isinstance(value, (list, tuple)):
+            cleaned = [str(item).strip() for item in value if str(item).strip()]
+            if cleaned:
+                catalog[str(key)] = cleaned
+            continue
+        if isinstance(value, dict):
+            catalog[str(key)] = contract_to_dict(value)
+            continue
+        text = str(value or "").strip()
+        if text:
+            catalog[str(key)] = text
+    updated["artifacts"] = catalog
+    return updated
+
+
 class RevenueAuditFulfillmentService:
     """Generate paid audit artifacts and recurring monitor deltas from queued orders."""
 
@@ -139,6 +233,68 @@ class RevenueAuditFulfillmentService:
             raise ValueError("RevenueAuditFulfillmentService requires telemetry when no revenue_store is provided")
         self.artifact_root = Path(artifact_root)
         self.default_gross_margin_pct = float(default_gross_margin_pct)
+        self.recurring_monitor_offer = website_growth_audit_recurring_monitor_offer()
+
+    def _ensure_staged_recurring_monitor(self, order: AuditOrder) -> RecurringMonitorEnrollment | None:
+        if self.audit_store is None:
+            return None
+        existing = self.audit_store.find_recurring_monitor_enrollment_by_audit_order(order.order_id)
+        amount = float(existing.monthly_amount_usd) if existing is not None else 299.0
+        if existing is None:
+            return self.audit_store.create_recurring_monitor_enrollment(
+                RecurringMonitorEnrollment(
+                    enrollment_id=self.audit_store.next_recurring_monitor_enrollment_id(),
+                    audit_order_id=order.order_id,
+                    offer_slug=self.recurring_monitor_offer.slug,
+                    parent_offer_slug=order.offer_slug,
+                    status="staged",
+                    cadence_days=int(self.recurring_monitor_offer.cadence_days),
+                    monthly_amount_usd=amount,
+                    currency=order.currency,
+                    metadata={
+                        "audit_business_name": order.business_name,
+                        "audit_website_url": order.website_url,
+                    },
+                    created_at=utc_now(),
+                    updated_at=utc_now(),
+                )
+            )
+        return self.audit_store.update_recurring_monitor_enrollment(
+            existing.enrollment_id,
+            metadata={
+                **existing.metadata,
+                "audit_business_name": order.business_name,
+                "audit_website_url": order.website_url,
+            },
+            updated_at=utc_now(),
+        )
+
+    def _recurring_monitor_payload(
+        self,
+        *,
+        order: AuditOrder,
+        enrollment: RecurringMonitorEnrollment | None,
+    ) -> dict[str, Any]:
+        amount = float(enrollment.monthly_amount_usd) if enrollment is not None else 299.0
+        return {
+            "offer": {
+                "name": self.recurring_monitor_offer.name,
+                "slug": self.recurring_monitor_offer.slug,
+                "description": self.recurring_monitor_offer.description,
+                "billing_interval": self.recurring_monitor_offer.billing_interval,
+                "cadence_days": self.recurring_monitor_offer.cadence_days,
+                "deliverables": list(self.recurring_monitor_offer.deliverables),
+                "monthly_amount_usd": amount,
+                "annualized_arr_usd": round(amount * 12.0, 2),
+            },
+            "status": enrollment.status if enrollment is not None else "staged",
+            "enrollment": contract_to_dict(enrollment) if enrollment is not None else None,
+            "checkout_request_template": {
+                "offer_slug": self.recurring_monitor_offer.slug,
+                "source_order_id": order.order_id,
+                "price_key": "monitor-monthly",
+            },
+        }
 
     def fulfill_paid_order(
         self,
@@ -363,11 +519,59 @@ class RevenueAuditFulfillmentService:
             )
 
         artifact_dir = self.artifact_root / "audits" / _slugify(order.order_id)
+        checklist_path = artifact_dir / "delivery_checklist.json"
         json_path = artifact_dir / "paid_audit.json"
         markdown_path = artifact_dir / "paid_audit.md"
-        payload = self._build_paid_audit_payload(order=order, bundle=bundle, paid_events=paid_events, generated_at=now)
+        pack_path = artifact_dir / "delivery_pack.json"
+        staged_monitor = self._ensure_staged_recurring_monitor(order)
+        payload = self._build_paid_audit_payload(
+            order=order,
+            bundle=bundle,
+            paid_events=paid_events,
+            generated_at=now,
+            recurring_monitor=staged_monitor,
+        )
+        checklist_payload = self._build_delivery_checklist_payload(order=order, generated_at=now)
+        _write_json(checklist_path, checklist_payload)
         _write_json(json_path, payload)
         _write_markdown(markdown_path, self._render_paid_audit_markdown(payload))
+        order_metadata = {
+            **_merge_artifacts(
+                _append_timeline_entries(
+                    order.metadata,
+                    _timeline_entry(
+                        status="artifact_generated",
+                        occurred_at=now,
+                        detail="Customer delivery artifacts were rendered and attached to the paid order.",
+                        artifact_paths=(str(json_path), str(markdown_path), str(checklist_path), str(pack_path)),
+                    ),
+                    _timeline_entry(
+                        status="delivered",
+                        occurred_at=now,
+                        detail="The paid Website Growth Audit delivery pack is ready to ship.",
+                        artifact_paths=(str(json_path), str(markdown_path), str(checklist_path), str(pack_path)),
+                    ),
+                ),
+                delivery_checklist=str(checklist_path),
+                delivery_json=str(json_path),
+                delivery_markdown=str(markdown_path),
+                delivery_pack=str(pack_path),
+                delivery_artifact_paths=[str(json_path), str(markdown_path)],
+            ),
+            "delivery_checklist": list(_delivery_checklist()),
+            "delivery_artifact_paths": [str(json_path), str(markdown_path)],
+        }
+        pack_payload = self._build_delivery_pack_payload(
+            order=order,
+            generated_at=now,
+            delivery_payload=payload,
+            checklist_path=str(checklist_path),
+            audit_json_path=str(json_path),
+            audit_markdown_path=str(markdown_path),
+            timeline=_status_timeline(order_metadata),
+            recurring_monitor=payload["recurring_monitor"],
+        )
+        _write_json(pack_path, pack_payload)
 
         updated_job = self.audit_store.update_fulfillment_job(
             job.job_id,
@@ -375,7 +579,12 @@ class RevenueAuditFulfillmentService:
             artifact_uri=str(json_path),
             metadata={
                 **job.metadata,
-                "artifact_paths": [str(json_path), str(markdown_path)],
+                "artifact_paths": [
+                    str(json_path),
+                    str(markdown_path),
+                    str(checklist_path),
+                    str(pack_path),
+                ],
                 "delivery_checklist": list(_delivery_checklist()),
                 "completed_at": now,
             },
@@ -402,6 +611,7 @@ class RevenueAuditFulfillmentService:
                         "price_key": order.price_key,
                         "fulfillment_status": "delivered",
                         "delivery_artifact_paths": [str(json_path), str(markdown_path)],
+                        "delivery_pack_path": str(pack_path),
                     },
                 )
             )
@@ -411,11 +621,7 @@ class RevenueAuditFulfillmentService:
             fulfillment_status="delivered",
             crm_outcome_id=outcome.id,
             delivered_at=now,
-            metadata={
-                **order.metadata,
-                "delivery_checklist": list(_delivery_checklist()),
-                "delivery_artifact_paths": [str(json_path), str(markdown_path)],
-            },
+            metadata=order_metadata,
             updated_at=now,
         )
 
@@ -444,6 +650,8 @@ class RevenueAuditFulfillmentService:
             job=updated_job,
             outcome=outcome,
             artifact_paths=(str(json_path), str(markdown_path)),
+            delivery_checklist_path=str(checklist_path),
+            delivery_pack_path=str(pack_path),
         )
 
     def run_monitor(
@@ -479,6 +687,7 @@ class RevenueAuditFulfillmentService:
         _write_markdown(markdown_path, self._render_monitor_markdown(delta))
 
         now = utc_now()
+        enrollment = self.audit_store.find_recurring_monitor_enrollment_by_audit_order(order.order_id)
         monitor_run = self.audit_store.create_monitor_run(
             MonitorRun(
                 run_id=self.audit_store.next_monitor_run_id(),
@@ -486,6 +695,7 @@ class RevenueAuditFulfillmentService:
                 status="completed",
                 baseline_bundle_id=baseline_bundle.bundle_id,
                 current_bundle_id=current_bundle.bundle_id,
+                recurring_monitor_enrollment_id=enrollment.enrollment_id if enrollment is not None else "",
                 delta_summary=delta["summary"]["headline"],
                 metadata={
                     "delta": delta,
@@ -496,10 +706,39 @@ class RevenueAuditFulfillmentService:
                 updated_at=now,
             )
         )
+        if enrollment is not None and enrollment.status in {"active", "paused"}:
+            self.audit_store.update_recurring_monitor_enrollment(
+                enrollment.enrollment_id,
+                latest_monitor_run_id=monitor_run.run_id,
+                monitor_runs_completed=enrollment.monitor_runs_completed + 1,
+                next_run_at=_add_days_iso(now, enrollment.cadence_days),
+                metadata={
+                    **enrollment.metadata,
+                    "latest_monitor_artifact_paths": [str(json_path), str(markdown_path)],
+                },
+                updated_at=now,
+            )
         updated_order = self.audit_store.update_order(
             order.order_id,
             metadata={
-                **order.metadata,
+                **_merge_artifacts(
+                    _append_timeline_entries(
+                        order.metadata,
+                        _timeline_entry(
+                            status="monitor_rerun_completed",
+                            occurred_at=now,
+                            detail="The recurring-monitor delta was generated for the delivered audit.",
+                            artifact_paths=(str(json_path), str(markdown_path)),
+                            metadata={
+                                "monitor_run_id": monitor_run.run_id,
+                                "headline": delta["summary"]["headline"],
+                            },
+                        ),
+                    ),
+                    monitor_json=str(json_path),
+                    monitor_markdown=str(markdown_path),
+                    latest_monitor_artifact_paths=[str(json_path), str(markdown_path)],
+                ),
                 "latest_monitor_run_id": monitor_run.run_id,
                 "latest_monitor_bundle": contract_to_dict(current_bundle),
                 "latest_monitor_artifact_paths": [str(json_path), str(markdown_path)],
@@ -703,6 +942,7 @@ class RevenueAuditFulfillmentService:
         bundle: AuditBundle,
         paid_events: list[Any],
         generated_at: str,
+        recurring_monitor: RecurringMonitorEnrollment | None,
     ) -> dict[str, Any]:
         prospect = bundle.prospect or order.prospect_profile
         severity_counts: dict[str, int] = {}
@@ -731,10 +971,63 @@ class RevenueAuditFulfillmentService:
                 "checklist": list(_delivery_checklist()),
                 "severity_counts": severity_counts,
             },
+            "recurring_monitor": self._recurring_monitor_payload(order=order, enrollment=recurring_monitor),
+        }
+
+    def _build_delivery_checklist_payload(
+        self,
+        *,
+        order: AuditOrder,
+        generated_at: str,
+    ) -> dict[str, Any]:
+        return {
+            "artifact": "revenue_audit_delivery_checklist",
+            "generated_at": generated_at,
+            "order_id": order.order_id,
+            "customer": {
+                "business_name": order.business_name,
+                "website_url": order.website_url,
+                "customer_email": order.customer_email,
+            },
+            "checklist": list(_delivery_checklist()),
+        }
+
+    def _build_delivery_pack_payload(
+        self,
+        *,
+        order: AuditOrder,
+        generated_at: str,
+        delivery_payload: dict[str, Any],
+        checklist_path: str,
+        audit_json_path: str,
+        audit_markdown_path: str,
+        timeline: list[dict[str, Any]],
+        recurring_monitor: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "artifact": "revenue_audit_delivery_pack",
+            "generated_at": generated_at,
+            "order_id": order.order_id,
+            "summary": delivery_payload["summary"],
+            "customer_delivery": {
+                "primary_artifact_path": audit_markdown_path,
+                "machine_readable_artifact_path": audit_json_path,
+                "ship_status": "ready",
+            },
+            "checklist_artifact_path": checklist_path,
+            "delivery_artifact_paths": [audit_json_path, audit_markdown_path],
+            "timeline": timeline,
+            "monitor_contract": {
+                "status": recurring_monitor.get("status", "ready_for_rerun"),
+                "artifact_kind": "revenue_audit_monitor_delta",
+                "reuse_surface": "recurring_monitor",
+            },
+            "recurring_monitor": recurring_monitor,
         }
 
     def _render_paid_audit_markdown(self, payload: dict[str, Any]) -> list[str]:
         issues = payload["audit_bundle"].get("issues", [])
+        recurring_monitor = payload.get("recurring_monitor", {})
         lines = [
             "# Website Growth Audit",
             "",
@@ -752,6 +1045,15 @@ class RevenueAuditFulfillmentService:
             lines.append(
                 f"- [{issue.get('severity', 'medium')}] {issue.get('summary', '')} ({issue.get('detector_key', '')})"
             )
+        lines.extend(
+            [
+                "",
+                "## Recurring Monitor",
+                f"- Status: {recurring_monitor.get('status', 'staged')}",
+                f"- Monthly price: ${recurring_monitor.get('offer', {}).get('monthly_amount_usd', 0):.2f}",
+                f"- Cadence: every {recurring_monitor.get('offer', {}).get('cadence_days', 30)} days",
+            ]
+        )
         return lines
 
     def _build_delta_payload(

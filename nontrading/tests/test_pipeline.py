@@ -175,6 +175,20 @@ def test_build_runtime_blocks_live_provider_with_placeholder_sender_domain(tmp_p
     assert "placeholder or unverified" in str(exc.value)
 
 
+def test_build_runtime_blocks_live_provider_without_verified_sender_flag(tmp_path: Path) -> None:
+    settings = RevenueAgentSettings(
+        db_path=tmp_path / "revenue_agent.db",
+        outbox_dir=tmp_path / "outbox",
+        provider="sendgrid",
+        sendgrid_api_key="test-key",
+        from_email="ops@elastifund.io",
+    )
+
+    with pytest.raises(RuntimeSafetyError) as exc:
+        build_runtime(settings, dry_run=False)
+    assert "JJ_REVENUE_SENDER_DOMAIN_VERIFIED" in str(exc.value)
+
+
 def test_build_runtime_allows_dry_run_with_placeholder_sender_domain(tmp_path: Path) -> None:
     settings = RevenueAgentSettings(
         db_path=tmp_path / "revenue_agent.db",

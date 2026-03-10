@@ -12,7 +12,7 @@ Two non-trading subsystems already exist:
 JJ-N is now beyond the original bare-substrate baseline, but it is still not launched.
 The repo has the first service-offer and operator assets, not a production revenue loop.
 
-Current repo truth verified on 2026-03-09:
+Current repo truth verified on 2026-03-10:
 
 - `make test-nontrading` is currently green in this worktree (`61` tests)
 - `pytest -q tests/nontrading` is currently green in this worktree (`49` tests)
@@ -111,8 +111,47 @@ Planned service definition:
 ## Safe Defaults
 
 - Revenue-agent sending defaults to `dry_run`.
-- The current outbound lane should be treated as a compliance harness and future phase-2 engine, not the first production wedge.
+- The current outbound lane is the first production wedge in this cycle once launch gates are closed.
 - The digital-products lane is research and prioritization infrastructure, not listing automation.
+
+## Instance 3: First-Dollar Playbook and Confidence Gating
+
+- Keep `Website Growth Audit` as the default non-trading path until a faster compliant wedge wins on data.
+- Use one narrow JTN chain:
+  `lead_source -> qualification -> website_growth_audit offer -> payout signal -> recurring loop`.
+- On stale stage input, record explicit stale reason, keep non-blocked steps running, and schedule immediate retry in the next cycle.
+- Target lead-to-qualified ≥20%, qualified-to-offer ≥10%, offer-to-paid ≥15% initially; improve monthly.
+- Update `nontrading` allocator score with Bayesian funnel confidence:
+  - per-step Beta state `(α, β)` for lead quality, qualification, offer acceptance, payout.
+  - `confidence_path = Π(α_s / (α_s + β_s))`.
+  - candidate `score = (expected_arr_delta + expected_improvement_velocity) * confidence_path`.
+- Failed step learning feedback is required:
+  - increment `β` for failed steps,
+  - reduce score for repeated failures at the same stage until mitigation notes are added.
+
+## Non-Trading Launch Gating Checklist
+
+1. Sender identity and DNS auth validated for chosen provider.
+2. Lead source freshness policy passes.
+3. Offer/copy quality and proposal template version pinned.
+4. Checkout + billing webhook emits explicit payout signal.
+5. First paid event captured and mapped to recurring-loop stage.
+6. Weekly confidence trend updated and non-regressed for three consecutive cycles.
+
+## 7-Day Non-Trading Cashflow Forecast Contract
+
+Record forecast daily for each batch:
+
+- expected leads, qualified leads, offer attempts, paid audits, gross payouts, fulfillment cost, net ARR.
+- confidence bands (P10/P50/P90) and failure mode.
+- finance gate checks: reserve floor, `JJ_FINANCE_SINGLE_ACTION_CAP_USD`, `JJ_FINANCE_MONTHLY_NEW_COMMITMENT_CAP_USD`, whitelist.
+- if any stage confidence falls below 0.6, hold that stage and emit recovery tasks before continuing.
+
+Top-3 bottleneck fixes to close this cycle:
+
+1. replace placeholder lead source with approved and rate-limited imports,
+2. lock in deterministic qualification rubric and fallback copy,
+3. complete payout signal instrumentation for recurring-loop scoring.
 
 ## Commands
 

@@ -86,16 +86,22 @@ class StripeCheckoutClient:
         currency: str,
         success_url: str,
         cancel_url: str,
+        mode: str = "payment",
+        billing_interval: str | None = None,
         customer_email: str = "",
         client_reference_id: str = "",
         metadata: dict[str, Any] | None = None,
+        subscription_metadata: dict[str, Any] | None = None,
         line_item_name: str,
         line_item_description: str = "",
     ) -> dict[str, Any]:
         if not self.secret_key:
             raise StripeClientError("Stripe secret key is not configured")
+        checkout_mode = str(mode or "payment").strip().lower()
+        if checkout_mode not in {"payment", "subscription"}:
+            raise StripeClientError(f"Unsupported Stripe checkout mode: {mode}")
         payload: dict[str, Any] = {
-            "mode": "payment",
+            "mode": checkout_mode,
             "success_url": success_url,
             "cancel_url": cancel_url,
             "line_items[0][price_data][currency]": currency.lower(),
@@ -104,6 +110,13 @@ class StripeCheckoutClient:
             "line_items[0][quantity]": 1,
             "payment_method_types[0]": "card",
         }
+        if checkout_mode == "subscription":
+            interval = str(billing_interval or "month").strip().lower()
+            if interval not in {"month", "quarter", "year"}:
+                raise StripeClientError(f"Unsupported Stripe recurring interval: {billing_interval}")
+            payload["line_items[0][price_data][recurring][interval]"] = "month" if interval == "quarter" else interval
+            if interval == "quarter":
+                payload["line_items[0][price_data][recurring][interval_count]"] = 3
         if line_item_description:
             payload["line_items[0][price_data][product_data][description]"] = line_item_description
         if customer_email:
@@ -112,6 +125,8 @@ class StripeCheckoutClient:
             payload["client_reference_id"] = client_reference_id
         for key, value in (metadata or {}).items():
             payload[f"metadata[{key}]"] = str(value)
+        for key, value in (subscription_metadata or {}).items():
+            payload[f"subscription_data[metadata][{key}]"] = str(value)
 
         response = requests.post(
             urljoin(self.api_base, "v1/checkout/sessions"),
@@ -128,7 +143,9 @@ class StripeCheckoutClient:
         return {
             "id": str(body.get("id", "")),
             "url": str(body.get("url", "")),
+            "mode": str(body.get("mode", "") or checkout_mode),
             "payment_intent": str(body.get("payment_intent", "") or ""),
+            "subscription": str(body.get("subscription", "") or ""),
             "status": str(body.get("status", "") or ""),
             "expires_at": _iso_from_unix(body.get("expires_at")),
             "raw": body,

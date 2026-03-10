@@ -75,6 +75,59 @@ class ServiceOffer:
         object.__setattr__(self, "fulfillment_provisioning", _freeze_value(dict(self.fulfillment_provisioning)))
 
 
+@dataclass(frozen=True)
+class RecurringServiceOffer:
+    name: str
+    slug: str
+    description: str
+    billing_interval: str
+    cadence_days: int
+    parent_offer_slug: str
+    fulfillment_type: str = "automated"
+    deliverables: tuple[str, ...] = field(default_factory=tuple)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        name = str(self.name).strip()
+        slug = "-".join(part for part in str(self.slug).strip().lower().replace("_", "-").split("-") if part)
+        description = str(self.description).strip()
+        billing_interval = str(self.billing_interval or "month").strip().lower()
+        cadence_days = int(self.cadence_days)
+        parent_offer_slug = "-".join(
+            part for part in str(self.parent_offer_slug).strip().lower().replace("_", "-").split("-") if part
+        )
+        fulfillment_type = str(self.fulfillment_type or "automated").strip().lower()
+
+        if not name:
+            raise ValueError("recurring offer name is required")
+        if not slug:
+            raise ValueError("recurring offer slug is required")
+        if not description:
+            raise ValueError("recurring offer description is required")
+        if billing_interval not in {"month", "quarter"}:
+            raise ValueError("billing_interval must be month or quarter")
+        if cadence_days <= 0:
+            raise ValueError("cadence_days must be positive")
+        if not parent_offer_slug:
+            raise ValueError("parent_offer_slug is required")
+        if fulfillment_type not in {"expert_led", "automated", "hybrid"}:
+            raise ValueError("fulfillment_type must be expert_led, automated, or hybrid")
+
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "slug", slug)
+        object.__setattr__(self, "description", description)
+        object.__setattr__(self, "billing_interval", billing_interval)
+        object.__setattr__(self, "cadence_days", cadence_days)
+        object.__setattr__(self, "parent_offer_slug", parent_offer_slug)
+        object.__setattr__(self, "fulfillment_type", fulfillment_type)
+        object.__setattr__(
+            self,
+            "deliverables",
+            tuple(str(item).strip() for item in self.deliverables if str(item).strip()),
+        )
+        object.__setattr__(self, "metadata", _freeze_value(dict(self.metadata)))
+
+
 WEBSITE_GROWTH_AUDIT = ServiceOffer(
     name="Website Growth Audit",
     slug="website-growth-audit",
@@ -120,6 +173,34 @@ WEBSITE_GROWTH_AUDIT = ServiceOffer(
     },
 )
 
+WEBSITE_GROWTH_AUDIT_RECURRING_MONITOR = RecurringServiceOffer(
+    name="Website Growth Audit Recurring Monitor",
+    slug="website-growth-audit-recurring-monitor",
+    description=(
+        "A hosted monthly recurring monitor that reruns the website-growth detectors, "
+        "ships a delta report, and keeps the post-audit quick-win backlog fresh."
+    ),
+    billing_interval="month",
+    cadence_days=30,
+    parent_offer_slug=WEBSITE_GROWTH_AUDIT.slug,
+    fulfillment_type="automated",
+    deliverables=(
+        "rerun cadence",
+        "delta report",
+        "severity-change summary",
+        "quick-win refresh",
+    ),
+    metadata={
+        "upsell_label": "Add the recurring monitor",
+        "billing_provider": "stripe_checkout",
+        "delivery_surface": "monitor_delta",
+    },
+)
+
 
 def website_growth_audit_offer() -> ServiceOffer:
     return WEBSITE_GROWTH_AUDIT
+
+
+def website_growth_audit_recurring_monitor_offer() -> RecurringServiceOffer:
+    return WEBSITE_GROWTH_AUDIT_RECURRING_MONITOR

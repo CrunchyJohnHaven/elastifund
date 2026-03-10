@@ -7,7 +7,7 @@
       "send_quota": 10
     },
     "compliance_status": "warning",
-    "confidence": 0.312,
+    "confidence": 0.28,
     "domain_health_penalty": 0.0,
     "engine_family": "revenue_audit",
     "expected_net_cash_30d": 0.0,
@@ -15,7 +15,7 @@
     "metadata": {
       "arr_lab": {
         "forecast_arr_usd_p50": 0.0,
-        "forecast_confidence": 0.48,
+        "forecast_confidence": 0.4,
         "forecast_confidence_label": "medium",
         "forecast_net_cash_30d_p50": 1488.0,
         "recommended_experiment": "better_monitor_upsell"

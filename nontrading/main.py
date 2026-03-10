@@ -59,16 +59,22 @@ def build_runtime(
                 "live_sender_blocked: from_email domain is placeholder or unverified; "
                 "set JJ_REVENUE_FROM_EMAIL to a verified sender domain"
             )
+        if not settings.sender_domain_verified:
+            raise RuntimeSafetyError(
+                "live_sender_blocked: sender domain is not verified; "
+                "set JJ_REVENUE_SENDER_DOMAIN_VERIFIED=true after DNS/auth checks pass"
+            )
         if settings.provider == "mailgun" and not settings.mailgun_domain:
             raise RuntimeSafetyError(
                 "live_sender_blocked: MAILGUN_DOMAIN is required when JJ_REVENUE_PROVIDER=mailgun"
             )
     logger.info(
-        "runtime_start mode=%s provider=%s approval_paper_mode=%s sender_domain=%s",
+        "runtime_start mode=%s provider=%s approval_paper_mode=%s sender_domain=%s sender_domain_verified=%s",
         "dry_run" if sender.provider_name == "dry_run" else "live",
         sender.provider_name,
         approval_gate.paper_mode,
         verified_domain or "unset",
+        settings.sender_domain_verified,
     )
     compliance_guard = ComplianceGuard(
         store,
