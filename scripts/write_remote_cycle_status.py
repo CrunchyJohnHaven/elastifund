@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import re
@@ -541,6 +542,269 @@ def _wallet_closed_batch_metrics(
         "open_non_btc_notional_usd": open_non_btc_notional,
         "conservative_closed_net_usd": conservative_closed_net,
         "all_book_closed_window_hours": round(all_window_hours, 4) if all_window_hours is not None else None,
+    }
+
+
+def _wallet_export_candidates(root: Path) -> list[Path]:
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    for base in (root, root / "data", root / "reports"):
+        if not base.exists():
+            continue
+        for path in base.glob("Polymarket-History*.csv"):
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            candidates.append(path)
+    candidates.sort(key=lambda path: path.stat().st_mtime if path.exists() else 0.0, reverse=True)
+    return candidates
+
+
+def _wallet_row_value(row: dict[str, Any], keys: Sequence[str]) -> str:
+    for key in keys:
+        if key in row and str(row.get(key) or "").strip():
+            return str(row.get(key) or "").strip()
+    return ""
+
+
+def _wallet_row_float(row: dict[str, Any], keys: Sequence[str]) -> float | None:
+    raw = _wallet_row_value(row, keys)
+    if not raw:
+        return None
+    cleaned = (
+        raw.replace("$", "")
+        .replace("USDC", "")
+        .replace("USD", "")
+        .replace(",", "")
+        .strip()
+    )
+    if not cleaned:
+        return None
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def _wallet_row_ts(row: dict[str, Any]) -> datetime | None:
+    return _parse_datetime_like(
+        _wallet_row_value(
+            row,
+            (
+                "timestamp",
+                "time",
+                "datetime",
+                "date",
+                "updated_at",
+                "created_at",
+                "closed_at",
+                "resolved_at",
+            ),
+        )
+    )
+
+
+def _series_delta_1d(series: list[tuple[datetime, float]]) -> float | None:
+    if not series:
+        return None
+    ordered = sorted(series, key=lambda item: item[0])
+    latest_ts, latest_value = ordered[-1]
+    target = latest_ts - timedelta(hours=24)
+    prior_candidates = [item for item in ordered if item[0] <= target]
+    if prior_candidates:
+        prior_value = prior_candidates[-1][1]
+    else:
+        return None
+    return round(latest_value - prior_value, 4)
+
+
+def _age_hours_from_datetimes(
+    *,
+    reference_at: datetime | None,
+    observed_at: datetime | None,
+) -> float | None:
+    if reference_at is None or observed_at is None:
+        return None
+    return max(0.0, (reference_at - observed_at).total_seconds() / 3600.0)
+
+
+def _freshness_label_for_age_hours(
+    age_hours: float | None,
+    *,
+    stale_after_hours: float = BTC5_RESEARCH_STALE_HOURS,
+) -> str:
+    if age_hours is None:
+        return "unknown"
+    if age_hours <= max(stale_after_hours / 2.0, 0.5):
+        return "fresh"
+    if age_hours <= stale_after_hours:
+        return "aging"
+    return "stale"
+
+
+def _freshness_score_for_label(label: Any) -> float:
+    text = str(label or "unknown").strip().lower()
+    if text == "fresh":
+        return 1.0
+    if text == "aging":
+        return 0.65
+    if text == "stale":
+        return 0.2
+    return 0.35
+
+
+def _normalize_unit_score(value: Any) -> float | None:
+    parsed = _float_or_none(value)
+    if parsed is None:
+        return None
+    if parsed > 1.0:
+        parsed = parsed / 100.0
+    return round(min(max(parsed, 0.0), 1.0), 4)
+
+
+def _confidence_label_for_score(score: float | None) -> str:
+    if score is None:
+        return "unknown"
+    if score >= 0.8:
+        return "high"
+    if score >= 0.55:
+        return "medium"
+    return "low"
+
+
+def _load_wallet_export_summary(
+    *,
+    root: Path,
+    generated_at: datetime,
+    btc5_data_at: datetime | None,
+) -> dict[str, Any] | None:
+    candidates = _wallet_export_candidates(root)
+    if not candidates:
+        return None
+
+    path = candidates[0]
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as fh:
+            reader = csv.DictReader(fh)
+            rows = [dict(row) for row in reader if isinstance(row, dict)]
+    except (OSError, csv.Error):
+        return None
+    if not rows:
+        return None
+
+    btc_closed_markets = 0
+    btc_closed_net_cashflow_usd = 0.0
+    btc_open_markets = 0
+    non_btc_open_buy_notional_usd = 0.0
+    btc_closed_ts: list[datetime] = []
+    export_latest_ts: datetime | None = None
+    equity_series: list[tuple[datetime, float]] = []
+    closed_cashflow_series: list[tuple[datetime, float]] = []
+    open_notional_series: list[tuple[datetime, float]] = []
+
+    for row in rows:
+        ts = _wallet_row_ts(row)
+        if ts is not None and (export_latest_ts is None or ts > export_latest_ts):
+            export_latest_ts = ts
+
+        market_text = (
+            _wallet_row_value(row, ("market", "market_title", "title", "question", "event", "ticker", "slug"))
+            .lower()
+        )
+        status = _wallet_row_value(row, ("status", "state", "position_status", "order_status")).lower()
+        is_btc = "btc" in market_text
+        is_closed = any(token in status for token in ("closed", "resolved", "settled"))
+        is_open = ("open" in status) and not is_closed
+
+        cashflow = _wallet_row_float(
+            row,
+            (
+                "cashflow_usd",
+                "closed_cashflow_usd",
+                "realized_cashflow_usd",
+                "realized_pnl_usd",
+                "cash_pnl_usd",
+                "pnl_usd",
+            ),
+        )
+        if cashflow is None:
+            cashflow = 0.0
+        buy_notional = _wallet_row_float(
+            row,
+            (
+                "open_buy_notional_usd",
+                "open_notional_usd",
+                "buy_notional_usd",
+                "buy_amount_usd",
+                "initial_value_usd",
+                "notional_usd",
+                "size_usd",
+            ),
+        )
+        if buy_notional is None:
+            buy_notional = 0.0
+
+        if is_closed and is_btc:
+            btc_closed_markets += 1
+            btc_closed_net_cashflow_usd += cashflow
+            if ts is not None:
+                btc_closed_ts.append(ts)
+        if is_open and is_btc:
+            btc_open_markets += 1
+        if is_open and not is_btc:
+            non_btc_open_buy_notional_usd += max(0.0, buy_notional)
+
+        equity = _wallet_row_float(
+            row,
+            ("portfolio_equity_usd", "portfolio_value_usd", "equity_usd", "wallet_value_usd", "total_wallet_value_usd"),
+        )
+        cumulative_closed = _wallet_row_float(
+            row,
+            ("closed_cashflow_usd", "cumulative_closed_cashflow_usd", "closed_net_cashflow_usd", "realized_cashflow_usd"),
+        )
+        open_notional = _wallet_row_float(
+            row,
+            ("open_notional_usd", "open_buy_notional_usd", "open_positions_notional_usd"),
+        )
+        if ts is not None and equity is not None:
+            equity_series.append((ts, equity))
+        if ts is not None and cumulative_closed is not None:
+            closed_cashflow_series.append((ts, cumulative_closed))
+        if ts is not None and open_notional is not None:
+            open_notional_series.append((ts, open_notional))
+
+    if export_latest_ts is None:
+        export_latest_ts = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+    export_age_hours = max(0.0, (generated_at - export_latest_ts).total_seconds() / 3600.0)
+    wallet_export_fresh = export_age_hours <= BTC5_RESEARCH_STALE_HOURS
+    fresher_than_btc = btc5_data_at is None or export_latest_ts >= btc5_data_at
+    use_wallet_export_reporting = wallet_export_fresh and fresher_than_btc
+
+    btc_closed_window_hours = None
+    if len(btc_closed_ts) >= 2:
+        btc_closed_window_hours = max(
+            1.0 / 60.0,
+            (max(btc_closed_ts) - min(btc_closed_ts)).total_seconds() / 3600.0,
+        )
+
+    return {
+        "source_path": _relative_path_text(root, path) or str(path),
+        "source_class": "wallet_export_csv",
+        "exported_at": export_latest_ts.isoformat(),
+        "source_age_hours": round(export_age_hours, 4),
+        "wallet_export_fresh": wallet_export_fresh,
+        "wallet_export_freshness_label": _freshness_label_for_age_hours(export_age_hours),
+        "fresher_than_btc_reporting_source": fresher_than_btc,
+        "use_wallet_export_reporting": use_wallet_export_reporting,
+        "btc_closed_markets": int(btc_closed_markets),
+        "btc_closed_net_cashflow_usd": round(btc_closed_net_cashflow_usd, 4),
+        "btc_open_markets": int(btc_open_markets),
+        "non_btc_open_buy_notional_usd": round(non_btc_open_buy_notional_usd, 4),
+        "btc_closed_window_hours": round(btc_closed_window_hours, 4) if btc_closed_window_hours is not None else None,
+        "portfolio_equity_delta_1d": _series_delta_1d(equity_series),
+        "closed_cashflow_delta_1d": _series_delta_1d(closed_cashflow_series),
+        "open_notional_delta_1d": _series_delta_1d(open_notional_series),
     }
 
 
@@ -1586,12 +1850,71 @@ def build_remote_cycle_status(
         launch=launch,
         accounting_reconciliation=accounting_reconciliation,
     )
+    generated_at = _parse_datetime_like(status.get("generated_at")) or datetime.now(timezone.utc)
+    public_scoreboard = _build_public_performance_scoreboard(
+        root=repo_root,
+        generated_at=generated_at,
+        capital=status["capital"],
+        btc5_maker=btc5_maker,
+        polymarket_wallet=polymarket_wallet,
+        accounting_reconciliation=accounting_reconciliation,
+    )
+    wallet_reconciliation_summary = dict(
+        public_scoreboard.get("wallet_reconciliation_summary") or {}
+    )
+    scale_summary = _load_strategy_scale_comparison_summary(
+        root=repo_root,
+        generated_at=generated_at,
+    )
+    audit_summary = _load_signal_source_audit_summary(
+        root=repo_root,
+        generated_at=generated_at,
+    )
+    current_probe_summary = _load_btc5_current_probe_summary(
+        root=repo_root,
+        generated_at=generated_at,
+    )
+    source_precedence = _build_source_precedence(
+        root=repo_root,
+        generated_at=generated_at,
+        service=service,
+        polymarket_wallet=polymarket_wallet,
+        btc5_maker=btc5_maker,
+        accounting_reconciliation=accounting_reconciliation,
+        wallet_reconciliation_summary=wallet_reconciliation_summary,
+    )
+    btc5_stage_readiness = _build_btc5_stage_readiness(
+        scale_summary=scale_summary,
+        audit_summary=audit_summary,
+        current_probe_summary=current_probe_summary,
+    )
+    deployment_confidence = _build_deployment_confidence(
+        service=service,
+        accounting_reconciliation=accounting_reconciliation,
+        btc5_stage_readiness=btc5_stage_readiness,
+        source_precedence=source_precedence,
+        scale_summary=scale_summary,
+        audit_summary=audit_summary,
+        wallet_reconciliation_summary=wallet_reconciliation_summary,
+        current_probe_summary=current_probe_summary,
+    )
+    runtime_truth.update(
+        {
+            "can_btc5_trade_now": bool(btc5_stage_readiness.get("can_trade_now")),
+            "allowed_stage": int(btc5_stage_readiness.get("allowed_stage") or 0),
+            "allowed_stage_label": btc5_stage_readiness.get("allowed_stage_label"),
+            "deployment_confidence_label": deployment_confidence.get("confidence_label"),
+        }
+    )
 
     status["service"] = service
     status["root_tests"] = root_tests
     status["wallet_flow"] = wallet_flow
     status["polymarket_wallet"] = polymarket_wallet
     status["btc_5min_maker"] = btc5_maker
+    status["btc5_stage_readiness"] = btc5_stage_readiness
+    status["deployment_confidence"] = deployment_confidence
+    status["source_precedence"] = source_precedence
     status["structural_gates"] = {"a6": a6_gate, "b1": b1_gate}
     status["launch"] = launch
     status["runtime_truth"] = runtime_truth
@@ -1631,6 +1954,9 @@ def render_remote_cycle_status_markdown(status: dict[str, Any]) -> str:
     launch = status["launch"]
     truth = status["runtime_truth"]
     accounting_reconciliation = status.get("accounting_reconciliation") or {}
+    btc5_stage_readiness = status.get("btc5_stage_readiness") or {}
+    deployment_confidence = status.get("deployment_confidence") or {}
+    source_precedence = status.get("source_precedence") or {}
 
     lines = [
         "# Remote Cycle Status",
@@ -1643,6 +1969,9 @@ def render_remote_cycle_status_markdown(status: dict[str, Any]) -> str:
         f"- B-1 gate: {gates['b1']['status']}",
         f"- Runtime drift detected: {'yes' if truth['drift_detected'] else 'no'}",
         f"- Accounting reconciliation drift: {'yes' if accounting_reconciliation.get('drift_detected') else 'no'}",
+        f"- BTC5 can trade now: {'yes' if btc5_stage_readiness.get('can_trade_now') else 'no'}",
+        f"- BTC5 allowed stage: {btc5_stage_readiness.get('allowed_stage_label') or 'stage_0'}",
+        f"- Deployment confidence: {deployment_confidence.get('confidence_label') or 'unknown'}",
         f"- Live launch blocked: {'yes' if launch['live_launch_blocked'] else 'no'}",
         f"- Next operator action: {launch['next_operator_action']}",
         "",
@@ -1786,6 +2115,37 @@ def render_remote_cycle_status_markdown(status: dict[str, Any]) -> str:
 
     lines.extend(
         [
+            "## BTC5 Stage Readiness",
+            "",
+            f"- Can BTC5 trade now: {'yes' if btc5_stage_readiness.get('can_trade_now') else 'no'}",
+            f"- Allowed stage now: {btc5_stage_readiness.get('allowed_stage_label') or 'stage_0'}",
+            f"- Stage artifact freshness: {btc5_stage_readiness.get('freshness') or 'unknown'}",
+            (
+                f"- Probe freshness hours: {btc5_stage_readiness.get('probe_freshness_hours')}"
+                if btc5_stage_readiness.get("probe_freshness_hours") is not None
+                else "- Probe freshness hours: unknown"
+            ),
+            "",
+            "### Stage 2 Blockers",
+            "",
+        ]
+    )
+    lines.extend(
+        f"- {item}" for item in (btc5_stage_readiness.get("stage_2_blockers") or ["none"])
+    )
+    lines.extend(
+        [
+            "",
+            "### Stage 3 Blockers",
+            "",
+        ]
+    )
+    lines.extend(
+        f"- {item}" for item in (btc5_stage_readiness.get("stage_3_blockers") or ["none"])
+    )
+
+    lines.extend(
+        [
             "## Service And Validation",
             "",
             f"- Service status: {service['status']}",
@@ -1923,6 +2283,45 @@ def render_remote_cycle_status_markdown(status: dict[str, Any]) -> str:
     )
     accounting_drift_reasons = accounting_reconciliation.get("drift_reasons") or ["none"]
     lines.extend(f"- {reason}" for reason in accounting_drift_reasons)
+    lines.extend(
+        [
+            "",
+            "## Deployment Confidence",
+            "",
+            f"- Confidence label: {deployment_confidence.get('confidence_label') or 'unknown'}",
+            f"- Freshness score: {_format_optional_float(deployment_confidence.get('freshness_score'))}",
+            f"- Accounting coherence score: {_format_optional_float(deployment_confidence.get('accounting_coherence_score'))}",
+            f"- Stage readiness score: {_format_optional_float(deployment_confidence.get('stage_readiness_score'))}",
+            f"- Confirmation coverage score: {_format_optional_float(deployment_confidence.get('confirmation_coverage_score'))}",
+            f"- Next required artifact: {deployment_confidence.get('next_required_artifact') or 'none'}",
+            "",
+            "### Deployment Blocking Checks",
+            "",
+        ]
+    )
+    lines.extend(
+        f"- {item}" for item in (deployment_confidence.get("blocking_checks") or ["none"])
+    )
+    lines.extend(
+        [
+            "",
+            "## Source Precedence",
+            "",
+            f"- Rule: {source_precedence.get('rule') or 'n/a'}",
+            "",
+            "### Precedence Contradictions",
+            "",
+        ]
+    )
+    contradictions = source_precedence.get("contradictions") or []
+    if contradictions:
+        for item in contradictions:
+            if isinstance(item, dict):
+                lines.append(f"- {item.get('code')}: {item.get('message')}")
+            else:
+                lines.append(f"- {item}")
+    else:
+        lines.append("- none")
     lines.extend(
         [
             "",
@@ -2125,6 +2524,7 @@ def write_remote_cycle_status(
     )
     runtime_truth_snapshot = apply_runtime_mode_reconciliation(
         runtime_truth_snapshot,
+        root=repo_root,
         runtime_mode_reconciliation=runtime_mode_reconciliation,
         runtime_mode_reconciliation_path=runtime_mode_reconciliation_target,
     )
@@ -2526,6 +2926,7 @@ def build_runtime_mode_reconciliation(
 def apply_runtime_mode_reconciliation(
     runtime_truth_snapshot: dict[str, Any],
     *,
+    root: Path,
     runtime_mode_reconciliation: dict[str, Any],
     runtime_mode_reconciliation_path: Path,
 ) -> dict[str, Any]:
@@ -2566,7 +2967,1100 @@ def apply_runtime_mode_reconciliation(
         "runtime_mode_reconciliation_markdown"
     ] = _relative_path_text(ROOT, runtime_mode_reconciliation_path)
     snapshot.setdefault("drift", {})["mode_contract"] = runtime_mode_reconciliation["drift_flags"]
+    _attach_control_plane_consistency(snapshot, root=root)
     return snapshot
+
+
+def _load_strategy_scale_comparison_summary(
+    *,
+    root: Path,
+    generated_at: datetime | None,
+) -> dict[str, Any]:
+    path = root / "reports" / "strategy_scale_comparison.json"
+    payload = _load_json(path, default={})
+    summary = {
+        "exists": path.exists() and isinstance(payload, dict),
+        "path": _relative_path_text(root, path) or str(path),
+        "generated_at": None,
+        "age_hours": None,
+        "freshness": "unknown",
+        "polymarket_btc5_status": None,
+        "next_1000_status": None,
+        "next_1000_recommended_amount_usd": None,
+        "stage_recommended": None,
+        "stage_gate_reason": None,
+        "stage_readiness": {},
+        "stage_blocking_checks": [],
+        "stage_reasons": [],
+        "ready_for_stage_1": False,
+        "ready_for_stage_2": False,
+        "ready_for_stage_3": False,
+        "wallet_export_freshness_hours": None,
+        "probe_freshness_hours": None,
+        "source_artifacts": [],
+    }
+    if not summary["exists"]:
+        return summary
+
+    payload = dict(payload)
+    artifact_generated_at = _parse_datetime_like(
+        _first_nonempty(payload.get("generated_at"), _safe_iso_mtime(path))
+    )
+    age_hours = _age_hours_from_datetimes(reference_at=generated_at, observed_at=artifact_generated_at)
+    capital_allocation = (
+        payload.get("capital_allocation_recommendation")
+        if isinstance(payload.get("capital_allocation_recommendation"), dict)
+        else {}
+    )
+    next_1000_alloc = (
+        capital_allocation.get("next_1000_usd")
+        if isinstance(capital_allocation.get("next_1000_usd"), dict)
+        else {}
+    )
+    next_1000_payload = payload.get("next_1000_usd") if isinstance(payload.get("next_1000_usd"), dict) else {}
+    venue_scoreboard = payload.get("venue_scoreboard") if isinstance(payload.get("venue_scoreboard"), list) else []
+    polymarket_btc5_entry = next(
+        (
+            dict(item)
+            for item in venue_scoreboard
+            if isinstance(item, dict)
+            and str(item.get("venue") or "").strip().lower() == "polymarket"
+            and str(item.get("lane") or "").strip().lower() == "btc5"
+        ),
+        {},
+    )
+    next_1000_stage = (
+        next_1000_alloc.get("stage_readiness")
+        if isinstance(next_1000_alloc.get("stage_readiness"), dict)
+        else {}
+    )
+    venue_stage = (
+        polymarket_btc5_entry.get("stage_readiness")
+        if isinstance(polymarket_btc5_entry.get("stage_readiness"), dict)
+        else {}
+    )
+    selected_stage = (
+        stage_payload
+        if isinstance((stage_payload := payload.get("stage_readiness")), dict)
+        else {}
+    )
+    if not selected_stage:
+        selected_stage = next_1000_stage or venue_stage or {}
+    selected_stage = dict(selected_stage)
+    summary.update(
+        {
+            "generated_at": artifact_generated_at.isoformat() if artifact_generated_at is not None else None,
+            "age_hours": round(age_hours, 4) if age_hours is not None else None,
+            "freshness": _freshness_label_for_age_hours(age_hours),
+            "polymarket_btc5_status": _first_nonempty(
+                polymarket_btc5_entry.get("capital_status"),
+                polymarket_btc5_entry.get("deployment_readiness"),
+            ),
+            "next_1000_status": _first_nonempty(
+                next_1000_alloc.get("status"),
+                next_1000_payload.get("status"),
+            ),
+            "next_1000_recommended_amount_usd": _float_or_none(
+                _first_nonempty(
+                    next_1000_alloc.get("recommended_amount_usd"),
+                    next_1000_payload.get("recommended_amount_usd"),
+                )
+            ),
+            "stage_recommended": _int_or_none(
+                _first_nonempty(
+                    selected_stage.get("recommended_stage"),
+                    next_1000_stage.get("recommended_stage"),
+                    venue_stage.get("recommended_stage"),
+                )
+            ),
+            "stage_gate_reason": _first_nonempty(
+                selected_stage.get("stage_gate_reason"),
+                next_1000_payload.get("stage_gate_reason"),
+                next_1000_alloc.get("stage_gate_reason"),
+            ),
+            "stage_readiness": selected_stage,
+            "stage_blocking_checks": list(selected_stage.get("blocking_checks") or []),
+            "stage_reasons": list(selected_stage.get("reasons") or []),
+            "ready_for_stage_1": bool(
+                _first_nonempty(selected_stage.get("ready_for_stage_1"), False)
+            ),
+            "ready_for_stage_2": bool(
+                _first_nonempty(selected_stage.get("ready_for_stage_2"), False)
+            ),
+            "ready_for_stage_3": bool(
+                _first_nonempty(selected_stage.get("ready_for_stage_3"), False)
+            ),
+            "wallet_export_freshness_hours": _float_or_none(
+                selected_stage.get("wallet_export_freshness_hours")
+            ),
+            "probe_freshness_hours": _float_or_none(
+                selected_stage.get("probe_freshness_hours")
+            ),
+            "source_artifacts": list(
+                dict.fromkeys(
+                    [
+                        *list(next_1000_alloc.get("source_artifacts") or []),
+                        *list(next_1000_payload.get("source_artifacts") or []),
+                    ]
+                )
+            ),
+        }
+    )
+    return summary
+
+
+def _load_signal_source_audit_summary(
+    *,
+    root: Path,
+    generated_at: datetime | None,
+) -> dict[str, Any]:
+    path = root / "reports" / "signal_source_audit.json"
+    payload = _load_json(path, default={})
+    summary = {
+        "exists": path.exists() and isinstance(payload, dict),
+        "path": _relative_path_text(root, path) or str(path),
+        "generated_at": None,
+        "age_hours": None,
+        "freshness": "unknown",
+        "stage_upgrade_support_status": None,
+        "wallet_flow_confirmation_ready": None,
+        "supports_capital_allocation": None,
+        "best_component_source": None,
+        "best_source_combo": None,
+        "stage_upgrade_blocking_checks": [],
+        "confirmation_coverage_score": None,
+        "confirmation_coverage_status": None,
+        "confirmation_lift": None,
+        "contradiction_penalty_score": None,
+    }
+    if not summary["exists"]:
+        return summary
+
+    payload = dict(payload)
+    capital_support = (
+        payload.get("capital_ranking_support")
+        if isinstance(payload.get("capital_ranking_support"), dict)
+        else {}
+    )
+    artifact_generated_at = _parse_datetime_like(
+        _first_nonempty(
+            capital_support.get("audit_generated_at"),
+            payload.get("generated_at"),
+            _safe_iso_mtime(path),
+        )
+    )
+    age_hours = _age_hours_from_datetimes(reference_at=generated_at, observed_at=artifact_generated_at)
+    confirmation_coverage_score = _first_nonempty(
+        capital_support.get("confirmation_coverage_score"),
+        capital_support.get("confirmation_coverage_pct"),
+        capital_support.get("resolved_window_coverage_score"),
+        capital_support.get("resolved_window_coverage_pct"),
+    )
+    normalized_confirmation_score = _normalize_unit_score(confirmation_coverage_score)
+    wallet_flow_confirmation_ready = _bool_or_none(
+        capital_support.get("wallet_flow_confirmation_ready")
+    )
+    if normalized_confirmation_score is None:
+        if wallet_flow_confirmation_ready is True:
+            normalized_confirmation_score = 0.75
+        elif wallet_flow_confirmation_ready is False:
+            normalized_confirmation_score = 0.2
+        elif _bool_or_none(capital_support.get("supports_capital_allocation")) is True:
+            normalized_confirmation_score = 0.35
+        else:
+            normalized_confirmation_score = 0.1
+    stage_upgrade_blocking_checks = list(capital_support.get("stage_upgrade_blocking_checks") or [])
+    stage_upgrade_support_status = _first_nonempty(
+        capital_support.get("stage_upgrade_support_status"),
+        capital_support.get("combined_sources_vs_single_source_status"),
+        capital_support.get("wallet_flow_vs_llm_status"),
+    )
+    confirmation_coverage_status = str(
+        _first_nonempty(
+            capital_support.get("confirmation_coverage_status"),
+            stage_upgrade_support_status,
+            ("ready" if wallet_flow_confirmation_ready else None),
+        )
+        or "unknown"
+    ).strip().lower()
+    if not stage_upgrade_blocking_checks and confirmation_coverage_status in {
+        "limited",
+        "insufficient_data",
+        "collect_more_data",
+        "not_ready",
+        "unknown",
+    }:
+        stage_upgrade_blocking_checks.append("confirmation_coverage_insufficient")
+    summary.update(
+        {
+            "generated_at": artifact_generated_at.isoformat() if artifact_generated_at is not None else None,
+            "age_hours": round(age_hours, 4) if age_hours is not None else None,
+            "freshness": _freshness_label_for_age_hours(age_hours),
+            "stage_upgrade_support_status": stage_upgrade_support_status,
+            "wallet_flow_confirmation_ready": wallet_flow_confirmation_ready,
+            "supports_capital_allocation": _bool_or_none(capital_support.get("supports_capital_allocation")),
+            "best_component_source": capital_support.get("best_component_source"),
+            "best_source_combo": capital_support.get("best_source_combo"),
+            "stage_upgrade_blocking_checks": _dedupe_preserve_order(stage_upgrade_blocking_checks),
+            "confirmation_coverage_score": normalized_confirmation_score,
+            "confirmation_coverage_status": confirmation_coverage_status,
+            "confirmation_lift": _float_or_none(
+                _first_nonempty(
+                    capital_support.get("confirmation_lift"),
+                    capital_support.get("confirmation_lift_pct"),
+                )
+            ),
+            "contradiction_penalty_score": _normalize_unit_score(
+                _first_nonempty(
+                    capital_support.get("contradiction_penalty_score"),
+                    capital_support.get("contradiction_penalty_pct"),
+                )
+            ),
+        }
+    )
+    return summary
+
+
+def _load_btc5_current_probe_summary(
+    *,
+    root: Path,
+    generated_at: datetime | None,
+) -> dict[str, Any]:
+    path = root / "reports" / "btc5_autoresearch_current_probe" / "latest.json"
+    payload = _load_json(path, default={})
+    summary = {
+        "exists": path.exists() and isinstance(payload, dict),
+        "path": _relative_path_text(root, path) or str(path),
+        "generated_at": None,
+        "age_hours": None,
+        "freshness": "unknown",
+        "probe_freshness_hours": None,
+        "latest_decision_at": None,
+        "trailing_12_live_filled_pnl_usd": None,
+        "trailing_40_live_filled_pnl_usd": None,
+        "trailing_120_live_filled_pnl_usd": None,
+        "recent_order_failed_rate": None,
+        "recent_direction_mix": {},
+        "recent_price_bucket_mix": {},
+        "recent_loss_cluster_flags": [],
+        "stage_ready_reason_tags": [],
+        "stage_not_ready_reason_tags": [],
+    }
+    if not summary["exists"]:
+        return summary
+
+    payload = dict(payload)
+    artifact_generated_at = _parse_datetime_like(
+        _first_nonempty(payload.get("generated_at"), _safe_iso_mtime(path))
+    )
+    age_hours = _age_hours_from_datetimes(
+        reference_at=generated_at,
+        observed_at=artifact_generated_at,
+    )
+    current_probe = (
+        payload.get("current_probe")
+        if isinstance(payload.get("current_probe"), dict)
+        else {}
+    )
+    probe_payload = dict(current_probe) if current_probe else payload
+    summary.update(
+        {
+            "generated_at": artifact_generated_at.isoformat() if artifact_generated_at is not None else None,
+            "age_hours": round(age_hours, 4) if age_hours is not None else None,
+            "freshness": _freshness_label_for_age_hours(age_hours),
+            "probe_freshness_hours": _float_or_none(
+                _first_nonempty(
+                    probe_payload.get("probe_freshness_hours"),
+                    probe_payload.get("freshness_hours"),
+                    age_hours,
+                )
+            ),
+            "latest_decision_at": _first_nonempty(
+                probe_payload.get("latest_decision_timestamp"),
+                probe_payload.get("latest_decision_at"),
+                probe_payload.get("latest_decision_ts"),
+            ),
+            "trailing_12_live_filled_pnl_usd": _float_or_none(
+                _first_nonempty(
+                    probe_payload.get("trailing_12_live_filled_pnl_usd"),
+                    probe_payload.get("trailing12_live_filled_pnl_usd"),
+                )
+            ),
+            "trailing_40_live_filled_pnl_usd": _float_or_none(
+                _first_nonempty(
+                    probe_payload.get("trailing_40_live_filled_pnl_usd"),
+                    probe_payload.get("trailing40_live_filled_pnl_usd"),
+                )
+            ),
+            "trailing_120_live_filled_pnl_usd": _float_or_none(
+                _first_nonempty(
+                    probe_payload.get("trailing_120_live_filled_pnl_usd"),
+                    probe_payload.get("trailing120_live_filled_pnl_usd"),
+                )
+            ),
+            "recent_order_failed_rate": _float_or_none(
+                _first_nonempty(
+                    probe_payload.get("recent_order_failed_rate"),
+                    probe_payload.get("order_failed_rate_recent_40"),
+                )
+            ),
+            "recent_direction_mix": dict(
+                probe_payload.get("recent_direction_mix")
+                if isinstance(probe_payload.get("recent_direction_mix"), dict)
+                else {}
+            ),
+            "recent_price_bucket_mix": dict(
+                probe_payload.get("recent_price_bucket_mix")
+                if isinstance(probe_payload.get("recent_price_bucket_mix"), dict)
+                else {}
+            ),
+            "recent_loss_cluster_flags": list(
+                probe_payload.get("recent_loss_cluster_flags")
+                if isinstance(probe_payload.get("recent_loss_cluster_flags"), list)
+                else (probe_payload.get("loss_cluster_flags") or [])
+            ),
+            "stage_ready_reason_tags": [
+                str(tag)
+                for tag in list(probe_payload.get("stage_ready_reason_tags") or [])
+                if str(tag).strip()
+            ],
+            "stage_not_ready_reason_tags": [
+                str(tag)
+                for tag in list(
+                    _first_nonempty(
+                        probe_payload.get("stage_not_ready_reason_tags"),
+                        probe_payload.get("not_ready_reason_tags"),
+                        [],
+                    )
+                    or []
+                )
+                if str(tag).strip()
+            ],
+        }
+    )
+    return summary
+
+
+def _split_btc5_stage_blockers(
+    blocking_checks: Sequence[Any],
+    *,
+    ready_for_stage_1: bool,
+    ready_for_stage_2: bool,
+    ready_for_stage_3: bool,
+) -> dict[str, list[str]]:
+    stage_1_checks: list[str] = []
+    stage_2_checks: list[str] = []
+    stage_3_checks: list[str] = []
+    stage_2_specific = {
+        "stage_upgrade_probe_stale",
+        "insufficient_trailing_40_live_fills",
+        "trailing_40_live_filled_not_positive",
+        "order_failed_rate_above_stage_2_limit",
+    }
+    stage_3_specific = {
+        "insufficient_trailing_120_live_fills",
+        "trailing_120_live_filled_not_positive",
+        "confirmation_coverage_insufficient",
+        "wallet_flow_confirmation_missing",
+        "signal_source_audit_missing",
+        "signal_source_audit_stale",
+        "wallet_flow_vs_llm_not_ready",
+        "contradiction_penalty_high",
+    }
+    normalized_checks = [
+        str(check).strip()
+        for check in list(dict.fromkeys(blocking_checks or []))
+        if str(check).strip()
+    ]
+    for check in normalized_checks:
+        lowered = check.lower()
+        if (
+            lowered.startswith("wallet_export_")
+            or lowered.startswith("stage_1_")
+            or lowered.startswith("trailing_12_")
+            or lowered.startswith("insufficient_trailing_12")
+            or lowered == "order_failed_rate_above_stage_1_limit"
+            or lowered == "btc5_forecast_not_promote_high"
+        ):
+            stage_1_checks.append(check)
+            stage_2_checks.append(check)
+            stage_3_checks.append(check)
+            continue
+        if lowered in stage_2_specific:
+            stage_2_checks.append(check)
+            stage_3_checks.append(check)
+            continue
+        if lowered in stage_3_specific:
+            stage_3_checks.append(check)
+            continue
+        if not ready_for_stage_1:
+            stage_1_checks.append(check)
+        if not ready_for_stage_2:
+            stage_2_checks.append(check)
+        if not ready_for_stage_3:
+            stage_3_checks.append(check)
+
+    return {
+        "stage_1_blockers": _dedupe_preserve_order(stage_1_checks),
+        "stage_2_blockers": _dedupe_preserve_order(stage_2_checks),
+        "stage_3_blockers": _dedupe_preserve_order(stage_3_checks),
+    }
+
+
+def _btc5_probe_activity_timestamp(btc5_maker: dict[str, Any]) -> datetime | None:
+    latest_trade = btc5_maker.get("latest_trade") if isinstance(btc5_maker.get("latest_trade"), dict) else {}
+    return _parse_datetime_like(
+        _first_nonempty(
+            btc5_maker.get("latest_live_filled_at"),
+            latest_trade.get("updated_at"),
+            latest_trade.get("created_at"),
+            btc5_maker.get("checked_at"),
+        )
+    )
+
+
+def _build_btc5_stage_readiness(
+    *,
+    scale_summary: dict[str, Any],
+    audit_summary: dict[str, Any],
+    current_probe_summary: dict[str, Any],
+) -> dict[str, Any]:
+    stage_payload = dict(scale_summary.get("stage_readiness") or {})
+    allowed_stage = int(scale_summary.get("stage_recommended") or stage_payload.get("recommended_stage") or 0)
+    ready_for_stage_1 = bool(scale_summary.get("ready_for_stage_1") or allowed_stage >= 1)
+    ready_for_stage_2 = bool(scale_summary.get("ready_for_stage_2") or allowed_stage >= 2)
+    ready_for_stage_3 = bool(scale_summary.get("ready_for_stage_3") or allowed_stage >= 3)
+    blocking_checks = list(scale_summary.get("stage_blocking_checks") or [])
+    reasons = list(scale_summary.get("stage_reasons") or [])
+
+    if not scale_summary.get("exists"):
+        blocking_checks.append("strategy_scale_comparison_missing")
+        reasons.append("BTC5 stage readiness is missing because reports/strategy_scale_comparison.json is absent.")
+    elif scale_summary.get("freshness") == "stale":
+        blocking_checks.append("strategy_scale_comparison_stale")
+        reasons.append("BTC5 stage readiness is using a stale strategy-scale comparison artifact.")
+
+    stage_blockers = _split_btc5_stage_blockers(
+        blocking_checks,
+        ready_for_stage_1=ready_for_stage_1,
+        ready_for_stage_2=ready_for_stage_2,
+        ready_for_stage_3=ready_for_stage_3,
+    )
+    stage_2_blockers = list(stage_blockers["stage_2_blockers"])
+    stage_3_blockers = list(stage_blockers["stage_3_blockers"])
+
+    audit_blockers = list(audit_summary.get("stage_upgrade_blocking_checks") or [])
+    if not audit_summary.get("exists"):
+        audit_blockers.append("signal_source_audit_missing")
+    elif audit_summary.get("freshness") == "stale":
+        audit_blockers.append("signal_source_audit_stale")
+    stage_3_blockers = _dedupe_preserve_order([*stage_3_blockers, *audit_blockers])
+
+    trade_now_ready = allowed_stage >= 1
+    trade_now_blockers = [] if trade_now_ready else (
+        list(stage_blockers["stage_1_blockers"]) or list(dict.fromkeys(blocking_checks))
+    )
+    trade_now_reasons = [] if trade_now_ready else (
+        reasons or ["BTC5 does not currently have a stage-approved deployment package."]
+    )
+
+    return {
+        "source_artifact": scale_summary.get("path"),
+        "source_artifacts": list(
+            dict.fromkeys(
+                [
+                    str(scale_summary.get("path") or "reports/strategy_scale_comparison.json"),
+                    *list(scale_summary.get("source_artifacts") or []),
+                    str(current_probe_summary.get("path") or "reports/btc5_autoresearch_current_probe/latest.json"),
+                    str(audit_summary.get("path") or "reports/signal_source_audit.json"),
+                ]
+            )
+        ),
+        "generated_at": scale_summary.get("generated_at"),
+        "freshness": scale_summary.get("freshness") or "unknown",
+        "age_hours": _float_or_none(scale_summary.get("age_hours")),
+        "allowed_stage": allowed_stage,
+        "allowed_stage_label": f"stage_{allowed_stage}",
+        "ready_for_stage_1": ready_for_stage_1,
+        "ready_for_stage_2": ready_for_stage_2,
+        "ready_for_stage_3": ready_for_stage_3,
+        "can_trade_now": trade_now_ready,
+        "trade_now_status": "ready" if trade_now_ready else "blocked",
+        "trade_now_blocking_checks": _dedupe_preserve_order(trade_now_blockers),
+        "trade_now_reasons": trade_now_reasons,
+        "blocking_checks": _dedupe_preserve_order(blocking_checks),
+        "reasons": reasons,
+        "stage_1_blockers": stage_blockers["stage_1_blockers"],
+        "stage_2_blockers": stage_2_blockers,
+        "stage_3_blockers": stage_3_blockers,
+        "wallet_export_freshness_hours": _float_or_none(
+            scale_summary.get("wallet_export_freshness_hours")
+        ),
+        "probe_freshness_hours": _float_or_none(
+            _first_nonempty(
+                scale_summary.get("probe_freshness_hours"),
+                current_probe_summary.get("probe_freshness_hours"),
+            )
+        ),
+        "current_probe_artifact": current_probe_summary.get("path"),
+        "current_probe_freshness": current_probe_summary.get("freshness") or "unknown",
+        "current_probe_generated_at": current_probe_summary.get("generated_at"),
+        "current_probe_stage_ready_reason_tags": list(
+            current_probe_summary.get("stage_ready_reason_tags") or []
+        ),
+        "current_probe_stage_not_ready_reason_tags": list(
+            current_probe_summary.get("stage_not_ready_reason_tags") or []
+        ),
+    }
+
+
+def _build_source_precedence(
+    *,
+    root: Path,
+    generated_at: datetime,
+    service: dict[str, Any],
+    polymarket_wallet: dict[str, Any],
+    btc5_maker: dict[str, Any],
+    accounting_reconciliation: dict[str, Any],
+    wallet_reconciliation_summary: dict[str, Any],
+) -> dict[str, Any]:
+    service_freshness = _source_freshness_confidence(
+        checked_at=service.get("checked_at"),
+        source_status=service.get("status") or "unknown",
+        source_path=service.get("source") or "reports/remote_service_status.json",
+    )
+    remote_wallet_freshness = (
+        ((accounting_reconciliation.get("source_confidence_freshness") or {}).get("remote_wallet"))
+        or {}
+    )
+    btc5_freshness = (
+        ((accounting_reconciliation.get("source_confidence_freshness") or {}).get("btc_5min_maker"))
+        or {}
+    )
+    local_ledger_freshness = (
+        ((accounting_reconciliation.get("source_confidence_freshness") or {}).get("local_ledger"))
+        or {}
+    )
+
+    wallet_reporting_precedence = str(
+        wallet_reconciliation_summary.get("reporting_precedence") or "btc5_runtime_db"
+    ).strip().lower()
+    wallet_selected_source = _first_nonempty(
+        wallet_reconciliation_summary.get("source_artifact"),
+        wallet_reconciliation_summary.get("btc5_probe_source_class"),
+        "remote_wallet_probe",
+    )
+    wallet_freshness_label = str(
+        _first_nonempty(
+            wallet_reconciliation_summary.get("wallet_export_freshness_label"),
+            remote_wallet_freshness.get("freshness"),
+            "unknown",
+        )
+    ).strip().lower()
+    if wallet_reporting_precedence != "wallet_export":
+        wallet_freshness_label = str(
+            _first_nonempty(
+                wallet_reconciliation_summary.get("btc5_probe_freshness_label"),
+                btc5_freshness.get("freshness"),
+                wallet_freshness_label,
+            )
+        ).strip().lower()
+
+    remote_wallet_selected = (
+        remote_wallet_freshness.get("freshness") in {"fresh", "aging"}
+        and polymarket_wallet.get("status") == "ok"
+    )
+    selected_position_source = (
+        "remote_wallet"
+        if remote_wallet_selected
+        else _first_nonempty(
+            (accounting_reconciliation.get("local_ledger_counts") or {}).get("source"),
+            "data/jj_trades.db",
+        )
+    )
+    selected_position_value = (
+        accounting_reconciliation.get("remote_wallet_counts")
+        if remote_wallet_selected
+        else accounting_reconciliation.get("local_ledger_counts")
+    ) or {}
+
+    service_age_hours = _float_or_none(service_freshness.get("age_minutes"))
+    if service_age_hours is not None:
+        service_age_hours = round(service_age_hours / 60.0, 4)
+    btc5_activity_at = _btc5_probe_activity_timestamp(btc5_maker)
+    btc5_activity_age_hours = _age_hours_from_datetimes(
+        reference_at=generated_at,
+        observed_at=btc5_activity_at,
+    )
+
+    contradictions: list[dict[str, Any]] = []
+    if (
+        wallet_reporting_precedence == "wallet_export"
+        and str(wallet_reconciliation_summary.get("btc5_probe_freshness_label") or "").strip().lower() == "stale"
+    ):
+        contradictions.append(
+            {
+                "code": "wallet_export_fresher_than_btc5_probe",
+                "severity": "warning",
+                "message": (
+                    "Fresh wallet-export reporting overrides the stale BTC5 probe for sleeve accounting truth."
+                ),
+                "selected_source": wallet_selected_source,
+                "shadowed_source": wallet_reconciliation_summary.get("btc5_probe_source_class") or "btc5_probe",
+            }
+        )
+    if (
+        service_freshness.get("freshness") == "stale"
+        and btc5_freshness.get("freshness") in {"fresh", "aging"}
+        and btc5_activity_age_hours is not None
+        and btc5_activity_age_hours <= 1.5
+    ):
+        contradictions.append(
+            {
+                "code": "stale_service_file_with_fresh_btc5_probe",
+                "severity": "warning",
+                "message": (
+                    "The remote service status file is stale while the BTC5 probe shows fresh sleeve activity; do not infer BTC5 readiness from the service file alone."
+                ),
+                "selected_source": btc5_maker.get("source") or btc5_maker.get("db_path") or "btc5_probe",
+                "shadowed_source": service.get("source") or "reports/remote_service_status.json",
+                "service_age_hours": service_age_hours,
+                "btc5_activity_age_hours": round(btc5_activity_age_hours, 4),
+            }
+        )
+    if (
+        remote_wallet_selected
+        and bool(accounting_reconciliation.get("drift_detected"))
+        and (
+            int(((accounting_reconciliation.get("unmatched_open_positions") or {}).get("absolute_delta") or 0)) > 0
+            or int(((accounting_reconciliation.get("unmatched_closed_positions") or {}).get("absolute_delta") or 0)) > 0
+        )
+    ):
+        contradictions.append(
+            {
+                "code": "local_ledger_drift_vs_remote_wallet",
+                "severity": "warning",
+                "message": (
+                    "Fresh remote wallet counts override the local ledger for position truth because the local ledger is drifting."
+                ),
+                "selected_source": "remote_wallet",
+                "shadowed_source": (accounting_reconciliation.get("local_ledger_counts") or {}).get("source"),
+            }
+        )
+
+    fields = [
+        {
+            "field": "wallet_reporting",
+            "selected_source": wallet_selected_source,
+            "fallback_sources": [
+                "remote_wallet_probe",
+                btc5_maker.get("source") or btc5_maker.get("db_path") or "data/btc_5min_maker.db",
+            ],
+            "selected_value": wallet_reporting_precedence,
+            "freshness": wallet_freshness_label,
+            "reason": wallet_reconciliation_summary.get("reporting_precedence_reason"),
+        },
+        {
+            "field": "btc5_runtime_activity",
+            "selected_source": btc5_maker.get("source") or btc5_maker.get("db_path") or "unavailable",
+            "fallback_sources": ["data/btc_5min_maker.db"],
+            "selected_value": {
+                "status": btc5_maker.get("status"),
+                "checked_at": btc5_maker.get("checked_at"),
+                "latest_live_filled_at": btc5_maker.get("latest_live_filled_at"),
+            },
+            "freshness": btc5_freshness.get("freshness") or "unknown",
+            "reason": "fresh_btc5_probe" if btc5_freshness.get("freshness") == "fresh" else "btc5_probe_fallback",
+        },
+        {
+            "field": "service_status",
+            "selected_source": service.get("source") or "reports/remote_service_status.json",
+            "fallback_sources": ["local_systemctl", "reports/runtime_truth_latest.json"],
+            "selected_value": service.get("status"),
+            "freshness": service_freshness.get("freshness") or "unknown",
+            "reason": (
+                "stale_service_file_retained_for_service_unit_status"
+                if service_freshness.get("freshness") == "stale"
+                else "fresh_service_status_file"
+            ),
+        },
+        {
+            "field": "position_counts",
+            "selected_source": selected_position_source,
+            "fallback_sources": [
+                "remote_wallet",
+                (accounting_reconciliation.get("local_ledger_counts") or {}).get("source") or "data/jj_trades.db",
+            ],
+            "selected_value": selected_position_value,
+            "freshness": (
+                remote_wallet_freshness.get("freshness")
+                if selected_position_source == "remote_wallet"
+                else local_ledger_freshness.get("freshness")
+            )
+            or "unknown",
+            "reason": (
+                "fresh_remote_wallet_supersedes_local_ledger_drift"
+                if selected_position_source == "remote_wallet" and accounting_reconciliation.get("drift_detected")
+                else "local_ledger_counts_retained"
+            ),
+        },
+    ]
+
+    return {
+        "rule": (
+            "Use the freshest artifact per truth domain: wallet export for wallet reporting, BTC5 probe for BTC5 activity, "
+            "remote wallet for position counts when the local ledger drifts, and stale service files remain advisory only."
+        ),
+        "fields": fields,
+        "contradictions": contradictions,
+    }
+
+
+def _build_deployment_confidence(
+    *,
+    service: dict[str, Any],
+    accounting_reconciliation: dict[str, Any],
+    btc5_stage_readiness: dict[str, Any],
+    source_precedence: dict[str, Any],
+    scale_summary: dict[str, Any],
+    audit_summary: dict[str, Any],
+    wallet_reconciliation_summary: dict[str, Any],
+    current_probe_summary: dict[str, Any],
+) -> dict[str, Any]:
+    service_freshness = _source_freshness_confidence(
+        checked_at=service.get("checked_at"),
+        source_status=service.get("status") or "unknown",
+        source_path=service.get("source") or "reports/remote_service_status.json",
+    )
+    remote_wallet_freshness = (
+        ((accounting_reconciliation.get("source_confidence_freshness") or {}).get("remote_wallet"))
+        or {}
+    )
+    btc5_freshness = (
+        ((accounting_reconciliation.get("source_confidence_freshness") or {}).get("btc_5min_maker"))
+        or {}
+    )
+    wallet_freshness_label = str(
+        _first_nonempty(
+            wallet_reconciliation_summary.get("wallet_export_freshness_label"),
+            remote_wallet_freshness.get("freshness"),
+            "unknown",
+        )
+    ).strip().lower()
+    if str(wallet_reconciliation_summary.get("reporting_precedence") or "").strip().lower() != "wallet_export":
+        wallet_freshness_label = str(
+            _first_nonempty(
+                wallet_reconciliation_summary.get("btc5_probe_freshness_label"),
+                btc5_freshness.get("freshness"),
+                wallet_freshness_label,
+            )
+        ).strip().lower()
+
+    freshness_score = round(
+        (
+            0.35 * _freshness_score_for_label(wallet_freshness_label)
+            + 0.35 * _freshness_score_for_label(
+                _first_nonempty(
+                    btc5_freshness.get("freshness"),
+                    current_probe_summary.get("freshness"),
+                    "unknown",
+                )
+            )
+            + 0.15 * _freshness_score_for_label(service_freshness.get("freshness"))
+            + 0.15 * _freshness_score_for_label(scale_summary.get("freshness"))
+        ),
+        4,
+    )
+
+    open_delta = int(
+        ((accounting_reconciliation.get("unmatched_open_positions") or {}).get("absolute_delta") or 0)
+    )
+    closed_delta = int(
+        ((accounting_reconciliation.get("unmatched_closed_positions") or {}).get("absolute_delta") or 0)
+    )
+    capital_delta = abs(_safe_float(accounting_reconciliation.get("capital_accounting_delta_usd"), 0.0))
+    accounting_score = 1.0
+    if str((accounting_reconciliation.get("remote_wallet_counts") or {}).get("status") or "").strip().lower() != "ok":
+        accounting_score = 0.2
+    else:
+        accounting_score -= min(open_delta * 0.05, 0.25)
+        accounting_score -= min(closed_delta * 0.01, 0.35)
+        accounting_score -= min((capital_delta / 250.0) * 0.35, 0.35)
+    accounting_coherence_score = round(min(max(accounting_score, 0.0), 1.0), 4)
+
+    allowed_stage = int(btc5_stage_readiness.get("allowed_stage") or 0)
+    stage_readiness_score = {0: 0.15, 1: 0.55, 2: 0.8, 3: 1.0}.get(allowed_stage, 0.15)
+    if str(scale_summary.get("freshness") or "").strip().lower() == "stale":
+        stage_readiness_score = max(0.1, stage_readiness_score - 0.1)
+    stage_readiness_score = round(stage_readiness_score, 4)
+
+    confirmation_coverage_score = _normalize_unit_score(
+        audit_summary.get("confirmation_coverage_score")
+    )
+    if confirmation_coverage_score is None:
+        confirmation_coverage_score = 0.1
+
+    contradiction_codes = [
+        str(item.get("code"))
+        for item in list(source_precedence.get("contradictions") or [])
+        if isinstance(item, dict) and str(item.get("code") or "").strip()
+    ]
+    blocking_checks = _dedupe_preserve_order(
+        [
+            *list(btc5_stage_readiness.get("trade_now_blocking_checks") or []),
+            *list(btc5_stage_readiness.get("stage_2_blockers") or []),
+            *list(btc5_stage_readiness.get("stage_3_blockers") or []),
+            *(
+                ["accounting_reconciliation_drift"]
+                if bool(accounting_reconciliation.get("drift_detected"))
+                else []
+            ),
+            *(
+                ["service_status_stale"]
+                if service_freshness.get("freshness") == "stale"
+                else []
+            ),
+            *(
+                ["confirmation_coverage_insufficient"]
+                if confirmation_coverage_score < 0.4
+                else []
+            ),
+            *contradiction_codes,
+        ]
+    )
+
+    next_required_artifact = None
+    if not scale_summary.get("exists"):
+        next_required_artifact = "reports/strategy_scale_comparison.json"
+    elif any(
+        check in blocking_checks
+        for check in ("stage_upgrade_probe_stale", "stage_1_probe_missing")
+    ):
+        next_required_artifact = "reports/btc5_autoresearch_current_probe/latest.json"
+    elif any(str(check).startswith("wallet_export_") for check in blocking_checks):
+        next_required_artifact = "data/Polymarket-History-*.csv"
+    elif "stale_service_file_with_fresh_btc5_probe" in contradiction_codes or "service_status_stale" in blocking_checks:
+        next_required_artifact = "reports/remote_service_status.json"
+    elif "accounting_reconciliation_drift" in blocking_checks:
+        next_required_artifact = "data/jj_trades.db"
+    elif any(
+        check in blocking_checks
+        for check in (
+            "confirmation_coverage_insufficient",
+            "signal_source_audit_missing",
+            "signal_source_audit_stale",
+            "wallet_flow_confirmation_missing",
+        )
+    ):
+        next_required_artifact = "reports/signal_source_audit.json"
+    elif current_probe_summary.get("exists") is False:
+        next_required_artifact = "reports/btc5_autoresearch_current_probe/latest.json"
+
+    overall_score = round(
+        (
+            0.3 * freshness_score
+            + 0.35 * accounting_coherence_score
+            + 0.25 * stage_readiness_score
+            + 0.1 * confirmation_coverage_score
+        ),
+        4,
+    )
+    confidence_label = _confidence_label_for_score(overall_score)
+    if accounting_coherence_score < 0.35 or freshness_score < 0.3:
+        confidence_label = "low"
+
+    return {
+        "confidence_label": confidence_label,
+        "overall_score": overall_score,
+        "freshness_score": freshness_score,
+        "accounting_coherence_score": accounting_coherence_score,
+        "stage_readiness_score": stage_readiness_score,
+        "confirmation_coverage_score": round(confirmation_coverage_score, 4),
+        "can_btc5_trade_now": bool(btc5_stage_readiness.get("can_trade_now")),
+        "allowed_stage": allowed_stage,
+        "allowed_stage_label": btc5_stage_readiness.get("allowed_stage_label") or f"stage_{allowed_stage}",
+        "stage_2_blockers": list(btc5_stage_readiness.get("stage_2_blockers") or []),
+        "stage_3_blockers": list(btc5_stage_readiness.get("stage_3_blockers") or []),
+        "blocking_checks": blocking_checks,
+        "warning_checks": contradiction_codes,
+        "next_required_artifact": next_required_artifact,
+        "service_status_freshness": service_freshness.get("freshness") or "unknown",
+        "wallet_reporting_precedence": wallet_reconciliation_summary.get("reporting_precedence"),
+        "current_probe_freshness": current_probe_summary.get("freshness") or "unknown",
+    }
+
+
+def _attach_control_plane_consistency(snapshot: dict[str, Any], *, root: Path) -> None:
+    strategy = (
+        (((snapshot.get("state_improvement") or {}).get("strategy_recommendations")) or {})
+        if isinstance(snapshot, dict)
+        else {}
+    )
+    scoreboard = dict(strategy.get("public_performance_scoreboard") or {})
+    capital_readiness = dict(strategy.get("capital_addition_readiness") or {})
+    generated_at = _parse_datetime_like(snapshot.get("generated_at"))
+
+    drift_flags = dict(snapshot.get("drift_flags") or {})
+    mode = dict(snapshot.get("mode_reconciliation") or {})
+    remote_probe_alignment = dict(mode.get("remote_probe_alignment") or {})
+    local_env = dict(mode.get("local_env") or {})
+    remote_mode = dict(mode.get("remote_mode") or {})
+    remote_values = dict(remote_mode.get("values") or {})
+    selected_profile = str(mode.get("selected_profile") or "").strip()
+    local_selector = str(local_env.get("JJ_RUNTIME_PROFILE") or "").strip()
+    remote_selector = str(remote_values.get("JJ_RUNTIME_PROFILE") or "").strip()
+    observed_remote_runtime_profile = str(
+        _first_nonempty(
+            snapshot.get("remote_runtime_profile"),
+            remote_mode.get("remote_runtime_profile"),
+        )
+        or ""
+    ).strip()
+    profile_mismatch_reasons: list[str] = []
+    if bool(drift_flags.get("profile_override_drift")):
+        profile_mismatch_reasons.append("profile_override_drift")
+    if local_selector and selected_profile and local_selector != selected_profile:
+        profile_mismatch_reasons.append("local_selector_differs_from_selected_profile")
+    if remote_selector and selected_profile and remote_selector != selected_profile:
+        profile_mismatch_reasons.append("remote_selector_differs_from_selected_profile")
+    if observed_remote_runtime_profile and selected_profile and observed_remote_runtime_profile != selected_profile:
+        profile_mismatch_reasons.append("observed_remote_runtime_profile_differs_from_selected_profile")
+    if remote_selector and observed_remote_runtime_profile and remote_selector != observed_remote_runtime_profile:
+        profile_mismatch_reasons.append("remote_selector_differs_from_observed_remote_runtime_profile")
+    profile_mismatch_reasons.extend(
+        str(item)
+        for item in (remote_probe_alignment.get("feature_mismatches") or [])
+        if str(item).strip()
+    )
+    profile_mismatch_reasons.extend(
+        str(item)
+        for item in (remote_probe_alignment.get("count_mismatches") or [])
+        if str(item).strip()
+    )
+    profile_mismatch_reasons = _dedupe_preserve_order(profile_mismatch_reasons)
+
+    service_mismatch_reasons: list[str] = []
+    expected_primary_service = "btc-5min-maker.service"
+    service_state = str((snapshot.get("service") or {}).get("status") or "unknown").strip().lower()
+    observed_service_name = str((snapshot.get("service") or {}).get("service_name") or "").strip()
+    btc5_source = str((snapshot.get("runtime") or {}).get("btc5_source") or "").strip().lower()
+    launch_posture = str((snapshot.get("launch") or {}).get("posture") or "unknown").strip().lower()
+    if observed_service_name and observed_service_name != expected_primary_service:
+        service_mismatch_reasons.append(
+            f"service_target_mismatch: expected {expected_primary_service}, observed {observed_service_name}"
+        )
+    if bool(drift_flags.get("service_running_while_launch_blocked")):
+        service_mismatch_reasons.append("jj_live_non_primary_running_while_launch_blocked")
+    if service_state == "running" and btc5_source in {"unavailable", "missing_data/btc_5min_maker.db", ""}:
+        service_mismatch_reasons.append("service_running_without_btc5_runtime_source")
+    if launch_posture == "blocked" and service_state == "running":
+        service_mismatch_reasons.append("launch_blocked_but_service_running")
+    service_mismatch_reasons = _dedupe_preserve_order(service_mismatch_reasons)
+
+    wallet_reconciliation_summary = dict(scoreboard.get("wallet_reconciliation_summary") or {})
+    precedence = str(wallet_reconciliation_summary.get("reporting_precedence") or "").strip().lower()
+    realized_mode = str(scoreboard.get("realized_btc5_sleeve_window_mode") or "").strip().lower()
+    wallet_export_freshness = str(
+        wallet_reconciliation_summary.get("wallet_export_freshness_label") or "unknown"
+    ).strip().lower()
+    btc5_probe_freshness = str(
+        wallet_reconciliation_summary.get("btc5_probe_freshness_label") or "unknown"
+    ).strip().lower()
+    truth_source_reasons: list[str] = []
+    if wallet_export_freshness == "fresh" and btc5_probe_freshness == "stale":
+        truth_source_reasons.append("fresh_wallet_export_with_stale_btc5_probe")
+    if (
+        wallet_export_freshness in {"fresh", "aging"}
+        and btc5_probe_freshness == "stale"
+        and precedence != "wallet_export"
+    ):
+        truth_source_reasons.append("fresh_wallet_export_not_selected_while_btc5_probe_stale")
+    if wallet_export_freshness == "stale" and precedence == "wallet_export":
+        truth_source_reasons.append("stale_wallet_export_selected_for_reporting")
+    truth_source_reasons = _dedupe_preserve_order(truth_source_reasons)
+
+    scale_recommendation = _load_strategy_scale_comparison_summary(root=root, generated_at=generated_at)
+    audit_summary = _load_signal_source_audit_summary(root=root, generated_at=generated_at)
+    capital_conflicts: list[str] = []
+    if precedence == "wallet_export" and realized_mode and realized_mode != "wallet_closed_batch":
+        capital_conflicts.append("wallet_export_precedence_not_reflected_in_realized_window_mode")
+    fund_status = str((capital_readiness.get("fund") or {}).get("status") or "").strip().lower()
+    next_1000_status = str((capital_readiness.get("next_1000_usd") or {}).get("status") or "").strip().lower()
+    if fund_status == "hold" and next_1000_status not in {"", "hold"}:
+        capital_conflicts.append("fund_hold_conflicts_with_next_1000_status")
+    deploy_recommendation = str(scoreboard.get("deploy_recommendation") or "").strip().lower()
+    polymarket_status = str((capital_readiness.get("polymarket_btc5") or {}).get("status") or "").strip().lower()
+    if deploy_recommendation == "hold" and polymarket_status in {"ready_test_tranche", "ready_scale"}:
+        capital_conflicts.append("forecast_hold_conflicts_with_polymarket_ready_status")
+    scale_polymarket_status = str(scale_recommendation.get("polymarket_btc5_status") or "").strip().lower()
+    if scale_polymarket_status and polymarket_status and scale_polymarket_status != polymarket_status:
+        capital_conflicts.append(
+            f"polymarket_btc5_status_conflict: runtime={polymarket_status} strategy_scale={scale_polymarket_status}"
+        )
+    scale_next_1000_status = str(scale_recommendation.get("next_1000_status") or "").strip().lower()
+    if scale_next_1000_status and next_1000_status and scale_next_1000_status != next_1000_status:
+        capital_conflicts.append(
+            f"next_1000_status_conflict: runtime={next_1000_status} strategy_scale={scale_next_1000_status}"
+        )
+    audit_stage_status = str(audit_summary.get("stage_upgrade_support_status") or "").strip().lower()
+    wallet_flow_confirmation_ready = audit_summary.get("wallet_flow_confirmation_ready")
+    if audit_stage_status == "limited" and polymarket_status in {"ready_test_tranche", "ready_scale"}:
+        capital_conflicts.append("signal_source_audit_limits_stage_upgrade_but_runtime_promotes_btc5")
+    if audit_stage_status == "limited" and scale_next_1000_status in {"ready_test_tranche", "ready_scale"}:
+        capital_conflicts.append("signal_source_audit_limits_stage_upgrade_but_strategy_scale_promotes")
+    if wallet_flow_confirmation_ready is False and next_1000_status in {"ready_test_tranche", "ready_scale"}:
+        capital_conflicts.append("wallet_flow_confirmation_missing_for_runtime_capital_upgrade")
+    capital_conflicts = _dedupe_preserve_order(capital_conflicts)
+
+    consistency = {
+        "profile_consistency": {
+            "status": "mismatch" if profile_mismatch_reasons else "consistent",
+            "reasons": profile_mismatch_reasons,
+            "selected_profile": selected_profile or None,
+            "local_selector": local_selector or None,
+            "remote_selector": remote_selector or None,
+            "observed_remote_runtime_profile": observed_remote_runtime_profile or None,
+        },
+        "service_consistency": {
+            "status": "mismatch" if service_mismatch_reasons else "consistent",
+            "reasons": service_mismatch_reasons,
+            "expected_primary_service": expected_primary_service,
+            "observed_service_name": observed_service_name or None,
+            "observed_service_status": service_state or "unknown",
+        },
+        "truth_source_consistency": {
+            "status": "mismatch" if truth_source_reasons else "consistent",
+            "reasons": truth_source_reasons,
+            "reporting_precedence": precedence or "unknown",
+            "reporting_precedence_reason": wallet_reconciliation_summary.get("reporting_precedence_reason"),
+            "wallet_export_freshness": wallet_export_freshness,
+            "wallet_export_age_hours": _float_or_none(wallet_reconciliation_summary.get("source_age_hours")),
+            "btc5_probe_freshness": btc5_probe_freshness,
+            "btc5_probe_age_hours": _float_or_none(wallet_reconciliation_summary.get("btc5_probe_age_hours")),
+        },
+        "capital_consistency": {
+            "status": "conflict" if capital_conflicts else "consistent",
+            "reasons": capital_conflicts,
+            "artifacts": {
+                "selected_forecast": {
+                    "deploy_recommendation": scoreboard.get("deploy_recommendation"),
+                    "forecast_confidence_label": scoreboard.get("forecast_confidence_label"),
+                    "source_artifact": scoreboard.get("public_forecast_source_artifact"),
+                },
+                "runtime_capital_readiness": {
+                    "fund_status": fund_status or None,
+                    "polymarket_btc5_status": polymarket_status or None,
+                    "next_1000_status": next_1000_status or None,
+                },
+                "strategy_scale_comparison": scale_recommendation,
+                "signal_source_audit": audit_summary,
+            },
+        },
+    }
+    strategy["control_plane_consistency"] = consistency
+    state_improvement = dict(snapshot.get("state_improvement") or {})
+    state_improvement["strategy_recommendations"] = strategy
+    snapshot["state_improvement"] = state_improvement
 
 
 def render_runtime_mode_reconciliation_markdown(payload: dict[str, Any]) -> str:
@@ -2702,6 +4196,9 @@ def build_runtime_truth_snapshot(
     wallet_flow = status["wallet_flow"]
     service = status["service"]
     runtime_truth = status["runtime_truth"]
+    btc5_stage_readiness = dict(status.get("btc5_stage_readiness") or {})
+    deployment_confidence = dict(status.get("deployment_confidence") or {})
+    status_source_precedence = dict(status.get("source_precedence") or {})
     service_drift_reason = next(
         (
             reason
@@ -2716,6 +4213,54 @@ def build_runtime_truth_snapshot(
     previous_snapshot = (
         previous_runtime_truth_snapshot if isinstance(previous_runtime_truth_snapshot, dict) else {}
     )
+    source_precedence_fields = [
+        {
+            "field": "cycles_completed",
+            "selected_source": cycle_reconciliation["selected_source"],
+            "fallback_sources": [
+                "data/intel_snapshot.json",
+                "reports/remote_cycle_status.json",
+            ],
+            "selected_value": cycle_reconciliation["selected_value"],
+        },
+        {
+            "field": "wallet_flow_status",
+            "selected_source": "data/smart_wallets.json + data/wallet_scores.db",
+            "fallback_sources": ["reports/remote_cycle_status.json"],
+            "selected_value": wallet_flow["status"],
+        },
+        {
+            "field": "service_status",
+            "selected_source": service.get("source") or "reports/remote_service_status.json",
+            "fallback_sources": ["reports/remote_cycle_status.json"],
+            "selected_value": service["status"],
+        },
+        {
+            "field": "launch_posture",
+            "selected_source": "reports/remote_cycle_status.json",
+            "fallback_sources": ["reports/edge_scan_*.json (advisory only)"],
+            "selected_value": launch_posture,
+        },
+        {
+            "field": "verification_status",
+            "selected_source": root_tests.get("source") or "reports/root_test_status.json",
+            "fallback_sources": ["reports/pipeline_*.json.verification"],
+            "selected_value": root_tests["status"],
+        },
+    ]
+    existing_field_names = {
+        str(item.get("field"))
+        for item in source_precedence_fields
+        if isinstance(item, dict) and str(item.get("field") or "").strip()
+    }
+    for item in list(status_source_precedence.get("fields") or []):
+        if not isinstance(item, dict):
+            continue
+        field_name = str(item.get("field") or "").strip()
+        if not field_name or field_name in existing_field_names:
+            continue
+        source_precedence_fields.append(item)
+        existing_field_names.add(field_name)
     state_improvement = _build_state_improvement_report(
         root=repo_root,
         generated_at=datetime.now(timezone.utc),
@@ -2743,47 +4288,20 @@ def build_runtime_truth_snapshot(
             "drift_detected": bool(
                 cycle_reconciliation["drift_detected"] or runtime_truth.get("drift_detected")
             ),
+            "btc5_can_trade_now": bool(btc5_stage_readiness.get("can_trade_now")),
+            "btc5_allowed_stage": btc5_stage_readiness.get("allowed_stage_label"),
+            "deployment_confidence_label": deployment_confidence.get("confidence_label"),
         },
         "source_precedence": {
             "rule": (
-                "Prefer underlying synced/runtime artifacts over previously written summary outputs "
-                "when timestamps or content disagree."
+                _first_nonempty(
+                    status_source_precedence.get("rule"),
+                    "Prefer underlying synced/runtime artifacts over previously written summary outputs "
+                    "when timestamps or content disagree.",
+                )
             ),
-            "fields": [
-                {
-                    "field": "cycles_completed",
-                    "selected_source": cycle_reconciliation["selected_source"],
-                    "fallback_sources": [
-                        "data/intel_snapshot.json",
-                        "reports/remote_cycle_status.json",
-                    ],
-                    "selected_value": cycle_reconciliation["selected_value"],
-                },
-                {
-                    "field": "wallet_flow_status",
-                    "selected_source": "data/smart_wallets.json + data/wallet_scores.db",
-                    "fallback_sources": ["reports/remote_cycle_status.json"],
-                    "selected_value": wallet_flow["status"],
-                },
-                {
-                    "field": "service_status",
-                    "selected_source": service.get("source") or "reports/remote_service_status.json",
-                    "fallback_sources": ["reports/remote_cycle_status.json"],
-                    "selected_value": service["status"],
-                },
-                {
-                    "field": "launch_posture",
-                    "selected_source": "reports/remote_cycle_status.json",
-                    "fallback_sources": ["reports/edge_scan_*.json (advisory only)"],
-                    "selected_value": launch_posture,
-                },
-                {
-                    "field": "verification_status",
-                    "selected_source": root_tests.get("source") or "reports/root_test_status.json",
-                    "fallback_sources": ["reports/pipeline_*.json.verification"],
-                    "selected_value": root_tests["status"],
-                },
-            ],
+            "fields": source_precedence_fields,
+            "contradictions": list(status_source_precedence.get("contradictions") or []),
         },
         "reconciliation": {
             "cycles_completed": cycle_reconciliation,
@@ -2864,9 +4382,12 @@ def build_runtime_truth_snapshot(
         "wallet_flow": status["wallet_flow"],
         "polymarket_wallet": status.get("polymarket_wallet") or {},
         "btc_5min_maker": status.get("btc_5min_maker") or {},
+        "btc5_stage_readiness": btc5_stage_readiness,
+        "deployment_confidence": deployment_confidence,
         "accounting_reconciliation": status.get("accounting_reconciliation") or {},
         "service": {
             "status": service["status"],
+            "service_name": service.get("service_name"),
             "systemctl_state": service.get("systemctl_state"),
             "detail": service.get("detail"),
             "checked_at": service.get("checked_at"),
@@ -2944,6 +4465,9 @@ def build_public_runtime_snapshot(runtime_truth_snapshot: dict[str, Any]) -> dic
     latest_pipeline = runtime_truth_snapshot["latest_pipeline"]
     state_improvement = runtime_truth_snapshot.get("state_improvement") or {}
     drift = runtime_truth_snapshot["drift"]
+    btc5_stage_readiness = runtime_truth_snapshot.get("btc5_stage_readiness") or {}
+    deployment_confidence = runtime_truth_snapshot.get("deployment_confidence") or {}
+    source_precedence = runtime_truth_snapshot.get("source_precedence") or {}
 
     public_snapshot = {
         "artifact": "public_runtime_snapshot",
@@ -3000,6 +4524,32 @@ def build_public_runtime_snapshot(runtime_truth_snapshot: dict[str, Any]) -> dic
             "live_launch_blocked": launch["live_launch_blocked"],
             "blocked_reasons": list(launch.get("blocked_reasons") or []),
             "next_operator_action": launch["next_operator_action"],
+        },
+        "btc5_stage_readiness": {
+            "can_trade_now": btc5_stage_readiness.get("can_trade_now"),
+            "allowed_stage": btc5_stage_readiness.get("allowed_stage"),
+            "allowed_stage_label": btc5_stage_readiness.get("allowed_stage_label"),
+            "stage_2_blockers": list(btc5_stage_readiness.get("stage_2_blockers") or []),
+            "stage_3_blockers": list(btc5_stage_readiness.get("stage_3_blockers") or []),
+            "freshness": btc5_stage_readiness.get("freshness"),
+            "probe_freshness_hours": btc5_stage_readiness.get("probe_freshness_hours"),
+        },
+        "deployment_confidence": {
+            "confidence_label": deployment_confidence.get("confidence_label"),
+            "freshness_score": deployment_confidence.get("freshness_score"),
+            "accounting_coherence_score": deployment_confidence.get("accounting_coherence_score"),
+            "stage_readiness_score": deployment_confidence.get("stage_readiness_score"),
+            "confirmation_coverage_score": deployment_confidence.get("confirmation_coverage_score"),
+            "can_btc5_trade_now": deployment_confidence.get("can_btc5_trade_now"),
+            "allowed_stage": deployment_confidence.get("allowed_stage"),
+            "allowed_stage_label": deployment_confidence.get("allowed_stage_label"),
+            "blocking_checks": list(deployment_confidence.get("blocking_checks") or []),
+            "next_required_artifact": deployment_confidence.get("next_required_artifact"),
+        },
+        "source_precedence": {
+            "rule": source_precedence.get("rule"),
+            "fields": list(source_precedence.get("fields") or []),
+            "contradictions": list(source_precedence.get("contradictions") or []),
         },
         "wallet_flow": {
             "status": wallet_flow["status"],
@@ -4589,6 +6139,22 @@ def _build_public_performance_scoreboard(
         btc5_maker=btc5_maker,
         deployed_capital_usd=deployed_capital_usd,
     )
+    btc5_data_at = _parse_datetime_like(
+        _first_nonempty(
+            btc5_maker.get("latest_live_filled_at"),
+            (btc5_maker.get("latest_trade") or {}).get("updated_at")
+            if isinstance(btc5_maker.get("latest_trade"), dict)
+            else None,
+            btc5_maker.get("checked_at"),
+        )
+    )
+    wallet_export_summary = _load_wallet_export_summary(
+        root=root,
+        generated_at=generated_at,
+        btc5_data_at=btc5_data_at,
+    )
+    btc5_probe_age_hours = _age_hours_from_datetimes(reference_at=generated_at, observed_at=btc5_data_at)
+    btc5_probe_freshness_label = _freshness_label_for_age_hours(btc5_probe_age_hours)
     forecast_selection = _select_public_forecast_candidate(root=root, generated_at=generated_at)
     selected = forecast_selection.get("selected") or {}
     drift_open = bool(accounting_reconciliation.get("drift_detected"))
@@ -4615,6 +6181,92 @@ def _build_public_performance_scoreboard(
         velocity_gain_pct_per_day = round((velocity_gain_pct / velocity_window_hours) * 24.0, 4)
     intraday_summary = dict(btc5_maker.get("intraday_live_summary") or {})
     closed_batch = dict(polymarket_wallet.get("closed_batch_metrics") or {})
+    wallet_reconciliation_summary = {
+        "source_class": "polymarket_data_api",
+        "source_artifact": "polymarket_wallet_probe",
+        "source_age_hours": None,
+        "wallet_export_fresh": False,
+        "wallet_export_freshness_label": "unknown",
+        "reporting_precedence": "btc5_runtime_db",
+        "reporting_precedence_reason": "wallet_export_missing",
+        "btc_closed_markets": int(_safe_float(closed_batch.get("btc_contracts_resolved"), 0.0) or 0),
+        "btc_closed_net_cashflow_usd": round(_safe_float(closed_batch.get("btc_closed_cashflow_usd"), 0.0), 4),
+        "btc_open_markets": None,
+        "non_btc_open_buy_notional_usd": _float_or_none(closed_batch.get("open_non_btc_notional_usd")),
+        "btc5_probe_source_class": btc5_maker.get("source"),
+        "btc5_probe_checked_at": btc5_data_at.isoformat() if btc5_data_at is not None else None,
+        "btc5_probe_age_hours": round(btc5_probe_age_hours, 4) if btc5_probe_age_hours is not None else None,
+        "btc5_probe_freshness_label": btc5_probe_freshness_label,
+        "btc5_probe_live_filled_rows": _int_or_none(btc5_maker.get("live_filled_rows")),
+        "btc5_probe_live_filled_pnl_usd": _float_or_none(btc5_maker.get("live_filled_pnl_usd")),
+    }
+    portfolio_equity_delta_1d = None
+    closed_cashflow_delta_1d = None
+    open_notional_delta_1d = None
+    reporting_precedence = "btc5_runtime_db"
+    reporting_precedence_reason = "wallet_export_missing"
+    if isinstance(wallet_export_summary, dict):
+        wallet_export_fresh = bool(wallet_export_summary.get("wallet_export_fresh"))
+        wallet_export_fresher_than_btc = bool(wallet_export_summary.get("fresher_than_btc_reporting_source"))
+        use_wallet_export_reporting = bool(wallet_export_summary.get("use_wallet_export_reporting"))
+        wallet_reconciliation_summary.update(
+            {
+                "source_class": str(wallet_export_summary.get("source_class") or "wallet_export_csv"),
+                "source_artifact": wallet_export_summary.get("source_path"),
+                "source_age_hours": _float_or_none(wallet_export_summary.get("source_age_hours")),
+                "wallet_export_fresh": wallet_export_fresh,
+                "wallet_export_freshness_label": str(
+                    wallet_export_summary.get("wallet_export_freshness_label")
+                    or _freshness_label_for_age_hours(_float_or_none(wallet_export_summary.get("source_age_hours")))
+                ),
+                "btc_closed_markets": int(_safe_float(wallet_export_summary.get("btc_closed_markets"), 0.0) or 0),
+                "btc_closed_net_cashflow_usd": round(
+                    _safe_float(wallet_export_summary.get("btc_closed_net_cashflow_usd"), 0.0),
+                    4,
+                ),
+                "btc_open_markets": int(_safe_float(wallet_export_summary.get("btc_open_markets"), 0.0) or 0),
+                "non_btc_open_buy_notional_usd": _float_or_none(
+                    wallet_export_summary.get("non_btc_open_buy_notional_usd")
+                ),
+            }
+        )
+        portfolio_equity_delta_1d = _float_or_none(wallet_export_summary.get("portfolio_equity_delta_1d"))
+        closed_cashflow_delta_1d = _float_or_none(wallet_export_summary.get("closed_cashflow_delta_1d"))
+        open_notional_delta_1d = _float_or_none(wallet_export_summary.get("open_notional_delta_1d"))
+        if use_wallet_export_reporting:
+            reporting_precedence = "wallet_export"
+            reporting_precedence_reason = "wallet_export_fresh_and_at_least_as_recent_as_btc5_probe"
+            wallet_closed_fills = int(_safe_float(wallet_export_summary.get("btc_closed_markets"), 0.0) or 0)
+            wallet_closed_pnl = round(
+                _safe_float(wallet_export_summary.get("btc_closed_net_cashflow_usd"), 0.0),
+                4,
+            )
+            wallet_closed_hours = _float_or_none(wallet_export_summary.get("btc_closed_window_hours"))
+            if wallet_closed_fills > 0:
+                run_rate_pct = None
+                if (
+                    wallet_closed_hours is not None
+                    and wallet_closed_hours > 0
+                    and deployed_capital_usd is not None
+                    and deployed_capital_usd > 0
+                ):
+                    annualization = 24.0 * 365.0 / wallet_closed_hours
+                    run_rate_pct = round((wallet_closed_pnl / deployed_capital_usd) * annualization * 100.0, 4)
+                realized_window = {
+                    "window_pnl_usd": wallet_closed_pnl,
+                    "window_live_fills": wallet_closed_fills,
+                    "window_hours": wallet_closed_hours,
+                    "run_rate_pct": run_rate_pct,
+                    "window_mode": "wallet_closed_batch",
+                }
+        elif wallet_export_fresh and not wallet_export_fresher_than_btc:
+            reporting_precedence_reason = "btc5_probe_is_fresher_than_wallet_export"
+        elif not wallet_export_fresh:
+            reporting_precedence_reason = "wallet_export_stale"
+        else:
+            reporting_precedence_reason = "btc5_probe_retained_as_reporting_source"
+    wallet_reconciliation_summary["reporting_precedence"] = reporting_precedence
+    wallet_reconciliation_summary["reporting_precedence_reason"] = reporting_precedence_reason
     denominator_initial = _float_or_none(
         _first_nonempty(
             capital.get("polymarket_tracked_capital_usd"),
@@ -4660,6 +6312,17 @@ def _build_public_performance_scoreboard(
         "timebound_velocity_forecast_gain_pct": velocity_gain_pct,
         "timebound_velocity_forecast_gain_pct_per_day": velocity_gain_pct_per_day,
         "public_forecast_source_artifact": selected.get("path"),
+        "realized_closed_btc_cashflow_usd": _float_or_none(
+            wallet_reconciliation_summary.get("btc_closed_net_cashflow_usd")
+        ),
+        "open_non_btc_notional_usd": _float_or_none(
+            wallet_reconciliation_summary.get("non_btc_open_buy_notional_usd")
+        ),
+        "forecast_arr_pct": _float_or_none(selected.get("active_arr_pct")),
+        "wallet_reconciliation_summary": wallet_reconciliation_summary,
+        "portfolio_equity_delta_1d": portfolio_equity_delta_1d,
+        "closed_cashflow_delta_1d": closed_cashflow_delta_1d,
+        "open_notional_delta_1d": open_notional_delta_1d,
         "intraday_live_summary": intraday_summary,
         "wallet_closed_batch": {
             "btc_closed_cashflow_usd": round(btc_closed_cashflow, 4),
@@ -5038,6 +6701,25 @@ def _build_state_improvement_report(
         launch=launch,
         accounting_reconciliation=accounting_reconciliation,
     )
+    public_performance_scoreboard["capital_stage_readiness"] = str(
+        ((capital_addition_readiness.get("polymarket_btc5") or {}).get("status") or "hold")
+    )
+    public_performance_scoreboard["next_1000_usd_status"] = str(
+        ((capital_addition_readiness.get("next_1000_usd") or {}).get("status") or "hold")
+    )
+    public_performance_scoreboard["next_1000_usd_recommended_amount_usd"] = _float_or_none(
+        ((capital_addition_readiness.get("next_1000_usd") or {}).get("recommended_amount_usd"))
+    )
+    public_performance_scoreboard["performance_split"] = {
+        "realized_closed_btc_cashflow_usd": _float_or_none(
+            public_performance_scoreboard.get("realized_closed_btc_cashflow_usd")
+        ),
+        "open_non_btc_notional_usd": _float_or_none(
+            public_performance_scoreboard.get("open_non_btc_notional_usd")
+        ),
+        "forecast_arr_pct": _float_or_none(public_performance_scoreboard.get("forecast_arr_pct")),
+        "capital_stage_readiness": public_performance_scoreboard.get("capital_stage_readiness"),
+    }
 
     report = {
         "artifact": "state_improvement_report",
@@ -5059,6 +6741,11 @@ def _build_state_improvement_report(
             "btc5_edge_profile": btc5_research_recommendation.get("btc5_edge_profile") or {},
             "btc5_forecast_confidence": btc5_research_recommendation.get("btc5_forecast_confidence") or {},
             "public_performance_scoreboard": public_performance_scoreboard,
+            "performance_split": public_performance_scoreboard.get("performance_split") or {},
+            "wallet_reconciliation_summary": public_performance_scoreboard.get("wallet_reconciliation_summary") or {},
+            "portfolio_equity_delta_1d": _float_or_none(public_performance_scoreboard.get("portfolio_equity_delta_1d")),
+            "closed_cashflow_delta_1d": _float_or_none(public_performance_scoreboard.get("closed_cashflow_delta_1d")),
+            "open_notional_delta_1d": _float_or_none(public_performance_scoreboard.get("open_notional_delta_1d")),
             "capital_addition_readiness": capital_addition_readiness,
         },
         "reconciliation_summary": {

@@ -42,6 +42,9 @@ DEFAULT_SIGNAL_SOURCE_AUDIT_PATH = ROOT / "reports" / "signal_source_audit.json"
 DEFAULT_RUNTIME_TRUTH_PATH = ROOT / "reports" / "runtime_truth_latest.json"
 DEFAULT_PUBLIC_RUNTIME_SNAPSHOT_PATH = ROOT / "reports" / "public_runtime_snapshot.json"
 DEFAULT_BTC5_AUTORESEARCH_PATH = ROOT / "reports" / "btc5_autoresearch" / "latest.json"
+DEFAULT_BTC5_CURRENT_PROBE_PATH = (
+    ROOT / "reports" / "btc5_autoresearch_current_probe" / "latest.json"
+)
 DEFAULT_BTC5_MONTE_CARLO_PATH = ROOT / "reports" / "btc5_monte_carlo_latest.json"
 DEFAULT_KALSHI_WEATHER_LANE_PATH = ROOT / "reports" / "parallel" / "instance05_weather_lane.json"
 DEFAULT_KALSHI_ORDERS_PATH = ROOT / "data" / "kalshi_weather_orders.jsonl"
@@ -1353,6 +1356,7 @@ def _load_btc5_probe_summary(probe_db_path: Path | None, *, now: datetime) -> di
     return {
         "available": True,
         "path": str(resolved_path),
+        "source": "probe_db",
         "latest_decision_at": latest_decision_at,
         "freshness_hours": freshness_hours,
         "fresh_for_stage_upgrade": freshness_hours is not None and freshness_hours <= VENUE_STALE_HOURS,
@@ -1368,6 +1372,152 @@ def _load_btc5_probe_summary(probe_db_path: Path | None, *, now: datetime) -> di
         "trailing_120_live_filled_net_positive": trailing_120_positive,
         "order_failed_rate_recent_40": order_failed_rate_recent_40,
     }
+
+
+def _load_btc5_current_probe_summary(
+    current_probe_path: Path | None,
+    *,
+    now: datetime,
+) -> dict[str, Any]:
+    resolved_path = (
+        current_probe_path if current_probe_path is not None else DEFAULT_BTC5_CURRENT_PROBE_PATH
+    )
+    empty = {
+        "available": False,
+        "path": str(resolved_path) if resolved_path is not None else None,
+        "source": "current_probe_latest",
+        "latest_decision_at": None,
+        "freshness_hours": None,
+        "fresh_for_stage_upgrade": False,
+        "live_filled_rows": 0,
+        "trailing_12_live_filled_rows": 0,
+        "trailing_12_live_filled_pnl_usd": 0.0,
+        "trailing_12_live_filled_net_positive": False,
+        "trailing_40_live_filled_rows": 0,
+        "trailing_40_live_filled_pnl_usd": 0.0,
+        "trailing_40_live_filled_net_positive": False,
+        "trailing_120_live_filled_rows": 0,
+        "trailing_120_live_filled_pnl_usd": 0.0,
+        "trailing_120_live_filled_net_positive": False,
+        "order_failed_rate_recent_40": None,
+    }
+    if resolved_path is None or not resolved_path.exists():
+        return empty
+
+    payload = _load_json_dict(resolved_path) or {}
+    if not payload:
+        return empty
+
+    current_probe = payload.get("current_probe") if isinstance(payload.get("current_probe"), dict) else payload
+    trailing_windows = (
+        current_probe.get("trailing_live_filled_windows")
+        if isinstance(current_probe.get("trailing_live_filled_windows"), dict)
+        else {}
+    )
+    latest_decision_at = (
+        current_probe.get("latest_live_fill_timestamp")
+        or current_probe.get("latest_decision_timestamp")
+        or payload.get("latest_live_fill_timestamp")
+        or payload.get("latest_decision_timestamp")
+        or payload.get("generated_at")
+    )
+    probe_freshness_hours = None
+    if current_probe.get("probe_freshness_hours") is not None:
+        probe_freshness_hours = _safe_float(current_probe.get("probe_freshness_hours"))
+    elif payload.get("probe_freshness_hours") is not None:
+        probe_freshness_hours = _safe_float(payload.get("probe_freshness_hours"))
+    elif latest_decision_at is not None:
+        probe_freshness_hours = _freshness_hours(latest_decision_at, now=now)
+
+    def _window_summary(name: str) -> tuple[int, float, bool]:
+        window = trailing_windows.get(name) if isinstance(trailing_windows.get(name), dict) else {}
+        fills = int(_safe_float(window.get("fills"), 0.0))
+        pnl = round(_safe_float(window.get("pnl_usd"), 0.0), 4)
+        net_positive = bool(window.get("net_positive")) if "net_positive" in window else pnl > 0.0
+        return fills, pnl, net_positive
+
+    trailing_12_rows, trailing_12_pnl, trailing_12_positive = _window_summary("trailing_12")
+    trailing_40_rows, trailing_40_pnl, trailing_40_positive = _window_summary("trailing_40")
+    trailing_120_rows, trailing_120_pnl, trailing_120_positive = _window_summary("trailing_120")
+
+    live_filled_rows = int(
+        _safe_float(
+            current_probe.get("live_filled_row_count"),
+            _safe_float(
+                current_probe.get("validation_live_filled_rows"),
+                _safe_float(payload.get("validation_live_filled_rows"), 0.0),
+            ),
+        )
+    )
+    order_failed_rate_recent_40 = None
+    if current_probe.get("recent_order_failed_rate") is not None:
+        order_failed_rate_recent_40 = round(
+            _safe_float(current_probe.get("recent_order_failed_rate")),
+            4,
+        )
+    elif payload.get("recent_order_failed_rate") is not None:
+        order_failed_rate_recent_40 = round(_safe_float(payload.get("recent_order_failed_rate")), 4)
+
+    return {
+        "available": True,
+        "path": str(resolved_path),
+        "source": "current_probe_latest",
+        "latest_decision_at": latest_decision_at,
+        "freshness_hours": probe_freshness_hours,
+        "fresh_for_stage_upgrade": (
+            probe_freshness_hours is not None and probe_freshness_hours <= VENUE_STALE_HOURS
+        ),
+        "live_filled_rows": live_filled_rows,
+        "trailing_12_live_filled_rows": trailing_12_rows,
+        "trailing_12_live_filled_pnl_usd": trailing_12_pnl,
+        "trailing_12_live_filled_net_positive": trailing_12_positive,
+        "trailing_40_live_filled_rows": trailing_40_rows,
+        "trailing_40_live_filled_pnl_usd": trailing_40_pnl,
+        "trailing_40_live_filled_net_positive": trailing_40_positive,
+        "trailing_120_live_filled_rows": trailing_120_rows,
+        "trailing_120_live_filled_pnl_usd": trailing_120_pnl,
+        "trailing_120_live_filled_net_positive": trailing_120_positive,
+        "order_failed_rate_recent_40": order_failed_rate_recent_40,
+    }
+
+
+def _default_current_probe_path_for_forecast(btc5_autoresearch_path: Path) -> Path:
+    if btc5_autoresearch_path.parent.name == "btc5_autoresearch":
+        return btc5_autoresearch_path.parent.parent / "btc5_autoresearch_current_probe" / "latest.json"
+    return btc5_autoresearch_path.parent / "btc5_autoresearch_current_probe" / "latest.json"
+
+
+def _resolve_btc5_probe_summary(
+    *,
+    current_probe_summary: dict[str, Any],
+    probe_db_summary: dict[str, Any],
+) -> dict[str, Any]:
+    candidates = [
+        summary
+        for summary in (current_probe_summary, probe_db_summary)
+        if isinstance(summary, dict) and summary.get("available")
+    ]
+    if not candidates:
+        return current_probe_summary if current_probe_summary.get("path") else probe_db_summary
+
+    preferred = min(
+        candidates,
+        key=lambda summary: (
+            _safe_float(summary.get("freshness_hours"), float("inf")),
+            0 if summary.get("source") == "current_probe_latest" else 1,
+        ),
+    )
+    merged = dict(preferred)
+    merged["sources_considered"] = [
+        {
+            "path": candidate.get("path"),
+            "source": candidate.get("source"),
+            "freshness_hours": candidate.get("freshness_hours"),
+            "fresh_for_stage_upgrade": candidate.get("fresh_for_stage_upgrade"),
+        }
+        for candidate in candidates
+    ]
+    return merged
 
 
 def _capital_efficiency_score(
@@ -1618,6 +1768,7 @@ def _build_btc5_venue_entry(
     runtime_truth_path: Path,
     public_runtime_snapshot_path: Path,
     btc5_autoresearch_path: Path,
+    btc5_current_probe_path: Path | None,
     btc5_monte_carlo_path: Path,
     wallet_export_path: Path | None,
     btc5_probe_db_path: Path | None,
@@ -1629,7 +1780,15 @@ def _build_btc5_venue_entry(
     monte_carlo_payload = _load_json_dict(btc5_monte_carlo_path) or {}
     runtime_block = runtime_truth.get("runtime") or {}
     wallet_summary = _load_wallet_export_summary(wallet_export_path, now=now)
-    probe_summary = _load_btc5_probe_summary(btc5_probe_db_path, now=now)
+    resolved_current_probe_path = (
+        btc5_current_probe_path
+        if btc5_current_probe_path is not None
+        else _default_current_probe_path_for_forecast(btc5_autoresearch_path)
+    )
+    probe_summary = _resolve_btc5_probe_summary(
+        current_probe_summary=_load_btc5_current_probe_summary(resolved_current_probe_path, now=now),
+        probe_db_summary=_load_btc5_probe_summary(btc5_probe_db_path, now=now),
+    )
     audit_support = _build_audit_capital_support(audit_payload, now=now)
     capacity_profile, capacity_source_label = _select_capacity_stress_profile(
         monte_carlo_payload,
@@ -1890,6 +2049,7 @@ def _build_btc5_venue_entry(
                 str(runtime_truth_path),
                 str(public_runtime_snapshot_path),
                 str(btc5_autoresearch_path),
+                str(resolved_current_probe_path) if resolved_current_probe_path is not None else None,
                 str(signal_source_audit_path) if signal_source_audit_path is not None else None,
                 monte_carlo_source_path,
                 wallet_summary.get("path"),
@@ -2179,6 +2339,7 @@ def _attach_venue_scoreboard(
     runtime_truth_path: Path,
     public_runtime_snapshot_path: Path,
     btc5_autoresearch_path: Path,
+    btc5_current_probe_path: Path | None,
     btc5_monte_carlo_path: Path,
     wallet_export_path: Path | None,
     btc5_probe_db_path: Path | None,
@@ -2195,6 +2356,7 @@ def _attach_venue_scoreboard(
             runtime_truth_path=runtime_truth_path,
             public_runtime_snapshot_path=public_runtime_snapshot_path,
             btc5_autoresearch_path=btc5_autoresearch_path,
+            btc5_current_probe_path=btc5_current_probe_path,
             btc5_monte_carlo_path=btc5_monte_carlo_path,
             wallet_export_path=wallet_export_path,
             btc5_probe_db_path=btc5_probe_db_path,
@@ -2554,6 +2716,7 @@ def run_scale_comparison(
     runtime_truth_path: Path = DEFAULT_RUNTIME_TRUTH_PATH,
     public_runtime_snapshot_path: Path = DEFAULT_PUBLIC_RUNTIME_SNAPSHOT_PATH,
     btc5_autoresearch_path: Path = DEFAULT_BTC5_AUTORESEARCH_PATH,
+    btc5_current_probe_path: Path | None = None,
     btc5_monte_carlo_path: Path = DEFAULT_BTC5_MONTE_CARLO_PATH,
     wallet_export_path: Path | None = None,
     btc5_probe_db_path: Path | None = DEFAULT_BTC5_PROBE_DB_PATH,
@@ -2582,6 +2745,7 @@ def run_scale_comparison(
         runtime_truth_path=runtime_truth_path,
         public_runtime_snapshot_path=public_runtime_snapshot_path,
         btc5_autoresearch_path=btc5_autoresearch_path,
+        btc5_current_probe_path=btc5_current_probe_path,
         btc5_monte_carlo_path=btc5_monte_carlo_path,
         wallet_export_path=wallet_export_path,
         btc5_probe_db_path=btc5_probe_db_path,
@@ -2654,6 +2818,16 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--btc5-current-probe",
+        type=Path,
+        default=None,
+        help=(
+            "Optional BTC5 current-probe JSON path used as the primary freshness, trailing-fill, "
+            "and order-failed-rate ranking input. When omitted, the sibling "
+            "reports/btc5_autoresearch_current_probe/latest.json path is used."
+        ),
+    )
+    parser.add_argument(
         "--btc5-monte-carlo",
         type=Path,
         default=DEFAULT_BTC5_MONTE_CARLO_PATH,
@@ -2685,6 +2859,7 @@ def main() -> None:
         markdown_output_path=args.markdown_output,
         wallet_flow_archive_path=args.wallet_flow_archive,
         signal_source_audit_path=args.signal_source_audit,
+        btc5_current_probe_path=args.btc5_current_probe,
         btc5_monte_carlo_path=args.btc5_monte_carlo,
         wallet_export_path=args.wallet_export,
         btc5_probe_db_path=args.btc5_probe_db,

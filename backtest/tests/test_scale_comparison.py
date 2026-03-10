@@ -60,6 +60,55 @@ def _write_probe_db(path: Path, rows: list[tuple[int, str, float]]) -> None:
         conn.close()
 
 
+def _write_current_probe_payload(
+    path: Path,
+    *,
+    generated_at: str,
+    probe_freshness_hours: float,
+    trailing_12_pnl_usd: float,
+    trailing_40_pnl_usd: float,
+    trailing_120_pnl_usd: float,
+    order_failed_rate_recent_40: float,
+    validation_live_filled_rows: int = 110,
+    live_filled_row_count: int = 131,
+) -> Path:
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at": generated_at,
+                "deploy_recommendation": "promote",
+                "package_confidence_label": "high",
+                "validation_live_filled_rows": validation_live_filled_rows,
+                "current_probe": {
+                    "latest_decision_timestamp": "2026-03-10T15:40:00+00:00",
+                    "latest_live_fill_timestamp": "2026-03-10T15:40:00+00:00",
+                    "probe_freshness_hours": probe_freshness_hours,
+                    "live_filled_row_count": live_filled_row_count,
+                    "recent_order_failed_rate": order_failed_rate_recent_40,
+                    "trailing_live_filled_windows": {
+                        "trailing_12": {
+                            "fills": 12,
+                            "pnl_usd": trailing_12_pnl_usd,
+                            "net_positive": trailing_12_pnl_usd > 0.0,
+                        },
+                        "trailing_40": {
+                            "fills": 40,
+                            "pnl_usd": trailing_40_pnl_usd,
+                            "net_positive": trailing_40_pnl_usd > 0.0,
+                        },
+                        "trailing_120": {
+                            "fills": 120,
+                            "pnl_usd": trailing_120_pnl_usd,
+                            "net_positive": trailing_120_pnl_usd > 0.0,
+                        },
+                    },
+                },
+            }
+        )
+    )
+    return path
+
+
 def _write_capital_surface_fixtures(
     tmp_path: Path,
     *,
@@ -843,6 +892,91 @@ def test_run_scale_comparison_surfaces_stale_probe_for_stage_upgrades(monkeypatc
     assert report["next_100_usd"]["status"] == "hold"
     assert report["next_1000_usd"]["status"] == "hold"
     assert report["next_1000_usd"]["stage_gate_reason"].startswith("No capital stage is eligible yet.")
+
+
+def test_run_scale_comparison_prefers_current_probe_latest_over_stale_probe_db(
+    monkeypatch,
+    tmp_path: Path,
+):
+    monkeypatch.setattr(
+        "backtest.run_scale_comparison._utc_now",
+        lambda: datetime(2026, 3, 10, 16, 0, tzinfo=timezone.utc),
+    )
+    ready_lane = LaneEvidence(
+        lane="llm_only",
+        status="ready",
+        evidence_summary={"qualified_signals": 1},
+        opportunities=[_opportunity("1", "buy_yes", "YES_WON")],
+    )
+    monkeypatch.setattr(
+        "backtest.run_scale_comparison.load_lane_evidences",
+        lambda **_: {
+            "llm_only": ready_lane,
+            "wallet_flow": LaneEvidence(
+                lane="wallet_flow",
+                status="insufficient_data",
+                reasons=["zero qualifying signals"],
+                evidence_summary={"resolved_qualifying_signals": 0},
+            ),
+            "lmsr": LaneEvidence(lane="lmsr", status="insufficient_data", reasons=["missing archive"]),
+            "cross_platform_arb": LaneEvidence(
+                lane="cross_platform_arb", status="insufficient_data", reasons=["missing archive"]
+            ),
+        },
+    )
+    paths = _write_capital_surface_fixtures(
+        tmp_path,
+        runtime_generated_at="2026-03-10T15:55:00+00:00",
+        forecast_generated_at="2026-03-10T15:54:00+00:00",
+    )
+    audit_path = _write_ready_signal_audit(tmp_path / "signal_source_audit.json")
+    wallet_export_path = tmp_path / "Polymarket-History-2026-03-10 (1).csv"
+    wallet_export_path.write_text(
+        "\n".join(
+            [
+                '"marketName","action","usdcAmount","tokenAmount","tokenName","timestamp","hash"',
+                '"Bitcoin Up or Down - March 10, 10:35AM-10:40AM ET","Buy","5.0","10.0","Down","1773156900","0x1"',
+                '"Bitcoin Up or Down - March 10, 10:35AM-10:40AM ET","Redeem","0","0","","1773157200","0x2"',
+            ]
+        )
+        + "\n"
+    )
+    stale_probe_db_path = tmp_path / "btc_5min_maker.remote_probe.db"
+    _write_probe_db(
+        stale_probe_db_path,
+        _probe_rows(live_filled=120, failed=3, start_ts=1773136800),
+    )
+    current_probe_path = _write_current_probe_payload(
+        tmp_path / "btc5_current_probe_latest.json",
+        generated_at="2026-03-10T15:59:00+00:00",
+        probe_freshness_hours=0.35,
+        trailing_12_pnl_usd=-29.3863,
+        trailing_40_pnl_usd=-34.5164,
+        trailing_120_pnl_usd=93.5718,
+        order_failed_rate_recent_40=0.175,
+    )
+
+    report = run_scale_comparison(
+        bankrolls=[1000.0],
+        json_output_path=tmp_path / "strategy_scale_comparison.json",
+        markdown_output_path=tmp_path / "strategy_scale_comparison.md",
+        signal_source_audit_path=audit_path,
+        wallet_export_path=wallet_export_path,
+        btc5_current_probe_path=current_probe_path,
+        btc5_probe_db_path=stale_probe_db_path,
+        kalshi_settlements_path=tmp_path / "kalshi_weather_settlements.jsonl",
+        kalshi_decisions_path=tmp_path / "kalshi_weather_decisions.jsonl",
+        **paths,
+    )
+
+    btc5_entry = next(item for item in report["venue_scoreboard"] if item["venue"] == "polymarket")
+    assert btc5_entry["probe_summary"]["source"] == "current_probe_latest"
+    assert btc5_entry["stage_readiness"]["fresh_probe_summary"] is True
+    assert btc5_entry["stage_readiness"]["probe_freshness_hours"] == 0.35
+    assert btc5_entry["stage_readiness"]["recommended_stage"] == 0
+    assert "stage_upgrade_probe_stale" not in btc5_entry["stage_readiness"]["blocking_checks"]
+    assert "trailing_12_live_filled_not_positive" in btc5_entry["stage_readiness"]["blocking_checks"]
+    assert report["capital_allocation_recommendation"]["stage_readiness"]["probe_freshness_hours"] == 0.35
 
 
 def test_run_scale_comparison_holds_when_signal_audit_blocks_capital_expansion(monkeypatch, tmp_path: Path):
