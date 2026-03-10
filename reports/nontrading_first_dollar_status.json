@@ -1,0 +1,38 @@
+{
+  "blocking_reasons": [
+    "checkout_surface_not_ready",
+    "billing_webhook_not_ready",
+    "manual_close_lane_not_ready"
+  ],
+  "checkout_sessions_created": 0,
+  "confidence": 0.1,
+  "delivery_artifacts_generated": 0,
+  "expected_net_cash_30d": 0.0,
+  "first_dollar_at": null,
+  "first_paid_order_at": null,
+  "generated_at": "2026-03-10T15:06:04+00:00",
+  "launch_gates": {
+    "billing_webhook_ready": false,
+    "checkout_surface_ready": false,
+    "compliance_clear": true,
+    "fulfillment_surface_ready": true,
+    "manual_close_ready": false,
+    "offer_defined": true,
+    "pipeline_available": true
+  },
+  "launchable": false,
+  "monitor_runs_completed": 0,
+  "orders_recorded": 0,
+  "paid_orders_seen": 0,
+  "paid_revenue_usd": 0.0,
+  "schema_version": "first_dollar_readiness.v1",
+  "source_artifacts": {
+    "allocator_input_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_allocator_input.json",
+    "benchmark_comparison_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_benchmark_comparison.json",
+    "launch_summary": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_launch_summary.json",
+    "public_report": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_public_report.json",
+    "status_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_first_dollar_status.json"
+  },
+  "status": "setup_only",
+  "time_to_first_dollar_hours": null
+}

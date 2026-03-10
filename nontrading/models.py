@@ -310,3 +310,105 @@ class TelemetryEvent:
     payload: dict[str, Any] = field(default_factory=dict)
     id: int | None = None
     created_at: str | None = None
+
+
+@dataclass(frozen=True)
+class FirstDollarReadiness:
+    """Public-safe readiness contract for the JJ-N first-dollar lane."""
+
+    status: str
+    launchable: bool
+    paid_orders_seen: int = 0
+    paid_revenue_usd: float = 0.0
+    first_paid_order_at: str | None = None
+    first_dollar_at: str | None = None
+    time_to_first_dollar_hours: float | None = None
+    checkout_sessions_created: int = 0
+    orders_recorded: int = 0
+    delivery_artifacts_generated: int = 0
+    monitor_runs_completed: int = 0
+    expected_net_cash_30d: float = 0.0
+    confidence: float = 0.0
+    launch_gates: dict[str, bool] = field(default_factory=dict)
+    blocking_reasons: tuple[str, ...] = field(default_factory=tuple)
+    source_artifacts: dict[str, str] = field(default_factory=dict)
+    schema_version: str = "first_dollar_readiness.v1"
+    generated_at: str = field(default_factory=utc_now)
+
+    def __post_init__(self) -> None:
+        valid_statuses = {
+            "setup_only",
+            "launchable",
+            "paid_order_seen",
+            "first_dollar_observed",
+        }
+        normalized_status = str(self.status).strip().lower()
+        if normalized_status not in valid_statuses:
+            raise ValueError(f"Unsupported first-dollar status: {self.status}")
+        object.__setattr__(self, "status", normalized_status)
+        object.__setattr__(self, "launchable", bool(self.launchable))
+        object.__setattr__(self, "paid_orders_seen", max(0, int(self.paid_orders_seen)))
+        object.__setattr__(self, "paid_revenue_usd", round(max(0.0, float(self.paid_revenue_usd)), 2))
+        object.__setattr__(
+            self,
+            "checkout_sessions_created",
+            max(0, int(self.checkout_sessions_created)),
+        )
+        object.__setattr__(self, "orders_recorded", max(0, int(self.orders_recorded)))
+        object.__setattr__(
+            self,
+            "delivery_artifacts_generated",
+            max(0, int(self.delivery_artifacts_generated)),
+        )
+        object.__setattr__(
+            self,
+            "monitor_runs_completed",
+            max(0, int(self.monitor_runs_completed)),
+        )
+        object.__setattr__(
+            self,
+            "expected_net_cash_30d",
+            round(max(0.0, float(self.expected_net_cash_30d)), 2),
+        )
+        object.__setattr__(
+            self,
+            "confidence",
+            max(0.0, min(1.0, float(self.confidence))),
+        )
+        object.__setattr__(self, "launch_gates", {str(key): bool(value) for key, value in self.launch_gates.items()})
+        object.__setattr__(
+            self,
+            "blocking_reasons",
+            tuple(str(item) for item in self.blocking_reasons if str(item).strip()),
+        )
+        object.__setattr__(
+            self,
+            "source_artifacts",
+            {
+                str(key): str(value)
+                for key, value in self.source_artifacts.items()
+                if str(key).strip() and value is not None and str(value).strip()
+            },
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "generated_at": self.generated_at,
+            "status": self.status,
+            "launchable": self.launchable,
+            "paid_orders_seen": self.paid_orders_seen,
+            "paid_revenue_usd": self.paid_revenue_usd,
+            "first_paid_order_at": self.first_paid_order_at,
+            "first_dollar_at": self.first_dollar_at,
+            "time_to_first_dollar_hours": self.time_to_first_dollar_hours,
+            "checkout_sessions_created": self.checkout_sessions_created,
+            "orders_recorded": self.orders_recorded,
+            "delivery_artifacts_generated": self.delivery_artifacts_generated,
+            "monitor_runs_completed": self.monitor_runs_completed,
+            "expected_net_cash_30d": self.expected_net_cash_30d,
+            "confidence": self.confidence,
+            "launch_gates": dict(self.launch_gates),
+            "blocking_reasons": list(self.blocking_reasons),
+            "source_artifacts": dict(self.source_artifacts),
+        }

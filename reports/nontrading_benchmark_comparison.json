@@ -1,0 +1,79 @@
+{
+  "allocator_guardrail": "comparison_only rows are excluded from live allocator decisions.",
+  "evaluation_contract": "inventory/metrics/README.md",
+  "generated_at": "2026-03-10T15:06:04+00:00",
+  "items": [
+    {
+      "comparison_only": false,
+      "engine_family": "revenue_audit",
+      "excluded_from_allocator": false,
+      "label": "Elastifund JJ-N",
+      "metrics": {
+        "confidence": 0.1,
+        "cost_usd": 0.0,
+        "cycle_time_seconds": 0.0,
+        "decision_count": 3,
+        "expected_net_cash_30d": 0.0,
+        "outcome_value_usd": 0.0
+      },
+      "source_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_public_report.json",
+      "status": "setup_only",
+      "system_id": "elastifund_jjn"
+    },
+    {
+      "allocator_eligible": false,
+      "comparison_mode": "comparison_only",
+      "comparison_only": true,
+      "engine_family": "comparison_only",
+      "excluded_from_allocator": true,
+      "isolation": {
+        "log_index_prefix": "elastifund-openclaw-benchmark",
+        "namespace": "openclaw-benchmark",
+        "secrets_scope": "isolated",
+        "shared_state_access": "none",
+        "state_scope": "isolated",
+        "wallet_access": "none"
+      },
+      "label": "OpenClaw",
+      "metadata": {
+        "adapter_metadata": {
+          "comparison_count": 2,
+          "comparison_only": true,
+          "comparison_reason": "sibling benchmark only",
+          "raw_event_type_counts": {
+            "diagnostic.heartbeat": 1,
+            "message.processed": 3,
+            "model.usage": 2,
+            "queue.lane.enqueue": 1,
+            "webhook.processed": 1
+          },
+          "upstream_version": "2026.3.9"
+        },
+        "allocator_eligible": false,
+        "comparison_case_count": 2,
+        "comparison_mode": "comparison_only",
+        "evaluation_track": "comparison_only",
+        "execution_label": "internal_simulation",
+        "spec_version": "2026.03-openclaw1",
+        "upstream_commit": "59bc3c66300ba93a71b4220146e7135950387770",
+        "upstream_repo": "https://github.com/openclaw/openclaw.git"
+      },
+      "metrics": {
+        "confidence": null,
+        "cost_usd": 0.07,
+        "cycle_time_seconds": 0.513333,
+        "decision_count": 3,
+        "outcome_value_usd": null
+      },
+      "notes": [
+        "OpenClaw comparison is isolated and excluded from live allocator decisions.",
+        "Normalized 2 shared outcome comparison case(s)."
+      ],
+      "source_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/openclaw/normalized/latest.json",
+      "status": "comparison_ready",
+      "system_id": "openclaw"
+    }
+  ],
+  "schema_version": "nontrading_benchmark_comparison.v1",
+  "state": "comparison_ready"
+}

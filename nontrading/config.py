@@ -136,6 +136,7 @@ class RevenueAgentSettings:
     complaint_rate_red: float = 0.003
     bounce_rate_yellow: float = 0.02
     bounce_rate_red: float = 0.05
+    sender_domain_verified: bool = False
     sendgrid_api_key: str | None = None
     mailgun_api_key: str | None = None
     mailgun_domain: str | None = None
@@ -174,6 +175,7 @@ class RevenueAgentSettings:
             complaint_rate_red=_get_float("JJ_REVENUE_COMPLAINT_RATE_RED", 0.003),
             bounce_rate_yellow=_get_float("JJ_REVENUE_BOUNCE_RATE_YELLOW", 0.02),
             bounce_rate_red=_get_float("JJ_REVENUE_BOUNCE_RATE_RED", 0.05),
+            sender_domain_verified=_get_bool("JJ_REVENUE_SENDER_DOMAIN_VERIFIED", False),
             sendgrid_api_key=getenv("SENDGRID_API_KEY"),
             mailgun_api_key=getenv("MAILGUN_API_KEY"),
             mailgun_domain=getenv("MAILGUN_DOMAIN"),

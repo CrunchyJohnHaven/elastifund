@@ -1,0 +1,37 @@
+{
+  "gateway": {
+    "bind": "lan",
+    "auth": {
+      "mode": "token"
+    }
+  },
+  "logging": {
+    "level": "info",
+    "file": "/var/lib/openclaw/state/logs/openclaw-benchmark.jsonl",
+    "consoleStyle": "json"
+  },
+  "plugins": {
+    "allow": [
+      "diagnostics-otel"
+    ],
+    "entries": {
+      "diagnostics-otel": {
+        "enabled": true
+      }
+    }
+  },
+  "diagnostics": {
+    "enabled": true,
+    "otel": {
+      "enabled": true,
+      "endpoint": "http://otel-collector.observability.svc.cluster.local:4318",
+      "protocol": "http/protobuf",
+      "serviceName": "openclaw-benchmark",
+      "traces": true,
+      "metrics": true,
+      "logs": true,
+      "sampleRate": 1.0,
+      "flushIntervalMs": 10000
+    }
+  }
+}

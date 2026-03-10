@@ -391,22 +391,26 @@ class NonTradingTelemetry:
         revenue: float = 0.0,
         gross_margin: float = 0.0,
         is_simulated: bool = False,
+        metadata: Mapping[str, Any] | None = None,
     ) -> TelemetryEvent:
+        payload = {
+            "account_id": account_id,
+            "opportunity_id": opportunity_id,
+            "outcome_id": outcome_id,
+            "fulfillment_status": status,
+            "revenue": revenue,
+            "gross_margin": gross_margin,
+            "gross_margin_pct": _gross_margin_pct(revenue, gross_margin),
+            "is_simulated": is_simulated,
+        }
+        if metadata:
+            payload.update(dict(metadata))
         return self.emit(
             event_type="fulfillment_status_changed",
             entity_type="opportunity",
             entity_id=str(opportunity_id),
             status=status,
-            payload={
-                "account_id": account_id,
-                "opportunity_id": opportunity_id,
-                "outcome_id": outcome_id,
-                "fulfillment_status": status,
-                "revenue": revenue,
-                "gross_margin": gross_margin,
-                "gross_margin_pct": _gross_margin_pct(revenue, gross_margin),
-                "is_simulated": is_simulated,
-            },
+            payload=payload,
         )
 
     def cycle_completed(
