@@ -65,10 +65,11 @@ This file is the single source of truth for the next website build. If the site 
   - best direction PnL `+$70.49`
   - best price bucket `<0.49`
   - best price bucket PnL `+$42.15`
-- JJ-N is real but still pre-launch:
-  - first wedge is the Website Growth Audit
-  - live send, checkout, fulfillment reporting, and revenue claims remain blocked
-  - first-dollar status is `setup_only`, `launchable=false`, `time_to_first_dollar_hours=null`, `paid_revenue_usd=0.0`
+- JJ-N is real and split into two explicit operator states:
+  - `manual_close_now`: open (`launch_mode=manual_close_only`, fulfillment path ready)
+  - `automated_checkout_after_upgrade`: blocked pending new-box env setup
+  - exact env checklist for automated checkout: `PUBLIC_BASE_URL`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
+  - first-dollar public metrics remain `setup_only` with zero paid revenue until a paid order is recorded
 
 ## Elastic employee route contract
 
@@ -108,6 +109,24 @@ This file is the single source of truth for the next website build. If the site 
 
 These are the only primary sources the public site should read directly in this pass.
 
+## Post-upgrade public sync gate
+
+Do not publish fresh README or website runtime claims until a clean post-upgrade packet exists.
+
+Minimum gate to clear before sync:
+
+- `reports/runtime_truth_latest.json` regenerated on the new box with non-null runtime/service fields.
+- `reports/public_runtime_snapshot.json` regenerated from the same cycle.
+- `reports/remote_cycle_status.json` and `reports/remote_service_status.json` regenerated from the same cycle.
+- `reports/launch_packet_latest.json` confirms storage and service checks are healthy.
+
+If any of those are missing, stale, or contradictory:
+
+- Keep public posture `upgrade_blocked`.
+- Keep release posture `shadow_ready_after_upgrade`.
+- Keep Kalshi weather posture `parked_lane`.
+- Do not refresh headline metrics or claim labels in README or route copy.
+
 | Artifact | Role | Notes |
 |---|---|---|
 | `reports/public_runtime_snapshot.json` | primary public runtime snapshot | homepage, trading board, and `/live/` should prefer this |
@@ -116,6 +135,8 @@ These are the only primary sources the public site should read directly in this 
 | `reports/root_test_status.json` | verification headline | use checked-in summary only |
 | `improvement_velocity.json` | BTC5 scoreboard, forecast, confidence, timebound velocity | primary performance-story artifact |
 | `reports/nontrading_public_report.json` | JJ-N public-safe board | Phase 0 board and funnel zeros |
+| `reports/nontrading_launch_summary.json` | JJ-N launch-mode truth | source of `manual_close_only` vs checkout readiness |
+| `reports/nontrading_cycle_packet.json` | JJ-N cycle-level readiness and blockers | use when public report lags behind cycle truth |
 | `inventory/data/systems.json` | benchmarked system count | secondary proof surface |
 | `reports/arb_empirical_snapshot.json` | A-6 and B-1 gate detail | trading board support |
 
@@ -192,6 +213,8 @@ These paths may be read only if they are referenced by an allowed primary artifa
 | `jjn_send_status` | `reports/nontrading_public_report.json.wedge.live_send_status` | must stay explicit |
 | `jjn_fulfillment_status` | `reports/nontrading_public_report.json.launch_summary.fulfillment_ready` | must stay explicit |
 | `jjn_accounts_researched` through `jjn_time_to_first_dollar` | `reports/nontrading_public_report.json.funnel.*` and `first_dollar_readiness.time_to_first_dollar_hours` | zeros/nulls are valid and should remain visible until real data exists |
+| `jjn_manual_close_status` | `reports/nontrading_launch_summary.json.launch_mode` and `reports/nontrading_cycle_packet.json` | render as `manual_close_now` when mode is `manual_close_only` |
+| `jjn_automated_checkout_status` | `reports/nontrading_public_report.json.first_dollar_readiness.launch_gates` | blocked until checkout + billing webhook gates are true |
 
 ## Copy rules
 
@@ -390,3 +413,13 @@ Post-deploy:
 
 - Manually refresh `REPLIT_WEBSITE_CURRENT.pdf`.
 - If any source artifact changes shape, update `site.js` and this file in the same patch.
+
+## Canonical deep-research paste-target bundle
+
+Every operator dispatch packet should include these five copy-paste files as fixed targets:
+
+1. `research/deep_research_prompt.md`
+2. `research/DEEP_RESEARCH_PROMPT_100_STRATEGIES.md`
+3. `research/dispatches/DISPATCH_076_CLAUDE_DEEP_RESEARCH_100_strategies.md`
+4. `research/dispatches/P0_69_chatgpt54_master_prompt_optimization_CHATGPT54.md`
+5. `research/dispatches/P0_77_hft_binary_options_chainlink_barrier_GEMINI_DEEP_RESEARCH.md`
