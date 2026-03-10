@@ -62,6 +62,24 @@ def write_json(path: Path, payload: dict[str, object]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _status_timeline(metadata: dict[str, object] | None) -> list[dict[str, object]]:
+    if not metadata:
+        return []
+    timeline = metadata.get("status_timeline")
+    if not isinstance(timeline, list):
+        return []
+    return [dict(item) for item in timeline if isinstance(item, dict)]
+
+
+def _artifact_catalog(metadata: dict[str, object] | None) -> dict[str, object]:
+    if not metadata:
+        return {}
+    artifacts = metadata.get("artifacts")
+    if not isinstance(artifacts, dict):
+        return {}
+    return {str(key): value for key, value in artifacts.items()}
+
+
 def main() -> int:
     args = parse_args()
     db_path = args.db_path
@@ -96,6 +114,7 @@ def main() -> int:
 
     report_path = output_dir / "nontrading_public_report.json"
     launch_summary_path = output_dir / "nontrading_launch_summary.json"
+    launch_checklist_path = output_dir / "nontrading_launch_operator_checklist.json"
     status_path = output_dir / "nontrading_first_dollar_status.json"
     allocator_path = output_dir / "nontrading_allocator_input.json"
     comparison_path = output_dir / "nontrading_benchmark_comparison.json"
@@ -103,6 +122,7 @@ def main() -> int:
         revenue_store,
         report_path=report_path,
         launch_summary_path=launch_summary_path,
+        launch_checklist_path=launch_checklist_path,
         status_path=status_path,
         allocator_path=allocator_path,
         comparison_path=comparison_path,
@@ -111,10 +131,34 @@ def main() -> int:
     write_sidecar_artifacts(
         report,
         launch_summary_path=launch_summary_path,
+        launch_checklist_path=launch_checklist_path,
         status_path=status_path,
         allocator_path=allocator_path,
         comparison_path=comparison_path,
     )
+    final_order = audit_store.get_order(args.order_id)
+    final_metadata = dict(final_order.metadata) if final_order is not None else {}
+    timeline = _status_timeline(final_metadata)
+    artifacts = _artifact_catalog(final_metadata)
+    ship_artifact = str(artifacts.get("delivery_markdown") or fulfillment.artifact_path)
+    operator_steps = [
+        {
+            "step": "regenerate_report",
+            "status": "completed",
+            "artifact_path": str(report_path),
+        },
+        {
+            "step": "verify_status",
+            "status": "completed" if report["first_dollar_readiness"]["status"] == "first_dollar_observed" else "needs_review",
+            "detail": report["first_dollar_readiness"]["status"],
+            "artifact_path": str(status_path),
+        },
+        {
+            "step": "ship_delivery_pack",
+            "status": "completed" if ship_artifact else "needs_review",
+            "artifact_path": ship_artifact,
+        },
+    ]
 
     summary = {
         "schema_version": "revenue_audit_fulfillment_run.v1",
@@ -125,12 +169,18 @@ def main() -> int:
         "report_status": report["first_dollar_readiness"]["status"],
         "claim_status": report["headline"]["claim_status"],
         "delivery_artifact_paths": list(fulfillment.artifact_paths),
+        "delivery_checklist_path": fulfillment.delivery_checklist_path,
+        "delivery_pack_path": fulfillment.delivery_pack_path,
         "monitor_status": monitor_status,
         "monitor_reason": monitor_reason,
         "monitor_artifact_paths": list(monitor.artifact_paths) if monitor is not None else [],
+        "order_timeline": timeline,
+        "order_artifacts": artifacts,
+        "operator_steps": operator_steps,
         "outputs": {
             "report": str(report_path),
             "launch_summary": str(launch_summary_path),
+            "launch_checklist": str(launch_checklist_path),
             "status": str(status_path),
             "allocator_input": str(allocator_path),
             "comparison": str(comparison_path),
