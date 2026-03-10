@@ -1,7 +1,5 @@
-import os
 import sys
 from datetime import date, datetime, timedelta, timezone
-from unittest.mock import patch
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,11 +12,16 @@ from kalshi.weather_arb import (
     _already_ordered_tickers,
     _current_hourly_usage,
     _normalize_mode,
+    _outstanding_contract_notional,
+    archive_forecast_snapshot,
     _resolve_hourly_budget_usd,
     _validate_args,
     build_weather_signal,
     extract_market_target_date,
+    load_forecast_snapshot_archive,
+    log_settlement_outcomes,
     parse_temperature_contract,
+    reconcile_decisions_with_settlements,
     temperature_probability,
 )
 
@@ -199,6 +202,32 @@ def test_current_hourly_usage_counts_only_recent_executed_rows(tmp_path: Path):
     assert usage.notional_usd == 19.5
 
 
+def test_current_hourly_usage_falls_back_to_legacy_nested_fields(tmp_path: Path):
+    now = datetime(2026, 3, 9, 12, 0, tzinfo=timezone.utc)
+    log = tmp_path / "orders.jsonl"
+    rows = [
+        {
+            "timestamp": (now - timedelta(minutes=10)).isoformat(),
+            "order": {"status": "paper"},
+            "signal": {"size_usd": 4.25},
+        },
+        {
+            "timestamp": (now - timedelta(minutes=15)).isoformat(),
+            "order": {"status": "live"},
+            "signal": {"size_usd": 5.75},
+        },
+        {
+            "timestamp": (now - timedelta(minutes=5)).isoformat(),
+            "order": {"status": "rejected"},
+            "signal": {"size_usd": 9.0},
+        },
+    ]
+    log.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    usage = _current_hourly_usage(now=now, orders_log=log)
+    assert usage.order_count == 2
+    assert usage.notional_usd == 10.0
+
+
 def test_resolve_hourly_budget_prefers_explicit_then_runtime_env():
     env = {
         "JJ_HOURLY_NOTIONAL_BUDGET_USD": "41.25",
@@ -216,6 +245,15 @@ def test_normalize_mode_sets_execute_for_live():
     assert args.mode == "live"
 
 
+def test_normalize_mode_rejects_execute_without_explicit_live_mode():
+    args = SimpleNamespace(mode="paper", execute=True)
+    try:
+        _normalize_mode(args)
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "--mode live" in str(exc)
+
+
 def test_validate_args_rejects_invalid_hourly_limits():
     args = SimpleNamespace(
         edge_threshold=0.1,
@@ -230,6 +268,7 @@ def test_validate_args_rejects_invalid_hourly_limits():
         max_orders=1,
         max_orders_per_hour=-1,
         hourly_budget_usd=50.0,
+        max_contract_notional_usd=5.0,
         interval_seconds=60,
     )
     try:
@@ -279,6 +318,80 @@ def test_already_ordered_tickers_reads_nested_signal(tmp_path: Path):
     assert ("KXHIGHLAX-26MAR09-B73.5", "yes") in result
 
 
+def test_already_ordered_tickers_reads_legacy_order_fields(tmp_path: Path):
+    log = tmp_path / "orders.jsonl"
+    row = {
+        "execute": False,
+        "order": {
+            "ticker": "KXHIGHNY-26MAR09-A64",
+            "side": "no",
+            "status": "paper",
+        },
+    }
+    log.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    result = _already_ordered_tickers(orders_log=log)
+    assert ("KXHIGHNY-26MAR09-A64", "no") in result
+
+
+def test_outstanding_contract_notional_excludes_settled_orders(tmp_path: Path):
+    orders = tmp_path / "orders.jsonl"
+    settlements = tmp_path / "settlements.jsonl"
+    orders.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "market_ticker": "KXHIGHMIA-26MAR09-B84.5",
+                        "execution_result": "live",
+                        "notional_usd": 5.0,
+                        "order_client_id": "cid-live-settled",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "signal": {
+                            "market_ticker": "KXHIGHMIA-26MAR09-B84.5",
+                            "size_usd": 3.5,
+                        },
+                        "order": {
+                            "client_order_id": "cid-paper-open",
+                            "status": "paper",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "market_ticker": "KXHIGHNY-26MAR09-A64",
+                        "execution_result": "paper",
+                        "notional_usd": 2.25,
+                        "order_client_id": "cid-other-open",
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    settlements.write_text(
+        json.dumps(
+            {
+                "order_client_id": "cid-live-settled",
+                "market_ticker": "KXHIGHMIA-26MAR09-B84.5",
+                "side": "no",
+                "matched": True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    outstanding = _outstanding_contract_notional(
+        orders_log=orders,
+        settlement_log=settlements,
+    )
+    assert outstanding["KXHIGHMIA-26MAR09-B84.5"] == 3.5
+    assert outstanding["KXHIGHNY-26MAR09-A64"] == 2.25
+
+
 def test_adaptive_temp_std_same_day_is_smaller():
     today = date.today()
     tomorrow = today + timedelta(days=1)
@@ -316,3 +429,188 @@ def test_build_signal_rejects_negative_spread():
     }
     sig = build_weather_signal("AUS", snapshot, market, edge_threshold=0.05, max_spread=0.15)
     assert sig is None, "Should reject signal with negative spread (crossed market)"
+
+
+def test_forecast_snapshot_archive_roundtrip(tmp_path: Path):
+    archive = tmp_path / "forecast_snapshots.jsonl"
+    snapshot = ForecastSnapshot(
+        city="NYC",
+        target_date="2026-03-09",
+        high_temp_f=62.0,
+        pop_probability=0.35,
+        source_period="Monday",
+    )
+    archive_forecast_snapshot(snapshot, archive_path=archive)
+    rows = load_forecast_snapshot_archive(archive_path=archive)
+    assert len(rows) == 1
+    assert rows[0]["city"] == "NYC"
+    assert rows[0]["target_date"] == "2026-03-09"
+    assert rows[0]["high_temp_f"] == 62.0
+
+
+def test_reconcile_decisions_with_settlements_prefers_client_order_id(tmp_path: Path):
+    decisions = tmp_path / "decisions.jsonl"
+    settlements = tmp_path / "settlements.jsonl"
+    decisions.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "market_ticker": "KXHIGHNY-26MAR09-A64",
+                        "side": "yes",
+                        "execution_mode": "paper",
+                        "execution_result": "paper",
+                        "order_client_id": "cid-123",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "market_ticker": "KXHIGHNY-26MAR09-A66",
+                        "side": "no",
+                        "execution_mode": "paper",
+                        "execution_result": "paper",
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    settlements.write_text(
+        json.dumps(
+            {
+                "order_client_id": "cid-123",
+                "market_ticker": "KXHIGHNY-26MAR09-A64",
+                "side": "yes",
+                "result": "yes",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    summary = reconcile_decisions_with_settlements(
+        decisions_log=decisions,
+        settlement_log=settlements,
+    )
+    assert summary["total_executed_decisions"] == 2
+    assert summary["matched_settlements"] == 1
+    assert summary["unmatched_settlements"] == 1
+
+
+def test_reconcile_decisions_with_settlements_falls_back_to_orders_log(tmp_path: Path):
+    decisions = tmp_path / "missing_decisions.jsonl"
+    orders = tmp_path / "orders.jsonl"
+    settlements = tmp_path / "settlements.jsonl"
+    orders.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "timestamp": "2026-03-09T10:00:00+00:00",
+                        "order": {
+                            "client_order_id": "cid-match",
+                            "ticker": "KXHIGHNY-26MAR09-A64",
+                            "side": "yes",
+                            "status": "paper",
+                        },
+                        "signal": {
+                            "city": "NYC",
+                            "market_ticker": "KXHIGHNY-26MAR09-A64",
+                            "side": "yes",
+                            "size_usd": 4.0,
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-03-09T10:05:00+00:00",
+                        "order": {
+                            "client_order_id": "cid-open",
+                            "ticker": "KXHIGHNY-26MAR09-A66",
+                            "side": "no",
+                            "status": "paper",
+                        },
+                        "signal": {
+                            "city": "NYC",
+                            "market_ticker": "KXHIGHNY-26MAR09-A66",
+                            "side": "no",
+                            "size_usd": 5.0,
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    settlements.write_text(
+        json.dumps(
+            {
+                "order_client_id": "cid-match",
+                "market_ticker": "KXHIGHNY-26MAR09-A64",
+                "side": "yes",
+                "result": "yes",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    summary = reconcile_decisions_with_settlements(
+        decisions_log=decisions,
+        orders_log=orders,
+        settlement_log=settlements,
+    )
+    assert summary["decision_source"] == "orders_log_backfill"
+    assert summary["total_executed_decisions"] == 2
+    assert summary["matched_settlements"] == 1
+    assert summary["unmatched_settlements"] == 1
+
+
+def test_log_settlement_outcomes_appends_matched_row_for_legacy_order(tmp_path: Path):
+    orders = tmp_path / "orders.jsonl"
+    settlements = tmp_path / "settlements.jsonl"
+    orders.write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-03-09T20:00:00+00:00",
+                "order": {
+                    "client_order_id": "cid-legacy",
+                    "ticker": "KXHIGHNY-26MAR09-A64",
+                    "side": "yes",
+                    "status": "paper",
+                },
+                "signal": {
+                    "city": "NYC",
+                    "market_ticker": "KXHIGHNY-26MAR09-A64",
+                    "side": "yes",
+                    "model_probability": 0.62,
+                    "order_probability": 0.41,
+                    "edge": 0.21,
+                    "reason": "legacy nested row",
+                    "size_usd": 4.0,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class StubMarketsApi:
+        def get_market(self, *, ticker: str):
+            assert ticker == "KXHIGHNY-26MAR09-A64"
+            return {"market": {"status": "settled", "result": "yes"}}
+
+    session = SimpleNamespace(markets_api=StubMarketsApi())
+    settled = log_settlement_outcomes(
+        session,
+        orders_log=orders,
+        settlement_log=settlements,
+    )
+
+    rows = [json.loads(line) for line in settlements.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert settled == 1
+    assert len(rows) == 1
+    assert rows[0]["order_client_id"] == "cid-legacy"
+    assert rows[0]["notional_usd"] == 4.0
+    assert rows[0]["matched"] is True
+    assert rows[0]["match_status"] == "matched"

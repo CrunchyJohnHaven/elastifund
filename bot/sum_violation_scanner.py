@@ -113,6 +113,8 @@ class ScanStats:
     events_blocked_no_orderbook: int
     violations_found: int
     elapsed_seconds: float
+    measurement_records: int = 0
+    measurement_executable_records: int = 0
 
 
 @dataclass(frozen=True)
@@ -181,6 +183,9 @@ class SumViolationScanner:
         use_websocket: bool = True,
         ws_chunk_size: int = 200,
         ws_warmup_seconds: float = 1.0,
+        measurement_only: bool = False,
+        measurement_artifact_path: str | Path | None = None,
+        enable_order_routing: bool = False,
     ) -> None:
         self.db_path = Path(db_path)
         self.output_path = Path(output_path)
@@ -199,10 +204,19 @@ class SumViolationScanner:
         self.use_websocket = bool(use_websocket)
         self.ws_chunk_size = max(1, int(ws_chunk_size))
         self.ws_warmup_seconds = max(0.0, float(ws_warmup_seconds))
+        self.measurement_only = bool(measurement_only)
+        self.enable_order_routing = bool(enable_order_routing)
+        if self.measurement_only and self.enable_order_routing:
+            raise ValueError("measurement_only mode forbids order routing")
+        self.measurement_artifact_path = (
+            Path(measurement_artifact_path) if measurement_artifact_path is not None else None
+        )
 
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         self.report_path.parent.mkdir(parents=True, exist_ok=True)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.measurement_artifact_path is not None:
+            self.measurement_artifact_path.parent.mkdir(parents=True, exist_ok=True)
 
         self._session = requests.Session()
         self._quote_store = BestBidAskStore()
@@ -214,6 +228,9 @@ class SumViolationScanner:
             exclude_augmented=True,
         )
         self._latest_opportunities: list = []
+        self._latest_measurement_capture: dict[str, Any] | None = None
+        self._measurement_event_state: dict[str, str] = {}
+        self._measurement_last_scan_ts: int | None = None
 
     def close(self) -> None:
         if self._market_stream is not None:
@@ -799,6 +816,57 @@ class SumViolationScanner:
             for violation in violations:
                 handle.write(json.dumps(self._violation_to_record(violation), sort_keys=True) + "\n")
 
+    def _build_measurement_capture(self, *, scanner: A6SumScanner, batch: Any, now_ts: int) -> dict[str, Any]:
+        cadence_seconds: float | None = None
+        if self._measurement_last_scan_ts is not None:
+            cadence_seconds = max(0.0, float(now_ts - self._measurement_last_scan_ts))
+        records = scanner.build_measurement_records(batch, refresh_cadence_seconds=cadence_seconds)
+
+        state_transitions: list[dict[str, Any]] = []
+        for record in records:
+            previous = self._measurement_event_state.get(record.event_id)
+            if previous is not None and previous != record.state:
+                state_transitions.append(
+                    {
+                        "event_id": record.event_id,
+                        "from_state": previous,
+                        "to_state": record.state,
+                        "detected_at_ts": int(now_ts),
+                    }
+                )
+            self._measurement_event_state[record.event_id] = record.state
+
+        self._measurement_last_scan_ts = int(now_ts)
+        executable_count = sum(1 for record in records if record.state == "executable")
+        blocked_count = sum(1 for record in records if record.state == "blocked")
+        return {
+            "schema_version": "structural_measurement_capture.v1",
+            "mode": "measurement_only" if self.measurement_only else "scan_with_measurement_capture",
+            "generated_at": datetime.fromtimestamp(now_ts, tz=timezone.utc).isoformat(),
+            "non_ordering_guardrail": {
+                "measurement_only": bool(self.measurement_only),
+                "order_routing_enabled": bool(self.enable_order_routing),
+                "order_routing_reachable": False,
+            },
+            "summary": {
+                "events_observed": len(records),
+                "executable_events": executable_count,
+                "blocked_events": blocked_count,
+                "opportunity_frequency_per_hour": (
+                    round((executable_count * 3600.0) / cadence_seconds, 6)
+                    if cadence_seconds and cadence_seconds > 0
+                    else None
+                ),
+            },
+            "capture_window": {
+                "scan_interval_seconds": int(self.interval_seconds),
+                "observed_refresh_cadence_seconds": cadence_seconds,
+                "scanned_at_ts": int(now_ts),
+            },
+            "state_transitions": state_transitions,
+            "measurements": [record.to_dict() for record in records],
+        }
+
     def scan_once(self) -> ScanStats:
         started = time.time()
         now_ts = int(started)
@@ -829,6 +897,8 @@ class SumViolationScanner:
 
         # Build executable A6Opportunity objects from the same engine state.
         self._latest_opportunities = []
+        measurement_records = 0
+        measurement_executable = 0
         if A6SumScanner is not None:
             try:
                 a6_scanner = A6SumScanner(
@@ -842,6 +912,15 @@ class SumViolationScanner:
                 self._latest_opportunities = [
                     opp for opp in batch.opportunities if opp.executable
                 ]
+                capture = self._build_measurement_capture(scanner=a6_scanner, batch=batch, now_ts=now_ts)
+                self._latest_measurement_capture = capture
+                measurement_records = int(capture.get("summary", {}).get("events_observed") or 0)
+                measurement_executable = int(capture.get("summary", {}).get("executable_events") or 0)
+                if self.measurement_artifact_path is not None:
+                    self.measurement_artifact_path.write_text(
+                        json.dumps(capture, indent=2, sort_keys=True),
+                        encoding="utf-8",
+                    )
             except Exception as exc:
                 logger.debug("A6 opportunity extraction failed: %s", exc)
 
@@ -853,6 +932,8 @@ class SumViolationScanner:
             quotes_updated=len(quote_map),
             events_blocked_no_orderbook=len(blocked_event_ids),
             violations_found=len(violations),
+            measurement_records=measurement_records,
+            measurement_executable_records=measurement_executable,
             elapsed_seconds=round(time.time() - started, 3),
         )
 
@@ -903,6 +984,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disable-websocket", action="store_true")
     parser.add_argument("--ws-chunk-size", type=int, default=200)
     parser.add_argument("--ws-warmup-seconds", type=float, default=1.0)
+    parser.add_argument("--measurement-only", action="store_true")
+    parser.add_argument("--measurement-artifact-path", default=None)
+    parser.add_argument("--enable-order-routing", action="store_true")
     parser.add_argument("--max-cycles", type=int, default=None)
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--log-level", default="INFO")
@@ -938,6 +1022,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         use_websocket=use_websocket,
         ws_chunk_size=args.ws_chunk_size,
         ws_warmup_seconds=args.ws_warmup_seconds,
+        measurement_only=bool(args.measurement_only),
+        measurement_artifact_path=args.measurement_artifact_path,
+        enable_order_routing=bool(args.enable_order_routing),
     )
     try:
         scanner.run(once=args.once, max_cycles=args.max_cycles)

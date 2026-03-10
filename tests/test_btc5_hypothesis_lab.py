@@ -5,11 +5,21 @@ from zoneinfo import ZoneInfo
 
 from scripts.btc5_hypothesis_lab import (
     HypothesisSpec,
+    _best_live_followups,
+    _best_one_sided_followups,
+    _capacity_stress_candidates,
+    _candidate_from_profile_result,
+    _follow_up_candidates,
+    _loss_cluster_suppression_candidates,
+    _last_improvement_for_hypothesis,
+    _recommended_session_policy,
     build_hypothesis_specs,
     evaluate_hypothesis_walk_forward,
     priced_rows,
+    rank_hypothesis_pool,
     summarize_hypothesis_history,
 )
+from scripts.btc5_monte_carlo import GuardrailProfile
 
 
 ET_ZONE = ZoneInfo("America/New_York")
@@ -135,3 +145,271 @@ def test_evaluate_hypothesis_walk_forward_finds_persistent_edge() -> None:
     assert result["summary"]["splits_evaluated"] >= 2
     assert result["summary"]["validation_replay_pnl_usd"] > 0.0
     assert result["summary"]["validation_median_arr_pct"] > 0.0
+
+
+def test_recommended_session_policy_matches_runtime_contract() -> None:
+    candidate = {
+        "hypothesis": {
+            "name": "hyp_down_d0.00010_open_et",
+            "session_name": "open_et",
+            "et_hours": [9, 10, 11],
+            "max_abs_delta": 0.0001,
+            "up_max_buy_price": None,
+            "down_max_buy_price": 0.49,
+        }
+    }
+    policy = _recommended_session_policy(candidate)
+    assert len(policy) == 1
+    record = policy[0]
+    assert set(record.keys()) == {"name", "et_hours", "max_abs_delta", "down_max_buy_price"}
+    assert record["name"] == "open_et"
+    assert record["et_hours"] == [9, 10, 11]
+
+
+def test_follow_up_candidates_are_deterministic_and_runtime_ready() -> None:
+    ranked = _follow_up_candidates(
+        [
+            {
+                "hypothesis": {
+                    "name": "zzz",
+                    "session_name": "open_et",
+                    "et_hours": [9, 10, 11],
+                    "max_abs_delta": 0.0001,
+                    "up_max_buy_price": 0.49,
+                    "down_max_buy_price": 0.50,
+                },
+                "summary": {"ranking_score": 2.0, "evidence_band": "candidate"},
+            },
+            {
+                "hypothesis": {
+                    "name": "aaa",
+                    "session_name": "midday_et",
+                    "et_hours": [12, 13],
+                    "max_abs_delta": 0.00008,
+                    "up_max_buy_price": 0.48,
+                    "down_max_buy_price": 0.49,
+                },
+                "summary": {"ranking_score": 2.0, "evidence_band": "validated"},
+            },
+        ]
+    )
+    assert [item["name"] for item in ranked] == ["aaa", "zzz"]
+    assert {
+        "name",
+        "direction",
+        "session_name",
+        "et_hours",
+        "max_abs_delta",
+        "up_max_buy_price",
+        "down_max_buy_price",
+        "ranking_score",
+        "evidence_band",
+        "validation_live_filled_rows",
+        "generalization_ratio",
+        "validation_median_arr_pct",
+        "validation_p05_arr_pct",
+        "arr_improvement_vs_active_pct",
+        "fill_retention_vs_active",
+        "execution_realism_score",
+        "execution_realism_label",
+        "follow_up_families",
+    }.issubset(set(ranked[0].keys()))
+
+
+def test_candidate_from_profile_result_exposes_standard_summary_fields() -> None:
+    profile = GuardrailProfile(
+        "active_profile",
+        max_abs_delta=0.00015,
+        up_max_buy_price=0.49,
+        down_max_buy_price=0.51,
+    )
+    candidate = _candidate_from_profile_result(
+        profile=profile,
+        evaluated={
+            "hypothesis": {
+                "name": "candidate_a",
+                "session_name": "open_et",
+                "et_hours": [9, 10, 11],
+                "max_abs_delta": 0.0001,
+                "up_max_buy_price": 0.49,
+                "down_max_buy_price": 0.50,
+            },
+            "summary": {
+                "ranking_score": 5.0,
+                "evidence_band": "validated",
+                "validation_live_filled_rows": 12,
+                "generalization_ratio": 0.85,
+                "validation_median_arr_pct": 50.0,
+                "validation_p05_arr_pct": 30.0,
+            },
+        },
+    )
+    assert candidate["name"] == "candidate_a"
+    assert candidate["validation_live_filled_rows"] == 12
+    assert candidate["generalization_ratio"] == 0.85
+    assert candidate["validation_median_arr_pct"] == 50.0
+    assert candidate["validation_p05_arr_pct"] == 30.0
+
+
+def test_hypothesis_summary_staleness_fields_are_present() -> None:
+    rows = priced_rows(_synthetic_rows())
+    last_ts = _last_improvement_for_hypothesis(
+        rows,
+        {
+            "name": "down_hour_10",
+            "direction": "DOWN",
+            "max_abs_delta": 0.00010,
+            "up_max_buy_price": None,
+            "down_max_buy_price": 0.49,
+            "et_hours": [10],
+            "session_name": "hour_et_10",
+        },
+    )
+    assert last_ts is not None
+    now = datetime.now(timezone.utc)
+    hours_since = (now - last_ts).total_seconds() / 3600.0
+    assert isinstance(hours_since, float)
+
+
+def test_rank_hypothesis_pool_biases_down_open_quote_bucket() -> None:
+    rows = priced_rows(_synthetic_rows())
+    focused = HypothesisSpec(
+        name="focused_down_open",
+        direction="DOWN",
+        max_abs_delta=0.00010,
+        up_max_buy_price=None,
+        down_max_buy_price=0.48,
+        et_hours=(9, 10, 11),
+        session_name="open_et",
+    )
+    broad = HypothesisSpec(
+        name="broad_up",
+        direction="UP",
+        max_abs_delta=0.00010,
+        up_max_buy_price=0.50,
+        down_max_buy_price=None,
+        et_hours=(12, 13),
+        session_name="midday_et",
+    )
+    ranked = rank_hypothesis_pool(
+        rows,
+        [broad, focused],
+        max_candidates=2,
+        min_live_fills=3,
+    )
+    assert ranked
+    assert ranked[0].name == "focused_down_open"
+
+
+def test_capacity_stress_candidates_emit_scaling_fields() -> None:
+    rows = priced_rows(_synthetic_rows())
+    spec = HypothesisSpec(
+        name="down_hour_10",
+        direction="DOWN",
+        max_abs_delta=0.00010,
+        up_max_buy_price=None,
+        down_max_buy_price=0.49,
+        et_hours=(10,),
+        session_name="hour_et_10",
+    )
+    evaluated = evaluate_hypothesis_walk_forward(
+        rows,
+        spec,
+        paths=100,
+        block_size=2,
+        loss_limit_usd=10.0,
+        seed=7,
+        min_train_rows=8,
+        min_validate_rows=4,
+        min_train_fills=2,
+        min_validate_fills=1,
+    )
+    stress = _capacity_stress_candidates(
+        rows,
+        evaluated,
+        paths=90,
+        block_size=2,
+        loss_limit_usd=10.0,
+        seed=7,
+        min_train_rows=8,
+        min_validate_rows=4,
+        min_train_fills=2,
+        min_validate_fills=1,
+    )
+    assert stress
+    assert {
+        "name",
+        "variant",
+        "expected_fill_lift",
+        "expected_median_pnl_delta_usd",
+        "expected_p05_arr_delta_pct",
+        "evidence_band",
+    }.issubset(stress[0].keys())
+
+
+def test_hypothesis_summary_emits_live_and_one_sided_followups() -> None:
+    rows = priced_rows(_synthetic_rows())
+    specs = build_hypothesis_specs(rows, min_rows_per_hour=4)
+    ranked = rank_hypothesis_pool(rows, specs, max_candidates=6, min_live_fills=3)
+    evaluated = [
+        result
+        for spec in ranked
+        if (
+            result := evaluate_hypothesis_walk_forward(
+                rows,
+                spec,
+                paths=60,
+                block_size=2,
+                loss_limit_usd=10.0,
+                seed=9,
+                min_train_rows=8,
+                min_validate_rows=4,
+                min_train_fills=2,
+                min_validate_fills=1,
+            )
+        )
+    ]
+    follow_ups = _follow_up_candidates(evaluated)
+    assert len(follow_ups) <= 5
+    assert all(isinstance(item.get("follow_up_families"), list) for item in follow_ups)
+    best_live = _best_live_followups(follow_ups)
+    assert len(best_live) <= 5
+    one_sided = _best_one_sided_followups(follow_ups)
+    assert len(one_sided) <= 5
+
+
+def test_loss_cluster_suppression_candidates_identify_negative_clusters() -> None:
+    rows = priced_rows(_synthetic_rows())
+    spec = HypothesisSpec(
+        name="active_any",
+        direction=None,
+        max_abs_delta=0.00015,
+        up_max_buy_price=0.51,
+        down_max_buy_price=0.51,
+        et_hours=tuple(),
+        session_name="any",
+    )
+    evaluated = evaluate_hypothesis_walk_forward(
+        rows,
+        spec,
+        paths=80,
+        block_size=2,
+        loss_limit_usd=10.0,
+        seed=7,
+        min_train_rows=8,
+        min_validate_rows=4,
+        min_train_fills=2,
+        min_validate_fills=1,
+    )
+    clusters = _loss_cluster_suppression_candidates(rows, evaluated)
+    assert isinstance(clusters, list)
+    assert clusters
+    assert {
+        "direction",
+        "session_name",
+        "price_bucket",
+        "delta_bucket",
+        "loss_rows",
+        "total_loss_usd",
+        "suggested_action",
+    }.issubset(clusters[0].keys())

@@ -600,9 +600,266 @@ def test_run_cycle_skips_wallet_signal_for_dedicated_btc5_market(tmp_path, monke
         return True
 
     live.place_order = _place_order
+    telemetry_calls: list[tuple[str, dict]] = []
+    live._safe_elastic_call = lambda method, payload: telemetry_calls.append((method, payload))
 
     summary = asyncio.run(live.run_cycle())
 
     assert summary["status"] == "ok"
     assert summary["trades_placed"] == 0
     assert captured_orders == []
+    signal_events = [payload for method, payload in telemetry_calls if method == "index_signal"]
+    assert len(signal_events) == 1
+    assert signal_events[0]["reason_skipped"] == "btc5_dedicated"
+    assert signal_events[0]["source_components"] == ["wallet_flow"]
+    assert signal_events[0]["signal_sources"] == ["wallet_flow"]
+
+
+def test_run_cycle_rejects_stale_wallet_signal_when_quality_metadata_present(tmp_path, monkeypatch):
+    live = _make_live(
+        tmp_path,
+        markets=[
+            {
+                "id": "m-crypto",
+                "conditionId": "m-crypto",
+                "question": "Will Bitcoin be up or down at 10:15 AM ET?",
+                "outcomePrices": [0.42, 0.58],
+                "clobTokenIds": ["yes-token", "no-token"],
+                "volume": 500.0,
+                "liquidity": 200.0,
+            }
+        ],
+    )
+
+    live.wallet_flow_scores_file.write_text(
+        json.dumps({"wallets": {"0xabc": {"address": "0xabc", "activity_score": 80.0}}})
+    )
+    live.wallet_flow_db_file.touch()
+
+    monkeypatch.setattr(
+        jj_live_module,
+        "wallet_flow_get_signals",
+        lambda: [
+            {
+                "market_id": "m-crypto",
+                "question": "Will Bitcoin be up or down at 10:15 AM ET?",
+                "direction": "buy_yes",
+                "market_price": 0.5,
+                "estimated_prob": 0.74,
+                "edge": 0.18,
+                "confidence": 0.74,
+                "reasoning": "Wallet flow consensus",
+                "source": "wallet_flow",
+                "resolution_hours": 0.25,
+                "velocity_score": 120.0,
+                "wallet_signal_age_seconds": 300,
+                "wallet_consensus_share": 0.80,
+                "wallet_consensus_notional_usd": 150.0,
+            }
+        ],
+    )
+
+    captured_orders: list[dict] = []
+
+    async def _place_order(**kwargs):
+        captured_orders.append(kwargs)
+        return True
+
+    live.place_order = _place_order
+    telemetry_calls: list[tuple[str, dict]] = []
+    live._safe_elastic_call = lambda method, payload: telemetry_calls.append((method, payload))
+
+    summary = asyncio.run(live.run_cycle())
+
+    assert summary["status"] == "ok"
+    assert summary["trades_placed"] == 0
+    assert captured_orders == []
+    signal_events = [payload for method, payload in telemetry_calls if method == "index_signal"]
+    assert len(signal_events) == 1
+    assert signal_events[0]["reason_skipped"] == "wallet_signal_stale"
+    assert signal_events[0]["source_components"] == ["wallet_flow"]
+    assert signal_events[0]["source_combo"] == "wallet_flow"
+    assert signal_events[0]["signal_metadata"]["wallet_signal_age_seconds"] == 300.0
+    assert signal_events[0]["signal_metadata"]["wallet_consensus_share"] == 0.8
+    assert signal_events[0]["signal_metadata"]["wallet_consensus_notional_usd"] == 150.0
+
+
+def test_run_cycle_rejects_low_wallet_consensus_or_notional(tmp_path, monkeypatch):
+    live = _make_live(
+        tmp_path,
+        markets=[
+            {
+                "id": "m-crypto",
+                "conditionId": "m-crypto",
+                "question": "Will Bitcoin be up or down at 10:15 AM ET?",
+                "outcomePrices": [0.42, 0.58],
+                "clobTokenIds": ["yes-token", "no-token"],
+                "volume": 500.0,
+                "liquidity": 200.0,
+            }
+        ],
+    )
+
+    live.wallet_flow_scores_file.write_text(
+        json.dumps({"wallets": {"0xabc": {"address": "0xabc", "activity_score": 80.0}}})
+    )
+    live.wallet_flow_db_file.touch()
+
+    monkeypatch.setattr(
+        jj_live_module,
+        "wallet_flow_get_signals",
+        lambda: [
+            {
+                "market_id": "m-crypto",
+                "question": "Will Bitcoin be up or down at 10:15 AM ET?",
+                "direction": "buy_yes",
+                "market_price": 0.5,
+                "estimated_prob": 0.74,
+                "edge": 0.18,
+                "confidence": 0.74,
+                "reasoning": "Wallet flow consensus",
+                "source": "wallet_flow",
+                "resolution_hours": 0.25,
+                "velocity_score": 120.0,
+                "wallet_signal_age_seconds": 30,
+                "wallet_consensus_share": 0.55,
+                "wallet_consensus_notional_usd": 10.0,
+            }
+        ],
+    )
+
+    captured_orders: list[dict] = []
+
+    async def _place_order(**kwargs):
+        captured_orders.append(kwargs)
+        return True
+
+    live.place_order = _place_order
+    telemetry_calls: list[tuple[str, dict]] = []
+    live._safe_elastic_call = lambda method, payload: telemetry_calls.append((method, payload))
+
+    summary = asyncio.run(live.run_cycle())
+
+    assert summary["status"] == "ok"
+    assert summary["trades_placed"] == 0
+    assert captured_orders == []
+    signal_events = [payload for method, payload in telemetry_calls if method == "index_signal"]
+    assert len(signal_events) == 1
+    assert signal_events[0]["reason_skipped"] == "wallet_consensus_low"
+    assert signal_events[0]["signal_metadata"]["wallet_consensus_share"] == 0.55
+    assert signal_events[0]["signal_metadata"]["wallet_consensus_notional_usd"] == 10.0
+
+
+def test_run_cycle_late_hydrates_wallet_signal_from_window_metadata(tmp_path, monkeypatch):
+    live = _make_live(
+        tmp_path,
+        markets=[
+            {
+                "id": "m-scanner",
+                "conditionId": "cond-scanner",
+                "question": "Bitcoin Up or Down - March 9, 8:00AM-8:15AM ET",
+                "outcomePrices": [0.42, 0.58],
+                "clobTokenIds": ["scanner-yes", "scanner-no"],
+                "volume": 500.0,
+                "liquidity": 200.0,
+                "endDate": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
+            }
+        ],
+    )
+
+    live.wallet_flow_scores_file.write_text(
+        json.dumps({"wallets": {"0xabc": {"address": "0xabc", "activity_score": 80.0}}})
+    )
+    live.wallet_flow_db_file.touch()
+
+    window_start = datetime(2026, 3, 9, 13, 20, tzinfo=timezone.utc)
+    monkeypatch.setattr(
+        jj_live_module,
+        "wallet_flow_get_signals",
+        lambda: [
+            {
+                "market_id": "cond-window-miss",
+                "question": "Bitcoin Up or Down - March 9, 8:20AM-8:25AM ET",
+                "direction": "buy_yes",
+                "market_price": 0.5,
+                "estimated_prob": 0.74,
+                "edge": 0.18,
+                "confidence": 0.74,
+                "reasoning": "Wallet flow consensus",
+                "source": "wallet_flow",
+                "resolution_hours": 0.08,
+                "velocity_score": 120.0,
+                "wallet_window_start_ts": window_start.isoformat(),
+                "wallet_window_minutes": 5,
+                "wallet_signal_age_seconds": 20,
+                "wallet_consensus_share": 0.70,
+                "wallet_consensus_notional_usd": 45.0,
+            }
+        ],
+    )
+
+    fetch_calls: list[str] = []
+
+    async def _fetch_market_metadata_for_signal(market_id, market_lookup):
+        fetch_calls.append(market_id)
+        if market_id == "cond-window":
+            market_lookup["cond-window"] = {
+                "question": "Bitcoin Up or Down - March 9, 8:20AM-8:25AM ET",
+                "token_ids": ["window-yes", "window-no"],
+                "yes_price": 0.43,
+                "volume": 640.0,
+                "liquidity": 280.0,
+                "tags": [],
+                "category": "crypto",
+                "resolution_hours": 0.08,
+                "llm_allowed": False,
+                "market_gate_reason": "ok",
+            }
+            return market_lookup["cond-window"]
+        return None
+
+    live._fetch_market_metadata_for_signal = _fetch_market_metadata_for_signal
+
+    async def _fetch_recent_trade_hydrated_markets():
+        return (
+            [
+                {
+                    "id": "m-window",
+                    "conditionId": "cond-window",
+                    "question": "Bitcoin Up or Down - March 9, 8:20AM-8:25AM ET",
+                    "slug": "btc-updown-5m-1741526400",
+                    "outcomePrices": [0.43, 0.57],
+                    "clobTokenIds": ["window-yes", "window-no"],
+                    "volume": 800.0,
+                    "liquidity": 320.0,
+                    "endDate": (window_start + timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+                    "acceptingOrders": True,
+                    "closed": False,
+                }
+            ],
+            {
+                "recent_trades_fetched": 1000,
+                "recent_market_hydrations": 1,
+                "recent_fast_markets_seen": 1,
+            },
+        )
+
+    live._fetch_recent_trade_hydrated_markets = _fetch_recent_trade_hydrated_markets
+
+    captured_orders: list[dict] = []
+
+    async def _place_order(**kwargs):
+        captured_orders.append(kwargs)
+        return True
+
+    live.place_order = _place_order
+
+    summary = asyncio.run(live.run_cycle())
+
+    assert summary["status"] == "ok"
+    assert summary["trades_placed"] == 1
+    assert "cond-window-miss" in fetch_calls
+    assert "cond-window" in fetch_calls
+    assert captured_orders
+    assert captured_orders[0]["market_id"] == "cond-window-miss"
+    assert captured_orders[0]["price"] == 0.43

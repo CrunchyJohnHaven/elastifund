@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -27,6 +27,18 @@ class ServiceOffer:
     ideal_customer_profile: Mapping[str, Any]
     fulfillment_type: str
     scoring_criteria: Mapping[str, Any]
+    funnel_stages: tuple[str, ...] = field(
+        default_factory=lambda: (
+            "intake",
+            "approval",
+            "outreach",
+            "meeting",
+            "proposal",
+            "fulfillment",
+            "outcome",
+        )
+    )
+    fulfillment_provisioning: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         name = str(self.name).strip()
@@ -55,6 +67,12 @@ class ServiceOffer:
         object.__setattr__(self, "ideal_customer_profile", _freeze_value(dict(self.ideal_customer_profile)))
         object.__setattr__(self, "fulfillment_type", fulfillment_type)
         object.__setattr__(self, "scoring_criteria", _freeze_value(dict(self.scoring_criteria)))
+        object.__setattr__(
+            self,
+            "funnel_stages",
+            tuple(str(stage).strip().lower() for stage in self.funnel_stages if str(stage).strip()),
+        )
+        object.__setattr__(self, "fulfillment_provisioning", _freeze_value(dict(self.fulfillment_provisioning)))
 
 
 WEBSITE_GROWTH_AUDIT = ServiceOffer(
@@ -93,6 +111,12 @@ WEBSITE_GROWTH_AUDIT = ServiceOffer(
         "compliance_simplicity": 0.10,
         "capital_required": 0.05,
         "sales_cycle_length": 0.05,
+    },
+    fulfillment_provisioning={
+        "workspace": "pending",
+        "data_intake": "pending",
+        "audit_brief": "pending",
+        "delivery_packet": "pending",
     },
 )
 

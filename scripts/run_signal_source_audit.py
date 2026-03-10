@@ -281,6 +281,33 @@ def _recommend_source(
     return ("demote_to_tiebreaker", "Mixed evidence: keep collecting data without granting primary sizing.")
 
 
+def _best_win_rate_entry(metrics_map: dict[str, dict[str, Any]], key_name: str) -> dict[str, Any] | None:
+    ranked: list[tuple[float, int, float, str, dict[str, Any]]] = []
+    for label, metrics in metrics_map.items():
+        win_rate = metrics.get("win_rate")
+        if win_rate is None:
+            continue
+        ranked.append(
+            (
+                _safe_float(win_rate, 0.0),
+                int(metrics.get("resolved_trades", 0) or 0),
+                _safe_float(metrics.get("total_pnl"), 0.0),
+                str(label),
+                metrics,
+            )
+        )
+    if not ranked:
+        return None
+    best_win_rate, resolved_trades, total_pnl, label, metrics = max(ranked)
+    return {
+        key_name: label,
+        "win_rate": best_win_rate,
+        "resolved_trades": resolved_trades,
+        "total_trades": int(metrics.get("total_trades", 0) or 0),
+        "total_pnl": total_pnl,
+    }
+
+
 def build_audit_payload(
     *,
     db_path: Path,
@@ -370,7 +397,44 @@ def build_audit_payload(
         "wallet_flow_only": cohort_metrics["wallet_flow_only"],
         "llm_only": llm_only,
         "llm_and_wallet_flow": cohort_metrics["llm_and_wallet_flow"],
+        "wallet_flow_any_win_rate": wallet_flow_any.get("win_rate"),
+        "llm_only_win_rate": llm_only.get("win_rate"),
         "wallet_flow_any_win_rate_delta_vs_llm_only": wallet_flow_delta,
+        "winner": (
+            "wallet_flow"
+            if wallet_flow_delta is not None and wallet_flow_delta > 0
+            else "llm_only"
+            if wallet_flow_delta is not None and wallet_flow_delta < 0
+            else "tie"
+            if wallet_flow_delta == 0
+            else None
+        ),
+    }
+    combined_sources = [value for key, value in combo_metrics.items() if "+" in str(key)]
+    single_sources = [value for key, value in combo_metrics.items() if "+" not in str(key)]
+    combined_vs_single: dict[str, Any] = {
+        "status": "insufficient_data",
+        "combined_sources_beat_single_source_lanes": None,
+        "combined_best_win_rate": None,
+        "single_best_win_rate": None,
+        "winner": None,
+    }
+    combined_win_rates = [metrics.get("win_rate") for metrics in combined_sources if metrics.get("win_rate") is not None]
+    single_win_rates = [metrics.get("win_rate") for metrics in single_sources if metrics.get("win_rate") is not None]
+    if combined_win_rates and single_win_rates:
+        combined_best = max(_safe_float(value, 0.0) for value in combined_win_rates)
+        single_best = max(_safe_float(value, 0.0) for value in single_win_rates)
+        combined_vs_single = {
+            "status": "ready",
+            "combined_sources_beat_single_source_lanes": combined_best > single_best,
+            "combined_best_win_rate": combined_best,
+            "single_best_win_rate": single_best,
+            "winner": "combined" if combined_best > single_best else "single_source" if single_best > combined_best else "tie",
+        }
+
+    ranking_snapshot = {
+        "best_component_source": _best_win_rate_entry(component_metrics, "source"),
+        "best_source_combo": _best_win_rate_entry(combo_metrics, "source_combo"),
     }
 
     recommendations: dict[str, dict[str, Any]] = {}
@@ -430,6 +494,20 @@ def build_audit_payload(
         "by_source_combo": combo_metrics,
         "observed_extra_sources": extra_metrics,
         "wallet_flow_vs_llm": wallet_flow_comparison,
+        "combined_sources_vs_single_source": combined_vs_single,
+        "ranking_snapshot": ranking_snapshot,
+        "capital_ranking_support": {
+            "stale_threshold_hours": 6.0,
+            "trade_attribution_ready": all(
+                column in set(db_columns)
+                for column in ("source", "source_combo", "source_components_json", "source_count")
+            )
+            and state_snapshot["trade_log_has_source_attribution"],
+            "wallet_flow_vs_llm_status": wallet_flow_comparison["status"],
+            "combined_sources_vs_single_source_status": combined_vs_single["status"],
+            "best_component_source": (ranking_snapshot.get("best_component_source") or {}).get("source"),
+            "best_source_combo": (ranking_snapshot.get("best_source_combo") or {}).get("source_combo"),
+        },
         "recommendations": recommendations,
     }
 

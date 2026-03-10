@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -58,7 +59,9 @@ def seed_pipeline_leads(store: RevenueStore) -> None:
     store.append_suppression("sales@suppressed.example", reason="manual_test", source="pytest")
 
 
-def test_pipeline_run_cycle_processes_full_dry_run(tmp_path: Path) -> None:
+def test_pipeline_run_cycle_processes_full_dry_run(tmp_path: Path, monkeypatch) -> None:
+    cycle_report_path = tmp_path / "reports" / "website_growth_audit_cycle_reports.jsonl"
+    monkeypatch.setenv("JJ_NONTRADING_CYCLE_REPORT_PATH", str(cycle_report_path))
     settings = make_settings(tmp_path)
     store, pipeline = build_runtime(settings, dry_run=True)
     seed_pipeline_leads(store)
@@ -72,14 +75,26 @@ def test_pipeline_run_cycle_processes_full_dry_run(tmp_path: Path) -> None:
     assert report.suppressed_leads == 1
     assert report.accounts_researched == 2
     assert report.qualified_accounts == 1
+    assert report.outreach_approved == 1
+    assert report.outreach_blocked == 0
     assert report.outreach_sent == 1
     assert report.replies_recorded == 1
     assert report.meetings_booked == 1
     assert report.proposals_sent == 1
+    assert report.fulfillment_planned == 1
     assert report.outcomes_recorded == 1
+    assert report.offer_slug == "website-growth-audit"
+    assert report.funnel_stage_counts is not None
+    assert report.persisted_report_path == str(cycle_report_path)
     assert snapshot["accounts"] == 2
     assert snapshot["crm_opportunities"] == 2
     assert len(store.list_outbox_messages()) == 1
+    opportunities = store.list_opportunities()
+    assert any("fulfillment" in dict(item.metadata) for item in opportunities if item.status != "research_only")
+    assert cycle_report_path.exists()
+    payloads = [json.loads(line) for line in cycle_report_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert payloads[-1]["fulfillment_planned"] == 1
+    assert payloads[-1]["outreach_approved"] == 1
     assert {
         "account_researched",
         "message_sent",
@@ -91,7 +106,9 @@ def test_pipeline_run_cycle_processes_full_dry_run(tmp_path: Path) -> None:
     }.issubset(events)
 
 
-def test_pipeline_honors_kill_switch_before_processing(tmp_path: Path) -> None:
+def test_pipeline_honors_kill_switch_before_processing(tmp_path: Path, monkeypatch) -> None:
+    cycle_report_path = tmp_path / "reports" / "blocked_cycle_reports.jsonl"
+    monkeypatch.setenv("JJ_NONTRADING_CYCLE_REPORT_PATH", str(cycle_report_path))
     settings = make_settings(tmp_path)
     store, pipeline = build_runtime(settings, dry_run=True)
     seed_pipeline_leads(store)
@@ -102,6 +119,8 @@ def test_pipeline_honors_kill_switch_before_processing(tmp_path: Path) -> None:
     assert report.status == "blocked"
     assert report.reason == "engine_kill_switch"
     assert report.blocked_stage == "revenue_pipeline"
+    assert report.persisted_report_path == str(cycle_report_path)
+    assert cycle_report_path.exists()
     assert store.list_accounts() == []
 
 

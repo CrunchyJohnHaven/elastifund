@@ -24,7 +24,7 @@ Notes:
   - The VPS target defaults to $VPS_USER@$VPS_IP from .env or the shell environment.
   - The remote deploy target is a file copy, not a git checkout.
   - The remote .env is never uploaded from local; it is only edited in place with --clean-env.
-  - Runtime-affecting deploys refresh the checked-in status artifacts locally after the remote step.
+  - Runtime-affecting deploys refresh the checked-in status artifacts and repo-root public metrics locally after the remote step.
 EOF
 }
 
@@ -236,6 +236,7 @@ refresh_runtime_artifacts() {
         cd "$PROJECT_DIR"
         python3 scripts/write_remote_cycle_status.py \
             --service-status-json reports/remote_service_status.json
+        python3 scripts/render_public_metrics.py
     )
 }
 
@@ -269,6 +270,9 @@ if [ -f "$PROJECT_DIR/config/btc5_strategy.env" ]; then
 fi
 if [ -f "$PROJECT_DIR/config/flywheel_runtime.local.json" ]; then
     sync_file "config/flywheel_runtime.local.json"
+fi
+if [ -f "$PROJECT_DIR/state/btc5_autoresearch.env" ]; then
+    sync_file "state/btc5_autoresearch.env"
 fi
 for local_path in "$PROJECT_DIR"/config/runtime_profiles/*.json; do
     relative_path="config/runtime_profiles/$(basename "$local_path")"

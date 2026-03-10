@@ -90,6 +90,9 @@ def test_build_remote_cycle_status_includes_polymarket_wallet_observation(
     assert status["runtime"]["polymarket_live_orders"] == 2
     assert status["runtime"]["polymarket_open_positions"] == 3
     assert status["runtime"]["polymarket_closed_positions_realized_pnl_usd"] == -1.49
+    assert status["accounting_reconciliation"]["unmatched_open_positions"]["delta_remote_minus_local"] == 3
+    assert status["accounting_reconciliation"]["unmatched_closed_positions"]["delta_remote_minus_local"] == 4
+    assert status["accounting_reconciliation"]["source_confidence_freshness"]["remote_wallet"]["confidence_score"] >= 0.5
 
 
 def test_build_remote_cycle_status_includes_btc5_maker_observation(tmp_path: Path):
@@ -184,6 +187,16 @@ def test_build_remote_cycle_status_includes_btc5_maker_observation(tmp_path: Pat
     assert status["btc_5min_maker"]["fill_attribution"]["recent_direction_regime"]["favored_direction"] == "DOWN"
     assert status["btc_5min_maker"]["fill_attribution"]["recent_direction_regime"]["weaker_direction"] == "UP"
     assert status["btc_5min_maker"]["fill_attribution"]["recent_direction_regime"]["triggered"] is False
+    assert status["btc_5min_maker"]["intraday_live_summary"]["filled_rows_today"] == 3
+    assert status["btc_5min_maker"]["intraday_live_summary"]["filled_pnl_usd_today"] == 5.6231
+    assert status["btc_5min_maker"]["intraday_live_summary"]["win_rate_today"] == 0.6667
+    assert status["btc_5min_maker"]["intraday_live_summary"]["recent_5_pnl_usd"] == 5.6231
+    assert status["btc_5min_maker"]["intraday_live_summary"]["recent_12_pnl_usd"] == 5.6231
+    assert status["btc_5min_maker"]["intraday_live_summary"]["skip_price_count"] == 0
+    assert status["btc_5min_maker"]["intraday_live_summary"]["order_failed_count"] == 0
+    assert status["btc_5min_maker"]["intraday_live_summary"]["cancelled_unfilled_count"] == 0
+    assert status["btc_5min_maker"]["intraday_live_summary"]["best_direction_today"]["label"] == "DOWN"
+    assert status["btc_5min_maker"]["intraday_live_summary"]["best_price_bucket_today"]["label"] == "<0.49"
     assert status["runtime"]["btc5_live_filled_rows"] == 3
     assert status["runtime"]["btc5_latest_order_status"] == "live_filled"
     assert status["runtime"]["btc5_latest_trade_pnl_usd"] == 5.416
@@ -193,6 +206,7 @@ def test_build_remote_cycle_status_includes_btc5_maker_observation(tmp_path: Pat
     assert status["runtime"]["btc5_recent_regime_favored_direction"] == "DOWN"
     assert status["runtime"]["btc5_recent_regime_weaker_direction"] == "UP"
     assert status["runtime"]["btc5_recent_regime_triggered"] is False
+    assert status["runtime"]["btc5_intraday_live_summary"]["filled_pnl_usd_today"] == 5.6231
 
 
 def test_build_remote_cycle_status_refreshes_data_cadence_from_live_observations(
@@ -772,30 +786,789 @@ def test_write_remote_cycle_status_emits_runtime_truth_and_public_snapshot(
     assert runtime_truth["reconciliation"]["btc_5min_maker"]["db_path"].endswith("data/btc_5min_maker.db")
     assert runtime_truth["reconciliation"]["btc_5min_maker"]["live_filled_pnl_usd"] == 5.4184
     assert runtime_truth["reconciliation"]["btc_5min_maker"]["fill_attribution"]["best_price_bucket"]["label"] == "<0.49"
+    assert runtime_truth["reconciliation"]["accounting"]["drift_detected"] is True
+    assert runtime_truth["reconciliation"]["accounting"]["unmatched_open_positions"]["delta_remote_minus_local"] == 5
+    assert runtime_truth["reconciliation"]["accounting"]["unmatched_closed_positions"]["delta_remote_minus_local"] == 2
+    assert runtime_truth["accounting_reconciliation"]["source_confidence_freshness"]["remote_wallet"]["freshness"] in {"fresh", "aging", "stale", "unknown"}
+    assert any(reason.startswith("Accounting drift: ") for reason in runtime_truth["drift"]["reasons"])
     assert runtime_truth["reconciliation"]["polymarket_wallet"]["free_collateral_usd"] == 0.0
     assert runtime_truth["state_improvement"]["hourly_budget_progress"]["window_minutes"] == 60
     assert runtime_truth["state_improvement"]["per_venue_candidate_counts"]["polymarket"] >= 0
     assert isinstance(runtime_truth["state_improvement"]["reject_reasons"], list)
     assert runtime_truth["state_improvement"]["operator_digest"]
     assert runtime_truth["state_improvement"]["strategy_recommendations"]["btc5_edge_profile"]["best_direction"]["label"] == "UP"
+    scoreboard = runtime_truth["state_improvement"]["strategy_recommendations"]["public_performance_scoreboard"]
+    capital_gate = runtime_truth["state_improvement"]["strategy_recommendations"]["capital_addition_readiness"]
+    assert scoreboard["fund_realized_arr_claim_status"] == "blocked"
+    assert scoreboard["fund_realized_arr_claim_reason"].startswith("fund_realized_arr_claim_blocked")
+    assert scoreboard["realized_btc5_sleeve_window_live_fills"] == 1
+    assert scoreboard["realized_btc5_sleeve_window_pnl_usd"] == 5.4184
+    assert scoreboard["realized_btc5_sleeve_window_hours"] is not None
+    assert scoreboard["realized_btc5_sleeve_run_rate_pct"] is not None
+    assert scoreboard["intraday_live_summary"]["filled_rows_today"] == 1
+    assert scoreboard["intraday_live_summary"]["filled_pnl_usd_today"] == 5.4184
+    assert scoreboard["intraday_live_summary"]["recent_5_pnl_usd"] == 5.4184
+    assert scoreboard["intraday_live_summary"]["skip_price_count"] == 0
+    assert scoreboard["intraday_live_summary"]["order_failed_count"] == 0
+    assert scoreboard["intraday_live_summary"]["best_direction_today"]["label"] == "UP"
+    assert scoreboard["intraday_live_summary"]["best_price_bucket_today"]["label"] == "<0.49"
+    assert scoreboard["timebound_velocity_forecast_gain_pct"] is None
+    assert scoreboard["timebound_velocity_forecast_gain_pct_per_day"] is None
+    assert capital_gate["fund"]["status"] == "hold"
+    assert capital_gate["fund"]["recommended_amount_usd"] == 0
+    assert capital_gate["polymarket_btc5"]["status"] == "hold"
+    assert capital_gate["kalshi_weather"]["status"] == "hold"
+    assert capital_gate["next_1000_usd"]["status"] == "hold"
+    assert capital_gate["next_1000_usd"]["recommended_amount_usd"] == 0
     assert public_snapshot["snapshot_source"] == "reports/runtime_truth_latest.json"
     assert public_snapshot["service"]["status"] == "running"
     assert "host" not in public_snapshot["service"]
     assert public_snapshot["capital"]["polymarket_actual_deployable_usd"] == 0.0
     assert public_snapshot["polymarket_wallet"]["total_wallet_value_usd"] == 60.67
     assert public_snapshot["runtime"]["btc5_source"] == "local_sqlite_db"
+    assert public_snapshot["runtime"]["btc5_intraday_live_summary"]["filled_rows_today"] == 1
     assert public_snapshot["btc_5min_maker"]["live_filled_pnl_usd"] == 5.4184
     assert public_snapshot["btc_5min_maker"]["source"] == "local_sqlite_db"
     assert public_snapshot["btc_5min_maker"]["fill_attribution"]["best_price_bucket"]["label"] == "<0.49"
+    assert public_snapshot["btc_5min_maker"]["intraday_live_summary"]["filled_pnl_usd_today"] == 5.4184
     assert public_snapshot["runtime"]["btc5_live_filled_rows"] == 1
     assert "maker_address" not in public_snapshot["polymarket_wallet"]
     assert public_snapshot["state_improvement"]["operator_digest"]
+    assert (
+        public_snapshot["state_improvement"]["strategy_recommendations"]["public_performance_scoreboard"]["fund_realized_arr_claim_status"]
+        == "blocked"
+    )
+    assert (
+        public_snapshot["state_improvement"]["strategy_recommendations"]["capital_addition_readiness"]["next_1000_usd"]["status"]
+        == "hold"
+    )
     assert any(
         "jj-live.service is running while launch posture remains blocked" in headline
         for headline in public_snapshot["operator_headlines"]
     )
     assert (tmp_path / "reports" / "state_improvement_latest.json").exists()
     assert (tmp_path / "reports" / "state_improvement_digest.md").exists()
+
+
+def test_write_remote_cycle_status_populates_btc5_forecast_confidence_from_research(
+    tmp_path: Path,
+    monkeypatch,
+):
+    _write_base_remote_state(tmp_path)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    _write_json(
+        tmp_path / "reports" / "remote_service_status.json",
+        {
+            "checked_at": now.isoformat(),
+            "status": "stopped",
+            "systemctl_state": "inactive",
+            "detail": "inactive",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "root_test_status.json",
+        {
+            "checked_at": now.isoformat(),
+            "command": "make test",
+            "status": "passing",
+            "summary": "12 passed",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "arb_empirical_snapshot.json",
+        {
+            "gating_metrics": {
+                "all_gates_pass": False,
+                "fill_probability_gate": "insufficient_data",
+                "half_life_gate": "fail",
+                "half_life_seconds": 0.0,
+                "settlement_path_gate": "untested",
+            },
+            "b1": {},
+        },
+    )
+    _write_btc5_db(
+        tmp_path / "data" / "btc_5min_maker.db",
+        [
+            {
+                "window_start_ts": 1773061200,
+                "window_end_ts": 1773061500,
+                "slug": "btc-updown-5m-1773061200",
+                "decision_ts": 1773061499,
+                "direction": "UP",
+                "order_price": 0.49,
+                "trade_size_usd": 5.0,
+                "order_status": "live_filled",
+                "filled": 1,
+                "pnl_usd": 5.0,
+                "created_at": now.isoformat(),
+                "updated_at": now.isoformat(),
+            },
+        ],
+    )
+    _write_json(
+        tmp_path / "reports" / "btc5_autoresearch" / "latest.json",
+        {
+            "generated_at": now.isoformat(),
+            "active_profile": {
+                "name": "active",
+                "max_abs_delta": 0.00015,
+                "up_max_buy_price": 0.49,
+                "down_max_buy_price": 0.51,
+            },
+            "best_candidate": {
+                "profile": {
+                    "name": "best",
+                    "max_abs_delta": 0.00010,
+                    "up_max_buy_price": 0.49,
+                    "down_max_buy_price": 0.51,
+                }
+            },
+            "arr_tracking": {
+                "current_median_arr_pct": 100.0,
+                "best_median_arr_pct": 125.0,
+                "median_arr_delta_pct": 25.0,
+                "current_p05_arr_pct": 40.0,
+                "best_p05_arr_pct": 45.0,
+            },
+            "decision": {"action": "hold", "reason": "validation still building"},
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "btc5_autoresearch_loop" / "latest.json",
+        {
+            "summary": {"last_cycle_finished_at": now.isoformat()},
+            "latest_entry": {
+                "arr": {
+                    "active_median_arr_pct": 100.0,
+                    "best_median_arr_pct": 125.0,
+                    "active_p05_arr_pct": 40.0,
+                    "best_p05_arr_pct": 45.0,
+                    "median_arr_delta_pct": 25.0,
+                }
+            },
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "btc5_hypothesis_lab" / "summary.json",
+        {
+            "generated_at": now.isoformat(),
+            "best_hypothesis": {
+                "hypothesis": {
+                    "name": "midday-policy",
+                    "session_name": "midday_et",
+                    "et_hours": [12, 13],
+                    "max_abs_delta": 0.00015,
+                    "up_max_buy_price": 0.49,
+                    "down_max_buy_price": 0.49,
+                },
+                "summary": {
+                    "validation_live_filled_rows": 8,
+                    "generalization_ratio": 0.85,
+                    "evidence_band": "candidate",
+                },
+            },
+            "baseline": {"deduped_live_filled_rows": 12},
+        },
+    )
+
+    monkeypatch.setattr(
+        "scripts.write_remote_cycle_status._load_polymarket_wallet_state",
+        lambda root: {"status": "unavailable", "checked_at": now.isoformat()},
+    )
+
+    write_remote_cycle_status(tmp_path)
+    runtime_truth = json.loads((tmp_path / "reports" / "runtime_truth_latest.json").read_text())
+    public_snapshot = json.loads((tmp_path / "reports" / "public_runtime_snapshot.json").read_text())
+
+    strategy = runtime_truth["state_improvement"]["strategy_recommendations"]
+    forecast = strategy["btc5_forecast_confidence"]
+    edge_profile = strategy["btc5_edge_profile"]
+
+    assert forecast["confidence_label"] == "medium"
+    assert forecast["validation_live_filled_rows"] == 8
+    assert forecast["generalization_ratio"] == 0.85
+    assert forecast["active_median_arr_pct"] == 100.0
+    assert forecast["best_median_arr_pct"] == 125.0
+    assert forecast["median_arr_delta_pct"] == 25.0
+    assert "reports/btc5_autoresearch/latest.json" in forecast["source_artifacts"]
+    assert edge_profile["active_profile"]["name"] == "active"
+    assert edge_profile["best_profile"]["name"] == "best"
+    assert edge_profile["recommended_session_policy"][0]["name"] == "midday-policy"
+    assert edge_profile["validation_live_filled_rows"] == 8
+    assert public_snapshot["state_improvement"]["strategy_recommendations"]["btc5_forecast_confidence"]["confidence_label"] == "medium"
+
+
+def test_write_remote_cycle_status_marks_missing_or_stale_primary_research_artifacts(
+    tmp_path: Path,
+    monkeypatch,
+):
+    _write_base_remote_state(tmp_path)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    stale_time = (now - timedelta(hours=7)).isoformat()
+    _write_json(
+        tmp_path / "reports" / "remote_service_status.json",
+        {
+            "checked_at": now.isoformat(),
+            "status": "stopped",
+            "systemctl_state": "inactive",
+            "detail": "inactive",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "root_test_status.json",
+        {
+            "checked_at": now.isoformat(),
+            "command": "make test",
+            "status": "passing",
+            "summary": "12 passed",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "arb_empirical_snapshot.json",
+        {
+            "gating_metrics": {
+                "all_gates_pass": False,
+                "fill_probability_gate": "insufficient_data",
+                "half_life_gate": "fail",
+                "half_life_seconds": 0.0,
+                "settlement_path_gate": "untested",
+            },
+            "b1": {},
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "btc5_autoresearch" / "latest.json",
+        {
+            "generated_at": stale_time,
+            "arr_tracking": {
+                "current_median_arr_pct": 100.0,
+                "best_median_arr_pct": 120.0,
+                "median_arr_delta_pct": 20.0,
+                "current_p05_arr_pct": 30.0,
+                "best_p05_arr_pct": 35.0,
+            },
+        },
+    )
+
+    monkeypatch.setattr(
+        "scripts.write_remote_cycle_status._load_polymarket_wallet_state",
+        lambda root: {"status": "unavailable", "checked_at": now.isoformat()},
+    )
+
+    write_remote_cycle_status(tmp_path)
+    runtime_truth = json.loads((tmp_path / "reports" / "runtime_truth_latest.json").read_text())
+    reasons = runtime_truth["state_improvement"]["strategy_recommendations"]["btc5_forecast_confidence"]["confidence_reasons"]
+
+    assert any(reason.startswith("stale_primary_research_artifact:reports/btc5_autoresearch/latest.json") for reason in reasons)
+    assert any(reason.startswith("missing_primary_research_artifact:reports/btc5_autoresearch_loop/latest.json") for reason in reasons)
+
+
+def test_write_remote_cycle_status_public_forecast_selection_prefers_confidence_then_deploy_rank(
+    tmp_path: Path,
+    monkeypatch,
+):
+    _write_base_remote_state(tmp_path)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    _write_json(
+        tmp_path / "reports" / "remote_service_status.json",
+        {
+            "checked_at": now.isoformat(),
+            "status": "stopped",
+            "systemctl_state": "inactive",
+            "detail": "inactive",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "root_test_status.json",
+        {
+            "checked_at": now.isoformat(),
+            "command": "make test",
+            "status": "passing",
+            "summary": "12 passed",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "arb_empirical_snapshot.json",
+        {
+            "gating_metrics": {
+                "all_gates_pass": False,
+                "fill_probability_gate": "insufficient_data",
+                "half_life_gate": "fail",
+                "half_life_seconds": 0.0,
+                "settlement_path_gate": "untested",
+            },
+            "b1": {},
+        },
+    )
+    _write_btc5_db(
+        tmp_path / "data" / "btc_5min_maker.db",
+        [
+            {
+                "window_start_ts": 1773061200,
+                "window_end_ts": 1773061500,
+                "slug": "btc-updown-5m-1773061200",
+                "decision_ts": 1773061499,
+                "direction": "UP",
+                "order_price": 0.49,
+                "trade_size_usd": 5.0,
+                "order_status": "live_filled",
+                "filled": 1,
+                "pnl_usd": 5.0,
+                "created_at": now.isoformat(),
+                "updated_at": now.isoformat(),
+            },
+        ],
+    )
+    _write_json(
+        tmp_path / "reports" / "btc5_autoresearch" / "latest.json",
+        {
+            "generated_at": now.isoformat(),
+            "arr_tracking": {
+                "current_median_arr_pct": 100.0,
+                "best_median_arr_pct": 120.0,
+                "median_arr_delta_pct": 20.0,
+            },
+            "deploy_recommendation": "hold",
+            "package_confidence_label": "medium",
+            "package_confidence_reasons": ["baseline_medium_confidence"],
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "btc5_autoresearch_current_probe" / "latest.json",
+        {
+            "generated_at": (now - timedelta(hours=1)).isoformat(),
+            "arr_tracking": {
+                "current_median_arr_pct": 120.0,
+                "best_median_arr_pct": 180.0,
+                "median_arr_delta_pct": 60.0,
+            },
+            "deploy_recommendation": "promote",
+            "package_confidence_label": "high",
+            "package_confidence_reasons": ["probe_live_validation_strong"],
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "btc5_autoresearch_loop" / "latest.json",
+        {
+            "summary": {"last_cycle_finished_at": now.isoformat()},
+            "latest_entry": {
+                "arr": {
+                    "active_median_arr_pct": 121.0,
+                    "best_median_arr_pct": 170.0,
+                    "median_arr_delta_pct": 49.0,
+                },
+                "deploy_recommendation": "shadow_only",
+                "package_confidence_label": "high",
+            },
+        },
+    )
+
+    monkeypatch.setattr(
+        "scripts.write_remote_cycle_status._load_polymarket_wallet_state",
+        lambda root: {"status": "unavailable", "checked_at": now.isoformat()},
+    )
+
+    write_remote_cycle_status(tmp_path)
+    runtime_truth = json.loads((tmp_path / "reports" / "runtime_truth_latest.json").read_text())
+    scoreboard = runtime_truth["state_improvement"]["strategy_recommendations"]["public_performance_scoreboard"]
+
+    assert scoreboard["public_forecast_source_artifact"] == "reports/btc5_autoresearch_current_probe/latest.json"
+    assert scoreboard["deploy_recommendation"] == "promote"
+    assert scoreboard["forecast_confidence_label"] == "high"
+    assert scoreboard["forecast_best_arr_pct"] == 180.0
+    assert scoreboard["forecast_arr_delta_pct"] == 60.0
+    assert scoreboard["timebound_velocity_window_hours"] is not None
+    assert scoreboard["timebound_velocity_forecast_gain_pct"] == 60.0
+    assert scoreboard["timebound_velocity_forecast_gain_pct_per_day"] is not None
+
+
+def test_write_remote_cycle_status_public_scoreboard_includes_wallet_closed_batch_metrics(
+    tmp_path: Path,
+    monkeypatch,
+):
+    _write_base_remote_state(tmp_path)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    _write_json(
+        tmp_path / "reports" / "remote_service_status.json",
+        {
+            "checked_at": now.isoformat(),
+            "status": "stopped",
+            "systemctl_state": "inactive",
+            "detail": "inactive",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "root_test_status.json",
+        {
+            "checked_at": now.isoformat(),
+            "command": "make test",
+            "status": "passing",
+            "summary": "12 passed",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "arb_empirical_snapshot.json",
+        {
+            "gating_metrics": {
+                "all_gates_pass": False,
+                "fill_probability_gate": "insufficient_data",
+                "half_life_gate": "fail",
+                "half_life_seconds": 0.0,
+                "settlement_path_gate": "untested",
+            },
+            "b1": {},
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "btc5_autoresearch_loop" / "latest.json",
+        {
+            "generated_at": now.isoformat(),
+            "arr_tracking": {
+                "current_median_arr_pct": 100.0,
+                "best_median_arr_pct": 160.0,
+                "median_arr_delta_pct": 60.0,
+            },
+            "deploy_recommendation": "promote",
+            "package_confidence_label": "high",
+            "package_confidence_reasons": ["fresh_probe"],
+        },
+    )
+
+    monkeypatch.setattr(
+        "scripts.write_remote_cycle_status._load_polymarket_wallet_state",
+        lambda root: {
+            "status": "ok",
+            "checked_at": now.isoformat(),
+            "maker_address": "0xabc",
+            "signature_type": 1,
+            "free_collateral_usd": 120.0,
+            "reserved_order_usd": 10.0,
+            "live_orders_count": 2,
+            "live_orders": [],
+            "open_positions_count": 5,
+            "positions_initial_value_usd": 43.1,
+            "positions_current_value_usd": 247.91,
+            "positions_unrealized_pnl_usd": 4.0,
+            "closed_positions_count": 128,
+            "closed_positions_realized_pnl_usd": 84.6,
+            "total_wallet_value_usd": 377.91,
+            "closed_batch_metrics": {
+                "btc_closed_cashflow_usd": 131.52,
+                "btc_contracts_resolved": 128,
+                "btc_wins": 75,
+                "btc_losses": 53,
+                "btc_profit_factor": 1.49,
+                "btc_average_win_usd": 5.35,
+                "btc_average_loss_usd": -5.10,
+                "btc_closed_window_hours": 24.0,
+                "all_book_closed_cashflow_usd": 84.60,
+                "open_non_btc_notional_usd": 43.10,
+                "conservative_closed_net_usd": 84.60,
+                "all_book_closed_window_hours": 72.0,
+            },
+            "warnings": [],
+        },
+    )
+
+    write_remote_cycle_status(tmp_path)
+    runtime_truth = json.loads((tmp_path / "reports" / "runtime_truth_latest.json").read_text())
+    scoreboard = runtime_truth["state_improvement"]["strategy_recommendations"]["public_performance_scoreboard"]
+    wallet_closed = scoreboard["wallet_closed_batch"]
+
+    assert wallet_closed["btc_closed_cashflow_usd"] == 131.52
+    assert wallet_closed["btc_contracts_resolved"] == 128
+    assert wallet_closed["btc_profit_factor"] == 1.49
+    assert wallet_closed["btc_closed_run_rate_pct_initial_capital"] is not None
+    assert wallet_closed["btc_closed_run_rate_pct_current_portfolio"] is not None
+    assert wallet_closed["conservative_all_book_run_rate_pct_initial_capital"] is not None
+    assert scoreboard["fund_realized_arr_claim_status"] == "blocked"
+
+
+def test_write_remote_cycle_status_capital_addition_readiness_defaults_to_btc5_test_tranche(
+    tmp_path: Path,
+    monkeypatch,
+):
+    _write_base_remote_state(tmp_path)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    _write_json(
+        tmp_path / "reports" / "remote_service_status.json",
+        {
+            "checked_at": now.isoformat(),
+            "status": "stopped",
+            "systemctl_state": "inactive",
+            "detail": "inactive",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "root_test_status.json",
+        {
+            "checked_at": now.isoformat(),
+            "command": "make test",
+            "status": "passing",
+            "summary": "12 passed",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "arb_empirical_snapshot.json",
+        {
+            "gating_metrics": {
+                "all_gates_pass": False,
+                "fill_probability_gate": "insufficient_data",
+                "half_life_gate": "fail",
+                "half_life_seconds": 0.0,
+                "settlement_path_gate": "untested",
+            },
+            "b1": {},
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "strategy_scale_comparison.json",
+        {"generated_at": now.isoformat(), "artifact": "strategy_scale_comparison"},
+    )
+    _write_json(
+        tmp_path / "reports" / "signal_source_audit.json",
+        {"generated_at": now.isoformat(), "artifact": "signal_source_audit"},
+    )
+    rows = []
+    base = 1773061200
+    for idx in range(12):
+        rows.append(
+            {
+                "window_start_ts": base + (idx * 300),
+                "window_end_ts": base + (idx * 300) + 300,
+                "slug": f"btc-updown-5m-{base + (idx * 300)}",
+                "decision_ts": base + (idx * 300) + 299,
+                "direction": "UP" if idx % 2 == 0 else "DOWN",
+                "order_price": 0.49,
+                "trade_size_usd": 5.0,
+                "order_status": "live_filled",
+                "filled": 1,
+                "pnl_usd": 2.0 if idx < 8 else -1.0,
+                "created_at": now.isoformat(),
+                "updated_at": now.isoformat(),
+            }
+        )
+    _write_btc5_db(tmp_path / "data" / "btc_5min_maker.db", rows)
+    _write_json(
+        tmp_path / "reports" / "btc5_autoresearch_current_probe" / "latest.json",
+        {
+            "generated_at": now.isoformat(),
+            "deploy_recommendation": "promote",
+            "package_confidence_label": "high",
+            "arr_tracking": {
+                "current_median_arr_pct": 100.0,
+                "best_median_arr_pct": 150.0,
+                "median_arr_delta_pct": 50.0,
+            },
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "btc5_autoresearch" / "latest.json",
+        {"generated_at": now.isoformat()},
+    )
+    _write_json(
+        tmp_path / "reports" / "btc5_autoresearch_loop" / "latest.json",
+        {"summary": {"last_cycle_finished_at": now.isoformat()}},
+    )
+
+    monkeypatch.setattr(
+        "scripts.write_remote_cycle_status._load_polymarket_wallet_state",
+        lambda root: {
+            "status": "ok",
+            "checked_at": now.isoformat(),
+            "maker_address": "0xabc",
+            "signature_type": 1,
+            "free_collateral_usd": 1.0,
+            "reserved_order_usd": 2.0,
+            "live_orders_count": 0,
+            "live_orders": [],
+            "open_positions_count": 1,
+            "positions_initial_value_usd": 5.0,
+            "positions_current_value_usd": 5.1,
+            "positions_unrealized_pnl_usd": 0.1,
+            "closed_positions_count": 1,
+            "closed_positions_realized_pnl_usd": 0.1,
+            "total_wallet_value_usd": 8.2,
+            "warnings": [],
+        },
+    )
+
+    write_remote_cycle_status(tmp_path)
+    runtime_truth = json.loads((tmp_path / "reports" / "runtime_truth_latest.json").read_text())
+    readiness = runtime_truth["state_improvement"]["strategy_recommendations"]["capital_addition_readiness"]
+    assert readiness["fund"]["status"] == "hold"
+    assert readiness["polymarket_btc5"]["status"] == "ready_test_tranche"
+    assert readiness["polymarket_btc5"]["recommended_amount_usd"] == 100
+    assert readiness["kalshi_weather"]["status"] == "hold"
+    assert readiness["next_1000_usd"]["status"] == "hold"
+
+
+def test_write_remote_cycle_status_uses_cached_remote_btc5_rows_for_realized_run_rate(
+    tmp_path: Path,
+    monkeypatch,
+):
+    _write_base_remote_state(tmp_path)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    _write_json(
+        tmp_path / "reports" / "remote_service_status.json",
+        {
+            "checked_at": now.isoformat(),
+            "status": "stopped",
+            "systemctl_state": "inactive",
+            "detail": "inactive",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "root_test_status.json",
+        {
+            "checked_at": now.isoformat(),
+            "command": "make test",
+            "status": "passing",
+            "summary": "12 passed",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "arb_empirical_snapshot.json",
+        {
+            "gating_metrics": {
+                "all_gates_pass": False,
+                "fill_probability_gate": "insufficient_data",
+                "half_life_gate": "fail",
+                "half_life_seconds": 0.0,
+                "settlement_path_gate": "untested",
+            },
+            "b1": {},
+        },
+    )
+    cached_rows = []
+    base_ts = datetime(2026, 3, 9, 18, 0, tzinfo=timezone.utc)
+    for idx in range(12):
+        cached_rows.append(
+            {
+                "id": idx + 1,
+                "window_start_ts": int((base_ts + timedelta(minutes=5 * idx)).timestamp()),
+                "order_status": "live_filled",
+                "pnl_usd": 1.5,
+                "updated_at": (base_ts + timedelta(minutes=5 * idx)).isoformat(),
+            }
+        )
+    _write_json(tmp_path / "reports" / "tmp_remote_btc5_window_rows.json", cached_rows)
+
+    monkeypatch.setattr(
+        "scripts.write_remote_cycle_status._load_polymarket_wallet_state",
+        lambda root: {
+            "status": "ok",
+            "checked_at": now.isoformat(),
+            "maker_address": "0xabc",
+            "signature_type": 1,
+            "free_collateral_usd": 225.0,
+            "reserved_order_usd": 0.0,
+            "live_orders_count": 0,
+            "live_orders": [],
+            "open_positions_count": 1,
+            "positions_initial_value_usd": 25.0,
+            "positions_current_value_usd": 25.0,
+            "positions_unrealized_pnl_usd": 0.0,
+            "closed_positions_count": 0,
+            "closed_positions_realized_pnl_usd": 0.0,
+            "total_wallet_value_usd": 250.0,
+            "warnings": [],
+        },
+    )
+    monkeypatch.setattr(
+        "scripts.write_remote_cycle_status._load_btc5_maker_state",
+        lambda root: {
+            "status": "ok",
+            "checked_at": now.isoformat(),
+            "source": "remote_sqlite_probe",
+            "db_path": "/remote/data/btc_5min_maker.db",
+            "live_filled_rows": 12,
+            "live_filled_pnl_usd": 18.0,
+            "avg_live_filled_pnl_usd": 1.5,
+            "latest_live_filled_at": cached_rows[-1]["updated_at"],
+            "recent_live_filled": cached_rows[-5:],
+        },
+    )
+
+    write_remote_cycle_status(tmp_path)
+    runtime_truth = json.loads((tmp_path / "reports" / "runtime_truth_latest.json").read_text())
+    scoreboard = runtime_truth["state_improvement"]["strategy_recommendations"]["public_performance_scoreboard"]
+
+    assert scoreboard["realized_btc5_sleeve_window_mode"] == "trailing_12_live_fills"
+    assert scoreboard["realized_btc5_sleeve_window_live_fills"] == 12
+    assert scoreboard["realized_btc5_sleeve_window_hours"] is not None
+    assert scoreboard["realized_btc5_sleeve_run_rate_pct"] is not None
+
+
+def test_build_remote_cycle_status_service_reconciled_but_accounting_mismatched(tmp_path: Path, monkeypatch):
+    _write_base_remote_state(tmp_path)
+    _write_json(
+        tmp_path / "reports" / "remote_service_status.json",
+        {
+            "checked_at": "2026-03-09T13:20:00+00:00",
+            "status": "stopped",
+            "systemctl_state": "inactive",
+            "detail": "inactive",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "root_test_status.json",
+        {
+            "checked_at": "2026-03-09T13:21:00+00:00",
+            "command": "make test",
+            "status": "passing",
+            "summary": "12 passed",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "arb_empirical_snapshot.json",
+        {
+            "gating_metrics": {
+                "all_gates_pass": False,
+                "fill_probability_gate": "insufficient_data",
+                "half_life_gate": "fail",
+                "half_life_seconds": 0.0,
+                "settlement_path_gate": "untested",
+            },
+            "b1": {},
+        },
+    )
+    _write_trade_db(
+        tmp_path / "data" / "jj_trades.db",
+        [{"market_id": "m1", "outcome": None}],
+    )
+    monkeypatch.setattr(
+        "scripts.write_remote_cycle_status._load_polymarket_wallet_state",
+        lambda root: {
+            "status": "ok",
+            "checked_at": "2026-03-09T13:22:00+00:00",
+            "maker_address": "0xabc",
+            "signature_type": 1,
+            "free_collateral_usd": 10.0,
+            "reserved_order_usd": 5.0,
+            "live_orders_count": 1,
+            "live_orders": [],
+            "open_positions_count": 4,
+            "positions_initial_value_usd": 25.0,
+            "positions_current_value_usd": 24.0,
+            "positions_unrealized_pnl_usd": -1.0,
+            "closed_positions_count": 3,
+            "closed_positions_realized_pnl_usd": 2.0,
+            "total_wallet_value_usd": 39.0,
+            "warnings": [],
+        },
+    )
+
+    status = build_remote_cycle_status(tmp_path)
+
+    assert status["service"]["status"] == "stopped"
+    assert status["launch"]["live_launch_blocked"] is True
+    assert "accounting_reconciliation_drift" in status["launch"]["blocked_checks"]
+    assert any(reason.startswith("Accounting drift: ") for reason in status["launch"]["blocked_reasons"])
+    assert status["runtime_truth"]["service_drift_detected"] is False
+    assert status["runtime_truth"]["accounting_drift_detected"] is True
+    assert any(reason.startswith("Accounting drift: ") for reason in status["runtime_truth"]["drift_reasons"])
 
 
 def test_write_remote_cycle_status_emits_runtime_mode_reconciliation_artifact(tmp_path: Path):

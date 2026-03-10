@@ -95,6 +95,86 @@ def test_consensus_detector_emits_signal_for_unique_smart_wallets(
     assert signal.confidence > 0.5
 
 
+def test_consensus_detector_populates_two_sided_opposition_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixed_now = 1_700_000_000
+    monkeypatch.setattr(detector.time, "time", lambda: fixed_now)
+    smart_wallets = {
+        "0x1": detector.WalletScore(address="0x1", activity_score=86.0, is_smart=True),
+        "0x2": detector.WalletScore(address="0x2", activity_score=89.0, is_smart=True),
+        "0x3": detector.WalletScore(address="0x3", activity_score=84.0, is_smart=True),
+        "0x4": detector.WalletScore(address="0x4", activity_score=75.0, is_smart=True),
+        "0x5": detector.WalletScore(address="0x5", activity_score=73.0, is_smart=True),
+    }
+    monitor = detector.FlowMonitor(smart_wallets)
+    monitor._recent_trades = [
+        _trade("0x1", fixed_now - 45, size=9.0),
+        _trade("0x2", fixed_now - 40, size=8.0),
+        _trade("0x3", fixed_now - 35, size=7.0),
+        {**_trade("0x4", fixed_now - 30, size=4.0), "_effective_outcome": 1, "outcome": "Down"},
+        {**_trade("0x5", fixed_now - 20, size=5.0), "_effective_outcome": 1, "outcome": "Down"},
+    ]
+
+    raw = monitor.get_consensus_signals()
+    signals = [sig for sig in raw if sig.direction == "outcome_0"]
+    assert len(signals) == 1
+    sig = signals[0]
+    assert sig.wallet_consensus_wallets == 3
+    assert sig.wallet_consensus_notional_usd == pytest.approx(24.0)
+    assert sig.wallet_opposition_wallets == 2
+    assert sig.wallet_opposition_notional_usd == pytest.approx(9.0)
+    assert sig.wallet_consensus_share is not None
+    assert 0.0 < sig.wallet_consensus_share < 1.0
+
+
+def test_consensus_confidence_is_age_discounted(monkeypatch: pytest.MonkeyPatch) -> None:
+    fixed_now = 1_700_000_000
+    monkeypatch.setattr(detector.time, "time", lambda: fixed_now)
+    smart_wallets = {
+        "0xa": detector.WalletScore(address="0xa", activity_score=90.0, is_smart=True),
+        "0xb": detector.WalletScore(address="0xb", activity_score=90.0, is_smart=True),
+        "0xc": detector.WalletScore(address="0xc", activity_score=90.0, is_smart=True),
+    }
+    monitor = detector.FlowMonitor(smart_wallets)
+    monitor._recent_trades = [
+        {**_trade("0xa", fixed_now - 60, size=6.0), "conditionId": "fresh-1"},
+        {**_trade("0xb", fixed_now - 50, size=6.0), "conditionId": "fresh-1"},
+        {**_trade("0xc", fixed_now - 45, size=6.0), "conditionId": "fresh-1"},
+        {**_trade("0xa", fixed_now - 1700, size=6.0), "conditionId": "stale-1"},
+        {**_trade("0xb", fixed_now - 1650, size=6.0), "conditionId": "stale-1"},
+        {**_trade("0xc", fixed_now - 1600, size=6.0), "conditionId": "stale-1"},
+    ]
+
+    signals = {sig.market_id: sig for sig in monitor.get_consensus_signals()}
+    assert signals["fresh-1"].confidence > signals["stale-1"].confidence
+
+
+def test_consensus_parses_btc_window_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    fixed_now = 1_700_000_000
+    monkeypatch.setattr(detector.time, "time", lambda: fixed_now)
+    smart_wallets = {
+        "0x1": detector.WalletScore(address="0x1", activity_score=80.0, is_smart=True),
+        "0x2": detector.WalletScore(address="0x2", activity_score=82.0, is_smart=True),
+        "0x3": detector.WalletScore(address="0x3", activity_score=78.0, is_smart=True),
+    }
+    monitor = detector.FlowMonitor(smart_wallets)
+    trade = _trade("0x1", fixed_now - 40, size=6.0)
+    trade["title"] = "BTC Up or Down 15m (3:45 PM ET)"
+    monitor._recent_trades = [
+        trade,
+        {**trade, "proxyWallet": "0x2", "timestamp": fixed_now - 35},
+        {**trade, "proxyWallet": "0x3", "timestamp": fixed_now - 30},
+    ]
+
+    signals = monitor.get_consensus_signals()
+    assert len(signals) == 1
+    signal = signals[0]
+    assert signal.wallet_window_minutes == 15
+    assert isinstance(signal.wallet_window_start_ts, str)
+    assert signal.wallet_window_start_ts.endswith("+00:00")
+
+
 def test_bootstrap_status_and_scan_explicitly_flag_missing_bootstrap(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -182,6 +262,11 @@ def test_get_signals_for_engine_converts_wallet_flow_signal(
                 "total_smart_size": 42.0,
                 "avg_smart_score": 88.0,
                 "signal_age_seconds": 12.0,
+                "wallet_consensus_share": 0.75,
+                "wallet_opposition_wallets": 1,
+                "wallet_opposition_notional_usd": 8.0,
+                "wallet_window_start_ts": "2026-03-09T15:45:00+00:00",
+                "wallet_window_minutes": 5,
             }
         ],
     )
@@ -197,6 +282,43 @@ def test_get_signals_for_engine_converts_wallet_flow_signal(
     assert signal["confidence"] == 0.72
     assert signal["source"] == "wallet_flow"
     assert "4 smart wallets agree on Down" in signal["reasoning"]
+    assert signal["wallet_consensus_wallets"] == 4
+    assert signal["wallet_consensus_notional_usd"] == 42.0
+    assert signal["wallet_signal_age_seconds"] == 12.0
+    assert signal["wallet_consensus_share"] == 0.75
+    assert signal["wallet_opposition_wallets"] == 1
+    assert signal["wallet_opposition_notional_usd"] == 8.0
+    assert signal["wallet_window_start_ts"] == "2026-03-09T15:45:00+00:00"
+    assert signal["wallet_window_minutes"] == 5
+
+
+def test_get_signals_for_engine_backward_compatible_when_metadata_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        detector,
+        "scan_for_signals",
+        lambda: [
+            {
+                "market_id": "cond-legacy",
+                "market_title": "BTC Up or Down",
+                "direction": "outcome_0",
+                "outcome_name": "Up",
+                "confidence": 0.66,
+                "smart_wallets_count": 3,
+                "total_smart_size": 30.0,
+                "avg_smart_score": 80.0,
+                "signal_age_seconds": 45.0,
+            }
+        ],
+    )
+
+    signals = detector.get_signals_for_engine()
+    assert len(signals) == 1
+    signal = signals[0]
+    assert signal["market_id"] == "cond-legacy"
+    assert "wallet_window_start_ts" not in signal
+    assert "wallet_window_minutes" not in signal
 
 
 def test_get_signals_for_engine_suppresses_balanced_conflicts(

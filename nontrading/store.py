@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import statistics
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +35,36 @@ from nontrading.models import (
 )
 
 logger = logging.getLogger("nontrading.store")
+UTC = timezone.utc
+PUBLIC_REPORT_SCHEMA = "nontrading_public_report.v1"
+ACTUAL_REVENUE_OUTCOME_STATUSES = {"won"}
+SUCCESSFUL_MESSAGE_STATUSES = {"sent"}
+SUCCESSFUL_OUTBOX_STATUSES = {"dry_run", "provider_accepted", "sent"}
+
+
+def _parse_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _hours_between(start: str | None, end: str | None) -> float | None:
+    start_dt = _parse_timestamp(start)
+    end_dt = _parse_timestamp(end)
+    if start_dt is None or end_dt is None:
+        return None
+    return round(max((end_dt - start_dt).total_seconds() / 3600.0, 0.0), 6)
 
 DEFAULT_TABLES = {
     "agent_state": "agent_state",
@@ -2281,6 +2313,27 @@ class RevenueStore:
         updated = self.get_approval_request(request_id)
         if updated is None:
             raise RuntimeError(f"Approval request {request_id} disappeared")
+        if status in {"approved", "rejected"}:
+            review_latency_hours = _hours_between(updated.created_at, updated.reviewed_at)
+            self.record_telemetry_event(
+                TelemetryEvent(
+                    event_type="approval_decision",
+                    entity_type=updated.entity_type,
+                    entity_id=updated.entity_id,
+                    status=updated.status,
+                    payload={
+                        "request_id": updated.id or 0,
+                        "action_type": updated.action_type,
+                        "summary": updated.summary,
+                        "requested_by": updated.requested_by,
+                        "reviewed_by": updated.reviewed_by,
+                        "review_notes": updated.review_notes,
+                        "created_at": updated.created_at or "",
+                        "reviewed_at": updated.reviewed_at or "",
+                        "review_latency_hours": review_latency_hours,
+                    },
+                )
+            )
         return updated
 
     def list_approval_requests(self, status: str | None = None) -> list[ApprovalRequest]:
@@ -2436,4 +2489,182 @@ class RevenueStore:
             "engine_states": len(engine_states),
             "engine_kill_switches": sum(1 for row in engine_states if row.kill_switch_active),
             "table_namespace": "compat" if t != DEFAULT_TABLES else "default",
+        }
+
+    def public_report_snapshot(self) -> dict[str, Any]:
+        snapshot = self.status_snapshot()
+        telemetry_events = self.list_telemetry_events()
+        opportunities = self.list_opportunities()
+        messages = self.list_messages()
+        meetings = self.list_meetings()
+        proposals = self.list_proposals()
+        outcomes = self.list_outcomes()
+        approval_requests = self.list_approval_requests()
+        outbox_messages = self.list_outbox_messages()
+
+        account_researched_events = [event for event in telemetry_events if event.event_type == "account_researched"]
+        cycle_events = [event for event in telemetry_events if event.event_type == "cycle_complete"]
+        fulfillment_events = [event for event in telemetry_events if event.event_type == "fulfillment_status_changed"]
+        approval_decisions = [event for event in telemetry_events if event.event_type == "approval_decision"]
+
+        qualified_account_ids = {
+            opportunity.account_id
+            for opportunity in opportunities
+            if opportunity.stage == "qualified"
+            or opportunity.status not in {"research_only", "closed_lost"}
+            or float(opportunity.score) >= 70.0
+        }
+        delivered_messages = [
+            message
+            for message in messages
+            if message.direction == "outbound" and message.status in SUCCESSFUL_MESSAGE_STATUSES
+        ]
+        replies_recorded = [
+            message
+            for message in messages
+            if message.direction == "inbound" and message.status == "received"
+        ]
+        meetings_booked = [meeting for meeting in meetings if meeting.status in {"booked", "completed"}]
+        proposals_sent = [proposal for proposal in proposals if proposal.status == "sent"]
+        actual_outcomes = [outcome for outcome in outcomes if not bool(outcome.metadata.get("simulated"))]
+        simulated_outcomes = [outcome for outcome in outcomes if bool(outcome.metadata.get("simulated"))]
+        revenue_outcomes = [
+            outcome
+            for outcome in actual_outcomes
+            if outcome.status in ACTUAL_REVENUE_OUTCOME_STATUSES and float(outcome.revenue) > 0.0
+        ]
+
+        revenue_won_usd = round(sum(float(outcome.revenue) for outcome in revenue_outcomes), 2)
+        gross_margin_usd = round(sum(float(outcome.gross_margin) for outcome in revenue_outcomes), 2)
+        gross_margin_pct = round(gross_margin_usd / revenue_won_usd, 6) if revenue_won_usd > 0 else None
+        first_research_at = min(
+            (event.created_at for event in account_researched_events if event.created_at),
+            default=None,
+        )
+        first_revenue_at = min(
+            (outcome.created_at for outcome in revenue_outcomes if outcome.created_at),
+            default=None,
+        )
+        time_to_first_dollar_hours = _hours_between(first_research_at, first_revenue_at)
+
+        approval_latencies = [
+            latency
+            for request in approval_requests
+            if request.status in {"approved", "rejected"}
+            and (latency := _hours_between(request.created_at, request.reviewed_at)) is not None
+        ]
+        median_approval_latency_hours = (
+            round(statistics.median(approval_latencies), 6) if approval_latencies else None
+        )
+
+        latest_fulfillment_event = fulfillment_events[-1] if fulfillment_events else None
+        fulfillment_status_counts: dict[str, int] = {}
+        for event in fulfillment_events:
+            status = str(event.status or event.payload.get("fulfillment_status") or "unknown")
+            fulfillment_status_counts[status] = fulfillment_status_counts.get(status, 0) + 1
+
+        if revenue_won_usd > 0.0:
+            current_phase = "phase_0_revenue_evidence"
+            claim_status = "actual_revenue_recorded"
+            claim_reason = "Closed-won JJ-N revenue is recorded in repo-tracked outcomes."
+        elif proposals_sent or actual_outcomes:
+            current_phase = "phase_0_offer_ready"
+            claim_status = "pipeline_only_no_revenue"
+            claim_reason = "JJ-N has proposal and outcome plumbing, but no closed-won revenue is recorded yet."
+        elif delivered_messages:
+            current_phase = "phase_0_outreach_active"
+            claim_status = "paper_funnel_only"
+            claim_reason = "JJ-N has outreach activity, but revenue proof is not recorded yet."
+        elif qualified_account_ids:
+            current_phase = "phase_0_pipeline_seeded"
+            claim_status = "qualification_only"
+            claim_reason = "JJ-N is qualifying targets, but outreach and revenue proof remain pre-launch."
+        elif account_researched_events:
+            current_phase = "phase_0_research_active"
+            claim_status = "research_only"
+            claim_reason = "JJ-N has researched accounts in repo-tracked telemetry, but qualification and revenue proof remain pre-launch."
+        else:
+            current_phase = "phase_0_setup"
+            claim_status = "setup_only"
+            claim_reason = "JJ-N remains in setup and dry-run instrumentation mode."
+
+        live_delivery_observed = any(
+            message.provider != "dry_run" and message.status in SUCCESSFUL_OUTBOX_STATUSES
+            for message in outbox_messages
+        )
+        latest_event_at = max(
+            (event.created_at for event in telemetry_events if event.created_at),
+            default=None,
+        )
+        latest_cycle_completed_at = max(
+            (
+                str(event.payload.get("completed_at") or event.created_at)
+                for event in cycle_events
+                if event.created_at
+            ),
+            default=None,
+        )
+
+        return {
+            "schema_version": PUBLIC_REPORT_SCHEMA,
+            "generated_at": utc_now(),
+            "funnel": {
+                "researched_accounts": len(account_researched_events),
+                "qualified_accounts": len(qualified_account_ids),
+                "delivered_messages": len(delivered_messages),
+                "reply_rate": round(len(replies_recorded) / len(delivered_messages), 6) if delivered_messages else None,
+                "meetings_booked": len(meetings_booked),
+                "proposals_sent": len(proposals_sent),
+                "outcomes_recorded": len(actual_outcomes),
+                "simulated_outcomes_recorded": len(simulated_outcomes),
+            },
+            "commercial": {
+                "revenue_won_usd": revenue_won_usd,
+                "gross_margin_usd": gross_margin_usd,
+                "gross_margin_pct": gross_margin_pct,
+                "time_to_first_dollar_hours": time_to_first_dollar_hours,
+                "time_to_first_dollar_status": (
+                    "observed" if time_to_first_dollar_hours is not None else "not_yet_observed"
+                ),
+            },
+            "approval": {
+                "pending_requests": sum(1 for request in approval_requests if request.status == "pending"),
+                "approved_requests": sum(1 for request in approval_requests if request.status == "approved"),
+                "rejected_requests": sum(1 for request in approval_requests if request.status == "rejected"),
+                "decisions_recorded": len(approval_decisions),
+                "median_review_latency_hours": median_approval_latency_hours,
+            },
+            "fulfillment": {
+                "events_recorded": len(fulfillment_events),
+                "status_counts": fulfillment_status_counts,
+                "latest_status": (
+                    str(
+                        (latest_fulfillment_event.payload.get("fulfillment_status") if latest_fulfillment_event else "")
+                        or (latest_fulfillment_event.status if latest_fulfillment_event else "")
+                        or ""
+                    )
+                    or None
+                ),
+                "delivery_claim_status": "live_delivery_observed" if live_delivery_observed else "no_live_delivery_observed",
+            },
+            "phase": {
+                "current_phase": current_phase,
+                "claim_status": claim_status,
+                "claim_reason": claim_reason,
+            },
+            "freshness": {
+                "latest_event_at": latest_event_at,
+                "latest_cycle_completed_at": latest_cycle_completed_at,
+                "first_account_researched_at": first_research_at,
+                "first_revenue_at": first_revenue_at,
+            },
+            "source_snapshot": {
+                "db_path": str(self.db_path),
+                "table_namespace": snapshot["table_namespace"],
+                "telemetry_dataset": "elastifund.nontrading",
+                "accounts": snapshot["accounts"],
+                "crm_opportunities": snapshot["crm_opportunities"],
+                "approval_requests": snapshot["approval_requests"],
+                "telemetry_events": snapshot["telemetry_events"],
+            },
         }

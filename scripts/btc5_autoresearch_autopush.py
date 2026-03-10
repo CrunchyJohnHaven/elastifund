@@ -56,11 +56,26 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _apply_session_policy_line(env_text: str, session_policy: list[dict[str, object]]) -> str:
+    lines = [line for line in env_text.splitlines() if not line.startswith("BTC5_SESSION_POLICY_JSON=")]
+    if session_policy:
+        lines.append(
+            "BTC5_SESSION_POLICY_JSON="
+            + json.dumps(session_policy, separators=(",", ":"))
+        )
+    return "\n".join(lines) + "\n"
+
+
 def main() -> int:
     args = parse_args()
     payload = json.loads(args.cycle_json.read_text())
     decision = payload.get("decision") or {}
     best_candidate = payload.get("best_candidate") or {}
+    best_runtime_package = payload.get("selected_best_runtime_package") or payload.get("best_runtime_package") or {}
+    package_session_policy = list((best_runtime_package.get("session_policy") or []))
+    package_already_loaded = bool(
+        ((payload.get("capital_scale_recommendation") or {}).get("promoted_package_selected"))
+    )
     best_profile = best_candidate.get("profile") or {}
     median_arr_delta_pct = float(decision.get("median_arr_delta_pct") or 0.0)
     if decision.get("action") != "promote":
@@ -70,22 +85,22 @@ def main() -> int:
         print(json.dumps({"status": "noop", "reason": "arr_delta_not_positive"}, indent=2))
         return 0
 
-    args.base_env.write_text(
-        render_strategy_env(
-            best_candidate,
-            {
-                "generated_at": str(payload.get("generated_at") or ""),
-                "reason": str(decision.get("reason") or ""),
-            },
-        )
-    )
-
     allowed = {str(Path(path)) for path in (DEFAULT_ALLOWED_PATHS + list(args.allow_path))}
     dirty_paths = _dirty_paths()
     blocked = [path for path in dirty_paths if path not in allowed]
     if blocked:
         print(json.dumps({"status": "skipped", "reason": "dirty_worktree", "blocked_paths": blocked}, indent=2))
         return 0
+
+    env_text = render_strategy_env(
+        best_candidate,
+        {
+            "generated_at": str(payload.get("generated_at") or ""),
+            "reason": str(decision.get("reason") or ""),
+        },
+    )
+    env_text = _apply_session_policy_line(env_text, package_session_policy)
+    args.base_env.write_text(env_text)
 
     stage_paths = [path for path in allowed if (ROOT / path).exists()]
     if not stage_paths:
@@ -136,6 +151,8 @@ def main() -> int:
                 "commit_message": commit_message,
                 "profile": best_profile,
                 "median_arr_delta_pct": round(median_arr_delta_pct, 4),
+                "session_policy_records": len(package_session_policy),
+                "promoted_package_already_loaded": package_already_loaded,
             },
             indent=2,
         )

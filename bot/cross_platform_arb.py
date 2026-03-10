@@ -21,7 +21,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Optional
 
 import httpx
 from orchestration.venue_router import (
@@ -58,6 +58,7 @@ GAMMA_API_BASE = "https://gamma-api.polymarket.com"
 DATA_DIR = Path(__file__).parent / "data"
 MATCH_CACHE_FILE = DATA_DIR / "market_matches.json"
 ARB_POSITIONS_FILE = DATA_DIR / "arb_positions.json"
+KALSHI_MARKET_CACHE_FILE = DATA_DIR / "kalshi_markets_cache.json"
 
 # Minimum profit % after fees to trigger an arb
 MIN_PROFIT_PCT = 0.01  # 1%
@@ -79,6 +80,10 @@ DEFAULT_POLY_FILL_PROB = 0.93
 DEFAULT_KALSHI_FILL_PROB = 0.90
 DEFAULT_POLY_LATENCY_PENALTY = 0.0010
 DEFAULT_KALSHI_LATENCY_PENALTY = 0.0015
+DEFAULT_KALSHI_FETCH_PACE_SECONDS = 0.20
+DEFAULT_KALSHI_FETCH_RETRY_DELAY_SECONDS = 0.40
+DEFAULT_KALSHI_FETCH_MAX_RETRIES = 2
+DEFAULT_KALSHI_CACHE_TTL_SECONDS = 900.0
 
 # Words to strip for matching
 STRIP_WORDS = {
@@ -96,6 +101,17 @@ def _env_float(name: str, default: float) -> float:
     except (TypeError, ValueError):
         logger.warning("Invalid %s=%r, falling back to %.4f", name, raw, default)
         return float(default)
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return int(default)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        logger.warning("Invalid %s=%r, falling back to %d", name, raw, default)
+        return int(default)
 
 
 def _build_opportunity_key(arb: "ArbOpportunity") -> str:
@@ -434,16 +450,136 @@ def _parse_kalshi_market(m) -> Optional[MarketListing]:
     )
 
 
-def fetch_kalshi_markets(client: "KalshiClient", max_pages: int = 10) -> list[MarketListing]:
-    """Fetch active non-sports markets from Kalshi API.
+def _serialize_market_listing(listing: MarketListing) -> dict[str, Any]:
+    payload = asdict(listing)
+    payload["extra"] = dict(payload.get("extra") or {})
+    return payload
 
-    Strategy: fetch events first (politics, economics, weather, entertainment),
-    then get markets per event. Also fetch known weather series directly.
-    """
-    listings = []
-    seen_tickers = set()
 
-    def _add_market(m):
+def _deserialize_market_listing(payload: dict[str, Any]) -> Optional[MarketListing]:
+    try:
+        return MarketListing(
+            platform=str(payload["platform"]),
+            market_id=str(payload["market_id"]),
+            title=str(payload["title"]),
+            normalized_title=str(payload["normalized_title"]),
+            yes_bid=float(payload["yes_bid"]),
+            yes_ask=float(payload["yes_ask"]),
+            no_bid=float(payload["no_bid"]),
+            no_ask=float(payload["no_ask"]),
+            volume=float(payload.get("volume", 0.0) or 0.0),
+            end_date=payload.get("end_date"),
+            extra=dict(payload.get("extra") or {}),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _is_throttle_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "429" in text or "too many requests" in text or "rate limit" in text
+
+
+def _load_kalshi_markets_from_cache(*, max_age_seconds: float) -> tuple[list[MarketListing], Optional[float]]:
+    if not KALSHI_MARKET_CACHE_FILE.exists():
+        return [], None
+    try:
+        payload = json.loads(KALSHI_MARKET_CACHE_FILE.read_text())
+    except (json.JSONDecodeError, OSError):
+        return [], None
+
+    generated_at_text = str(payload.get("generated_at", "") or "")
+    generated_at = None
+    if generated_at_text:
+        try:
+            generated_at = datetime.fromisoformat(generated_at_text.replace("Z", "+00:00"))
+        except ValueError:
+            generated_at = None
+
+    age_seconds = None
+    if generated_at is not None:
+        if generated_at.tzinfo is None:
+            generated_at = generated_at.replace(tzinfo=timezone.utc)
+        age_seconds = max(0.0, (datetime.now(timezone.utc) - generated_at).total_seconds())
+        if age_seconds > max_age_seconds:
+            return [], age_seconds
+
+    listings: list[MarketListing] = []
+    for item in payload.get("markets", []):
+        if not isinstance(item, dict):
+            continue
+        parsed = _deserialize_market_listing(item)
+        if parsed is not None:
+            listings.append(parsed)
+    return listings, age_seconds
+
+
+def _save_kalshi_markets_cache(listings: list[MarketListing]) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "market_count": len(listings),
+        "markets": [_serialize_market_listing(item) for item in listings],
+    }
+    KALSHI_MARKET_CACHE_FILE.write_text(json.dumps(payload, indent=2))
+
+
+def _call_kalshi_with_retry(
+    request_fn: Callable[..., Any],
+    *,
+    pace_seconds: float,
+    retry_delay_seconds: float,
+    max_retries: int,
+    diagnostics: dict[str, Any],
+    **kwargs: Any,
+) -> Any:
+    for attempt in range(max_retries + 1):
+        if attempt > 0:
+            delay = retry_delay_seconds * float(attempt)
+            time.sleep(delay)
+            diagnostics["retry_attempts"] += 1
+        time.sleep(pace_seconds)
+        try:
+            return request_fn(**kwargs)
+        except Exception as exc:
+            if _is_throttle_error(exc):
+                diagnostics["throttle_events"] += 1
+                if attempt < max_retries:
+                    continue
+            raise
+
+
+def fetch_kalshi_markets_with_diagnostics(
+    client: "KalshiClient",
+    max_pages: int = 10,
+) -> tuple[list[MarketListing], dict[str, Any]]:
+    """Fetch active non-sports Kalshi markets with pacing/retry/cache resilience."""
+    listings: list[MarketListing] = []
+    seen_tickers: set[str] = set()
+    diagnostics: dict[str, Any] = {
+        "throttle_events": 0,
+        "retry_attempts": 0,
+        "used_cache": False,
+        "cache_age_seconds": None,
+        "degraded": False,
+        "failure_stage": None,
+    }
+
+    pace_seconds = max(
+        0.0,
+        _env_float("JJ_KALSHI_FETCH_PACE_SECONDS", DEFAULT_KALSHI_FETCH_PACE_SECONDS),
+    )
+    retry_delay_seconds = max(
+        0.0,
+        _env_float("JJ_KALSHI_FETCH_RETRY_DELAY_SECONDS", DEFAULT_KALSHI_FETCH_RETRY_DELAY_SECONDS),
+    )
+    max_retries = max(0, _env_int("JJ_KALSHI_FETCH_MAX_RETRIES", DEFAULT_KALSHI_FETCH_MAX_RETRIES))
+    cache_ttl_seconds = max(
+        1.0,
+        _env_float("JJ_KALSHI_FETCH_CACHE_TTL_SECONDS", DEFAULT_KALSHI_CACHE_TTL_SECONDS),
+    )
+
+    def _add_market(m: Any) -> None:
         listing = _parse_kalshi_market(m)
         if listing and listing.market_id not in seen_tickers:
             seen_tickers.add(listing.market_id)
@@ -452,64 +588,145 @@ def fetch_kalshi_markets(client: "KalshiClient", max_pages: int = 10) -> list[Ma
     # 1. Fetch known weather series directly
     for series in KALSHI_SERIES:
         try:
-            resp = client.get_markets(series_ticker=series, limit=50)
-            for m in (resp.markets or []):
+            resp = _call_kalshi_with_retry(
+                client.get_markets,
+                pace_seconds=pace_seconds,
+                retry_delay_seconds=retry_delay_seconds,
+                max_retries=max_retries,
+                diagnostics=diagnostics,
+                series_ticker=series,
+                limit=50,
+            )
+            for m in (getattr(resp, "markets", None) or []):
                 _add_market(m)
-        except Exception as e:
-            logger.debug(f"Series {series} fetch failed: {e}")
+        except Exception as exc:
+            diagnostics["degraded"] = True
+            diagnostics["failure_stage"] = diagnostics["failure_stage"] or "series_fetch"
+            logger.debug("Series %s fetch failed: %s", series, exc)
 
     # 2. Fetch events and get their markets
     try:
         cursor = None
-        for page in range(5):
-            kwargs = {"limit": 200}
+        for _page in range(5):
+            kwargs: dict[str, Any] = {"limit": 200}
             if cursor:
                 kwargs["cursor"] = cursor
-            resp = client.get_events(**kwargs)
-            events = resp.events or []
+            resp = _call_kalshi_with_retry(
+                client.get_events,
+                pace_seconds=pace_seconds,
+                retry_delay_seconds=retry_delay_seconds,
+                max_retries=max_retries,
+                diagnostics=diagnostics,
+                **kwargs,
+            )
+            events = getattr(resp, "events", None) or []
 
             for evt in events:
                 ticker = evt.event_ticker if hasattr(evt, "event_ticker") else ""
-                # Skip sports-looking events
-                skip = any(x in ticker.upper() for x in [
-                    "SPORT", "NBA", "NFL", "MLB", "NHL", "NCAA",
-                    "SOC", "UFC", "LOL", "CSGO", "VALO",
-                    "KXMVE",
-                ])
+                skip = any(
+                    x in ticker.upper()
+                    for x in [
+                        "SPORT",
+                        "NBA",
+                        "NFL",
+                        "MLB",
+                        "NHL",
+                        "NCAA",
+                        "SOC",
+                        "UFC",
+                        "LOL",
+                        "CSGO",
+                        "VALO",
+                        "KXMVE",
+                    ]
+                )
                 if skip:
                     continue
 
                 try:
-                    mkts_resp = client.get_markets(event_ticker=ticker, limit=50)
-                    for m in (mkts_resp.markets or []):
+                    mkts_resp = _call_kalshi_with_retry(
+                        client.get_markets,
+                        pace_seconds=pace_seconds,
+                        retry_delay_seconds=retry_delay_seconds,
+                        max_retries=max_retries,
+                        diagnostics=diagnostics,
+                        event_ticker=ticker,
+                        limit=50,
+                    )
+                    for m in (getattr(mkts_resp, "markets", None) or []):
                         _add_market(m)
                 except Exception:
-                    pass
+                    diagnostics["degraded"] = True
+                    diagnostics["failure_stage"] = diagnostics["failure_stage"] or "event_market_fetch"
+                    continue
 
-            cursor = resp.cursor if hasattr(resp, "cursor") and resp.cursor else None
+            cursor = getattr(resp, "cursor", None) or None
             if not cursor or len(events) < 200:
                 break
 
-    except Exception as e:
-        logger.warning(f"Kalshi events fetch failed: {e}")
+    except Exception as exc:
+        diagnostics["degraded"] = True
+        diagnostics["failure_stage"] = diagnostics["failure_stage"] or "events_fetch"
+        logger.warning("Kalshi events fetch failed: %s", exc)
 
     # 3. Also do a general market scan (non-sports, with liquidity)
     try:
         cursor = None
-        for page in range(max_pages):
+        for _page in range(max_pages):
             kwargs = {"status": "open", "limit": 1000}
             if cursor:
                 kwargs["cursor"] = cursor
-            resp = client.get_markets(**kwargs)
-            for m in (resp.markets or []):
+            resp = _call_kalshi_with_retry(
+                client.get_markets,
+                pace_seconds=pace_seconds,
+                retry_delay_seconds=retry_delay_seconds,
+                max_retries=max_retries,
+                diagnostics=diagnostics,
+                **kwargs,
+            )
+            for m in (getattr(resp, "markets", None) or []):
                 _add_market(m)
-            cursor = resp.cursor if hasattr(resp, "cursor") and resp.cursor else None
+            cursor = getattr(resp, "cursor", None) or None
             if not cursor:
                 break
-    except Exception as e:
-        logger.warning(f"Kalshi general fetch failed: {e}")
+    except Exception as exc:
+        diagnostics["degraded"] = True
+        diagnostics["failure_stage"] = diagnostics["failure_stage"] or "general_fetch"
+        logger.warning("Kalshi general fetch failed: %s", exc)
 
-    logger.info(f"Fetched {len(listings)} non-sports Kalshi markets")
+    if listings:
+        _save_kalshi_markets_cache(listings)
+        logger.info(
+            "Fetched %d non-sports Kalshi markets (throttle_events=%d, retries=%d)",
+            len(listings),
+            diagnostics["throttle_events"],
+            diagnostics["retry_attempts"],
+        )
+        return listings, diagnostics
+
+    cached_listings, cache_age_seconds = _load_kalshi_markets_from_cache(max_age_seconds=cache_ttl_seconds)
+    if cached_listings:
+        diagnostics["used_cache"] = True
+        diagnostics["cache_age_seconds"] = round(float(cache_age_seconds or 0.0), 3)
+        diagnostics["degraded"] = True
+        logger.warning(
+            "Kalshi live fetch returned 0 markets; using cached surface (%d markets, age_s=%s)",
+            len(cached_listings),
+            diagnostics["cache_age_seconds"],
+        )
+        return cached_listings, diagnostics
+
+    logger.info(
+        "Fetched %d non-sports Kalshi markets (no cache fallback, throttle_events=%d, retries=%d)",
+        len(listings),
+        diagnostics["throttle_events"],
+        diagnostics["retry_attempts"],
+    )
+    return listings, diagnostics
+
+
+def fetch_kalshi_markets(client: "KalshiClient", max_pages: int = 10) -> list[MarketListing]:
+    listings, _diagnostics = fetch_kalshi_markets_with_diagnostics(client, max_pages=max_pages)
     return listings
 
 
@@ -679,6 +896,118 @@ def scan_for_arbs(
     return arbs
 
 
+def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _market_horizon_hours(value: Optional[str], *, now: datetime) -> Optional[float]:
+    dt = _parse_iso_datetime(value)
+    if dt is None:
+        return None
+    return round((dt - now).total_seconds() / 3600.0, 4)
+
+
+def build_matched_surface_artifact(
+    *,
+    poly_markets: list[MarketListing],
+    kalshi_markets: list[MarketListing],
+    match_threshold: float = 0.70,
+    generated_at: Optional[datetime] = None,
+) -> dict[str, Any]:
+    now = generated_at or datetime.now(timezone.utc)
+    matches = match_markets(poly_markets, kalshi_markets, threshold=match_threshold)
+    rows: list[dict[str, Any]] = []
+
+    for pm, km, score in matches:
+        maybe_arb = detect_arb(pm, km, score)
+        gross_edge = float(maybe_arb.net_profit_pct) if maybe_arb is not None else 0.0
+        candidates = [
+            VenueRouteCandidate(
+                venue="polymarket",
+                market_id=pm.market_id,
+                opportunity_key=f"{pm.market_id}|{km.market_id}",
+                gross_edge=gross_edge,
+                fee_rate=POLY_MAKER_FEE,
+                fill_probability=_env_float("JJ_POLY_FILL_PROB", DEFAULT_POLY_FILL_PROB),
+                latency_penalty=_env_float("JJ_POLY_LATENCY_PENALTY", DEFAULT_POLY_LATENCY_PENALTY),
+                notional_usd=MAX_ARB_USD,
+            ),
+            VenueRouteCandidate(
+                venue="kalshi",
+                market_id=km.market_id,
+                opportunity_key=f"{pm.market_id}|{km.market_id}",
+                gross_edge=gross_edge,
+                fee_rate=KALSHI_FEE_COEFFICIENT * (km.yes_ask * (1.0 - km.yes_ask)),
+                fill_probability=_env_float("JJ_KALSHI_FILL_PROB", DEFAULT_KALSHI_FILL_PROB),
+                latency_penalty=_env_float("JJ_KALSHI_LATENCY_PENALTY", DEFAULT_KALSHI_LATENCY_PENALTY),
+                notional_usd=MAX_ARB_USD,
+            ),
+        ]
+        ranked = sorted(candidates, key=lambda item: item.net_edge, reverse=True)
+        route_score = round(100.0 * max(0.0, ranked[0].net_edge), 6) if ranked else 0.0
+
+        rows.append(
+            {
+                "opportunity_key": f"{pm.market_id}|{km.market_id}",
+                "venues": {"primary": "polymarket", "hedge": "kalshi"},
+                "market_ids": {"polymarket": pm.market_id, "kalshi": km.market_id},
+                "titles": {"polymarket": pm.title, "kalshi": km.title},
+                "match_score": round(float(score), 6),
+                "horizon_hours": {
+                    "polymarket": _market_horizon_hours(pm.end_date, now=now),
+                    "kalshi": _market_horizon_hours(km.end_date, now=now),
+                },
+                "spread": {
+                    "polymarket": round(max(pm.yes_ask - pm.yes_bid, pm.no_ask - pm.no_bid), 6),
+                    "kalshi": round(max(km.yes_ask - km.yes_bid, km.no_ask - km.no_bid), 6),
+                },
+                "route_score": route_score,
+                "route_score_components": {
+                    "polymarket_net_edge": round(candidates[0].net_edge, 6),
+                    "kalshi_net_edge": round(candidates[1].net_edge, 6),
+                    "selected_venue": ranked[0].venue if ranked else None,
+                },
+                "arb_direction": maybe_arb.direction if maybe_arb is not None else None,
+                "net_profit_pct": round(float(maybe_arb.net_profit_pct), 6) if maybe_arb is not None else 0.0,
+            }
+        )
+
+    return {
+        "schema_version": "instance06.v1",
+        "generated_at": now.isoformat(),
+        "match_threshold": float(match_threshold),
+        "counts": {
+            "polymarket_markets": len(poly_markets),
+            "kalshi_markets": len(kalshi_markets),
+            "matched_surfaces": len(rows),
+        },
+        "matched_surface": rows,
+    }
+
+
+def write_matched_surface_artifact(
+    *,
+    artifact: dict[str, Any],
+    output_path: Path,
+) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(artifact, indent=2) + "\n")
+    return output_path
+
+
 # ---------------------------------------------------------------------------
 # Signal output (for jj_live.py integration)
 # ---------------------------------------------------------------------------
@@ -771,7 +1100,9 @@ async def _async_get_signals() -> list[dict]:
         logger.warning("Kalshi client unavailable, skipping cross-platform arb")
         return []
 
-    kalshi_markets = fetch_kalshi_markets(kalshi_client, max_pages=3)
+    kalshi_markets, kalshi_fetch_diagnostics = fetch_kalshi_markets_with_diagnostics(kalshi_client, max_pages=3)
+    if kalshi_fetch_diagnostics.get("degraded"):
+        logger.warning("Kalshi fetch degraded: %s", kalshi_fetch_diagnostics)
 
     if not poly_markets or not kalshi_markets:
         logger.warning(

@@ -65,9 +65,13 @@ smoke-nontrading:
 
 btc5-autoresearch-local:
 	$(PYTHON) scripts/run_btc5_autoresearch_loop.py --include-archive-csvs
+	@printf '%s\n' 'Latest package decision (reports/btc5_autoresearch_loop/latest.md):'
+	@grep -E 'Last package decision|Last package confidence|Last missing evidence|Last public forecast source|Last capital status|Last capital tranche' reports/btc5_autoresearch_loop/latest.md || true
 
 btc5-autoresearch-local-autopush:
 	$(PYTHON) scripts/run_btc5_autoresearch_loop.py --include-archive-csvs --on-promote-command "$(PYTHON) scripts/btc5_autoresearch_autopush.py"
+	@printf '%s\n' 'Latest package decision (reports/btc5_autoresearch_loop/latest.md):'
+	@grep -E 'Last package decision|Last package confidence|Last missing evidence|Last public forecast source|Last capital status|Last capital tranche' reports/btc5_autoresearch_loop/latest.md || true
 
 btc5-arr-report:
 	$(PYTHON) scripts/render_btc5_arr_progress.py

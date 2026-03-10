@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Elastifund / Worker Leaderboard | JJ-N public metric definitions</title>
-  <meta name="description" content="JJ-N is not launched yet. This page defines the non-trading worker metrics, the five-engine model, and the human approval boundary before public performance claims begin.">
+  <title>Elastifund / Worker | JJ-N Phase 0 board</title>
+  <meta name="description" content="JJ-N now has a true Phase 0 board: the Website Growth Audit wedge, current activation status, explicit blockers, and a public-safe funnel with zero invented revenue claims.">
   <link rel="stylesheet" href="/site.css">
   <script src="/site.js" defer></script>
 </head>
@@ -16,11 +16,12 @@
           <span class="brand-mark"></span>
           <span class="brand-text">
             <span class="brand-name">Elastifund</span>
-            <span class="brand-subtitle">JJ-N worker leaderboard stub</span>
+            <span class="brand-subtitle">JJ-N Phase 0 board</span>
           </span>
         </a>
         <nav class="header-nav" aria-label="Primary">
           <a class="nav-link" data-page="home" href="/">Home</a>
+          <a class="nav-link" data-page="live" href="/live/">Live</a>
           <a class="nav-link" data-page="elastic" href="/elastic/">Elastic</a>
           <a class="nav-link" data-page="develop" href="/develop/">Develop</a>
           <a class="nav-link" data-page="trading" href="/leaderboards/trading/">Trading</a>
@@ -37,44 +38,47 @@
       <section class="route-hero">
         <div class="container route-hero-grid">
           <div>
-            <span class="eyebrow">Worker leaderboard</span>
-            <h1>JJ-N is still in Phase 0, so the public job today is metric definition, not invented revenue.</h1>
+            <span class="eyebrow">Worker board</span>
+            <h1>JJ-N now has a real Phase 0 surface: a concrete wedge, honest zeros, and explicit launch blockers.</h1>
             <p class="route-copy">
-              The non-trading worker will be measured like an actual revenue operation: accounts researched, qualified leads, messages sent, meetings booked, proposals sent, revenue won, gross margin, and time to first dollar. Until those systems exist, this page stays a stub on purpose.
+              The first non-trading revenue-bearing wedge is the <strong data-fill="jjn_offer_name"></strong>. This board no longer pretends the work is too early to show. It shows the actual Phase 0 state: what is implemented, what is still blocked, and which funnel metrics remain zero because live sends and fulfillment are not launched.
             </p>
+            <div class="badge-row">
+              <span class="tag good" data-fill="jjn_offer_name"></span>
+              <span class="tag neutral" data-fill="jjn_claim_status"></span>
+              <span class="tag neutral freshness-badge" data-freshness-badge="jjn">jj-n freshness</span>
+            </div>
             <div class="cta-row">
-              <a class="button button-primary" href="https://github.com/CrunchyJohnHaven/elastifund/tree/main/nontrading" target="_blank" rel="noopener">Inspect the nontrading lane</a>
-              <a class="button button-secondary" href="/elastic/">Read the platform framing</a>
+              <a class="button button-primary" href="/live/">Open /live/</a>
+              <a class="button button-secondary" href="https://github.com/CrunchyJohnHaven/elastifund/tree/main/nontrading" target="_blank" rel="noopener">Inspect the nontrading lane</a>
             </div>
           </div>
+
           <aside class="status-panel">
             <div class="status-panel-header">
               <div>
-                <div class="panel-kicker">Current status</div>
-                <h3>Public stub, not a vanity board</h3>
+                <div class="panel-kicker">Current posture</div>
+                <h3><span data-fill="jjn_phase"></span></h3>
               </div>
-              <span class="tag warn">Phase 0 foundations</span>
+              <span class="tag warn" data-fill="jjn_claim_status"></span>
             </div>
+            <p class="card-copy"><span data-fill="jjn_claim_reason"></span></p>
             <dl class="info-list">
               <div class="info-row">
-                <dt>Accounts researched</dt>
-                <dd>No public ledger yet</dd>
-              </div>
-              <div class="info-row">
-                <dt>Meetings booked</dt>
-                <dd>Not publishing until the funnel is instrumented</dd>
-              </div>
-              <div class="info-row">
-                <dt>Revenue won</dt>
-                <dd>No public revenue claim</dd>
-              </div>
-              <div class="info-row">
                 <dt>Approval mode</dt>
-                <dd>Human review required</dd>
+                <dd data-fill="jjn_approval_mode"></dd>
               </div>
               <div class="info-row">
-                <dt>Trust boundary</dt>
-                <dd>Runs in paper mode by default</dd>
+                <dt>Send status</dt>
+                <dd data-fill="jjn_send_status"></dd>
+              </div>
+              <div class="info-row">
+                <dt>Fulfillment status</dt>
+                <dd data-fill="jjn_fulfillment_status"></dd>
+              </div>
+              <div class="info-row">
+                <dt>Offer economics</dt>
+                <dd><span data-fill="jjn_offer_price"></span> / <span data-fill="jjn_offer_delivery"></span></dd>
               </div>
             </dl>
           </aside>
@@ -85,24 +89,24 @@
         <div class="container">
           <div class="evidence-grid">
             <article class="evidence-card">
-              <div class="evidence-label">Revenue won</div>
-              <div class="evidence-value">Not live</div>
-              <p class="evidence-sub">No public revenue claim before the workflow exists.</p>
+              <div class="evidence-label">Offer wedge</div>
+              <div class="evidence-value" data-fill="jjn_offer_name"></div>
+              <p class="evidence-sub"><span data-fill="jjn_offer_status"></span> / <span data-fill="jjn_offer_price"></span>.</p>
             </article>
             <article class="evidence-card">
-              <div class="evidence-label">Messages sent</div>
-              <div class="evidence-value">Approval-gated</div>
-              <p class="evidence-sub">Phase 0 keeps outreach behind human approval.</p>
+              <div class="evidence-label">Execution surface</div>
+              <div class="evidence-value"><span data-fill="jjn_engines_functional"></span> engines</div>
+              <p class="evidence-sub"><span data-fill="jjn_templates_count"></span> templates / <span data-fill="jjn_dashboard_count"></span> dashboard / RevenuePipeline wired.</p>
             </article>
             <article class="evidence-card">
-              <div class="evidence-label">Meetings booked</div>
-              <div class="evidence-value">Not instrumented</div>
-              <p class="evidence-sub">No fake funnel metrics, no inferred pipeline value.</p>
+              <div class="evidence-label">Verification</div>
+              <div class="evidence-value"><span data-fill="jjn_package_tests"></span> + <span data-fill="jjn_repo_tests"></span></div>
+              <p class="evidence-sub">Package and repo-root JJ-N test surfaces are green in the checked-in status docs.</p>
             </article>
             <article class="evidence-card">
-              <div class="evidence-label">Gross margin</div>
-              <div class="evidence-value">Pending</div>
-              <p class="evidence-sub">Published only after verified revenue and delivery costs exist.</p>
+              <div class="evidence-label">Current phase</div>
+              <div class="evidence-value" data-fill="jjn_current_phase_label"></div>
+              <p class="evidence-sub"><span data-fill="jjn_blockers_short"></span></p>
             </article>
           </div>
         </div>
@@ -111,87 +115,88 @@
       <section class="page-section">
         <div class="container">
           <div class="section-header">
-            <div class="section-kicker">Metric definitions</div>
-            <h2>The public scoreboard is defined before the lane goes live.</h2>
-            <p class="section-copy">These are the metrics JJ-N will publish once the worker is instrumented. Each needs a clear definition, source of truth, and confidence band.</p>
+            <div class="section-kicker">Public-safe funnel</div>
+            <h2>Zero is the correct number where launch is still blocked.</h2>
+            <p class="section-copy">This board is intentionally honest. Funnel metrics stay at zero until a real, approval-cleared, compliance-safe cycle produces them.</p>
           </div>
-          <div class="definition-grid">
-            <article class="definition-card">
-              <div class="definition-label">Accounts researched</div>
-              <h3>Target accounts enriched and scored.</h3>
-              <p class="definition-copy">Counts only when account evidence is written to the registry.</p>
-            </article>
-            <article class="definition-card">
-              <div class="definition-label">Qualified leads</div>
-              <h3>Prospects that pass the scoring framework.</h3>
-              <p class="definition-copy">Public count must map to explicit fit and compliance thresholds.</p>
-            </article>
-            <article class="definition-card">
-              <div class="definition-label">Messages sent</div>
-              <h3>Approved outreach actually delivered.</h3>
-              <p class="definition-copy">Reply rate belongs beside it, not hidden in a later dashboard.</p>
-            </article>
-            <article class="definition-card">
-              <div class="definition-label">Meetings booked</div>
-              <h3>Calendar holds accepted by a real prospect.</h3>
-              <p class="definition-copy">Show rate must accompany raw meeting counts.</p>
-            </article>
-            <article class="definition-card">
-              <div class="definition-label">Proposals sent</div>
-              <h3>Scoped offers generated from approved templates.</h3>
-              <p class="definition-copy">Drafts do not count until they are reviewed and sent.</p>
-            </article>
-            <article class="definition-card">
-              <div class="definition-label">Revenue won</div>
-              <h3>Verified cash from accepted work.</h3>
-              <p class="definition-copy">No pipeline inflation, no blending signed intent with cash.</p>
-            </article>
-            <article class="definition-card">
-              <div class="definition-label">Gross margin</div>
-              <h3>Revenue minus delivery cost.</h3>
-              <p class="definition-copy">A worker can close work and still be a bad business if margin disappears.</p>
-            </article>
-            <article class="definition-card">
-              <div class="definition-label">Time to first dollar</div>
-              <h3>Feedback density is part of the product.</h3>
-              <p class="definition-copy">Faster learning cycles matter as much as topline volume in Phase 0.</p>
-            </article>
-          </div>
-        </div>
-      </section>
-
-      <section class="page-section">
-        <div class="container">
-          <div class="section-header">
-            <div class="section-kicker">Five-engine model</div>
-            <h2>JJ-N is designed as a revenue-operations worker, not an unbounded entrepreneur.</h2>
-          </div>
-          <div class="surface-grid">
-            <article class="surface-card">
-              <div class="tag good">1</div>
-              <h3>Account Intelligence</h3>
-              <p class="surface-copy">Find, enrich, and score target accounts so the system learns which buyers deserve attention.</p>
-            </article>
-            <article class="surface-card">
-              <div class="tag good">2</div>
-              <h3>Outreach</h3>
-              <p class="surface-copy">Draft and queue compliant messages. In Phase 0, all sends stay behind human approval.</p>
-            </article>
-            <article class="surface-card">
-              <div class="tag good">3</div>
-              <h3>Interaction</h3>
-              <p class="surface-copy">Classify replies, schedule meetings, and prepare context-rich briefs for human operators.</p>
-            </article>
-            <article class="surface-card">
-              <div class="tag good">4</div>
-              <h3>Proposal</h3>
-              <p class="surface-copy">Turn discovery into scoped offers without letting pricing or legal commitments go unsupervised.</p>
-            </article>
-            <article class="surface-card">
-              <div class="tag good">5</div>
-              <h3>Learning</h3>
-              <p class="surface-copy">Compare predicted value to actual outcomes and update the playbook only when the evidence is real.</p>
-            </article>
+          <div class="table-wrap">
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Metric</th>
+                    <th>Current public count</th>
+                    <th>Claim rule</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>
+                      <div class="cell-title">Accounts researched</div>
+                      <div class="cell-meta">Stored account intelligence records</div>
+                    </td>
+                    <td data-fill="jjn_accounts_researched"></td>
+                    <td>Only counts once a real research cycle is published.</td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <div class="cell-title">Qualified accounts</div>
+                      <div class="cell-meta">Fit and compliance thresholds passed</div>
+                    </td>
+                    <td data-fill="jjn_qualified_accounts"></td>
+                    <td>No inferred qualification from templates or tests.</td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <div class="cell-title">Approved outreach</div>
+                      <div class="cell-meta">Messages cleared for send</div>
+                    </td>
+                    <td data-fill="jjn_outreach_approved"></td>
+                    <td>Approval counts stay separate from delivered sends.</td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <div class="cell-title">Delivered messages</div>
+                      <div class="cell-meta">Actually sent outreach</div>
+                    </td>
+                    <td data-fill="jjn_messages_delivered"></td>
+                    <td>No live send claim before verified sender identity and approval.</td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <div class="cell-title">Replies / meetings / proposals</div>
+                      <div class="cell-meta">Interaction and proposal stages</div>
+                    </td>
+                    <td><span data-fill="jjn_replies"></span> / <span data-fill="jjn_meetings_booked"></span> / <span data-fill="jjn_proposals_sent"></span></td>
+                    <td>These stay zero until a real cycle produces them.</td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <div class="cell-title">Outcomes recorded</div>
+                      <div class="cell-meta">Closed service outcomes</div>
+                    </td>
+                    <td data-fill="jjn_outcomes_recorded"></td>
+                    <td>No pipeline inflation, no fictional wins.</td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <div class="cell-title">Revenue won / gross margin</div>
+                      <div class="cell-meta">Verified cash and delivery economics</div>
+                    </td>
+                    <td><span data-fill="jjn_revenue_won"></span> / <span data-fill="jjn_gross_margin"></span></td>
+                    <td>Published only after verified delivery and cost capture exist.</td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <div class="cell-title">Time to first dollar</div>
+                      <div class="cell-meta">Feedback density metric</div>
+                    </td>
+                    <td data-fill="jjn_time_to_first_dollar"></td>
+                    <td>Remains unset until the first paid loop is complete.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </section>
@@ -199,14 +204,18 @@
       <section class="page-section">
         <div class="container split-grid">
           <article class="card">
-            <div class="card-kicker">Approval system</div>
-            <h3>Humans stay above the loop for commercial outreach.</h3>
-            <p class="card-copy">Phase 0 requires approval for every outbound action. That is the right boundary for sender reputation, compliance, and honest governance.</p>
+            <div class="card-kicker">Built now</div>
+            <h3>The wedge is concrete.</h3>
+            <p class="card-copy">
+              The Website Growth Audit is the first revenue-bearing offer, the five-engine model is wired, templates exist, and the route now shows the true Phase 0 board instead of hiding behind definitions-only copy.
+            </p>
           </article>
           <article class="card">
-            <div class="card-kicker">Compliance</div>
-            <h3>CAN-SPAM, suppression, sender identity, and rate limits are product features.</h3>
-            <p class="card-copy">The public worker board should only light up when the compliance layer and CRM schema are strong enough to support it.</p>
+            <div class="card-kicker">Still blocked</div>
+            <h3>Launch depends on operations, not more adjectives.</h3>
+            <p class="card-copy">
+              <span data-fill="jjn_blockers_short"></span> Checkout, fulfillment reporting, and current-cycle KPI publishing must land before this board can tell a real revenue story.
+            </p>
           </article>
         </div>
       </section>
@@ -217,17 +226,18 @@
         <div class="footer-panel">
           <div>
             <div class="footer-kicker">Worker route</div>
-            <h3>Define the scoreboard first. Earn the revenue story later.</h3>
-            <p class="footer-meta">Runtime snapshot generated <span data-fill="generated_utc"></span>. Public trading posture remains <span data-fill="launch_posture"></span>.</p>
+            <h3>Real wedge, honest zeros, explicit blockers.</h3>
+            <p class="footer-meta">Current phase: <span data-fill="jjn_current_phase_label"></span>. Claim status: <span data-fill="jjn_claim_status"></span>.</p>
           </div>
           <div class="footer-links">
+            <a href="/live/">Live</a>
             <a href="/">Home</a>
-            <a href="/elastic/">Elastic</a>
+            <a href="/leaderboards/trading/">Trading</a>
             <a href="/develop/">Develop</a>
-            <a href="/leaderboards/trading/">Trading leaderboard</a>
           </div>
           <div class="footer-meta">
-            <div>JJ-N is still a Phase 0 stub.</div>
+            <div>Snapshot: <span data-fill="generated_utc"></span>.</div>
+            <div>Offer: <span data-fill="jjn_offer_name"></span>.</div>
             <div>&copy; <span data-fill="year"></span> Elastifund.</div>
           </div>
         </div>

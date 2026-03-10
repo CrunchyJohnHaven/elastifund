@@ -11,12 +11,16 @@ core algorithmic logic needed for shadow validation:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+import json
 import math
+from pathlib import Path
 from typing import Iterable, Literal
 
 Side = Literal["UP", "DOWN"]
 Resolution = Literal["UP", "DOWN", "TIE"]
+Verdict = Literal["GO", "NO_GO", "INSUFFICIENT_DATA"]
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
@@ -86,6 +90,10 @@ class ShadowTradeResult:
     entry_price: float | None
     maker_pnl: float
     taker_pnl: float
+    would_win_if_filled: bool | None
+    theoretical_maker_pnl: float
+    theoretical_edge_vs_taker: float
+    post_fill_edge_vs_taker: float
     confidence: float
     fill_timestamp_ms: int | None
 
@@ -102,6 +110,53 @@ class BatchMetrics:
     ev_maker: float
     ev_taker: float
     qualifies: bool
+
+
+@dataclass(frozen=True)
+class Re1ShadowThresholds:
+    """Current RE1 keep/kill contract for 72-hour shadow validation."""
+
+    min_signal_count: int = 30
+    min_fill_rate: float = 0.15
+    min_post_fill_edge_usd: float = 0.0
+    min_theoretical_edge_usd: float = 0.0
+
+
+@dataclass(frozen=True)
+class FillProbabilityAssumptions:
+    """Explicit assumptions used to interpret maker fill probability."""
+
+    strict_trade_through: bool = True
+    max_wait_seconds: float = 60.0
+    prior_fill_probability: float = 0.15
+    model: str = "strict_trade_through_v1"
+
+
+@dataclass(frozen=True)
+class Re1ShadowReport:
+    """Standalone artifact contract for RE1 Chainlink maker-only shadow runs."""
+
+    schema_version: str
+    generated_at_utc: str
+    run_started_ms: int
+    run_ended_ms: int
+    requested_shadow_hours: float
+    evaluated_cases: int
+    signal_count: int
+    posted_count: int
+    filled_count: int
+    maker_fill_rate: float
+    maker_fill_probability_assumptions: dict[str, float | str | bool]
+    realized_vs_theoretical_edge: dict[str, float]
+    tie_band_breakdown: dict[str, dict[str, float]]
+    barrier_breakdown: dict[str, dict[str, float]]
+    re1_thresholds: dict[str, float | int]
+    verdict: Verdict
+    verdict_reason: str
+    promotion_policy: str
+
+    def to_dict(self) -> dict:
+        return asdict(self)
 
 
 class HFTShadowValidator:
@@ -299,6 +354,10 @@ class HFTShadowValidator:
                 entry_price=None,
                 maker_pnl=0.0,
                 taker_pnl=0.0,
+                would_win_if_filled=None,
+                theoretical_maker_pnl=0.0,
+                theoretical_edge_vs_taker=0.0,
+                post_fill_edge_vs_taker=0.0,
                 confidence=0.0,
                 fill_timestamp_ms=None,
             )
@@ -314,10 +373,16 @@ class HFTShadowValidator:
         taker_entry = case.snapshot.yes_ask if intent.side == "UP" else case.snapshot.no_ask
         taker_entry = _clamp(taker_entry, 0.01, 0.99)
 
-        taker_win = self._is_win(intent.side, case.resolution)
+        would_win = self._is_win(intent.side, case.resolution)
+        taker_win = would_win
         taker_shares = case.stake_usd / taker_entry
         taker_gross = taker_shares * (1.0 - taker_entry) if taker_win else -case.stake_usd
         taker_net = taker_gross - self.taker_fee(case.stake_usd, taker_entry)
+        theoretical_shares = case.stake_usd / intent.limit_price
+        theoretical_maker_pnl = (
+            theoretical_shares * (1.0 - intent.limit_price) if would_win else -case.stake_usd
+        )
+        theoretical_edge_vs_taker = theoretical_maker_pnl - taker_net
 
         if not filled:
             return ShadowTradeResult(
@@ -328,11 +393,15 @@ class HFTShadowValidator:
                 entry_price=float(intent.limit_price),
                 maker_pnl=0.0,
                 taker_pnl=float(taker_net),
+                would_win_if_filled=would_win,
+                theoretical_maker_pnl=float(theoretical_maker_pnl),
+                theoretical_edge_vs_taker=float(theoretical_edge_vs_taker),
+                post_fill_edge_vs_taker=float(0.0 - taker_net),
                 confidence=float(intent.confidence),
                 fill_timestamp_ms=None,
             )
 
-        win = self._is_win(intent.side, case.resolution)
+        win = would_win
         shares = case.stake_usd / intent.limit_price
         maker_gross = shares * (1.0 - intent.limit_price) if win else -case.stake_usd
 
@@ -344,6 +413,10 @@ class HFTShadowValidator:
             entry_price=float(intent.limit_price),
             maker_pnl=float(maker_gross),
             taker_pnl=float(taker_net),
+            would_win_if_filled=would_win,
+            theoretical_maker_pnl=float(theoretical_maker_pnl),
+            theoretical_edge_vs_taker=float(theoretical_edge_vs_taker),
+            post_fill_edge_vs_taker=float(maker_gross - taker_net),
             confidence=float(intent.confidence),
             fill_timestamp_ms=fill_ts,
         )
@@ -381,3 +454,188 @@ class HFTShadowValidator:
             ev_taker=ev_taker,
             qualifies=qualifies,
         )
+
+    def _in_tie_band(self, snapshot: MarketSnapshot) -> bool:
+        tie_band = max(0.0, self.tie_band_bps) / 10_000.0
+        if tie_band <= 0.0:
+            return False
+        return self.move_pct(snapshot.candle_open_price, snapshot.binance_price) <= tie_band
+
+    @staticmethod
+    def _bucket_metrics(rows: list[dict]) -> dict[str, float]:
+        posted_rows = [r for r in rows if r["result"].posted]
+        posted = len(posted_rows)
+        filled = sum(1 for r in posted_rows if r["result"].filled)
+        wins = sum(1 for r in posted_rows if r["result"].filled and r["result"].win)
+        fill_rate = (filled / posted) if posted else 0.0
+        win_rate = (wins / filled) if filled else 0.0
+        theoretical_edge = (
+            sum(r["result"].theoretical_edge_vs_taker for r in posted_rows) / posted
+            if posted
+            else 0.0
+        )
+        post_fill_edge = (
+            sum(r["result"].post_fill_edge_vs_taker for r in posted_rows) / posted
+            if posted
+            else 0.0
+        )
+        return {
+            "signals": float(posted),
+            "fills": float(filled),
+            "fill_rate": float(fill_rate),
+            "win_rate": float(win_rate),
+            "theoretical_edge_per_signal_usd": float(theoretical_edge),
+            "post_fill_edge_per_signal_usd": float(post_fill_edge),
+        }
+
+    @staticmethod
+    def _verdict_for_report(
+        signal_count: int,
+        fill_rate: float,
+        post_fill_edge_usd: float,
+        theoretical_edge_usd: float,
+        thresholds: Re1ShadowThresholds,
+    ) -> tuple[Verdict, str]:
+        if signal_count < thresholds.min_signal_count:
+            return (
+                "INSUFFICIENT_DATA",
+                (
+                    f"Need >= {thresholds.min_signal_count} signals, observed {signal_count}. "
+                    "Keep RE1 in shadow mode."
+                ),
+            )
+        if fill_rate < thresholds.min_fill_rate:
+            return (
+                "NO_GO",
+                (
+                    f"Maker fill rate {fill_rate:.3f} below threshold "
+                    f"{thresholds.min_fill_rate:.3f}."
+                ),
+            )
+        if post_fill_edge_usd < thresholds.min_post_fill_edge_usd:
+            return (
+                "NO_GO",
+                (
+                    f"Post-fill edge {post_fill_edge_usd:.4f} USD/signal below threshold "
+                    f"{thresholds.min_post_fill_edge_usd:.4f}."
+                ),
+            )
+        if theoretical_edge_usd < thresholds.min_theoretical_edge_usd:
+            return (
+                "NO_GO",
+                (
+                    f"Theoretical edge {theoretical_edge_usd:.4f} USD/signal below threshold "
+                    f"{thresholds.min_theoretical_edge_usd:.4f}."
+                ),
+            )
+        return ("GO", "RE1 shadow thresholds met; eligible for keep/kill review only.")
+
+    def build_re1_shadow_report(
+        self,
+        cases: Iterable[ShadowCase],
+        *,
+        run_started_ms: int | None = None,
+        run_ended_ms: int | None = None,
+        requested_shadow_hours: float = 72.0,
+        thresholds: Re1ShadowThresholds | None = None,
+        fill_assumptions: FillProbabilityAssumptions | None = None,
+    ) -> Re1ShadowReport:
+        rows = []
+        for case in cases:
+            result = self.evaluate_case(case)
+            rows.append(
+                {
+                    "case": case,
+                    "result": result,
+                    "in_tie_band": self._in_tie_band(case.snapshot),
+                }
+            )
+
+        thresholds = thresholds or Re1ShadowThresholds()
+        fill_assumptions = fill_assumptions or FillProbabilityAssumptions()
+
+        posted_rows = [r for r in rows if r["result"].posted]
+        posted_count = len(posted_rows)
+        filled_count = sum(1 for r in posted_rows if r["result"].filled)
+        fill_rate = (filled_count / posted_count) if posted_count else 0.0
+
+        theoretical_edge_per_signal = (
+            sum(r["result"].theoretical_edge_vs_taker for r in posted_rows) / posted_count
+            if posted_count
+            else 0.0
+        )
+        post_fill_edge_per_signal = (
+            sum(r["result"].post_fill_edge_vs_taker for r in posted_rows) / posted_count
+            if posted_count
+            else 0.0
+        )
+
+        verdict, reason = self._verdict_for_report(
+            signal_count=posted_count,
+            fill_rate=fill_rate,
+            post_fill_edge_usd=post_fill_edge_per_signal,
+            theoretical_edge_usd=theoretical_edge_per_signal,
+            thresholds=thresholds,
+        )
+
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        end_ms = run_ended_ms if run_ended_ms is not None else now_ms
+        start_ms = run_started_ms if run_started_ms is not None else int(
+            end_ms - requested_shadow_hours * 3600 * 1000
+        )
+        tie_band_rows = [r for r in posted_rows if r["in_tie_band"]]
+        non_tie_rows = [r for r in posted_rows if not r["in_tie_band"]]
+
+        return Re1ShadowReport(
+            schema_version="re1.shadow.v1",
+            generated_at_utc=datetime.now(timezone.utc).isoformat(),
+            run_started_ms=int(start_ms),
+            run_ended_ms=int(end_ms),
+            requested_shadow_hours=float(requested_shadow_hours),
+            evaluated_cases=len(rows),
+            signal_count=posted_count,
+            posted_count=posted_count,
+            filled_count=filled_count,
+            maker_fill_rate=float(fill_rate),
+            maker_fill_probability_assumptions={
+                "strict_trade_through": fill_assumptions.strict_trade_through,
+                "max_wait_seconds": float(fill_assumptions.max_wait_seconds),
+                "prior_fill_probability": float(fill_assumptions.prior_fill_probability),
+                "model": fill_assumptions.model,
+            },
+            realized_vs_theoretical_edge={
+                "theoretical_edge_per_signal_usd": float(theoretical_edge_per_signal),
+                "post_fill_edge_per_signal_usd": float(post_fill_edge_per_signal),
+                "fill_shortfall_edge_per_signal_usd": float(
+                    theoretical_edge_per_signal - post_fill_edge_per_signal
+                ),
+                "theoretical_edge_total_usd": float(
+                    sum(r["result"].theoretical_edge_vs_taker for r in posted_rows)
+                ),
+                "post_fill_edge_total_usd": float(
+                    sum(r["result"].post_fill_edge_vs_taker for r in posted_rows)
+                ),
+            },
+            tie_band_breakdown={
+                "in_tie_band": self._bucket_metrics(tie_band_rows),
+                "outside_tie_band": self._bucket_metrics(non_tie_rows),
+            },
+            barrier_breakdown={
+                "up_barrier": self._bucket_metrics(
+                    [r for r in posted_rows if r["result"].side == "UP"]
+                ),
+                "down_barrier": self._bucket_metrics(
+                    [r for r in posted_rows if r["result"].side == "DOWN"]
+                ),
+            },
+            re1_thresholds=asdict(thresholds),
+            verdict=verdict,
+            verdict_reason=reason,
+            promotion_policy="shadow_only_do_not_promote_live",
+        )
+
+    def write_re1_shadow_report(self, path: str | Path, report: Re1ShadowReport) -> Path:
+        output_path = Path(path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n")
+        return output_path

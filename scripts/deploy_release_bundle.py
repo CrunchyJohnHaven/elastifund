@@ -39,6 +39,9 @@ ROOT_DEPLOYABLE_FILES = {
     "requirements.txt",
     "requirements-elastic.txt",
 }
+EXACT_DEPLOYABLE_FILES = {
+    "state/btc5_autoresearch.env",
+}
 REQUIRED_RELEASE_REPORT_FILES = (
     "reports/runtime_truth_latest.json",
     "reports/public_runtime_snapshot.json",
@@ -139,6 +142,8 @@ def read_json(path: Path) -> dict[str, Any]:
 def is_deployable_changed_file(path: str) -> bool:
     if not path or path in NON_DEPLOYABLE_EXACT_FILES:
         return False
+    if path in EXACT_DEPLOYABLE_FILES:
+        return True
     if any(path.startswith(prefix) for prefix in NON_DEPLOYABLE_PREFIXES):
         return False
     if path in ROOT_DEPLOYABLE_FILES:

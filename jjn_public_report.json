@@ -1,0 +1,70 @@
+{
+  "artifact": "jjn_public_report",
+  "generated_at": "2026-03-09T20:03:46.413978+00:00",
+  "phase": "Phase 0 launch prep",
+  "claim_status": "prelaunch_instrumentation_only",
+  "claim_reason": "The Website Growth Audit wedge is coded and safety-gated, but live send, checkout, fulfillment, and KPI loops are not launched.",
+  "offer": {
+    "name": "Website Growth Audit",
+    "price_range_usd": "$500-$2,500",
+    "delivery_days": 5,
+    "fulfillment_type": "hybrid",
+    "status": "implemented_in_code_not_launched"
+  },
+  "funnel": {
+    "accounts_researched": 0,
+    "qualified_accounts": 0,
+    "outreach_approved": 0,
+    "messages_delivered": 0,
+    "replies": 0,
+    "meetings_booked": 0,
+    "proposals_sent": 0,
+    "outcomes_recorded": 0,
+    "revenue_won_usd": 0.0,
+    "gross_margin_usd": 0.0,
+    "time_to_first_dollar_days": null
+  },
+  "conversion": {
+    "reply_rate_pct": null,
+    "meeting_rate_pct": null,
+    "proposal_rate_pct": null,
+    "gross_margin_pct": null
+  },
+  "activation": {
+    "current_phase": "instrumentation_and_approval",
+    "approval_mode": "human_review_required",
+    "send_status": "blocked_pending_verified_domain_and_explicit_approval",
+    "fulfillment_status": "placeholders_defined_not_launched",
+    "dashboard_status": "phase0_public_board"
+  },
+  "delivery": {
+    "checkout_ready": false,
+    "billing_webhooks_ready": false,
+    "provisioning_ready": false,
+    "fulfillment_reporting_ready": false,
+    "recurring_monitor_defined": true
+  },
+  "evidence": {
+    "engines_functional": 5,
+    "templates_count": 3,
+    "dashboard_count": 1,
+    "package_tests_passed": 61,
+    "repo_tests_passed": 49,
+    "smoke_path_available": true,
+    "pipeline_entrypoint": "nontrading/main.py",
+    "pipeline_status": "RevenuePipeline runs from the CLI"
+  },
+  "blockers": [
+    "Verified sending domain and DNS auth are still missing.",
+    "A curated lead source has not been loaded into a live cycle.",
+    "Live outreach still requires explicit human approval.",
+    "Checkout and billing are not implemented.",
+    "Fulfillment reporting and KPI loops are not yet publishing."
+  ],
+  "artifact_sources": [
+    "docs/NON_TRADING_STATUS.md",
+    "nontrading/README.md",
+    "reports/jjn_phase0_20260309T013819Z.json",
+    "reports/jjn_phase1_readiness_20260309T021034Z.json"
+  ]
+}

@@ -21,9 +21,13 @@ if str(ROOT) not in sys.path:
 
 from scripts.btc5_monte_carlo import (  # noqa: E402
     DEFAULT_ARCHIVE_GLOB,
+    DEFAULT_DOWN_MAX,
     DEFAULT_LOSS_LIMIT_USD,
+    DEFAULT_MAX_ABS_DELTA,
     DEFAULT_REMOTE_ROWS_JSON,
+    DEFAULT_UP_MAX,
     REPORTS_DIR,
+    GuardrailProfile,
     _percentile,
     _round_metrics,
     _safe_float,
@@ -34,6 +38,8 @@ from scripts.btc5_monte_carlo import (  # noqa: E402
 
 
 DEFAULT_DB_PATH = Path("data/btc_5min_maker.db")
+DEFAULT_BASE_ENV = Path("config/btc5_strategy.env")
+DEFAULT_OVERRIDE_ENV = Path("state/btc5_autoresearch.env")
 DEFAULT_REPORT_DIR = Path("reports/btc5_hypothesis_lab")
 ET_ZONE = ZoneInfo("America/New_York")
 SESSION_FILTERS: tuple[tuple[str, tuple[int, ...]], ...] = (
@@ -89,6 +95,18 @@ def _parse_iso(value: Any) -> datetime | None:
         return None
 
 
+def _row_observed_at_utc(row: dict[str, Any]) -> datetime | None:
+    window_start_ts = _safe_int(row.get("window_start_ts"), 0)
+    if window_start_ts > 0:
+        return datetime.fromtimestamp(window_start_ts, tz=timezone.utc)
+    observed = _parse_iso(row.get("updated_at"))
+    if observed is None:
+        return None
+    if observed.tzinfo is None:
+        return observed.replace(tzinfo=timezone.utc)
+    return observed.astimezone(timezone.utc)
+
+
 def _window_dt_et(row: dict[str, Any]) -> datetime | None:
     window_start_ts = _safe_int(row.get("window_start_ts"), 0)
     if window_start_ts > 0:
@@ -97,6 +115,35 @@ def _window_dt_et(row: dict[str, Any]) -> datetime | None:
     if updated_at is not None:
         return updated_at.astimezone(ET_ZONE)
     return None
+
+
+def _load_env_file(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    values: dict[str, str] = {}
+    for line in path.read_text().splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        values[key.strip()] = value.strip().strip("'").strip('"')
+    return values
+
+
+def _merged_strategy_env(base_env: Path, override_env: Path) -> dict[str, str]:
+    merged = _load_env_file(base_env)
+    merged.update(_load_env_file(override_env))
+    return merged
+
+
+def _profile_from_env(name: str, env: dict[str, str]) -> GuardrailProfile:
+    return GuardrailProfile(
+        name=name,
+        max_abs_delta=_safe_float(env.get("BTC5_MAX_ABS_DELTA"), DEFAULT_MAX_ABS_DELTA),
+        up_max_buy_price=_safe_float(env.get("BTC5_UP_MAX_BUY_PRICE"), DEFAULT_UP_MAX),
+        down_max_buy_price=_safe_float(env.get("BTC5_DOWN_MAX_BUY_PRICE"), DEFAULT_DOWN_MAX),
+        note="loaded from strategy env",
+    )
 
 
 def enrich_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -373,6 +420,18 @@ def rank_hypothesis_pool(
             * max(0.25, fill_weight)
             * max(0.25, attempt_fill_rate + 0.25)
         )
+        # Bias toward the currently live-winning structure:
+        # DOWN + sub-0.49 quote caps + open/09 ET sessions.
+        focus_weight = 1.0
+        if str(spec.direction or "").upper() == "DOWN":
+            focus_weight *= 1.5
+        if spec.down_max_buy_price is not None and spec.down_max_buy_price < 0.49:
+            focus_weight *= 1.4
+        elif spec.down_max_buy_price is not None and spec.down_max_buy_price <= 0.49:
+            focus_weight *= 1.2
+        if spec.session_name == "open_et" or 9 in tuple(spec.et_hours):
+            focus_weight *= 1.2
+        exploration_score *= focus_weight
         key = (
             exploration_score,
             _safe_float(continuation.get("p05_arr_pct"), 0.0),
@@ -532,9 +591,573 @@ def _top_by_key(candidates: list[dict[str, Any]], key_name: str) -> list[dict[st
     )
 
 
+def _recommended_session_policy(best_hypothesis: dict[str, Any] | None) -> list[dict[str, Any]]:
+    hypothesis = (best_hypothesis or {}).get("hypothesis") or {}
+    session_name = str(hypothesis.get("session_name") or "").strip()
+    et_hours = sorted(
+        {
+            int(hour)
+            for hour in (hypothesis.get("et_hours") or [])
+            if isinstance(hour, int) or (isinstance(hour, str) and hour.isdigit())
+        }
+    )
+    if not et_hours:
+        return []
+
+    record: dict[str, Any] = {
+        "name": session_name or str(hypothesis.get("name") or "hypothesis_session"),
+        "et_hours": et_hours,
+    }
+    max_abs_delta = hypothesis.get("max_abs_delta")
+    up_max_buy_price = hypothesis.get("up_max_buy_price")
+    down_max_buy_price = hypothesis.get("down_max_buy_price")
+    if max_abs_delta is not None:
+        record["max_abs_delta"] = _safe_float(max_abs_delta, 0.0) or 0.0
+    if up_max_buy_price is not None:
+        record["up_max_buy_price"] = _safe_float(up_max_buy_price, 0.0) or 0.0
+    if down_max_buy_price is not None:
+        record["down_max_buy_price"] = _safe_float(down_max_buy_price, 0.0) or 0.0
+    return [record]
+
+
+def _follow_up_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return _follow_up_candidates_with_tradeoffs(candidates, active_candidate=None)
+
+
+def _hypothesis_followup_families(item: dict[str, Any]) -> list[str]:
+    families: list[str] = []
+    direction = str(item.get("direction") or "").upper()
+    up_cap = item.get("up_max_buy_price")
+    down_cap = item.get("down_max_buy_price")
+    max_abs_delta = item.get("max_abs_delta")
+    et_hours = tuple(int(hour) for hour in (item.get("et_hours") or []) if isinstance(hour, int))
+    session_name = str(item.get("session_name") or "any")
+
+    if direction == "DOWN" and up_cap is None:
+        families.append("down_only")
+    if direction == "DOWN" and (up_cap is None or _safe_float(up_cap, 1.0) <= 0.47):
+        families.append("up_disabled_or_nearly_disabled")
+    if (
+        direction == "DOWN"
+        and max_abs_delta is not None
+        and _safe_float(max_abs_delta, 1.0) <= 0.00008
+        and down_cap is not None
+        and _safe_float(down_cap, 1.0) <= 0.49
+    ):
+        families.append("tight_delta_down_bias")
+    if (
+        direction == "DOWN"
+        and max_abs_delta is not None
+        and _safe_float(max_abs_delta, 1.0) <= 0.00010
+        and down_cap is not None
+        and _safe_float(down_cap, 1.0) <= 0.49
+        and (session_name == "open_et" or any(hour in {9, 10, 11} for hour in et_hours))
+    ):
+        families.append("session_tight_down_bias")
+    return families
+
+
+def _follow_up_candidates_with_tradeoffs(
+    candidates: list[dict[str, Any]],
+    *,
+    active_candidate: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    active_arr = _safe_float((active_candidate or {}).get("validation_median_arr_pct"), 0.0)
+    active_fills = max(1, _safe_int((active_candidate or {}).get("validation_live_filled_rows"), 0))
+    for candidate in candidates:
+        hypothesis = candidate.get("hypothesis") if isinstance(candidate, dict) else {}
+        summary = candidate.get("summary") if isinstance(candidate, dict) else {}
+        if not isinstance(hypothesis, dict):
+            hypothesis = {}
+        if not isinstance(summary, dict):
+            summary = {}
+        et_hours = sorted(
+            {
+                int(hour)
+                for hour in (hypothesis.get("et_hours") or [])
+                if isinstance(hour, int) or (isinstance(hour, str) and hour.isdigit())
+            }
+        )
+        validation_fills = _safe_int(summary.get("validation_live_filled_rows"), 0)
+        fill_retention = validation_fills / float(active_fills)
+        generalization_ratio = _safe_float(summary.get("generalization_ratio"), 0.0)
+        evidence_band = str(summary.get("evidence_band") or "exploratory")
+        evidence_weight = 1.0 if evidence_band == "validated" else (0.8 if evidence_band == "candidate" else 0.6)
+        execution_realism_score = min(
+            1.0,
+            max(
+                0.0,
+                (0.5 * min(1.0, fill_retention))
+                + (0.3 * min(1.0, generalization_ratio))
+                + (0.2 * evidence_weight),
+            ),
+        )
+        payload = {
+            "name": str(hypothesis.get("name") or "candidate"),
+            "direction": str(hypothesis.get("direction") or "").upper() or None,
+            "session_name": str(hypothesis.get("session_name") or "any"),
+            "et_hours": et_hours,
+            "max_abs_delta": (
+                _safe_float(hypothesis.get("max_abs_delta"), 0.0)
+                if hypothesis.get("max_abs_delta") is not None
+                else None
+            ),
+            "up_max_buy_price": (
+                _safe_float(hypothesis.get("up_max_buy_price"), 0.0)
+                if hypothesis.get("up_max_buy_price") is not None
+                else None
+            ),
+            "down_max_buy_price": (
+                _safe_float(hypothesis.get("down_max_buy_price"), 0.0)
+                if hypothesis.get("down_max_buy_price") is not None
+                else None
+            ),
+            "ranking_score": _safe_float(summary.get("ranking_score"), 0.0),
+            "evidence_band": evidence_band,
+            "validation_live_filled_rows": validation_fills,
+            "generalization_ratio": generalization_ratio,
+            "validation_median_arr_pct": _safe_float(summary.get("validation_median_arr_pct"), 0.0),
+            "validation_p05_arr_pct": _safe_float(summary.get("validation_p05_arr_pct"), 0.0),
+            "arr_improvement_vs_active_pct": round(
+                _safe_float(summary.get("validation_median_arr_pct"), 0.0) - active_arr,
+                4,
+            ),
+            "fill_retention_vs_active": round(fill_retention, 4),
+            "execution_realism_score": round(execution_realism_score, 4),
+            "execution_realism_label": (
+                "high" if execution_realism_score >= 0.8 else ("medium" if execution_realism_score >= 0.6 else "low")
+            ),
+        }
+        payload["follow_up_families"] = _hypothesis_followup_families(payload)
+        items.append(payload)
+    items.sort(
+        key=lambda item: (
+            -_safe_float(item.get("ranking_score"), 0.0),
+            str(item.get("name") or ""),
+        )
+    )
+    return items[:5]
+
+
+def _best_live_followups(follow_ups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    candidates = [item for item in follow_ups if item.get("follow_up_families")]
+    if not candidates:
+        candidates = list(follow_ups)
+    candidates.sort(
+        key=lambda item: (
+            -_safe_float(item.get("execution_realism_score"), 0.0),
+            -_safe_float(item.get("ranking_score"), 0.0),
+            str(item.get("name") or ""),
+        )
+    )
+    return candidates[:5]
+
+
+def _best_one_sided_followups(follow_ups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    one_sided_families = {"down_only", "up_disabled_or_nearly_disabled"}
+    candidates = [
+        item
+        for item in follow_ups
+        if any(family in one_sided_families for family in (item.get("follow_up_families") or []))
+    ]
+    candidates.sort(
+        key=lambda item: (
+            -_safe_float(item.get("execution_realism_score"), 0.0),
+            -_safe_float(item.get("ranking_score"), 0.0),
+            str(item.get("name") or ""),
+        )
+    )
+    return candidates[:5]
+
+
+def _candidate_from_profile_result(
+    *,
+    profile: GuardrailProfile,
+    evaluated: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not isinstance(evaluated, dict):
+        return {
+            "name": profile.name,
+            "session_name": "any",
+            "et_hours": [],
+            "max_abs_delta": profile.max_abs_delta,
+            "up_max_buy_price": profile.up_max_buy_price,
+            "down_max_buy_price": profile.down_max_buy_price,
+            "ranking_score": 0.0,
+            "evidence_band": "exploratory",
+            "validation_live_filled_rows": 0,
+            "generalization_ratio": 0.0,
+            "validation_median_arr_pct": 0.0,
+            "validation_p05_arr_pct": 0.0,
+        }
+    hypothesis = dict(evaluated.get("hypothesis") or {})
+    summary = dict(evaluated.get("summary") or {})
+    return {
+        "name": str(hypothesis.get("name") or profile.name),
+        "session_name": str(hypothesis.get("session_name") or "any"),
+        "et_hours": sorted(
+            {
+                int(hour)
+                for hour in (hypothesis.get("et_hours") or [])
+                if isinstance(hour, int) or (isinstance(hour, str) and hour.isdigit())
+            }
+        ),
+        "max_abs_delta": (
+            _safe_float(hypothesis.get("max_abs_delta"), 0.0)
+            if hypothesis.get("max_abs_delta") is not None
+            else None
+        ),
+        "up_max_buy_price": (
+            _safe_float(hypothesis.get("up_max_buy_price"), 0.0)
+            if hypothesis.get("up_max_buy_price") is not None
+            else None
+        ),
+        "down_max_buy_price": (
+            _safe_float(hypothesis.get("down_max_buy_price"), 0.0)
+            if hypothesis.get("down_max_buy_price") is not None
+            else None
+        ),
+        "ranking_score": _safe_float(summary.get("ranking_score"), 0.0),
+        "evidence_band": str(summary.get("evidence_band") or "exploratory"),
+        "validation_live_filled_rows": _safe_int(summary.get("validation_live_filled_rows"), 0),
+        "generalization_ratio": _safe_float(summary.get("generalization_ratio"), 0.0),
+        "validation_median_arr_pct": _safe_float(summary.get("validation_median_arr_pct"), 0.0),
+        "validation_p05_arr_pct": _safe_float(summary.get("validation_p05_arr_pct"), 0.0),
+    }
+
+
+def _capacity_stress_candidates(
+    rows: list[dict[str, Any]],
+    best_hypothesis: dict[str, Any] | None,
+    *,
+    paths: int,
+    block_size: int,
+    loss_limit_usd: float,
+    seed: int,
+    min_train_rows: int,
+    min_validate_rows: int,
+    min_train_fills: int,
+    min_validate_fills: int,
+) -> list[dict[str, Any]]:
+    if not isinstance(best_hypothesis, dict):
+        return []
+    base_h = best_hypothesis.get("hypothesis")
+    base_s = best_hypothesis.get("summary")
+    if not isinstance(base_h, dict) or not isinstance(base_s, dict):
+        return []
+    base_spec = HypothesisSpec(
+        name=str(base_h.get("name") or "best"),
+        direction=str(base_h.get("direction")).upper() if base_h.get("direction") else None,
+        max_abs_delta=(
+            _safe_float(base_h.get("max_abs_delta"), 0.0) if base_h.get("max_abs_delta") is not None else None
+        ),
+        up_max_buy_price=(
+            _safe_float(base_h.get("up_max_buy_price"), 0.0) if base_h.get("up_max_buy_price") is not None else None
+        ),
+        down_max_buy_price=(
+            _safe_float(base_h.get("down_max_buy_price"), 0.0) if base_h.get("down_max_buy_price") is not None else None
+        ),
+        et_hours=tuple(
+            int(hour)
+            for hour in (base_h.get("et_hours") or [])
+            if isinstance(hour, int) or (isinstance(hour, str) and hour.isdigit())
+        ),
+        session_name=str(base_h.get("session_name") or "any"),
+    )
+    variant_specs = [
+        ("tight_quote", base_spec.__class__(
+            name=f"{base_spec.name}_tight_quote",
+            direction=base_spec.direction,
+            max_abs_delta=base_spec.max_abs_delta,
+            up_max_buy_price=(
+                round(max(0.45, min(0.55, (base_spec.up_max_buy_price or 0.49) - 0.01)), 2)
+                if base_spec.up_max_buy_price is not None
+                else None
+            ),
+            down_max_buy_price=(
+                round(max(0.45, min(0.55, (base_spec.down_max_buy_price or 0.49) - 0.01)), 2)
+                if base_spec.down_max_buy_price is not None
+                else None
+            ),
+            et_hours=base_spec.et_hours,
+            session_name=base_spec.session_name,
+        )),
+        ("loose_quote", base_spec.__class__(
+            name=f"{base_spec.name}_loose_quote",
+            direction=base_spec.direction,
+            max_abs_delta=base_spec.max_abs_delta,
+            up_max_buy_price=(
+                round(max(0.45, min(0.55, (base_spec.up_max_buy_price or 0.49) + 0.01)), 2)
+                if base_spec.up_max_buy_price is not None
+                else None
+            ),
+            down_max_buy_price=(
+                round(max(0.45, min(0.55, (base_spec.down_max_buy_price or 0.49) + 0.01)), 2)
+                if base_spec.down_max_buy_price is not None
+                else None
+            ),
+            et_hours=base_spec.et_hours,
+            session_name=base_spec.session_name,
+        )),
+        ("tight_delta", base_spec.__class__(
+            name=f"{base_spec.name}_tight_delta",
+            direction=base_spec.direction,
+            max_abs_delta=(
+                round(max(0.00001, (base_spec.max_abs_delta or 0.00010) * 0.85), 8)
+                if base_spec.max_abs_delta is not None
+                else None
+            ),
+            up_max_buy_price=base_spec.up_max_buy_price,
+            down_max_buy_price=base_spec.down_max_buy_price,
+            et_hours=base_spec.et_hours,
+            session_name=base_spec.session_name,
+        )),
+        ("loose_delta", base_spec.__class__(
+            name=f"{base_spec.name}_loose_delta",
+            direction=base_spec.direction,
+            max_abs_delta=(
+                round(min(0.00100, (base_spec.max_abs_delta or 0.00010) * 1.15), 8)
+                if base_spec.max_abs_delta is not None
+                else None
+            ),
+            up_max_buy_price=base_spec.up_max_buy_price,
+            down_max_buy_price=base_spec.down_max_buy_price,
+            et_hours=base_spec.et_hours,
+            session_name=base_spec.session_name,
+        )),
+    ]
+
+    base_fills = _safe_int(base_s.get("validation_live_filled_rows"), 0)
+    base_pnl = _safe_float(base_s.get("validation_replay_pnl_usd"), 0.0)
+    base_p05 = _safe_float(base_s.get("validation_p05_arr_pct"), 0.0)
+    candidates: list[dict[str, Any]] = []
+    for idx, (variant_name, variant_spec) in enumerate(variant_specs, start=1):
+        evaluated = evaluate_hypothesis_walk_forward(
+            rows,
+            variant_spec,
+            paths=max(50, int(paths // 3)),
+            block_size=block_size,
+            loss_limit_usd=loss_limit_usd,
+            seed=seed + (idx * 101),
+            min_train_rows=min_train_rows,
+            min_validate_rows=min_validate_rows,
+            min_train_fills=min_train_fills,
+            min_validate_fills=min_validate_fills,
+        )
+        if not isinstance(evaluated, dict):
+            continue
+        summary = evaluated.get("summary") if isinstance(evaluated.get("summary"), dict) else {}
+        fills = _safe_int(summary.get("validation_live_filled_rows"), 0)
+        pnl = _safe_float(summary.get("validation_replay_pnl_usd"), 0.0)
+        p05 = _safe_float(summary.get("validation_p05_arr_pct"), 0.0)
+        candidates.append(
+            {
+                "name": str(variant_spec.name),
+                "variant": variant_name,
+                "session_name": variant_spec.session_name,
+                "et_hours": list(variant_spec.et_hours),
+                "max_abs_delta": variant_spec.max_abs_delta,
+                "up_max_buy_price": variant_spec.up_max_buy_price,
+                "down_max_buy_price": variant_spec.down_max_buy_price,
+                "expected_fill_lift": int(fills - base_fills),
+                "expected_median_pnl_delta_usd": round(pnl - base_pnl, 4),
+                "expected_p05_arr_delta_pct": round(p05 - base_p05, 4),
+                "evidence_band": str(summary.get("evidence_band") or _evidence_band(fills)),
+            }
+        )
+    candidates.sort(
+        key=lambda item: (
+            _safe_float(item.get("expected_p05_arr_delta_pct"), 0.0),
+            _safe_float(item.get("expected_median_pnl_delta_usd"), 0.0),
+            str(item.get("name") or ""),
+        ),
+        reverse=True,
+    )
+    return candidates[:5]
+
+
+def _session_name_for_hour(et_hour: int | None) -> str:
+    if et_hour is None:
+        return "unknown"
+    if et_hour in {9, 10, 11}:
+        return "open_et"
+    if et_hour in {12, 13}:
+        return "midday_et"
+    if et_hour in {14, 15, 16}:
+        return "late_et"
+    return f"hour_et_{int(et_hour):02d}"
+
+
+def _price_bucket(order_price: float) -> str:
+    if order_price < 0.49:
+        return "lt_0.49"
+    if order_price <= 0.51:
+        return "0.49_to_0.51"
+    return "gt_0.51"
+
+
+def _delta_bucket(abs_delta: float) -> str:
+    if abs_delta <= 0.00005:
+        return "le_0.00005"
+    if abs_delta <= 0.00010:
+        return "0.00005_to_0.00010"
+    return "gt_0.00010"
+
+
+def _loss_cluster_suppression_candidates(
+    rows: list[dict[str, Any]],
+    best_hypothesis: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    hypothesis = (best_hypothesis or {}).get("hypothesis")
+    scoped_rows = rows
+    if isinstance(hypothesis, dict):
+        spec = HypothesisSpec(
+            name=str(hypothesis.get("name") or "best"),
+            direction=str(hypothesis.get("direction")).upper() if hypothesis.get("direction") else None,
+            max_abs_delta=(
+                _safe_float(hypothesis.get("max_abs_delta"), 0.0)
+                if hypothesis.get("max_abs_delta") is not None
+                else None
+            ),
+            up_max_buy_price=(
+                _safe_float(hypothesis.get("up_max_buy_price"), 0.0)
+                if hypothesis.get("up_max_buy_price") is not None
+                else None
+            ),
+            down_max_buy_price=(
+                _safe_float(hypothesis.get("down_max_buy_price"), 0.0)
+                if hypothesis.get("down_max_buy_price") is not None
+                else None
+            ),
+            et_hours=tuple(
+                int(hour)
+                for hour in (hypothesis.get("et_hours") or [])
+                if isinstance(hour, int) or (isinstance(hour, str) and hour.isdigit())
+            ),
+            session_name=str(hypothesis.get("session_name") or "any"),
+        )
+        scoped_rows = [row for row in rows if row_matches_hypothesis(row, spec)]
+    negative_fills = [
+        row
+        for row in scoped_rows
+        if str(row.get("order_status") or "").strip().lower() == "live_filled"
+        and _safe_float(row.get("pnl_usd"), 0.0) < 0.0
+    ]
+    if not negative_fills and scoped_rows is not rows:
+        negative_fills = [
+            row
+            for row in rows
+            if str(row.get("order_status") or "").strip().lower() == "live_filled"
+            and _safe_float(row.get("pnl_usd"), 0.0) < 0.0
+        ]
+    if not negative_fills:
+        return []
+
+    clusters: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for row in negative_fills:
+        direction = str(row.get("direction") or "UNKNOWN").upper()
+        et_hour = row.get("et_hour")
+        session_name = _session_name_for_hour(int(et_hour) if isinstance(et_hour, int) else None)
+        order_price = _safe_float(row.get("order_price"), 0.0)
+        abs_delta = _safe_float(row.get("abs_delta"), abs(_safe_float(row.get("delta"), 0.0)))
+        key = (direction, session_name, _price_bucket(order_price), _delta_bucket(abs_delta))
+        cluster = clusters.setdefault(
+            key,
+            {
+                "direction": direction,
+                "session_name": session_name,
+                "price_bucket": key[2],
+                "delta_bucket": key[3],
+                "loss_rows": 0,
+                "total_loss_usd": 0.0,
+            },
+        )
+        cluster["loss_rows"] = int(cluster["loss_rows"]) + 1
+        cluster["total_loss_usd"] = _safe_float(cluster["total_loss_usd"], 0.0) + _safe_float(row.get("pnl_usd"), 0.0)
+
+    ranked = sorted(
+        clusters.values(),
+        key=lambda item: (
+            _safe_float(item.get("total_loss_usd"), 0.0),
+            -_safe_int(item.get("loss_rows"), 0),
+            str(item.get("session_name") or ""),
+            str(item.get("price_bucket") or ""),
+            str(item.get("delta_bucket") or ""),
+        ),
+    )
+    return [
+        {
+            "direction": str(cluster.get("direction") or "UNKNOWN"),
+            "session_name": str(cluster.get("session_name") or "unknown"),
+            "price_bucket": str(cluster.get("price_bucket") or "unknown"),
+            "delta_bucket": str(cluster.get("delta_bucket") or "unknown"),
+            "loss_rows": _safe_int(cluster.get("loss_rows"), 0),
+            "total_loss_usd": round(_safe_float(cluster.get("total_loss_usd"), 0.0), 4),
+            "suggested_action": "suppress_cluster_until_revalidated",
+        }
+        for cluster in ranked[:5]
+    ]
+
+
+def _last_improvement_for_hypothesis(
+    rows: list[dict[str, Any]],
+    hypothesis_payload: dict[str, Any] | None,
+) -> datetime | None:
+    hypothesis_payload = hypothesis_payload or {}
+    if not isinstance(hypothesis_payload, dict):
+        return None
+    spec = HypothesisSpec(
+        name=str(hypothesis_payload.get("name") or "candidate"),
+        direction=(
+            str(hypothesis_payload.get("direction")).strip().upper()
+            if hypothesis_payload.get("direction") not in (None, "")
+            else None
+        ),
+        max_abs_delta=(
+            _safe_float(hypothesis_payload.get("max_abs_delta"), 0.0)
+            if hypothesis_payload.get("max_abs_delta") is not None
+            else None
+        ),
+        up_max_buy_price=(
+            _safe_float(hypothesis_payload.get("up_max_buy_price"), 0.0)
+            if hypothesis_payload.get("up_max_buy_price") is not None
+            else None
+        ),
+        down_max_buy_price=(
+            _safe_float(hypothesis_payload.get("down_max_buy_price"), 0.0)
+            if hypothesis_payload.get("down_max_buy_price") is not None
+            else None
+        ),
+        et_hours=tuple(
+            int(hour)
+            for hour in (hypothesis_payload.get("et_hours") or [])
+            if isinstance(hour, int) or (isinstance(hour, str) and hour.isdigit())
+        ),
+        session_name=str(hypothesis_payload.get("session_name") or "any"),
+    )
+    matched = [
+        row for row in rows
+        if row_matches_hypothesis(row, spec)
+        and str(row.get("order_status") or "").strip().lower() == "live_filled"
+        and _safe_float(row.get("pnl_usd"), 0.0) > 0.0
+    ]
+    if not matched:
+        matched = [
+            row for row in rows
+            if row_matches_hypothesis(row, spec)
+            and str(row.get("order_status") or "").strip().lower() == "live_filled"
+        ]
+    timestamps = [ts for ts in (_row_observed_at_utc(row) for row in matched) if ts is not None]
+    return max(timestamps) if timestamps else None
+
+
 def _render_markdown(summary: dict[str, Any]) -> str:
     top = summary.get("top_hypotheses") or []
     best = summary.get("best_hypothesis") or {}
+    recommended_policy = summary.get("recommended_session_policy") or []
+    best_candidate = summary.get("best_candidate") or {}
+    active_profile = summary.get("active_profile") or {}
     lines = [
         "# BTC5 Hypothesis Lab",
         "",
@@ -542,6 +1165,15 @@ def _render_markdown(summary: dict[str, Any]) -> str:
         f"- Source rows: `{summary['input']['observed_window_rows']}` total, `{summary['input']['priced_window_rows']}` priced observations",
         f"- Candidate pool: `{summary['input']['generated_candidates']}` generated, `{summary['input']['walk_forward_candidates']}` walk-forward validated",
         f"- Validation metric: `{summary['metric_name']}`",
+        f"- Active profile: `{active_profile.get('name', 'n/a')}`",
+        f"- Best candidate: `{best_candidate.get('name', 'n/a')}`",
+        f"- ARR delta vs active: `{_safe_float(summary.get('arr_delta_vs_active_pct'), 0.0):.2f}` percentage points",
+        f"- P05 ARR delta vs active: `{_safe_float(summary.get('p05_arr_delta_vs_active_pct'), 0.0):.2f}` percentage points",
+        f"- Validation fills: `{_safe_int(summary.get('validation_live_filled_rows'), 0)}`",
+        f"- Generalization ratio: `{_safe_float(summary.get('generalization_ratio'), 0.0):.4f}`",
+        f"- Evidence band: `{summary.get('evidence_band', 'exploratory')}`",
+        f"- Last improvement at: `{summary.get('last_improvement_at') or 'unknown'}`",
+        f"- Hours since last improvement: `{summary.get('hours_since_last_improvement')}`",
         "",
     ]
     if best:
@@ -561,6 +1193,19 @@ def _render_markdown(summary: dict[str, Any]) -> str:
                 f"- Validation profit probability: `{stats.get('validation_profit_probability', 0.0):.2%}`",
                 f"- Evidence band: `{stats.get('evidence_band', 'exploratory')}`",
                 f"- Generalization ratio: `{stats.get('generalization_ratio', 0.0):.4f}`",
+                "",
+            ]
+        )
+    if recommended_policy:
+        lines.extend(
+            [
+                "## Recommended Session Policy",
+                "",
+                f"- Runtime-ready policy records: `{len(recommended_policy)}`",
+                "",
+                "```json",
+                json.dumps(recommended_policy, indent=2),
+                "```",
                 "",
             ]
         )
@@ -625,7 +1270,9 @@ def _write_outputs(output_dir: Path, *, summary: dict[str, Any], write_latest: b
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db-path", type=Path, default=DEFAULT_DB_PATH)
-    parser.add_argument("--output-dir", type=Path, default=None)
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_REPORT_DIR)
+    parser.add_argument("--strategy-env", type=Path, default=DEFAULT_BASE_ENV)
+    parser.add_argument("--override-env", type=Path, default=DEFAULT_OVERRIDE_ENV)
     parser.add_argument("--include-archive-csvs", action="store_true")
     parser.add_argument("--archive-glob", default=DEFAULT_ARCHIVE_GLOB)
     parser.add_argument("--refresh-remote", action="store_true")
@@ -648,6 +1295,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    merged_env = _merged_strategy_env(args.strategy_env, args.override_env)
+    active_profile = _profile_from_env("active_profile", merged_env)
     rows, baseline = assemble_observed_rows(
         db_path=args.db_path,
         include_archive_csvs=bool(args.include_archive_csvs),
@@ -694,7 +1343,46 @@ def main() -> int:
         reverse=True,
     )
     top = evaluated[: max(1, int(args.top_hypotheses))]
-    output_dir = args.output_dir or (REPORTS_DIR / f"btc5_hypothesis_lab_{_stamp()}")
+    active_spec = HypothesisSpec(
+        name=active_profile.name,
+        direction=None,
+        max_abs_delta=active_profile.max_abs_delta,
+        up_max_buy_price=active_profile.up_max_buy_price,
+        down_max_buy_price=active_profile.down_max_buy_price,
+        et_hours=tuple(),
+        session_name="any",
+    )
+    active_result = evaluate_hypothesis_walk_forward(
+        enriched_priced_rows,
+        active_spec,
+        paths=max(1, int(args.paths)),
+        block_size=max(1, int(args.block_size)),
+        loss_limit_usd=float(args.loss_limit_usd),
+        seed=int(args.seed),
+        min_train_rows=max(1, int(args.min_train_rows)),
+        min_validate_rows=max(1, int(args.min_validate_rows)),
+        min_train_fills=max(1, int(args.min_train_fills)),
+        min_validate_fills=max(1, int(args.min_validate_fills)),
+    )
+    best_candidate = _candidate_from_profile_result(
+        profile=active_profile,
+        evaluated=top[0] if top else None,
+    )
+    active_candidate = _candidate_from_profile_result(
+        profile=active_profile,
+        evaluated=active_result,
+    )
+    last_improvement_at = _last_improvement_for_hypothesis(
+        enriched_priced_rows,
+        (top[0] or {}).get("hypothesis") if top else None,
+    )
+    hours_since_last_improvement = (
+        round((_now_utc() - last_improvement_at).total_seconds() / 3600.0, 4)
+        if last_improvement_at is not None
+        else None
+    )
+    output_dir = args.output_dir
+    follow_ups = _follow_up_candidates_with_tradeoffs(top, active_candidate=active_candidate)
     summary = {
         "generated_at": _now_utc().isoformat(),
         "metric_name": "validation_p05_arr_pct",
@@ -717,7 +1405,55 @@ def main() -> int:
             "min_validate_fills": int(args.min_validate_fills),
         },
         "baseline": baseline,
+        "active_profile": {
+            "name": active_candidate["name"],
+            "session_name": active_candidate["session_name"],
+            "et_hours": active_candidate["et_hours"],
+            "max_abs_delta": active_candidate["max_abs_delta"],
+            "up_max_buy_price": active_candidate["up_max_buy_price"],
+            "down_max_buy_price": active_candidate["down_max_buy_price"],
+        },
+        "best_candidate": best_candidate,
+        "arr_delta_vs_active_pct": round(
+            _safe_float(best_candidate.get("validation_median_arr_pct"), 0.0)
+            - _safe_float(active_candidate.get("validation_median_arr_pct"), 0.0),
+            4,
+        ),
+        "p05_arr_delta_vs_active_pct": round(
+            _safe_float(best_candidate.get("validation_p05_arr_pct"), 0.0)
+            - _safe_float(active_candidate.get("validation_p05_arr_pct"), 0.0),
+            4,
+        ),
+        "validation_live_filled_rows": _safe_int(best_candidate.get("validation_live_filled_rows"), 0),
+        "generalization_ratio": _safe_float(best_candidate.get("generalization_ratio"), 0.0),
+        "evidence_band": str(best_candidate.get("evidence_band") or "exploratory"),
+        "last_improvement_at": (
+            last_improvement_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            if last_improvement_at is not None
+            else None
+        ),
+        "hours_since_last_improvement": hours_since_last_improvement,
         "best_hypothesis": top[0] if top else None,
+        "recommended_session_policy": _recommended_session_policy(top[0] if top else None),
+        "follow_up_candidates": follow_ups,
+        "best_live_followups": _best_live_followups(follow_ups),
+        "best_one_sided_followups": _best_one_sided_followups(follow_ups),
+        "loss_cluster_suppression_candidates": _loss_cluster_suppression_candidates(
+            enriched_priced_rows,
+            top[0] if top else None,
+        ),
+        "capacity_stress_candidates": _capacity_stress_candidates(
+            enriched_priced_rows,
+            top[0] if top else None,
+            paths=max(1, int(args.paths)),
+            block_size=max(1, int(args.block_size)),
+            loss_limit_usd=float(args.loss_limit_usd),
+            seed=int(args.seed),
+            min_train_rows=max(1, int(args.min_train_rows)),
+            min_validate_rows=max(1, int(args.min_validate_rows)),
+            min_train_fills=max(1, int(args.min_train_fills)),
+            min_validate_fills=max(1, int(args.min_validate_fills)),
+        ),
         "top_hypotheses": top,
         "top_by_direction": _top_by_key(top, "direction"),
         "top_by_session": _top_by_key(top, "session_name"),

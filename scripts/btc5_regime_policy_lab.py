@@ -130,6 +130,22 @@ def _window_dt_et(row: dict[str, Any]) -> datetime | None:
     return datetime.fromtimestamp(window_start_ts, tz=timezone.utc).astimezone(ET_ZONE)
 
 
+def _row_observed_at_utc(row: dict[str, Any]) -> datetime | None:
+    window_start_ts = _safe_int(row.get("window_start_ts"), 0)
+    if window_start_ts > 0:
+        return datetime.fromtimestamp(window_start_ts, tz=timezone.utc)
+    updated_raw = str(row.get("updated_at") or "").strip()
+    if not updated_raw:
+        return None
+    try:
+        observed = datetime.fromisoformat(updated_raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if observed.tzinfo is None:
+        return observed.replace(tzinfo=timezone.utc)
+    return observed.astimezone(timezone.utc)
+
+
 def enrich_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     enriched: list[dict[str, Any]] = []
     for row in rows:
@@ -628,6 +644,88 @@ def _recommended_session_policy(best_policy: dict[str, Any] | None) -> list[dict
     return recommended
 
 
+def _row_matches_policy_payload(row: dict[str, Any], policy_payload: dict[str, Any]) -> bool:
+    default_profile_payload = policy_payload.get("default_profile")
+    if not isinstance(default_profile_payload, dict):
+        return False
+    default_profile = GuardrailProfile(
+        name=str(default_profile_payload.get("name") or "default"),
+        max_abs_delta=(
+            _safe_float(default_profile_payload.get("max_abs_delta"), 0.0)
+            if default_profile_payload.get("max_abs_delta") is not None
+            else None
+        ),
+        up_max_buy_price=(
+            _safe_float(default_profile_payload.get("up_max_buy_price"), 0.0)
+            if default_profile_payload.get("up_max_buy_price") is not None
+            else None
+        ),
+        down_max_buy_price=(
+            _safe_float(default_profile_payload.get("down_max_buy_price"), 0.0)
+            if default_profile_payload.get("down_max_buy_price") is not None
+            else None
+        ),
+    )
+    hour = row.get("et_hour")
+    overrides = policy_payload.get("overrides")
+    if isinstance(overrides, list):
+        for override in overrides:
+            if not isinstance(override, dict):
+                continue
+            hours = {
+                int(h)
+                for h in (override.get("et_hours") or [])
+                if isinstance(h, int) or (isinstance(h, str) and h.isdigit())
+            }
+            if hours and hour in hours:
+                profile_payload = override.get("profile")
+                if not isinstance(profile_payload, dict):
+                    return False
+                override_profile = GuardrailProfile(
+                    name=str(profile_payload.get("name") or "override"),
+                    max_abs_delta=(
+                        _safe_float(profile_payload.get("max_abs_delta"), 0.0)
+                        if profile_payload.get("max_abs_delta") is not None
+                        else None
+                    ),
+                    up_max_buy_price=(
+                        _safe_float(profile_payload.get("up_max_buy_price"), 0.0)
+                        if profile_payload.get("up_max_buy_price") is not None
+                        else None
+                    ),
+                    down_max_buy_price=(
+                        _safe_float(profile_payload.get("down_max_buy_price"), 0.0)
+                        if profile_payload.get("down_max_buy_price") is not None
+                        else None
+                    ),
+                )
+                return row_matches_profile(row, override_profile)
+    return row_matches_profile(row, default_profile)
+
+
+def _last_improvement_for_policy(
+    rows: list[dict[str, Any]],
+    best_policy: dict[str, Any] | None,
+) -> datetime | None:
+    policy_payload = (best_policy or {}).get("policy")
+    if not isinstance(policy_payload, dict):
+        return None
+    matched = [
+        row for row in rows
+        if _row_matches_policy_payload(row, policy_payload)
+        and str(row.get("order_status") or "").strip().lower() == "live_filled"
+        and _safe_float(row.get("pnl_usd"), 0.0) > 0.0
+    ]
+    if not matched:
+        matched = [
+            row for row in rows
+            if _row_matches_policy_payload(row, policy_payload)
+            and str(row.get("order_status") or "").strip().lower() == "live_filled"
+        ]
+    timestamps = [ts for ts in (_row_observed_at_utc(row) for row in matched) if ts is not None]
+    return max(timestamps) if timestamps else None
+
+
 def _candidate_runtime_package(candidate: dict[str, Any]) -> dict[str, Any]:
     policy = candidate.get("policy") if isinstance(candidate, dict) else {}
     if not isinstance(policy, dict):
@@ -707,7 +805,75 @@ def _candidate_runtime_package(candidate: dict[str, Any]) -> dict[str, Any]:
 
 
 def _follow_up_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    packages = [_candidate_runtime_package(candidate) for candidate in candidates]
+    return _follow_up_candidates_with_tradeoffs(candidates, active_candidate=None)
+
+
+def _regime_followup_families(item: dict[str, Any]) -> list[str]:
+    families: list[str] = []
+    up_cap = item.get("up_max_buy_price")
+    down_cap = item.get("down_max_buy_price")
+    max_abs_delta = item.get("max_abs_delta")
+    et_hours = tuple(int(hour) for hour in (item.get("et_hours") or []) if isinstance(hour, int))
+    session_count = _safe_int(item.get("session_count"), 0)
+
+    if up_cap is None:
+        families.append("down_only")
+    if up_cap is None or _safe_float(up_cap, 1.0) <= 0.47:
+        families.append("up_disabled_or_nearly_disabled")
+    if (
+        max_abs_delta is not None
+        and _safe_float(max_abs_delta, 1.0) <= 0.00008
+        and down_cap is not None
+        and _safe_float(down_cap, 1.0) <= 0.49
+    ):
+        families.append("tight_delta_down_bias")
+    if (
+        session_count > 0
+        and max_abs_delta is not None
+        and _safe_float(max_abs_delta, 1.0) <= 0.00010
+        and down_cap is not None
+        and _safe_float(down_cap, 1.0) <= 0.49
+        and any(hour in {9, 10, 11} for hour in et_hours)
+    ):
+        families.append("session_tight_down_bias")
+    return families
+
+
+def _follow_up_candidates_with_tradeoffs(
+    candidates: list[dict[str, Any]],
+    *,
+    active_candidate: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    active_arr = _safe_float((active_candidate or {}).get("validation_median_arr_pct"), 0.0)
+    active_fills = max(1, _safe_int((active_candidate or {}).get("validation_live_filled_rows"), 0))
+    packages: list[dict[str, Any]] = []
+    for candidate in candidates:
+        package = _candidate_runtime_package(candidate)
+        validation_fills = _safe_int(package.get("validation_live_filled_rows"), 0)
+        fill_retention = validation_fills / float(active_fills)
+        generalization_ratio = _safe_float(package.get("generalization_ratio"), 0.0)
+        evidence_band = str(package.get("evidence_band") or "exploratory")
+        evidence_weight = 1.0 if evidence_band == "validated" else (0.8 if evidence_band == "candidate" else 0.6)
+        execution_realism_score = min(
+            1.0,
+            max(
+                0.0,
+                (0.5 * min(1.0, fill_retention))
+                + (0.3 * min(1.0, generalization_ratio))
+                + (0.2 * evidence_weight),
+            ),
+        )
+        package["arr_improvement_vs_active_pct"] = round(
+            _safe_float(package.get("validation_median_arr_pct"), 0.0) - active_arr,
+            4,
+        )
+        package["fill_retention_vs_active"] = round(fill_retention, 4)
+        package["execution_realism_score"] = round(execution_realism_score, 4)
+        package["execution_realism_label"] = (
+            "high" if execution_realism_score >= 0.8 else ("medium" if execution_realism_score >= 0.6 else "low")
+        )
+        package["follow_up_families"] = _regime_followup_families(package)
+        packages.append(package)
     packages.sort(
         key=lambda item: (
             -_safe_float(item.get("ranking_score"), 0.0),
@@ -715,6 +881,282 @@ def _follow_up_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, An
         )
     )
     return packages[:5]
+
+
+def _best_live_followups(follow_ups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    candidates = [item for item in follow_ups if item.get("follow_up_families")]
+    if not candidates:
+        candidates = list(follow_ups)
+    candidates.sort(
+        key=lambda item: (
+            -_safe_float(item.get("execution_realism_score"), 0.0),
+            -_safe_float(item.get("ranking_score"), 0.0),
+            str(item.get("name") or ""),
+        )
+    )
+    return candidates[:5]
+
+
+def _best_one_sided_followups(follow_ups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    one_sided_families = {"down_only", "up_disabled_or_nearly_disabled"}
+    candidates = [
+        item
+        for item in follow_ups
+        if any(family in one_sided_families for family in (item.get("follow_up_families") or []))
+    ]
+    candidates.sort(
+        key=lambda item: (
+            -_safe_float(item.get("execution_realism_score"), 0.0),
+            -_safe_float(item.get("ranking_score"), 0.0),
+            str(item.get("name") or ""),
+        )
+    )
+    return candidates[:5]
+
+
+def _capacity_stress_candidates(
+    *,
+    rows: list[dict[str, Any]],
+    best_policy_record: dict[str, Any] | None,
+    paths: int,
+    block_size: int,
+    loss_limit_usd: float,
+    seed: int,
+) -> list[dict[str, Any]]:
+    if not isinstance(best_policy_record, dict):
+        return []
+    base_policy = _policy_candidate_from_record(best_policy_record)
+    if base_policy is None or not base_policy.overrides:
+        return []
+
+    base_history = best_policy_record.get("historical") if isinstance(best_policy_record.get("historical"), dict) else {}
+    base_mc = best_policy_record.get("monte_carlo") if isinstance(best_policy_record.get("monte_carlo"), dict) else {}
+    base_cont = best_policy_record.get("continuation") if isinstance(best_policy_record.get("continuation"), dict) else {}
+    base_fills = _safe_int(base_history.get("replay_live_filled_rows"), 0)
+    base_median_pnl = _safe_float(base_mc.get("median_total_pnl_usd"), 0.0)
+    base_p05_arr = _safe_float(base_cont.get("p05_arr_pct"), 0.0)
+
+    variants: list[tuple[str, int, str, PolicyCandidate]] = []
+    for index, override in enumerate(order_policy_overrides(base_policy.overrides)):
+        for variant_name in ("tight_quote", "loose_quote", "tight_delta", "loose_delta"):
+            profile = override.profile
+            if variant_name == "tight_quote":
+                updated_profile = GuardrailProfile(
+                    name=f"{profile.name}_tight_quote",
+                    max_abs_delta=profile.max_abs_delta,
+                    up_max_buy_price=(
+                        round(max(0.45, min(0.55, (profile.up_max_buy_price or 0.49) - 0.01)), 2)
+                        if profile.up_max_buy_price is not None
+                        else None
+                    ),
+                    down_max_buy_price=(
+                        round(max(0.45, min(0.55, (profile.down_max_buy_price or 0.49) - 0.01)), 2)
+                        if profile.down_max_buy_price is not None
+                        else None
+                    ),
+                    note=profile.note,
+                )
+            elif variant_name == "loose_quote":
+                updated_profile = GuardrailProfile(
+                    name=f"{profile.name}_loose_quote",
+                    max_abs_delta=profile.max_abs_delta,
+                    up_max_buy_price=(
+                        round(max(0.45, min(0.55, (profile.up_max_buy_price or 0.49) + 0.01)), 2)
+                        if profile.up_max_buy_price is not None
+                        else None
+                    ),
+                    down_max_buy_price=(
+                        round(max(0.45, min(0.55, (profile.down_max_buy_price or 0.49) + 0.01)), 2)
+                        if profile.down_max_buy_price is not None
+                        else None
+                    ),
+                    note=profile.note,
+                )
+            elif variant_name == "tight_delta":
+                updated_profile = GuardrailProfile(
+                    name=f"{profile.name}_tight_delta",
+                    max_abs_delta=(
+                        round(max(0.00001, (profile.max_abs_delta or 0.00010) * 0.90), 8)
+                        if profile.max_abs_delta is not None
+                        else None
+                    ),
+                    up_max_buy_price=profile.up_max_buy_price,
+                    down_max_buy_price=profile.down_max_buy_price,
+                    note=profile.note,
+                )
+            else:
+                updated_profile = GuardrailProfile(
+                    name=f"{profile.name}_loose_delta",
+                    max_abs_delta=(
+                        round(min(0.00100, (profile.max_abs_delta or 0.00010) * 1.10), 8)
+                        if profile.max_abs_delta is not None
+                        else None
+                    ),
+                    up_max_buy_price=profile.up_max_buy_price,
+                    down_max_buy_price=profile.down_max_buy_price,
+                    note=profile.note,
+                )
+
+            updated_overrides = list(base_policy.overrides)
+            updated_overrides[index] = PolicyOverride(
+                session_name=override.session_name,
+                et_hours=override.et_hours,
+                profile=updated_profile,
+            )
+            ordered = order_policy_overrides(updated_overrides)
+            variants.append(
+                (
+                    variant_name,
+                    index,
+                    override.session_name,
+                    PolicyCandidate(
+                        name=_policy_name(base_policy.default_profile, ordered),
+                        default_profile=base_policy.default_profile,
+                        overrides=ordered,
+                        note=f"capacity_stress:{variant_name}",
+                    ),
+                )
+            )
+
+    candidates: list[dict[str, Any]] = []
+    for idx, (variant_name, override_index, session_name, policy) in enumerate(variants, start=1):
+        historical = summarize_policy_history(rows, policy)
+        monte_carlo = run_policy_monte_carlo(
+            rows,
+            policy,
+            paths=max(80, int(paths // 4)),
+            horizon_trades=max(len(rows), 20),
+            block_size=max(1, int(block_size)),
+            loss_limit_usd=loss_limit_usd,
+            seed=seed + (idx * 97),
+        )
+        continuation = summarize_policy_arr(historical=historical, monte_carlo=monte_carlo)
+        fills = _safe_int(historical.get("replay_live_filled_rows"), 0)
+        candidates.append(
+            {
+                "name": policy.name,
+                "session_name": session_name,
+                "variant": variant_name,
+                "override_index": override_index,
+                "expected_fill_lift": fills - base_fills,
+                "expected_median_pnl_delta_usd": round(
+                    _safe_float(monte_carlo.get("median_total_pnl_usd"), 0.0) - base_median_pnl,
+                    4,
+                ),
+                "expected_p05_arr_delta_pct": round(
+                    _safe_float(continuation.get("p05_arr_pct"), 0.0) - base_p05_arr,
+                    4,
+                ),
+                "evidence_band": _evidence_band(fills),
+            }
+        )
+    candidates.sort(
+        key=lambda item: (
+            _safe_float(item.get("expected_p05_arr_delta_pct"), 0.0),
+            _safe_float(item.get("expected_median_pnl_delta_usd"), 0.0),
+            str(item.get("name") or ""),
+        ),
+        reverse=True,
+    )
+    return candidates[:5]
+
+
+def _session_name_for_hour(et_hour: int | None) -> str:
+    if et_hour is None:
+        return "unknown"
+    if et_hour in {9, 10, 11}:
+        return "open_et"
+    if et_hour in {12, 13}:
+        return "midday_et"
+    if et_hour in {14, 15, 16}:
+        return "late_et"
+    return f"hour_et_{int(et_hour):02d}"
+
+
+def _price_bucket(order_price: float) -> str:
+    if order_price < 0.49:
+        return "lt_0.49"
+    if order_price <= 0.51:
+        return "0.49_to_0.51"
+    return "gt_0.51"
+
+
+def _delta_bucket(abs_delta: float) -> str:
+    if abs_delta <= 0.00005:
+        return "le_0.00005"
+    if abs_delta <= 0.00010:
+        return "0.00005_to_0.00010"
+    return "gt_0.00010"
+
+
+def _loss_cluster_suppression_candidates(
+    rows: list[dict[str, Any]],
+    best_policy_record: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    policy_payload = (best_policy_record or {}).get("policy")
+    scoped_rows = rows
+    if isinstance(policy_payload, dict):
+        scoped_rows = [row for row in rows if _row_matches_policy_payload(row, policy_payload)]
+    negative_fills = [
+        row
+        for row in scoped_rows
+        if str(row.get("order_status") or "").strip().lower() == "live_filled"
+        and _safe_float(row.get("pnl_usd"), 0.0) < 0.0
+    ]
+    if not negative_fills and scoped_rows is not rows:
+        negative_fills = [
+            row
+            for row in rows
+            if str(row.get("order_status") or "").strip().lower() == "live_filled"
+            and _safe_float(row.get("pnl_usd"), 0.0) < 0.0
+        ]
+    if not negative_fills:
+        return []
+
+    clusters: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for row in negative_fills:
+        direction = str(row.get("direction") or "UNKNOWN").upper()
+        et_hour = row.get("et_hour")
+        session_name = _session_name_for_hour(int(et_hour) if isinstance(et_hour, int) else None)
+        order_price = _safe_float(row.get("order_price"), 0.0)
+        abs_delta = _safe_float(row.get("abs_delta"), abs(_safe_float(row.get("delta"), 0.0)))
+        key = (direction, session_name, _price_bucket(order_price), _delta_bucket(abs_delta))
+        cluster = clusters.setdefault(
+            key,
+            {
+                "direction": direction,
+                "session_name": session_name,
+                "price_bucket": key[2],
+                "delta_bucket": key[3],
+                "loss_rows": 0,
+                "total_loss_usd": 0.0,
+            },
+        )
+        cluster["loss_rows"] = int(cluster["loss_rows"]) + 1
+        cluster["total_loss_usd"] = _safe_float(cluster["total_loss_usd"], 0.0) + _safe_float(row.get("pnl_usd"), 0.0)
+
+    ranked = sorted(
+        clusters.values(),
+        key=lambda item: (
+            _safe_float(item.get("total_loss_usd"), 0.0),
+            -_safe_int(item.get("loss_rows"), 0),
+            str(item.get("session_name") or ""),
+            str(item.get("price_bucket") or ""),
+            str(item.get("delta_bucket") or ""),
+        ),
+    )
+    return [
+        {
+            "direction": str(cluster.get("direction") or "UNKNOWN"),
+            "session_name": str(cluster.get("session_name") or "unknown"),
+            "price_bucket": str(cluster.get("price_bucket") or "unknown"),
+            "delta_bucket": str(cluster.get("delta_bucket") or "unknown"),
+            "loss_rows": _safe_int(cluster.get("loss_rows"), 0),
+            "total_loss_usd": round(_safe_float(cluster.get("total_loss_usd"), 0.0), 4),
+            "suggested_action": "suppress_cluster_until_revalidated",
+        }
+        for cluster in ranked[:5]
+    ]
 
 
 def _evaluate_policies(
@@ -846,6 +1288,13 @@ def build_summary(
         )
     active_profile_summary = _candidate_runtime_package(current_policy or {})
     best_candidate_summary = _candidate_runtime_package(best_policy or {})
+    follow_ups = _follow_up_candidates_with_tradeoffs(evaluated, active_candidate=active_profile_summary)
+    last_improvement_at = _last_improvement_for_policy(enriched_rows, best_policy)
+    hours_since_last_improvement = (
+        round((_now_utc() - last_improvement_at).total_seconds() / 3600.0, 4)
+        if last_improvement_at is not None
+        else None
+    )
 
     return {
         "generated_at": _now_utc().isoformat(),
@@ -891,10 +1340,30 @@ def build_summary(
         "validation_live_filled_rows": _safe_int(best_candidate_summary.get("validation_live_filled_rows"), 0),
         "generalization_ratio": _safe_float(best_candidate_summary.get("generalization_ratio"), 0.0),
         "evidence_band": str(best_candidate_summary.get("evidence_band") or "exploratory"),
+        "last_improvement_at": (
+            last_improvement_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            if last_improvement_at is not None
+            else None
+        ),
+        "hours_since_last_improvement": hours_since_last_improvement,
         "current_policy": current_policy,
         "best_policy": best_policy,
         "recommended_session_policy": _recommended_session_policy(best_policy),
-        "follow_up_candidates": _follow_up_candidates(evaluated),
+        "follow_up_candidates": follow_ups,
+        "best_live_followups": _best_live_followups(follow_ups),
+        "best_one_sided_followups": _best_one_sided_followups(follow_ups),
+        "loss_cluster_suppression_candidates": _loss_cluster_suppression_candidates(
+            enriched_rows,
+            best_policy,
+        ),
+        "capacity_stress_candidates": _capacity_stress_candidates(
+            rows=enriched_rows,
+            best_policy_record=best_policy,
+            paths=max(1, int(paths)),
+            block_size=max(1, int(block_size)),
+            loss_limit_usd=max(0.0, float(loss_limit_usd)),
+            seed=int(seed),
+        ),
         "best_vs_current": best_vs_current,
     }
 

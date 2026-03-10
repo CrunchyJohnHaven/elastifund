@@ -3,13 +3,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from nontrading.models import Account, Meeting, Message, Opportunity, Outcome, Proposal
+from nontrading.models import Account, ApprovalRequest, Meeting, Message, Opportunity, Outcome, Proposal
 from nontrading.store import RevenueStore
 from nontrading.telemetry import NonTradingTelemetry, TelemetryBridge
 
 
 EXPECTED_EVENT_ALIASES = {
     "account_researched": "jjn.account.researched",
+    "approval_decision": "jjn.approval.decision",
+    "cycle_complete": "jjn.cycle.complete",
+    "fulfillment_status_changed": "jjn.fulfillment.status.changed",
     "message_sent": "jjn.outreach.sent",
     "reply_received": "jjn.interaction.reply_received",
     "meeting_booked": "jjn.interaction.meeting_booked",
@@ -82,8 +85,19 @@ def _emit_phase0_events(tmp_path: Path) -> tuple[RevenueStore, NonTradingTelemet
             status="won",
             revenue=1500.0,
             gross_margin=900.0,
+            metadata={"fulfillment_status": "delivery_pending"},
         )
     )
+    request = store.create_approval_request(
+        ApprovalRequest(
+            action_type="outreach_message",
+            entity_type="message",
+            entity_id=str(outbound.id or 0),
+            summary="Approve outreach to pat@acme.example",
+            requested_by="fixture",
+        )
+    )
+    store.update_approval_request_status(request.id or 0, status="approved", reviewed_by="john")
 
     telemetry.account_researched(account, source="fixture", notes="High-fit SMB")
     telemetry.message_sent(outbound)
@@ -91,6 +105,23 @@ def _emit_phase0_events(tmp_path: Path) -> tuple[RevenueStore, NonTradingTelemet
     telemetry.meeting_booked(meeting)
     telemetry.proposal_sent(proposal)
     telemetry.outcome_recorded(outcome)
+    telemetry.cycle_completed(
+        {
+            "cycle_id": "cycle-fixture",
+            "started_at": "2026-03-09T00:00:00+00:00",
+            "completed_at": "2026-03-09T00:15:00+00:00",
+            "status": "completed",
+            "accounts_researched": 1,
+            "qualified_accounts": 1,
+            "outreach_attempted": 1,
+            "outreach_sent": 1,
+            "approval_pending": 0,
+            "replies_recorded": 1,
+            "meetings_booked": 1,
+            "proposals_sent": 1,
+            "outcomes_recorded": 1,
+        }
+    )
     return store, telemetry, bridge
 
 
@@ -141,7 +172,7 @@ def test_nontrading_dashboard_asset_is_valid_ndjson() -> None:
     titles = {row["attributes"]["title"] for row in lines}
 
     assert "JJ-N Revenue Funnel" in titles
-    assert "JJ-N Approval Coverage" in titles
+    assert "JJ-N Approval And Fulfillment Coverage" in titles
     assert dashboard["attributes"]["title"] == "JJ-N Non-Trading Revenue Funnel"
     assert "event.dataset : \\\"elastifund.nontrading\\\"" in dashboard["attributes"]["kibanaSavedObjectMeta"]["searchSourceJSON"]
     assert len(dashboard["references"]) == 5
@@ -153,4 +184,6 @@ def test_nontrading_dashboard_asset_is_valid_ndjson() -> None:
     )
     assert "account_researched" in funnel_markdown
     assert "message_sent" in funnel_markdown
-    assert "approval-decision" in funnel_markdown
+    assert "approval_decision" in funnel_markdown
+    assert "fulfillment_status_changed" in funnel_markdown
+    assert "cycle_complete" in funnel_markdown

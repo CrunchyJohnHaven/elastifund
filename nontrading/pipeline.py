@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from nontrading.approval import ApprovalGate
+from nontrading.campaigns.website_growth_audit_funnel import (
+    WEBSITE_GROWTH_AUDIT_STEPS,
+    fulfillment_placeholder,
+)
 from nontrading.compliance import ComplianceGuard
 from nontrading.config import RevenueAgentSettings
 from nontrading.email.sender import BaseSender
@@ -27,6 +34,7 @@ logger = logging.getLogger("nontrading.pipeline")
 PIPELINE_ENGINE = "revenue_pipeline"
 QUALIFICATION_THRESHOLD = 70.0
 SUCCESSFUL_DELIVERY_STATUSES = {"dry_run", "provider_accepted", "sent"}
+DEFAULT_CYCLE_REPORT_PATH = Path("reports/nontrading/website_growth_audit_cycle_reports.jsonl")
 
 
 @dataclass(frozen=True)
@@ -43,12 +51,20 @@ class CycleReport:
     accounts_researched: int = 0
     qualified_accounts: int = 0
     outreach_attempted: int = 0
+    outreach_approved: int = 0
+    outreach_blocked: int = 0
     outreach_sent: int = 0
     approval_pending: int = 0
     replies_recorded: int = 0
     meetings_booked: int = 0
     proposals_sent: int = 0
+    fulfillment_planned: int = 0
     outcomes_recorded: int = 0
+    outcomes_won: int = 0
+    offer_slug: str = "website-growth-audit"
+    funnel_steps: tuple[str, ...] = WEBSITE_GROWTH_AUDIT_STEPS
+    funnel_stage_counts: dict[str, int] | None = None
+    persisted_report_path: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -84,6 +100,8 @@ class RevenuePipeline:
         self.interaction_engine = InteractionEngine(store, telemetry)
         self.proposal_engine = ProposalEngine(store, telemetry)
         self.learning_engine = LearningEngine(store, telemetry)
+        configured_report_path = os.environ.get("JJ_NONTRADING_CYCLE_REPORT_PATH", "").strip()
+        self.cycle_report_path = Path(configured_report_path) if configured_report_path else DEFAULT_CYCLE_REPORT_PATH
 
     @property
     def run_mode(self) -> str:
@@ -116,6 +134,7 @@ class RevenuePipeline:
             outreach = self._run_outreach_stage(qualified)
             interactions = self._run_interaction_stage(outreach)
             proposals = self._run_proposal_stage(interactions)
+            fulfillment_records = self._run_fulfillment_stage(proposals)
             outcomes = self._run_learning_stage(proposals)
         except RuntimeError as exc:
             stage_name, _, reason = str(exc).partition(":")
@@ -128,6 +147,11 @@ class RevenuePipeline:
             )
 
         completed_at = utc_now()
+        outreach_approved = sum(
+            1
+            for result in outreach
+            if result.approval.allowed and result.compliance.allowed
+        )
         report = CycleReport(
             cycle_id=cycle_id,
             started_at=started_at,
@@ -138,6 +162,8 @@ class RevenuePipeline:
             accounts_researched=len(researched),
             qualified_accounts=len(qualified),
             outreach_attempted=len(qualified),
+            outreach_approved=outreach_approved,
+            outreach_blocked=max(0, len(qualified) - outreach_approved),
             outreach_sent=sum(1 for result in outreach if result.delivery_status in SUCCESSFUL_DELIVERY_STATUSES),
             approval_pending=sum(
                 1
@@ -147,8 +173,13 @@ class RevenuePipeline:
             replies_recorded=sum(1 for item in interactions if item.reply_message_id is not None),
             meetings_booked=sum(1 for item in interactions if item.meeting_id is not None),
             proposals_sent=len(proposals),
+            fulfillment_planned=len(fulfillment_records),
             outcomes_recorded=len(outcomes),
+            outcomes_won=sum(1 for item in outcomes if str(item.status or "").endswith("won")),
+            funnel_stage_counts=self._build_funnel_stage_counts(),
         )
+        persisted_path = self._persist_cycle_report(report)
+        report = CycleReport(**{**report.to_dict(), "persisted_report_path": str(persisted_path)})
         self.telemetry.cycle_completed(report.to_dict())
         self.store.upsert_engine_state(
             PIPELINE_ENGINE,
@@ -231,6 +262,8 @@ class RevenuePipeline:
             last_heartbeat_at=timestamp,
             last_event_at=timestamp if dispatched else None,
         )
+        for result in dispatched:
+            self._sync_opportunity_stage_from_outreach(result)
         return dispatched
 
     def _run_interaction_stage(self, outreach_results):
@@ -263,6 +296,8 @@ class RevenuePipeline:
             last_heartbeat_at=timestamp,
             last_event_at=timestamp if interactions else None,
         )
+        for interaction in interactions:
+            self._sync_opportunity_stage_from_interaction(interaction)
         return interactions
 
     def _run_proposal_stage(self, interactions):
@@ -291,7 +326,49 @@ class RevenuePipeline:
             last_heartbeat_at=timestamp,
             last_event_at=timestamp if proposals else None,
         )
+        for proposal in proposals:
+            self._sync_opportunity_stage(
+                proposal.opportunity_id,
+                stage="proposal",
+                next_action="prepare_fulfillment",
+                metadata={"proposal_sent_at": timestamp},
+            )
         return proposals
+
+    def _run_fulfillment_stage(self, proposals):
+        self._ensure_stage_allowed("fulfillment")
+        self.store.touch_engine_heartbeat(
+            "fulfillment",
+            status="running",
+            run_mode=self.run_mode,
+            metadata={"new_proposals": len(proposals)},
+        )
+        records: list[dict[str, Any]] = []
+        timestamp = utc_now()
+        for proposal in proposals:
+            if proposal.id is None:
+                continue
+            placeholder = fulfillment_placeholder(
+                opportunity_id=proposal.opportunity_id,
+                proposal_id=proposal.id,
+                simulated=self.simulate_responses,
+            )
+            records.append(placeholder)
+            self._sync_opportunity_stage(
+                proposal.opportunity_id,
+                stage="fulfillment",
+                next_action="collect_audit_inputs",
+                metadata={"fulfillment": placeholder, "fulfillment_planned_at": timestamp},
+            )
+        self.store.upsert_engine_state(
+            "fulfillment",
+            status="idle",
+            run_mode=self.run_mode,
+            metadata={"new_proposals": len(proposals), "fulfillment_planned": len(records)},
+            last_heartbeat_at=timestamp,
+            last_event_at=timestamp if records else None,
+        )
+        return records
 
     def _run_learning_stage(self, proposals):
         self._ensure_stage_allowed("learning")
@@ -317,6 +394,15 @@ class RevenuePipeline:
             last_heartbeat_at=timestamp,
             last_event_at=timestamp if outcomes else None,
         )
+        for outcome in outcomes:
+            won = str(outcome.status or "").endswith("won")
+            self._sync_opportunity_stage(
+                outcome.opportunity_id,
+                stage="outcome",
+                status="won" if won else "open",
+                next_action="archive_case_study" if won else "follow_up_pipeline",
+                metadata={"latest_outcome_status": outcome.status, "latest_outcome_at": timestamp},
+            )
         return outcomes
 
     def _ensure_stage_allowed(self, engine_name: str) -> None:
@@ -366,6 +452,104 @@ class RevenuePipeline:
             visible.append(lead)
         return visible, len(rows), suppressed, skipped_existing
 
+    def _sync_opportunity_stage(
+        self,
+        opportunity_id: int | None,
+        *,
+        stage: str,
+        status: str | None = None,
+        next_action: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        if not opportunity_id:
+            return
+        current = self.store.get_opportunity(int(opportunity_id))
+        if current is None:
+            return
+        merged_metadata = dict(current.metadata)
+        if metadata:
+            merged_metadata.update(metadata)
+        self.store.upsert_opportunity(
+            current.__class__(
+                id=current.id,
+                account_id=current.account_id,
+                name=current.name,
+                offer_name=current.offer_name,
+                stage=str(stage).strip().lower(),
+                status=status or current.status,
+                score=current.score,
+                score_breakdown=current.score_breakdown,
+                estimated_value=current.estimated_value,
+                currency=current.currency,
+                next_action=next_action or current.next_action,
+                metadata=merged_metadata,
+                created_at=current.created_at,
+                updated_at=current.updated_at,
+            )
+        )
+
+    def _sync_opportunity_stage_from_outreach(self, result) -> None:
+        opportunity_id = result.message.opportunity_id
+        if opportunity_id is None:
+            return
+        if result.reason in {"approval_required", "approval_pending"}:
+            self._sync_opportunity_stage(
+                opportunity_id,
+                stage="approval",
+                next_action="review_outreach_approval",
+                metadata={"approval_status": "pending"},
+            )
+            return
+        if result.delivery_status in SUCCESSFUL_DELIVERY_STATUSES:
+            self._sync_opportunity_stage(
+                opportunity_id,
+                stage="outreach",
+                next_action="monitor_replies",
+                metadata={"outreach_status": "sent"},
+            )
+            return
+        self._sync_opportunity_stage(
+            opportunity_id,
+            stage="approval",
+            status="blocked",
+            next_action="resolve_send_blocker",
+            metadata={"outreach_status": result.delivery_status or result.reason},
+        )
+
+    def _sync_opportunity_stage_from_interaction(self, interaction) -> None:
+        if interaction.opportunity_id is None:
+            return
+        if interaction.meeting_id is not None:
+            self._sync_opportunity_stage(
+                interaction.opportunity_id,
+                stage="meeting",
+                next_action="prepare_proposal",
+                metadata={"interaction_classification": interaction.classification},
+            )
+            return
+        if interaction.reply_message_id is not None:
+            self._sync_opportunity_stage(
+                interaction.opportunity_id,
+                stage="meeting",
+                next_action="book_discovery_call",
+                metadata={"interaction_classification": interaction.classification},
+            )
+
+    def _build_funnel_stage_counts(self) -> dict[str, int]:
+        counts = {step: 0 for step in WEBSITE_GROWTH_AUDIT_STEPS}
+        for opportunity in self.store.list_opportunities():
+            stage = str(opportunity.stage or "").strip().lower()
+            if stage in counts:
+                counts[stage] += 1
+        return counts
+
+    def _persist_cycle_report(self, report: CycleReport) -> Path:
+        report_path = Path(self.cycle_report_path)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        with report_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(report.to_dict(), sort_keys=True) + "\n")
+        return report_path
+
     def _blocked_report(
         self,
         *,
@@ -383,6 +567,8 @@ class RevenuePipeline:
             reason=reason,
             blocked_stage=blocked_stage,
         )
+        persisted_path = self._persist_cycle_report(report)
+        report = CycleReport(**{**report.to_dict(), "persisted_report_path": str(persisted_path)})
         self.telemetry.cycle_completed(report.to_dict(), status="blocked")
         self.store.upsert_engine_state(
             blocked_stage,

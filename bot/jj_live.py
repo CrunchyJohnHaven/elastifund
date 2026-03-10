@@ -464,6 +464,9 @@ ENSEMBLE_DAILY_COST_CAP_USD = 2.0
 ENSEMBLE_ENABLE_SECOND_CLAUDE = False
 FAST_FLOW_RECENT_TRADES_LIMIT = 1000
 FAST_FLOW_HYDRATION_MAX_MARKETS = 60
+FAST_FLOW_WALLET_SIGNAL_STALE_SECONDS = 120.0
+FAST_FLOW_WALLET_MIN_CONSENSUS_SHARE = 0.60
+FAST_FLOW_WALLET_MIN_CONSENSUS_NOTIONAL_USD = 20.0
 PM_HOURLY_CAMPAIGN_ENABLED = False
 PM_HOURLY_NOTIONAL_CAP_USD = 50.0
 PM_CAMPAIGN_MAX_RESOLUTION_HOURS = 24.0
@@ -1548,8 +1551,87 @@ def extract_signal_metadata(payload: Mapping[str, Any] | None) -> dict[str, Any]
         if raw_prob is not None:
             metadata.setdefault("llm_raw_prob", round(raw_prob, 6))
 
-    if "wallet_flow" in sources and confidence is not None:
-        metadata.setdefault("wallet_consensus", round(confidence, 6))
+    if "wallet_flow" in sources:
+        if confidence is not None:
+            metadata.setdefault("wallet_consensus", round(confidence, 6))
+        wallet_consensus_wallets = payload.get("wallet_consensus_wallets")
+        if wallet_consensus_wallets is not None:
+            try:
+                metadata.setdefault(
+                    "wallet_consensus_wallets",
+                    int(float(wallet_consensus_wallets)),
+                )
+            except (TypeError, ValueError):
+                pass
+        wallet_consensus_notional_usd = _safe_float(
+            payload.get("wallet_consensus_notional_usd"),
+            None,
+        )
+        if wallet_consensus_notional_usd is not None:
+            metadata.setdefault(
+                "wallet_consensus_notional_usd",
+                round(wallet_consensus_notional_usd, 6),
+            )
+        wallet_consensus_share = _safe_float(
+            payload.get("wallet_consensus_share"),
+            None,
+        )
+        if wallet_consensus_share is not None:
+            metadata.setdefault(
+                "wallet_consensus_share",
+                round(wallet_consensus_share, 6),
+            )
+        wallet_opposition_wallets = payload.get("wallet_opposition_wallets")
+        if wallet_opposition_wallets is not None:
+            try:
+                metadata.setdefault(
+                    "wallet_opposition_wallets",
+                    int(float(wallet_opposition_wallets)),
+                )
+            except (TypeError, ValueError):
+                pass
+        wallet_opposition_notional_usd = _safe_float(
+            payload.get("wallet_opposition_notional_usd"),
+            None,
+        )
+        if wallet_opposition_notional_usd is not None:
+            metadata.setdefault(
+                "wallet_opposition_notional_usd",
+                round(wallet_opposition_notional_usd, 6),
+            )
+        wallet_signal_age_seconds = _safe_float(
+            payload.get("wallet_signal_age_seconds"),
+            None,
+        )
+        if wallet_signal_age_seconds is not None:
+            metadata.setdefault(
+                "wallet_signal_age_seconds",
+                round(wallet_signal_age_seconds, 6),
+            )
+        wallet_window_start_ts = str(payload.get("wallet_window_start_ts") or "").strip()
+        if wallet_window_start_ts:
+            metadata.setdefault("wallet_window_start_ts", wallet_window_start_ts)
+        wallet_window_minutes = payload.get("wallet_window_minutes")
+        if wallet_window_minutes is not None:
+            try:
+                metadata.setdefault(
+                    "wallet_window_minutes",
+                    int(float(wallet_window_minutes)),
+                )
+            except (TypeError, ValueError):
+                pass
+        wallet_conflict_resolution = payload.get("wallet_conflict_resolution")
+        if isinstance(wallet_conflict_resolution, Mapping):
+            metadata.setdefault(
+                "wallet_conflict_resolution",
+                dict(wallet_conflict_resolution),
+            )
+        wallet_hydration_source = str(payload.get("wallet_hydration_source") or "").strip()
+        if wallet_hydration_source:
+            metadata.setdefault("wallet_hydration_source", wallet_hydration_source)
+        wallet_hydrated_market_id = str(payload.get("wallet_hydrated_market_id") or "").strip()
+        if wallet_hydrated_market_id:
+            metadata.setdefault("wallet_hydrated_market_id", wallet_hydrated_market_id)
 
     if "lmsr" in sources and estimated_prob is not None:
         metadata.setdefault("lmsr_prob", round(estimated_prob, 6))
@@ -3666,6 +3748,143 @@ class JJLive:
 
         return None
 
+    @staticmethod
+    def _signal_wallet_metadata_value(signal: Mapping[str, Any], key: str) -> Any:
+        direct = signal.get(key)
+        if direct is not None:
+            return direct
+        metadata = signal.get("signal_metadata")
+        if isinstance(metadata, Mapping):
+            return metadata.get(key)
+        return None
+
+    @staticmethod
+    def _signal_has_wallet_quality_fields(signal: Mapping[str, Any]) -> bool:
+        for key in (
+            "wallet_signal_age_seconds",
+            "wallet_consensus_share",
+            "wallet_consensus_notional_usd",
+        ):
+            if JJLive._signal_wallet_metadata_value(signal, key) is not None:
+                return True
+        return False
+
+    def _wallet_quality_guard_reason(self, signal: Mapping[str, Any]) -> str | None:
+        if not self._signal_has_wallet_quality_fields(signal):
+            return None
+
+        signal_age_seconds = _safe_float(
+            self._signal_wallet_metadata_value(signal, "wallet_signal_age_seconds"),
+            None,
+        )
+        consensus_share = _safe_float(
+            self._signal_wallet_metadata_value(signal, "wallet_consensus_share"),
+            None,
+        )
+        consensus_notional_usd = _safe_float(
+            self._signal_wallet_metadata_value(signal, "wallet_consensus_notional_usd"),
+            None,
+        )
+
+        if (
+            signal_age_seconds is not None
+            and signal_age_seconds > FAST_FLOW_WALLET_SIGNAL_STALE_SECONDS
+        ):
+            return "wallet_signal_stale"
+        if (
+            consensus_share is not None
+            and consensus_share < FAST_FLOW_WALLET_MIN_CONSENSUS_SHARE
+        ):
+            return "wallet_consensus_low"
+        if (
+            consensus_notional_usd is not None
+            and consensus_notional_usd < FAST_FLOW_WALLET_MIN_CONSENSUS_NOTIONAL_USD
+        ):
+            return "wallet_notional_low"
+        return None
+
+    @staticmethod
+    def _parse_wallet_window_start(value: Any) -> datetime | None:
+        if value in (None, ""):
+            return None
+        if isinstance(value, (int, float)):
+            try:
+                return datetime.fromtimestamp(float(value), tz=timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                return None
+        return _parse_iso8601_utc(str(value))
+
+    async def _late_hydrate_wallet_signal_from_window(
+        self,
+        signal: dict[str, Any],
+        market_lookup: dict[str, dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        if not signal_has_source(signal, "wallet_flow"):
+            return None
+
+        original_market_id = str(signal.get("market_id", "") or "").strip()
+        window_start = self._parse_wallet_window_start(
+            self._signal_wallet_metadata_value(signal, "wallet_window_start_ts")
+        )
+        window_minutes = int(
+            _safe_float(
+                self._signal_wallet_metadata_value(signal, "wallet_window_minutes"),
+                0.0,
+            )
+        )
+        if window_start is None or window_minutes <= 0:
+            return None
+
+        hydrated_markets, _stats = await self._fetch_recent_trade_hydrated_markets()
+        if not hydrated_markets:
+            return None
+
+        best_match_id: str | None = None
+        best_drift_seconds: float | None = None
+        drift_tolerance_seconds = 120.0
+        for market in hydrated_markets:
+            question = str(market.get("question", "") or "")
+            slug = str(market.get("slug", "") or "")
+            if not looks_like_fast_flow_market(question):
+                continue
+            if not re.search(r"\b(bitcoin|btc)\b", f"{question} {slug}".lower()):
+                continue
+            end_ts = _parse_iso8601_utc(str(market.get("endDate", "") or ""))
+            if end_ts is None:
+                continue
+            candidate_start = end_ts - timedelta(minutes=window_minutes)
+            drift_seconds = abs((candidate_start - window_start).total_seconds())
+            if drift_seconds > drift_tolerance_seconds:
+                continue
+
+            market_id = str(
+                market.get("condition_id", market.get("conditionId", market.get("id", ""))) or ""
+            ).strip()
+            if not market_id:
+                market_id = str(market.get("id", "") or "").strip()
+            if not market_id:
+                continue
+
+            if best_drift_seconds is None or drift_seconds < best_drift_seconds:
+                best_match_id = market_id
+                best_drift_seconds = drift_seconds
+
+        if not best_match_id:
+            return None
+
+        hydrated = market_lookup.get(best_match_id)
+        if not isinstance(hydrated, dict):
+            hydrated = await self._fetch_market_metadata_for_signal(best_match_id, market_lookup)
+        if not isinstance(hydrated, dict):
+            return None
+
+        if original_market_id and original_market_id not in market_lookup:
+            market_lookup[original_market_id] = hydrated
+            self._elastic_market_lookup[str(original_market_id)] = dict(hydrated)
+        signal.setdefault("wallet_hydration_source", "window_context")
+        signal.setdefault("wallet_hydrated_market_id", best_match_id)
+        return hydrated
+
     def _has_llm_credentials(self) -> bool:
         return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY"))
 
@@ -4247,6 +4466,8 @@ class JJLive:
                 self._hydrate_signal_market_context(signal, market_lookup)
                 continue
             hydrated = await self._fetch_market_metadata_for_signal(market_id, market_lookup)
+            if hydrated is None:
+                hydrated = await self._late_hydrate_wallet_signal_from_window(signal, market_lookup)
             if hydrated is not None:
                 self._hydrate_signal_market_context(signal, market_lookup)
 
@@ -4394,14 +4615,45 @@ class JJLive:
         acted_on: bool,
         reason_skipped: str | None = None,
         extra: dict[str, Any] | None = None,
+        signal_payload: Mapping[str, Any] | None = None,
     ) -> None:
+        attribution_payload: Mapping[str, Any]
+        if isinstance(signal_payload, Mapping):
+            attribution_payload = signal_payload
+        else:
+            attribution_payload = {
+                "source": signal_source,
+                "source_combo": signal_source,
+                "signal_sources": normalize_source_components(signal_source),
+            }
+
+        source_components = extract_signal_source_components(attribution_payload)
+        signal_sources = extract_signal_sources(attribution_payload) or list(source_components)
+        source_combo = (
+            str(attribution_payload.get("source_combo", "") or "").strip()
+            or "+".join(source_components)
+            or canonical_source_key(signal_source)
+            or str(signal_source or "").strip()
+            or "unknown"
+        )
         payload = {
             "signal_source": signal_source,
+            "source_combo": source_combo,
+            "source_components": source_components,
+            "signal_sources": signal_sources,
+            "source_count": max(
+                len(source_components),
+                int(_safe_float(attribution_payload.get("source_count"), 0)),
+                1 if source_combo and source_combo != "unknown" else 0,
+            ),
             "market_id": str(market_id),
             "signal_value": signal_value,
             "confidence": confidence,
             "acted_on": acted_on,
         }
+        signal_metadata = extract_signal_metadata(attribution_payload)
+        if signal_metadata:
+            payload["signal_metadata"] = signal_metadata
         if reason_skipped:
             payload["reason_skipped"] = reason_skipped
         if extra:
@@ -7105,10 +7357,27 @@ class JJLive:
             mdata = market_lookup.get(market_id)
             if not mdata:
                 mdata = await self._fetch_market_metadata_for_signal(str(market_id), market_lookup)
+                if mdata is None:
+                    mdata = await self._late_hydrate_wallet_signal_from_window(signal, market_lookup)
                 if mdata is not None:
                     self._hydrate_signal_market_context(signal, market_lookup)
 
             if not mdata:
+                reason_skipped = (
+                    "wallet_window_hydration_miss"
+                    if self._signal_wallet_metadata_value(signal, "wallet_window_start_ts") is not None
+                    else "missing_market_metadata"
+                )
+                self._record_signal_evaluation(
+                    signal_source=str(signal.get("source_combo", signal.get("source", "unknown"))),
+                    market_id=str(market_id),
+                    signal_value=_safe_float(signal.get("edge"), None),
+                    confidence=_safe_float(signal.get("confidence"), None),
+                    acted_on=False,
+                    reason_skipped=reason_skipped,
+                    extra={"question": signal.get("question", "")},
+                    signal_payload=signal,
+                )
                 logger.warning(
                     "Execution skip: missing market metadata for signal market_id=%s question=%s",
                     str(market_id)[:32],
@@ -7118,6 +7387,19 @@ class JJLive:
 
             market_gate_reason = str(mdata.get("market_gate_reason", "ok") or "ok")
             if market_gate_reason == "btc5_dedicated":
+                self._record_signal_evaluation(
+                    signal_source=str(signal.get("source_combo", signal.get("source", "unknown"))),
+                    market_id=str(market_id),
+                    signal_value=_safe_float(signal.get("edge"), None),
+                    confidence=_safe_float(signal.get("confidence"), None),
+                    acted_on=False,
+                    reason_skipped="btc5_dedicated",
+                    extra={
+                        "question": signal.get("question", ""),
+                        "market_gate_reason": market_gate_reason,
+                    },
+                    signal_payload=signal,
+                )
                 logger.info(
                     "SKIP execution blocked by dedicated BTC5 ownership: %s",
                     signal.get("question", "")[:80],
@@ -7127,6 +7409,19 @@ class JJLive:
             feedback = self._get_elastic_ml_feedback(str(market_id))
             signal["elastic_ml_feedback"] = feedback
             if feedback.get("paused"):
+                self._record_signal_evaluation(
+                    signal_source=str(signal.get("source_combo", signal.get("source", "unknown"))),
+                    market_id=str(market_id),
+                    signal_value=_safe_float(signal.get("edge"), None),
+                    confidence=_safe_float(signal.get("confidence"), None),
+                    acted_on=False,
+                    reason_skipped="elastic_ml_paused",
+                    extra={
+                        "question": signal.get("question", ""),
+                        "pause_reason": feedback.get("pause_reason", ""),
+                    },
+                    signal_payload=signal,
+                )
                 logger.warning(
                     "Elastic ML pause: skipping order placement market=%s reason=%s | %s",
                     str(market_id)[:16],
@@ -7155,12 +7450,59 @@ class JJLive:
 
             execution_guard_reason = self._execution_signal_guard_reason(signal, mdata)
             if execution_guard_reason:
+                self._record_signal_evaluation(
+                    signal_source=str(signal.get("source_combo", signal.get("source", "unknown"))),
+                    market_id=str(market_id),
+                    signal_value=_safe_float(signal.get("edge"), None),
+                    confidence=_safe_float(signal.get("confidence"), None),
+                    acted_on=False,
+                    reason_skipped=execution_guard_reason,
+                    extra={"question": signal.get("question", "")},
+                    signal_payload=signal,
+                )
                 logger.info(
                     "SKIP execution blocked by %s guard: sources=%s cat=%s res=%s | %s",
                     execution_guard_reason,
                     signal.get("source_combo", signal.get("source", "")),
                     signal.get("category", mdata.get("category", "")),
                     signal.get("resolution_hours", mdata.get("resolution_hours", "?")),
+                    signal.get("question", "")[:80],
+                )
+                continue
+
+            wallet_quality_guard_reason = self._wallet_quality_guard_reason(signal)
+            if wallet_quality_guard_reason:
+                self._record_signal_evaluation(
+                    signal_source=str(signal.get("source_combo", signal.get("source", "unknown"))),
+                    market_id=str(market_id),
+                    signal_value=_safe_float(signal.get("edge"), None),
+                    confidence=_safe_float(signal.get("confidence"), None),
+                    acted_on=False,
+                    reason_skipped=wallet_quality_guard_reason,
+                    extra={
+                        "question": signal.get("question", ""),
+                        "wallet_signal_age_seconds": self._signal_wallet_metadata_value(
+                            signal,
+                            "wallet_signal_age_seconds",
+                        ),
+                        "wallet_consensus_share": self._signal_wallet_metadata_value(
+                            signal,
+                            "wallet_consensus_share",
+                        ),
+                        "wallet_consensus_notional_usd": self._signal_wallet_metadata_value(
+                            signal,
+                            "wallet_consensus_notional_usd",
+                        ),
+                    },
+                    signal_payload=signal,
+                )
+                logger.info(
+                    "SKIP execution blocked by %s wallet gate: sources=%s age=%s share=%s notional=%s | %s",
+                    wallet_quality_guard_reason,
+                    signal.get("source_combo", signal.get("source", "")),
+                    self._signal_wallet_metadata_value(signal, "wallet_signal_age_seconds"),
+                    self._signal_wallet_metadata_value(signal, "wallet_consensus_share"),
+                    self._signal_wallet_metadata_value(signal, "wallet_consensus_notional_usd"),
                     signal.get("question", "")[:80],
                 )
                 continue

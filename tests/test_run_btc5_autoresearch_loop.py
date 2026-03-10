@@ -70,6 +70,32 @@ def test_write_loop_reports_accumulates_summary(tmp_path: Path) -> None:
         "package_missing_evidence": ["median_arr_delta_not_positive"],
         "validation_live_filled_rows": 8,
         "generalization_ratio": 0.82,
+        "public_forecast_selection": {
+            "selection_reason": "selected_from_fresh_pool_by_confidence_then_deploy_then_generated_at",
+            "selected": {
+                "source_artifact": "reports/btc5_autoresearch/latest.json",
+                "forecast_arr_delta_pct": 20.0,
+            },
+        },
+        "public_forecast_source_artifact": "reports/btc5_autoresearch/latest.json",
+        "public_forecast_arr_delta_pct": 20.0,
+        "best_live_package": {"source": "regime_best_candidate", "runtime_package": {"profile": {"name": "live_balanced"}}},
+        "best_raw_research_package": {"source": "global_best_candidate", "runtime_package": {"profile": {"name": "raw_thin"}}},
+        "execution_drag_summary": {"skip_price_count": 20, "order_failed_count": 19, "cancelled_unfilled_count": 3},
+        "one_sided_bias_recommendation": {"recommendation": "tighten_down_and_suppress_up"},
+        "runtime_load_status": {
+            "override_env_written": True,
+            "override_env_path": "state/btc5_autoresearch.env",
+            "session_policy_records": 1,
+            "base_env_changed": False,
+            "service_restart_requested": False,
+            "service_restart_state": None,
+        },
+        "capital_scale_recommendation": {
+            "status": "test_add",
+            "recommended_tranche_usd": 100,
+            "reason": "high_confidence_and_trailing12_positive_but_fund_reconciliation_blocks_full_scale",
+        },
         "recommended_session_policy": [{"name": "open_et", "et_hours": [9, 10, 11], "max_abs_delta": 0.0001}],
         "hypothesis_lab": {"best_hypothesis": {"name": "hyp_down_open"}},
         "regime_policy_lab": {"best_policy": {"name": "policy_current_live_profile__open_et__grid_d0.00010_up0.49_down0.49"}},
@@ -101,10 +127,23 @@ def test_write_loop_reports_accumulates_summary(tmp_path: Path) -> None:
     assert latest_json["latest_entry"]["hypothesis_lab"]["best_hypothesis"]["name"] == "hyp_down_open"
     assert latest_json["latest_entry"]["regime_policy_lab"]["best_policy"]["name"].startswith("policy_current_live_profile")
     assert len(latest_json["latest_entry"]["recommended_session_policy"]) == 1
+    assert "velocity_summary" in latest_json
+    assert set(latest_json["velocity_summary"]) == {"window_24h", "window_7d"}
+    assert "cycles_in_window" in latest_json["velocity_summary"]["window_24h"]
+    assert "forecast_arr_gain_pct_per_day" in latest_json["velocity_summary"]["window_24h"]
     assert "Last best hypothesis" in latest_md
     assert "Last best regime policy" in latest_md
     assert "Last best session policy records" in latest_md
     assert "Last package decision" in latest_md
     assert "Last package confidence" in latest_md
+    assert "Last public forecast source" in latest_md
+    assert "Last best live package source" in latest_md
+    assert "Last best raw package source" in latest_md
+    assert "Last one-sided bias recommendation" in latest_md
+    assert "Last skip-price count" in latest_md
+    assert "Last capital status" in latest_md
+    assert "Last capital tranche" in latest_md
+    assert "Timebound Velocity" in latest_md
     assert "Last median ARR delta" in latest_md
+    assert "Last runtime override written" in latest_md
     assert len(history_lines) == 2

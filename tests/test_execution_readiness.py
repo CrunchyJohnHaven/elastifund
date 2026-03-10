@@ -287,6 +287,49 @@ class TestExecutionReadiness(unittest.TestCase):
         self.assertEqual(decision.service_status, "stopped")
         self.assertEqual(decision.blocked_reasons, tuple())
 
+    def test_fast_flow_restart_service_reconciled_even_when_accounting_mismatch_exists(self) -> None:
+        decision = evaluate_fast_flow_restart(
+            FastFlowRestartInputs(
+                remote_cycle_status={
+                    "launch": {
+                        "live_launch_blocked": True,
+                        "blocked_checks": ["accounting_reconciliation_drift"],
+                        "blocked_reasons": ["Accounting drift: open delta=+6, closed delta=+2."],
+                    },
+                    "wallet_flow": {
+                        "ready": True,
+                        "status": "ready",
+                        "wallet_count": 12,
+                        "reasons": [],
+                    },
+                    "runtime": {"cycles_completed": 412, "closed_trades": 0},
+                    "service": {
+                        "status": "stopped",
+                        "systemctl_state": "inactive",
+                        "detail": "inactive",
+                    },
+                    "root_tests": {"status": "passing"},
+                },
+                remote_service_status={
+                    "status": "stopped",
+                    "systemctl_state": "inactive",
+                    "detail": "inactive",
+                },
+                jj_state={"cycles_completed": 412},
+                root_test_status={"status": "passing"},
+                required_artifacts=(
+                    RestartRequiredArtifact("remote_cycle_status", "reports/remote_cycle_status.json", True),
+                    RestartRequiredArtifact("remote_service_status", "reports/remote_service_status.json", True),
+                    RestartRequiredArtifact("jj_state", "jj_state.json", True),
+                    RestartRequiredArtifact("root_test_status", "reports/root_test_status.json", True),
+                ),
+            )
+        )
+
+        self.assertTrue(decision.restart_ready)
+        self.assertEqual(decision.service_status, "stopped")
+        self.assertNotIn("remote_service_state_ambiguous", decision.blocked_reasons)
+
     def test_build_fast_flow_restart_report_reads_required_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

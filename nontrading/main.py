@@ -106,12 +106,16 @@ def format_status_line(snapshot: dict[str, object], report: CycleReport) -> str:
         f"existing={report.skipped_existing} "
         f"researched={report.accounts_researched} "
         f"qualified={report.qualified_accounts} "
+        f"approved={report.outreach_approved} "
         f"outreach={report.outreach_sent} "
+        f"blocked_outreach={report.outreach_blocked} "
         f"pending={report.approval_pending} "
         f"replies={report.replies_recorded} "
         f"meetings={report.meetings_booked} "
         f"proposals={report.proposals_sent} "
-        f"outcomes={report.outcomes_recorded}"
+        f"fulfillment={report.fulfillment_planned} "
+        f"outcomes={report.outcomes_recorded} "
+        f"won={report.outcomes_won}"
     )
 
 

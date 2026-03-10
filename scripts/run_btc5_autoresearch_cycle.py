@@ -32,6 +32,8 @@ DEFAULT_REPORT_DIR = Path("reports/btc5_autoresearch")
 DEFAULT_SERVICE_NAME = "btc-5min-maker.service"
 DEFAULT_HYPOTHESIS_SUMMARY = Path("reports/btc5_hypothesis_lab/summary.json")
 DEFAULT_REGIME_POLICY_SUMMARY = Path("reports/btc5_regime_policy_lab/summary.json")
+DEFAULT_CURRENT_PROBE_LATEST = Path("reports/btc5_autoresearch_current_probe/latest.json")
+DEFAULT_RUNTIME_TRUTH = Path("reports/runtime_truth_latest.json")
 
 
 def _now_utc() -> datetime:
@@ -65,6 +67,101 @@ def _load_json(path: Path) -> dict[str, Any] | None:
     if not isinstance(payload, dict):
         return None
     return payload
+
+
+def _parse_iso_timestamp(raw: Any) -> datetime | None:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    text = raw.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _confidence_rank(label: str) -> int:
+    return {"high": 3, "medium": 2, "low": 1}.get(str(label).strip().lower(), 0)
+
+
+def _deploy_rank(label: str) -> int:
+    return {"promote": 3, "shadow_only": 2, "hold": 1}.get(str(label).strip().lower(), 0)
+
+
+def _extract_forecast_candidate(payload: dict[str, Any] | None, *, source_artifact: str) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    arr = payload.get("arr_tracking") or {}
+    generated_at = _parse_iso_timestamp(payload.get("generated_at"))
+    confidence_label = str(payload.get("package_confidence_label") or "low")
+    deploy_recommendation = str(payload.get("deploy_recommendation") or "hold")
+    return {
+        "source_artifact": source_artifact,
+        "generated_at": generated_at.isoformat() if generated_at else "",
+        "forecast_active_arr_pct": _safe_float(arr.get("current_median_arr_pct"), 0.0),
+        "forecast_best_arr_pct": _safe_float(arr.get("best_median_arr_pct"), 0.0),
+        "forecast_arr_delta_pct": _safe_float(arr.get("median_arr_delta_pct"), 0.0),
+        "package_confidence_label": confidence_label,
+        "package_confidence_reasons": list(payload.get("package_confidence_reasons") or []),
+        "deploy_recommendation": deploy_recommendation,
+        "validation_live_filled_rows": int(payload.get("validation_live_filled_rows") or 0),
+        "generalization_ratio": _safe_float(payload.get("generalization_ratio"), 0.0),
+        "best_runtime_package": payload.get("best_runtime_package") or {},
+        "active_runtime_package": payload.get("active_runtime_package") or {},
+    }
+
+
+def _select_public_forecast(
+    *,
+    standard_payload: dict[str, Any] | None,
+    current_probe_payload: dict[str, Any] | None,
+    standard_source: str,
+    current_probe_source: str,
+) -> dict[str, Any]:
+    now = _now_utc()
+    candidates: list[dict[str, Any]] = []
+    standard = _extract_forecast_candidate(standard_payload, source_artifact=standard_source)
+    current_probe = _extract_forecast_candidate(current_probe_payload, source_artifact=current_probe_source)
+    if standard:
+        candidates.append(standard)
+    if current_probe:
+        candidates.append(current_probe)
+    if not candidates:
+        return {
+            "selected": None,
+            "candidates": [],
+            "selection_reason": "no_forecast_artifacts_available",
+        }
+
+    for candidate in candidates:
+        generated = _parse_iso_timestamp(candidate.get("generated_at"))
+        age_hours = ((now - generated).total_seconds() / 3600.0) if generated else 9999.0
+        candidate["age_hours"] = round(max(0.0, age_hours), 4)
+        candidate["is_fresh_6h"] = bool(generated and age_hours <= 6.0)
+
+    fresh = [item for item in candidates if item.get("is_fresh_6h")]
+    pool = fresh or candidates
+    pool.sort(
+        key=lambda item: (
+            _confidence_rank(str(item.get("package_confidence_label") or "")),
+            _deploy_rank(str(item.get("deploy_recommendation") or "")),
+            _parse_iso_timestamp(item.get("generated_at")) or datetime.fromtimestamp(0, tz=timezone.utc),
+        ),
+        reverse=True,
+    )
+    selected = pool[0]
+    selection_reason = (
+        "selected_from_fresh_pool_by_confidence_then_deploy_then_generated_at"
+        if fresh
+        else "no_fresh_artifacts_within_6h_selected_best_available"
+    )
+    return {
+        "selected": selected,
+        "candidates": candidates,
+        "selection_reason": selection_reason,
+    }
 
 
 def _merged_strategy_env(base_env: Path, override_env: Path) -> dict[str, str]:
@@ -263,6 +360,120 @@ def _runtime_package(
     }
 
 
+def _package_signature(package: dict[str, Any] | None) -> tuple[Any, ...]:
+    package = package or {}
+    profile = package.get("profile") if isinstance(package.get("profile"), dict) else {}
+    policy = package.get("session_policy") if isinstance(package.get("session_policy"), list) else []
+    normalized_policy: list[tuple[Any, ...]] = []
+    for item in policy:
+        if not isinstance(item, dict):
+            continue
+        hours = tuple(sorted(int(hour) for hour in (item.get("et_hours") or []) if isinstance(hour, int)))
+        normalized_policy.append(
+            (
+                str(item.get("name") or ""),
+                hours,
+                _safe_float(item.get("max_abs_delta"), None),
+                _safe_float(item.get("up_max_buy_price"), None),
+                _safe_float(item.get("down_max_buy_price"), None),
+            )
+        )
+    normalized_policy.sort()
+    return (
+        str(profile.get("name") or ""),
+        _safe_float(profile.get("max_abs_delta"), None),
+        _safe_float(profile.get("up_max_buy_price"), None),
+        _safe_float(profile.get("down_max_buy_price"), None),
+        tuple(normalized_policy),
+    )
+
+
+def _live_fill_windows(rows: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
+    live = [row for row in rows if str(row.get("order_status") or "").strip().lower() == "live_filled"]
+    live.sort(key=lambda row: int(row.get("window_start_ts") or row.get("timestamp") or 0))
+
+    def summarize(count: int) -> dict[str, float]:
+        sample = live[-count:] if len(live) >= count else list(live)
+        fills = len(sample)
+        pnl = sum(_safe_float(row.get("pnl_usd"), 0.0) for row in sample)
+        if fills >= 2:
+            first_ts = int(sample[0].get("window_start_ts") or sample[0].get("timestamp") or 0)
+            last_ts = int(sample[-1].get("window_start_ts") or sample[-1].get("timestamp") or 0)
+            hours = max(0.0, (last_ts - first_ts) / 3600.0)
+        else:
+            hours = 0.0
+        return {
+            "fills": fills,
+            "pnl_usd": round(pnl, 4),
+            "hours": round(hours, 4),
+            "net_positive": bool(pnl > 0.0),
+        }
+
+    return {
+        "trailing_5": summarize(5),
+        "trailing_12": summarize(12),
+        "trailing_20": summarize(20),
+    }
+
+
+def _fund_reconciliation_blocked(runtime_truth: dict[str, Any] | None) -> tuple[bool, list[str]]:
+    launch = (runtime_truth or {}).get("launch") or {}
+    blocked_checks = [str(item) for item in (launch.get("blocked_checks") or []) if item]
+    reconciliation_flags = {"accounting_reconciliation_drift", "polymarket_capital_truth_drift"}
+    active = sorted([item for item in blocked_checks if item in reconciliation_flags])
+    return (len(active) > 0, active)
+
+
+def _capital_scale_recommendation(
+    *,
+    package_confidence_label: str,
+    trailing: dict[str, dict[str, float]],
+    promoted_package_selected: bool,
+    fund_reconciliation_blocked: bool,
+    fund_block_reasons: list[str],
+) -> dict[str, Any]:
+    trailing_5 = trailing.get("trailing_5") or {}
+    trailing_12 = trailing.get("trailing_12") or {}
+    trailing_20 = trailing.get("trailing_20") or {}
+    conf_high = str(package_confidence_label).strip().lower() == "high"
+    positive_12 = bool(trailing_12.get("net_positive"))
+    positive_20 = bool(trailing_20.get("net_positive"))
+
+    status = "hold"
+    tranche = 0
+    basis = trailing_5
+    reason = "confidence_or_live_fill_window_not_sufficient_for_capital_add"
+
+    if conf_high and positive_12 and positive_20 and promoted_package_selected and not fund_reconciliation_blocked:
+        status = "scale_add"
+        tranche = 1000
+        basis = trailing_20
+        reason = "high_confidence_and_trailing20_12_positive_with_promoted_package_selected"
+    elif conf_high and positive_12 and fund_reconciliation_blocked:
+        status = "test_add"
+        tranche = 100
+        basis = trailing_12
+        reason = "high_confidence_and_trailing12_positive_but_fund_reconciliation_blocks_full_scale"
+    elif conf_high and positive_12 and not promoted_package_selected:
+        status = "hold"
+        tranche = 0
+        basis = trailing_12
+        reason = "promoted_package_not_currently_selected"
+
+    return {
+        "status": status,
+        "recommended_tranche_usd": tranche,
+        "basis_window_fills": int(basis.get("fills") or 0),
+        "basis_window_pnl_usd": round(_safe_float(basis.get("pnl_usd"), 0.0), 4),
+        "basis_window_hours": round(_safe_float(basis.get("hours"), 0.0), 4),
+        "reason": reason,
+        "promoted_package_selected": bool(promoted_package_selected),
+        "fund_reconciliation_blocked": bool(fund_reconciliation_blocked),
+        "fund_blocking_checks": list(fund_block_reasons),
+        "trailing_windows": trailing,
+    }
+
+
 def _extract_validation_rows(candidate: dict[str, Any] | None) -> int:
     if not isinstance(candidate, dict):
         return 0
@@ -401,6 +612,289 @@ def _select_best_target(
     decision["selected_source"] = best_entry.get("source")
     decision["selected_family"] = ((best_entry.get("candidate") or {}).get("candidate_family") or "unknown")
     return best_entry.get("candidate"), decision, evaluated
+
+
+def _build_hypothesis_candidate(summary: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(summary, dict):
+        return None
+    best = summary.get("best_candidate")
+    best_hypothesis = summary.get("best_hypothesis") or {}
+    hypothesis = best_hypothesis.get("hypothesis") if isinstance(best_hypothesis, dict) else {}
+    best_summary = best_hypothesis.get("summary") if isinstance(best_hypothesis, dict) else {}
+    if not isinstance(best, dict):
+        best = {}
+    if not isinstance(hypothesis, dict):
+        hypothesis = {}
+    if not isinstance(best_summary, dict):
+        best_summary = {}
+    name = str(best.get("name") or hypothesis.get("name") or "").strip()
+    if not name:
+        return None
+    profile = {
+        "name": name,
+        "max_abs_delta": _safe_float(best.get("max_abs_delta"), _safe_float(hypothesis.get("max_abs_delta"), None)),
+        "up_max_buy_price": _safe_float(
+            best.get("up_max_buy_price"), _safe_float(hypothesis.get("up_max_buy_price"), None)
+        ),
+        "down_max_buy_price": _safe_float(
+            best.get("down_max_buy_price"), _safe_float(hypothesis.get("down_max_buy_price"), None)
+        ),
+    }
+    session_name = str(best.get("session_name") or hypothesis.get("session_name") or "").strip()
+    hours = [int(hour) for hour in (best.get("et_hours") or hypothesis.get("et_hours") or []) if isinstance(hour, int)]
+    session_policy: list[dict[str, Any]] = []
+    if session_name and hours:
+        record: dict[str, Any] = {"name": session_name, "et_hours": sorted(hours)}
+        if profile.get("max_abs_delta") is not None:
+            record["max_abs_delta"] = profile["max_abs_delta"]
+        if profile.get("up_max_buy_price") is not None:
+            record["up_max_buy_price"] = profile["up_max_buy_price"]
+        if profile.get("down_max_buy_price") is not None:
+            record["down_max_buy_price"] = profile["down_max_buy_price"]
+        session_policy.append(record)
+    validation_rows = int(
+        _safe_float(
+            best.get("validation_live_filled_rows"),
+            _safe_float(best_summary.get("validation_live_filled_rows"), 0.0),
+        )
+        or 0
+    )
+    return {
+        "candidate_family": "hypothesis",
+        "profile": profile,
+        "base_profile": dict(profile),
+        "session_overrides": [],
+        "recommended_session_policy": session_policy,
+        "historical": {
+            "replay_live_filled_rows": validation_rows,
+            "replay_live_filled_pnl_usd": _safe_float(best_summary.get("validation_replay_pnl_usd"), 0.0),
+        },
+        "monte_carlo": {
+            "profit_probability": _safe_float(best_summary.get("validation_profit_probability"), 0.0),
+            "p95_max_drawdown_usd": _safe_float(best_summary.get("validation_p95_drawdown_usd"), 0.0),
+        },
+        "continuation": {
+            "median_arr_pct": _safe_float(best.get("validation_median_arr_pct"), _safe_float(best_summary.get("validation_median_arr_pct"), 0.0)),
+            "p05_arr_pct": _safe_float(best.get("validation_p05_arr_pct"), _safe_float(best_summary.get("validation_p05_arr_pct"), 0.0)),
+            "historical_arr_pct": _safe_float(best.get("validation_median_arr_pct"), _safe_float(best_summary.get("validation_median_arr_pct"), 0.0)),
+        },
+        "scoring": {
+            "generalization_ratio": _safe_float(best.get("generalization_ratio"), _safe_float(best_summary.get("generalization_ratio"), 0.0)),
+            "validation_live_filled_rows": validation_rows,
+            "evidence_band": str(best.get("evidence_band") or best_summary.get("evidence_band") or ""),
+        },
+    }
+
+
+def _execution_drag_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    total = max(1, len(rows))
+    skip_price = 0
+    order_failed = 0
+    cancelled_unfilled = 0
+    direction_stats: dict[str, dict[str, float]] = {}
+    for row in rows:
+        status = str(row.get("order_status") or "").strip().lower()
+        direction = str(row.get("direction") or "UNKNOWN").strip().upper()
+        stats = direction_stats.setdefault(
+            direction,
+            {"filled_rows": 0.0, "filled_pnl_usd": 0.0, "skip_price_count": 0.0, "order_failed_count": 0.0, "cancelled_unfilled_count": 0.0},
+        )
+        if status == "skip_price_outside_guardrails":
+            skip_price += 1
+            stats["skip_price_count"] += 1.0
+        elif status in {"live_order_failed", "order_failed", "order_placement_failed", "post_only_cross_failure"}:
+            order_failed += 1
+            stats["order_failed_count"] += 1.0
+        elif status in {"live_cancelled_unfilled", "cancelled_unfilled", "cancel_before_fill"}:
+            cancelled_unfilled += 1
+            stats["cancelled_unfilled_count"] += 1.0
+        elif status == "live_filled":
+            stats["filled_rows"] += 1.0
+            stats["filled_pnl_usd"] += _safe_float(row.get("pnl_usd"), 0.0)
+    return {
+        "total_rows": len(rows),
+        "skip_price_count": skip_price,
+        "order_failed_count": order_failed,
+        "cancelled_unfilled_count": cancelled_unfilled,
+        "skip_rate": skip_price / float(total),
+        "order_failure_rate": order_failed / float(total),
+        "cancelled_unfilled_rate": cancelled_unfilled / float(total),
+        "direction_stats": direction_stats,
+    }
+
+
+def _candidate_package_record(
+    *,
+    source: str,
+    candidate: dict[str, Any] | None,
+    active_candidate: dict[str, Any] | None,
+    drag_context: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not isinstance(candidate, dict):
+        return None
+    profile = candidate.get("profile") if isinstance(candidate.get("profile"), dict) else {}
+    if not profile:
+        return None
+    active_arr = _arr_for_candidate(active_candidate)
+    arr = _arr_for_candidate(candidate)
+    active_rows = max(1, int(_safe_float((active_candidate or {}).get("historical", {}).get("replay_live_filled_rows"), 1.0) or 1))
+    validation_rows = max(0, int(_safe_float(candidate.get("historical", {}).get("replay_live_filled_rows"), 0.0) or 0))
+    fill_retention = validation_rows / float(active_rows) if active_rows > 0 else 1.0
+    fill_drop = max(0.0, 1.0 - fill_retention)
+    arr_delta = arr["median_arr_pct"] - active_arr["median_arr_pct"]
+    p05_delta = arr["p05_arr_pct"] - active_arr["p05_arr_pct"]
+    current_scale = max(1.0, abs(active_arr["median_arr_pct"]))
+    arr_delta_norm = (arr_delta / current_scale) * 100.0
+    p05_delta_norm = (p05_delta / current_scale) * 100.0
+    sample_bonus = min(20.0, float(validation_rows)) * 0.2
+    raw_score = arr_delta_norm + (0.6 * p05_delta_norm) + sample_bonus
+    skip_penalty = float(drag_context.get("skip_rate") or 0.0) + fill_drop
+    order_failure_penalty = float(drag_context.get("order_failure_rate") or 0.0) + (0.5 * fill_drop)
+    live_score = raw_score - (45.0 * skip_penalty) - (45.0 * order_failure_penalty)
+    session_policy = (
+        _runtime_session_policy_from_overrides(candidate.get("session_overrides"))
+        or list(candidate.get("recommended_session_policy") or [])
+    )
+    return {
+        "source": source,
+        "candidate_family": str(candidate.get("candidate_family") or "unknown"),
+        "runtime_package": _runtime_package(profile=profile, session_policy=session_policy),
+        "candidate": candidate,
+        "median_arr_pct": round(arr["median_arr_pct"], 4),
+        "p05_arr_pct": round(arr["p05_arr_pct"], 4),
+        "median_arr_delta_pct": round(arr_delta, 4),
+        "p05_arr_delta_pct": round(p05_delta, 4),
+        "validation_live_filled_rows": validation_rows,
+        "fill_retention_ratio": round(fill_retention, 4),
+        "skip_rate_penalty": round(skip_penalty, 6),
+        "order_failure_penalty": round(order_failure_penalty, 6),
+        "raw_research_score": round(raw_score, 6),
+        "live_execution_score": round(live_score, 6),
+    }
+
+
+def _rank_candidate_packages(
+    *,
+    active_candidate: dict[str, Any] | None,
+    candidates: list[tuple[str, dict[str, Any] | None]],
+    drag_context: dict[str, Any],
+    min_fill_retention_ratio: float,
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+    ranked: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for source, candidate in candidates:
+        record = _candidate_package_record(
+            source=source,
+            candidate=candidate,
+            active_candidate=active_candidate,
+            drag_context=drag_context,
+        )
+        if record is None:
+            continue
+        signature = _package_signature(record.get("runtime_package"))
+        if signature in seen:
+            continue
+        seen.add(signature)
+        ranked.append(record)
+    if not ranked:
+        empty = {
+            "source": "none",
+            "candidate_family": "unknown",
+            "runtime_package": {"profile": {}, "session_policy": []},
+            "candidate": None,
+            "median_arr_pct": 0.0,
+            "p05_arr_pct": 0.0,
+            "median_arr_delta_pct": 0.0,
+            "p05_arr_delta_pct": 0.0,
+            "validation_live_filled_rows": 0,
+            "fill_retention_ratio": 0.0,
+            "skip_rate_penalty": 0.0,
+            "order_failure_penalty": 0.0,
+            "raw_research_score": 0.0,
+            "live_execution_score": 0.0,
+        }
+        return empty, empty, [], {
+            "skip_price_count": int(drag_context.get("skip_price_count") or 0),
+            "order_failed_count": int(drag_context.get("order_failed_count") or 0),
+            "cancelled_unfilled_count": int(drag_context.get("cancelled_unfilled_count") or 0),
+            "skip_rate": round(float(drag_context.get("skip_rate") or 0.0), 6),
+            "order_failure_rate": round(float(drag_context.get("order_failure_rate") or 0.0), 6),
+            "cancelled_unfilled_rate": round(float(drag_context.get("cancelled_unfilled_rate") or 0.0), 6),
+            "sample_size_rows": int(drag_context.get("total_rows") or 0),
+        }
+
+    ranked.sort(
+        key=lambda item: (
+            float(item.get("raw_research_score") or 0.0),
+            float(item.get("median_arr_delta_pct") or 0.0),
+            int(item.get("validation_live_filled_rows") or 0),
+        ),
+        reverse=True,
+    )
+    best_raw = ranked[0]
+    live_eligible = [
+        item
+        for item in ranked
+        if float(item.get("fill_retention_ratio") or 0.0) >= float(min_fill_retention_ratio)
+    ] or list(ranked)
+    live_eligible.sort(
+        key=lambda item: (
+            float(item.get("live_execution_score") or 0.0),
+            float(item.get("raw_research_score") or 0.0),
+            int(item.get("validation_live_filled_rows") or 0),
+        ),
+        reverse=True,
+    )
+    best_live = live_eligible[0]
+    drag_summary = {
+        "skip_price_count": int(drag_context.get("skip_price_count") or 0),
+        "order_failed_count": int(drag_context.get("order_failed_count") or 0),
+        "cancelled_unfilled_count": int(drag_context.get("cancelled_unfilled_count") or 0),
+        "skip_rate": round(float(drag_context.get("skip_rate") or 0.0), 6),
+        "order_failure_rate": round(float(drag_context.get("order_failure_rate") or 0.0), 6),
+        "cancelled_unfilled_rate": round(float(drag_context.get("cancelled_unfilled_rate") or 0.0), 6),
+        "sample_size_rows": int(drag_context.get("total_rows") or 0),
+        "best_live_fill_retention_ratio": float(best_live.get("fill_retention_ratio") or 0.0),
+        "best_raw_fill_retention_ratio": float(best_raw.get("fill_retention_ratio") or 0.0),
+        "winner_changed_due_to_execution_drag": bool(
+            _package_signature(best_live.get("runtime_package")) != _package_signature(best_raw.get("runtime_package"))
+        ),
+    }
+    return best_live, best_raw, ranked, drag_summary
+
+
+def _one_sided_bias_recommendation(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    summary = _execution_drag_context(rows)
+    stats = summary.get("direction_stats") if isinstance(summary.get("direction_stats"), dict) else {}
+    up = stats.get("UP") if isinstance(stats.get("UP"), dict) else {}
+    down = stats.get("DOWN") if isinstance(stats.get("DOWN"), dict) else {}
+    up_pnl = _safe_float(up.get("filled_pnl_usd"), 0.0)
+    down_pnl = _safe_float(down.get("filled_pnl_usd"), 0.0)
+    up_fills = int(_safe_float(up.get("filled_rows"), 0.0) or 0)
+    down_fills = int(_safe_float(down.get("filled_rows"), 0.0) or 0)
+    up_skip = int(_safe_float(up.get("skip_price_count"), 0.0) or 0)
+    down_skip = int(_safe_float(down.get("skip_price_count"), 0.0) or 0)
+    recommendation = "balanced_directional_bias"
+    reason = "directional_performance_mixed"
+    if down_pnl > 0.0 and up_pnl <= 0.0 and down_fills >= max(3, up_fills):
+        recommendation = "tighten_down_and_suppress_up"
+        reason = "down_is_profitable_while_up_is_non_positive"
+    elif down_pnl > up_pnl and down_skip <= up_skip:
+        recommendation = "suppress_up"
+        reason = "up_underperforms_and_absorbs_more_skips"
+    elif down_pnl > up_pnl:
+        recommendation = "tighten_down"
+        reason = "down_outperforms_up"
+    return {
+        "recommendation": recommendation,
+        "reason": reason,
+        "up_filled_pnl_usd": round(up_pnl, 4),
+        "down_filled_pnl_usd": round(down_pnl, 4),
+        "up_filled_rows": up_fills,
+        "down_filled_rows": down_fills,
+        "up_skip_price_count": up_skip,
+        "down_skip_price_count": down_skip,
+    }
 
 
 def _promotion_decision(
@@ -557,6 +1051,29 @@ def _restart_service(service_name: str) -> dict[str, Any]:
     }
 
 
+def _runtime_load_status(
+    *,
+    override_env_path: Path,
+    restart_on_promote: bool,
+    decision_action: str,
+    restart_result: dict[str, Any] | None,
+) -> dict[str, Any]:
+    override_values = _load_env_file(override_env_path)
+    session_policy_records = len(_runtime_session_policy_from_env(override_values))
+    return {
+        "override_env_written": bool(override_values),
+        "override_env_path": str(override_env_path),
+        "session_policy_records": session_policy_records,
+        "base_env_changed": False,
+        "service_restart_requested": bool(
+            str(decision_action or "").strip().lower() == "promote" and restart_on_promote
+        ),
+        "service_restart_state": (
+            str((restart_result or {}).get("service_state") or "").strip() or None
+        ),
+    }
+
+
 def _write_reports(report_dir: Path, payload: dict[str, Any]) -> dict[str, str]:
     report_dir.mkdir(parents=True, exist_ok=True)
     stamp = _stamp()
@@ -578,10 +1095,16 @@ def _write_reports(report_dir: Path, payload: dict[str, Any]) -> dict[str, str]:
         f"- Reason: `{payload['decision']['reason']}`",
         f"- Selected source: `{payload['decision'].get('selected_source', 'none')}`",
         f"- Selected family: `{payload['decision'].get('selected_family', 'none')}`",
+        f"- Chosen public forecast source: `{payload.get('public_forecast_source_artifact', 'none')}`",
+        f"- Public forecast selection reason: `{(payload.get('public_forecast_selection') or {}).get('selection_reason', 'none')}`",
         f"- Active profile: `{payload['active_profile']['name']}`",
         f"- Best profile: `{payload['best_candidate']['profile']['name'] if payload.get('best_candidate') else 'none'}`",
         f"- Package confidence: `{payload.get('package_confidence_label', 'low')}`",
         f"- Package confidence reasons: `{'; '.join(payload.get('package_confidence_reasons') or ['none'])}`",
+        f"- Capital scale recommendation: `{(payload.get('capital_scale_recommendation') or {}).get('status', 'hold')}`",
+        f"- Best live package source: `{(payload.get('best_live_package') or {}).get('source', 'none')}`",
+        f"- Best raw package source: `{(payload.get('best_raw_research_package') or {}).get('source', 'none')}`",
+        f"- One-sided bias recommendation: `{(payload.get('one_sided_bias_recommendation') or {}).get('recommendation', 'balanced_directional_bias')}`",
         f"- Observed window rows: `{payload['simulation_summary']['input']['observed_window_rows']}`",
         f"- Observed live-filled rows: `{payload['simulation_summary']['input']['live_filled_rows']}`",
         "",
@@ -613,11 +1136,33 @@ def _write_reports(report_dir: Path, payload: dict[str, Any]) -> dict[str, str]:
         f"- Best package session-policy records: `{len(((payload.get('best_runtime_package') or {}).get('session_policy') or []))}`",
         f"- Validation live-filled rows: `{payload.get('validation_live_filled_rows', 0)}`",
         f"- Generalization ratio: `{payload.get('generalization_ratio', 0.0):.4f}`",
+        f"- Promoted package selected: `{((payload.get('capital_scale_recommendation') or {}).get('promoted_package_selected'))}`",
+        "",
+        "## Execution Drag",
+        "",
+        f"- Skip-price count: `{((payload.get('execution_drag_summary') or {}).get('skip_price_count', 0))}`",
+        f"- Order-failed count: `{((payload.get('execution_drag_summary') or {}).get('order_failed_count', 0))}`",
+        f"- Cancelled-unfilled count: `{((payload.get('execution_drag_summary') or {}).get('cancelled_unfilled_count', 0))}`",
+        f"- Skip-rate penalty: `{((payload.get('best_live_package') or {}).get('skip_rate_penalty', 0.0))}`",
+        f"- Order-failure penalty: `{((payload.get('best_live_package') or {}).get('order_failure_penalty', 0.0))}`",
+        f"- Winner changed by drag: `{((payload.get('execution_drag_summary') or {}).get('winner_changed_due_to_execution_drag', False))}`",
+        "",
+        "## Runtime Load Status",
+        "",
+        f"- Override env written: `{((payload.get('runtime_load_status') or {}).get('override_env_written'))}`",
+        f"- Override env path: `{((payload.get('runtime_load_status') or {}).get('override_env_path') or 'none')}`",
+        f"- Runtime session-policy records: `{((payload.get('runtime_load_status') or {}).get('session_policy_records'))}`",
+        f"- Base env changed: `{((payload.get('runtime_load_status') or {}).get('base_env_changed'))}`",
+        f"- Service restart requested: `{((payload.get('runtime_load_status') or {}).get('service_restart_requested'))}`",
+        f"- Service restart state: `{((payload.get('runtime_load_status') or {}).get('service_restart_state') or 'none')}`",
         "",
         "## Package Decision",
         "",
         f"- Deploy recommendation: `{payload.get('deploy_recommendation', 'hold')}`",
         f"- Evidence missing: `{'; '.join(payload.get('package_missing_evidence') or ['none'])}`",
+        f"- Recommendation explanation: `{payload.get('decision', {}).get('reason', 'none')}`",
+        f"- Capital tranche recommendation: `{((payload.get('capital_scale_recommendation') or {}).get('recommended_tranche_usd', 0))}` USD",
+        f"- Capital reason: `{((payload.get('capital_scale_recommendation') or {}).get('reason') or 'none')}`",
         "",
         "## Best Candidate",
         "",
@@ -661,6 +1206,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--regime-max-composed-candidates", type=int, default=64)
     parser.add_argument("--hypothesis-summary", type=Path, default=DEFAULT_HYPOTHESIS_SUMMARY)
     parser.add_argument("--regime-policy-summary", type=Path, default=DEFAULT_REGIME_POLICY_SUMMARY)
+    parser.add_argument("--current-probe-latest", type=Path, default=DEFAULT_CURRENT_PROBE_LATEST)
+    parser.add_argument("--runtime-truth", type=Path, default=DEFAULT_RUNTIME_TRUTH)
     return parser.parse_args()
 
 
@@ -711,16 +1258,35 @@ def main() -> int:
     regime_policy_summary["baseline"] = baseline
     hypothesis_summary = _load_json(args.hypothesis_summary) or {}
     latest_regime_summary = _load_json(args.regime_policy_summary) or {}
+    prior_standard_latest = _load_json(args.report_dir / "latest.json") or {}
+    current_probe_latest = _load_json(args.current_probe_latest) or {}
+    runtime_truth = _load_json(args.runtime_truth) or {}
 
     current_candidate = _normalize_global_candidate(_find_candidate(global_summary, "current_live_profile"))
     if current_candidate is None:
         current_candidate = _normalize_regime_candidate(regime_policy_summary.get("current_policy"))
     global_best_candidate = _normalize_global_candidate(global_summary.get("best_candidate"))
     regime_best_candidate = _normalize_regime_candidate(regime_policy_summary.get("best_policy"))
-    best_candidate, decision, evaluated_targets = _select_best_target(
+    hypothesis_best_candidate = _build_hypothesis_candidate(hypothesis_summary)
+    drag_context = _execution_drag_context(rows)
+    best_live_package_record, best_raw_package_record, ranked_packages, execution_drag_summary = _rank_candidate_packages(
+        active_candidate=current_candidate,
         candidates=[
+            ("active_profile", current_candidate),
             ("global_best_candidate", global_best_candidate),
             ("regime_best_candidate", regime_best_candidate),
+            ("hypothesis_best_candidate", hypothesis_best_candidate),
+        ],
+        drag_context=drag_context,
+        min_fill_retention_ratio=float(args.min_fill_retention_ratio),
+    )
+    best_live_candidate = best_live_package_record.get("candidate") if isinstance(best_live_package_record, dict) else None
+    best_candidate, decision, evaluated_targets = _select_best_target(
+        candidates=[
+            ("best_live_package", best_live_candidate),
+            ("global_best_candidate", global_best_candidate),
+            ("regime_best_candidate", regime_best_candidate),
+            ("hypothesis_best_candidate", hypothesis_best_candidate),
         ],
         current=current_candidate,
         min_median_arr_improvement_pct=float(args.min_median_arr_improvement_pct),
@@ -815,11 +1381,75 @@ def main() -> int:
         "current_candidate": current_candidate,
         "global_best_candidate": global_best_candidate,
         "regime_best_candidate": regime_best_candidate,
+        "hypothesis_best_candidate": hypothesis_best_candidate,
         "promotion_candidates": evaluated_targets,
+        "best_live_package": {
+            "source": best_live_package_record.get("source"),
+            "candidate_family": best_live_package_record.get("candidate_family"),
+            "runtime_package": best_live_package_record.get("runtime_package"),
+            "median_arr_delta_pct": best_live_package_record.get("median_arr_delta_pct"),
+            "p05_arr_delta_pct": best_live_package_record.get("p05_arr_delta_pct"),
+            "fill_retention_ratio": best_live_package_record.get("fill_retention_ratio"),
+            "skip_rate_penalty": best_live_package_record.get("skip_rate_penalty"),
+            "order_failure_penalty": best_live_package_record.get("order_failure_penalty"),
+            "validation_live_filled_rows": best_live_package_record.get("validation_live_filled_rows"),
+            "live_execution_score": best_live_package_record.get("live_execution_score"),
+        },
+        "best_raw_research_package": {
+            "source": best_raw_package_record.get("source"),
+            "candidate_family": best_raw_package_record.get("candidate_family"),
+            "runtime_package": best_raw_package_record.get("runtime_package"),
+            "median_arr_delta_pct": best_raw_package_record.get("median_arr_delta_pct"),
+            "p05_arr_delta_pct": best_raw_package_record.get("p05_arr_delta_pct"),
+            "fill_retention_ratio": best_raw_package_record.get("fill_retention_ratio"),
+            "skip_rate_penalty": best_raw_package_record.get("skip_rate_penalty"),
+            "order_failure_penalty": best_raw_package_record.get("order_failure_penalty"),
+            "validation_live_filled_rows": best_raw_package_record.get("validation_live_filled_rows"),
+            "raw_research_score": best_raw_package_record.get("raw_research_score"),
+        },
+        "ranked_runtime_packages": ranked_packages,
+        "execution_drag_summary": execution_drag_summary,
+        "one_sided_bias_recommendation": _one_sided_bias_recommendation(rows),
         "simulation_summary": global_summary,
         "regime_policy_summary": regime_policy_summary,
         "service_restart": restart_result,
+        "runtime_load_status": _runtime_load_status(
+            override_env_path=args.override_env,
+            restart_on_promote=bool(args.restart_on_promote),
+            decision_action=str(decision.get("action") or ""),
+            restart_result=restart_result,
+        ),
     }
+    public_forecast_selection = _select_public_forecast(
+        standard_payload=payload,
+        current_probe_payload=current_probe_latest,
+        standard_source=str(args.report_dir / "latest.json"),
+        current_probe_source=str(args.current_probe_latest),
+    )
+    if not (public_forecast_selection.get("selected")) and prior_standard_latest:
+        public_forecast_selection = _select_public_forecast(
+            standard_payload=prior_standard_latest,
+            current_probe_payload=current_probe_latest,
+            standard_source=str(args.report_dir / "latest.json"),
+            current_probe_source=str(args.current_probe_latest),
+        )
+    selected_public = public_forecast_selection.get("selected") or {}
+    payload["public_forecast_selection"] = public_forecast_selection
+    payload["public_forecast_source_artifact"] = selected_public.get("source_artifact")
+    payload["selected_best_runtime_package"] = selected_public.get("best_runtime_package") or payload.get("best_runtime_package") or {}
+    promoted_package_selected = _package_signature(payload.get("selected_best_runtime_package")) == _package_signature(
+        payload.get("active_runtime_package")
+    )
+    fund_blocked, fund_block_reasons = _fund_reconciliation_blocked(runtime_truth)
+    trailing_windows = _live_fill_windows(rows)
+    payload["capital_scale_recommendation"] = _capital_scale_recommendation(
+        package_confidence_label=str(payload.get("package_confidence_label") or "low"),
+        trailing=trailing_windows,
+        promoted_package_selected=promoted_package_selected,
+        fund_reconciliation_blocked=fund_blocked,
+        fund_block_reasons=fund_block_reasons,
+    )
+
     artifacts = _write_reports(args.report_dir, payload)
     payload["artifacts"] = artifacts
     print(json.dumps(payload, indent=2, sort_keys=True))

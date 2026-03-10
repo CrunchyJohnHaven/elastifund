@@ -6,7 +6,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import hashlib
 import time
-from typing import TYPE_CHECKING, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 try:
     from bot.execution_readiness import (
@@ -44,6 +44,19 @@ def _now_ts() -> int:
 
 def _round_bucket(value: float, *, multiplier: int = 10_000) -> int:
     return int(round(float(value) * float(multiplier)))
+
+
+def _midpoint_bucket(midpoint: float) -> str:
+    value = max(0.0, min(1.0, float(midpoint)))
+    if value < 0.05:
+        return "tail_0_5pct"
+    if value < 0.15:
+        return "tail_5_15pct"
+    if value < 0.35:
+        return "mid_15_35pct"
+    if value < 0.65:
+        return "mid_35_65pct"
+    return "favorite_65_100pct"
 
 
 @dataclass(frozen=True)
@@ -156,6 +169,76 @@ class A6ScanBatch:
     scanned_at_ts: int
     snapshots: tuple[A6MarketSnapshot, ...]
     opportunities: tuple[A6Opportunity, ...]
+
+
+@dataclass(frozen=True)
+class A6MeasurementLegInput:
+    leg_id: str
+    market_id: str
+    condition_id: str
+    token_id: str
+    quote_side: str
+    quote_price: float
+    midpoint: float
+    spread: float
+    required_size: float
+    quote_age_seconds: float | None
+    price_bucket: str
+
+
+@dataclass(frozen=True)
+class A6MeasurementRecord:
+    event_id: str
+    signal_id: str
+    snapshot_ts: int
+    state: str
+    selected_construction: str
+    top_of_book_cost: float | None
+    maker_target_cost: float | None
+    gross_edge: float | None
+    quote_dwell_seconds: float | None
+    refresh_cadence_seconds: float | None
+    expected_legs: int
+    fresh_legs: int
+    blocked_reasons: tuple[str, ...]
+    fill_proxy_inputs: tuple[A6MeasurementLegInput, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event_id": self.event_id,
+            "signal_id": self.signal_id,
+            "snapshot_ts": self.snapshot_ts,
+            "state": self.state,
+            "selected_construction": self.selected_construction,
+            "construction": {
+                "top_of_book_cost": self.top_of_book_cost,
+                "maker_target_cost": self.maker_target_cost,
+                "gross_edge": self.gross_edge,
+            },
+            "quote": {
+                "dwell_seconds": self.quote_dwell_seconds,
+                "refresh_cadence_seconds": self.refresh_cadence_seconds,
+                "expected_legs": self.expected_legs,
+                "fresh_legs": self.fresh_legs,
+            },
+            "blocked_reasons": list(self.blocked_reasons),
+            "fill_proxy_inputs": [
+                {
+                    "leg_id": leg.leg_id,
+                    "market_id": leg.market_id,
+                    "condition_id": leg.condition_id,
+                    "token_id": leg.token_id,
+                    "quote_side": leg.quote_side,
+                    "quote_price": leg.quote_price,
+                    "midpoint": leg.midpoint,
+                    "spread": leg.spread,
+                    "required_size": leg.required_size,
+                    "quote_age_seconds": leg.quote_age_seconds,
+                    "price_bucket": leg.price_bucket,
+                }
+                for leg in self.fill_proxy_inputs
+            ],
+        }
 
 
 class A6SumScanner:
@@ -290,6 +373,87 @@ class A6SumScanner:
             snapshots=tuple(snapshots),
             opportunities=tuple(opportunities),
         )
+
+    def build_measurement_records(
+        self,
+        batch: A6ScanBatch,
+        *,
+        refresh_cadence_seconds: float | None = None,
+    ) -> tuple[A6MeasurementRecord, ...]:
+        by_event_opportunity = {opp.event_id: opp for opp in batch.opportunities}
+        records: list[A6MeasurementRecord] = []
+
+        for snapshot in batch.snapshots:
+            ranked = self._rank_constructions(snapshot)
+            best = ranked[0] if ranked else None
+            opportunity = by_event_opportunity.get(snapshot.event_id)
+            selected_construction = (
+                opportunity.selected_construction if opportunity is not None else (best.construction_type if best is not None else "none")
+            )
+            top_of_book_cost = (
+                float(best.total_cost)
+                if best is not None
+                else (float(snapshot.sum_yes_ask) if snapshot.sum_yes_ask is not None else None)
+            )
+            gross_edge = max(0.0, 1.0 - float(top_of_book_cost)) if top_of_book_cost is not None else None
+
+            measurement_legs = tuple(opportunity.legs) if opportunity is not None else tuple(best.legs if best is not None else ())
+            maker_target_cost = (
+                float(sum(max(0.0, leg.best_ask - leg.tick_size) for leg in measurement_legs))
+                if measurement_legs
+                else None
+            )
+
+            quote_ages = [
+                max(0.0, float(batch.scanned_at_ts - int(leg.updated_ts)))
+                for leg in snapshot.legs
+                if leg.updated_ts is not None
+            ]
+            quote_dwell_seconds = max(quote_ages) if quote_ages else None
+
+            fill_proxy_inputs: list[A6MeasurementLegInput] = []
+            for leg in measurement_legs:
+                midpoint = max(0.0, min(1.0, (float(leg.best_bid) + float(leg.best_ask)) / 2.0))
+                required_size = float(self.config.max_leg_notional_usd) / max(float(leg.best_ask), float(leg.tick_size), 0.001)
+                fill_proxy_inputs.append(
+                    A6MeasurementLegInput(
+                        leg_id=leg.leg_id,
+                        market_id=leg.market_id,
+                        condition_id=leg.condition_id,
+                        token_id=leg.token_id,
+                        quote_side=leg.quote_side,
+                        quote_price=float(leg.best_ask),
+                        midpoint=midpoint,
+                        spread=max(0.0, float(leg.best_ask) - float(leg.best_bid)),
+                        required_size=required_size,
+                        quote_age_seconds=quote_dwell_seconds,
+                        price_bucket=_midpoint_bucket(midpoint),
+                    )
+                )
+
+            blocked_reasons = list(snapshot.invalidation_reasons)
+            if opportunity is not None and opportunity.readiness_status != "ready":
+                blocked_reasons.extend(opportunity.readiness_reasons)
+            state = "executable" if snapshot.executable and best is not None and best.executable else "blocked"
+            records.append(
+                A6MeasurementRecord(
+                    event_id=snapshot.event_id,
+                    signal_id=(opportunity.signal_id if opportunity is not None else f"measurement-{snapshot.event_id}"),
+                    snapshot_ts=int(snapshot.detected_at_ts),
+                    state=state,
+                    selected_construction=selected_construction,
+                    top_of_book_cost=top_of_book_cost,
+                    maker_target_cost=maker_target_cost,
+                    gross_edge=gross_edge,
+                    quote_dwell_seconds=quote_dwell_seconds,
+                    refresh_cadence_seconds=refresh_cadence_seconds,
+                    expected_legs=int(snapshot.expected_legs),
+                    fresh_legs=int(snapshot.fresh_legs),
+                    blocked_reasons=tuple(dict.fromkeys(blocked_reasons)),
+                    fill_proxy_inputs=tuple(fill_proxy_inputs),
+                )
+            )
+        return tuple(records)
 
     def _build_leg_snapshot(
         self,

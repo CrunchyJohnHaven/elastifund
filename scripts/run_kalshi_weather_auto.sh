@@ -23,51 +23,31 @@ get_env_or_dotenv() {
   printf '%s' "$fallback"
 }
 
-is_placeholder() {
-  local v="${1:-}"
-  local lc
-  lc="$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')"
-  if [ -z "$lc" ]; then
-    return 0
-  fi
-  case "$lc" in
-    your*|*placeholder*|*example*)
-      return 0
-      ;;
-  esac
-  return 1
-}
-
 PYTHON_BIN="python3"
 if [ -f "$ROOT_DIR/.venv_kalshi/bin/python" ]; then
   PYTHON_BIN="$ROOT_DIR/.venv_kalshi/bin/python"
 fi
 
-ENV_KEY_ID="$(get_env_or_dotenv KALSHI_API_KEY_ID '')"
-ENV_KEY_PATH="$(get_env_or_dotenv KALSHI_RSA_KEY_PATH 'bot/kalshi/kalshi_rsa_private.pem')"
+ENV_MODE="$(get_env_or_dotenv KALSHI_WEATHER_MODE 'paper')"
 ENV_MAX_PAGES="$(get_env_or_dotenv KALSHI_WEATHER_MAX_PAGES '2')"
 ENV_MAX_SIGNALS="$(get_env_or_dotenv KALSHI_WEATHER_MAX_SIGNALS '20')"
 ENV_MAX_ORDERS="$(get_env_or_dotenv KALSHI_WEATHER_MAX_ORDERS '1')"
 ENV_MAX_ORDER_USD="$(get_env_or_dotenv KALSHI_WEATHER_MAX_ORDER_USD '3')"
+ENV_MAX_CONTRACT_NOTIONAL_USD="$(get_env_or_dotenv KALSHI_WEATHER_MAX_CONTRACT_NOTIONAL_USD "$ENV_MAX_ORDER_USD")"
 ENV_BANKROLL_USD="$(get_env_or_dotenv KALSHI_WEATHER_BANKROLL_USD '81')"
 ENV_KELLY_FRACTION="$(get_env_or_dotenv KALSHI_WEATHER_KELLY_FRACTION '0.25')"
 ENV_EDGE_THRESHOLD="$(get_env_or_dotenv KALSHI_WEATHER_EDGE_THRESHOLD '0.12')"
 ENV_MAX_SPREAD="$(get_env_or_dotenv KALSHI_WEATHER_MAX_SPREAD '0.12')"
 
-EXECUTE_FLAG=""
-if ! is_placeholder "$ENV_KEY_ID"; then
-  if [ -f "$ENV_KEY_PATH" ] && "$PYTHON_BIN" -c "import kalshi_python" >/dev/null 2>&1; then
-    EXECUTE_FLAG="--execute"
-  fi
-fi
-
 exec "$PYTHON_BIN" kalshi/weather_arb.py \
-  ${EXECUTE_FLAG} \
+  --mode "${ENV_MODE}" \
   --max-pages "${ENV_MAX_PAGES}" \
   --max-signals "${ENV_MAX_SIGNALS}" \
   --max-orders "${ENV_MAX_ORDERS}" \
   --max-order-usd "${ENV_MAX_ORDER_USD}" \
+  --max-contract-notional-usd "${ENV_MAX_CONTRACT_NOTIONAL_USD}" \
   --bankroll-usd "${ENV_BANKROLL_USD}" \
   --kelly-fraction "${ENV_KELLY_FRACTION}" \
   --edge-threshold "${ENV_EDGE_THRESHOLD}" \
-  --max-spread "${ENV_MAX_SPREAD}"
+  --max-spread "${ENV_MAX_SPREAD}" \
+  "$@"

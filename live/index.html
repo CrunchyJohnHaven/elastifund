@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Elastifund / Live | Checked-in public dashboard</title>
+  <meta name="description" content="A public-safe live dashboard for Elastifund built entirely from checked-in artifacts: runtime posture, BTC5 sleeve proof, forecast confidence, JJ-N funnel summary, and verification freshness.">
+  <link rel="stylesheet" href="/site.css">
+  <script src="/site.js" defer></script>
+</head>
+<body data-page="live">
+  <div class="page-wrap">
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="/">
+          <span class="brand-mark"></span>
+          <span class="brand-text">
+            <span class="brand-name">Elastifund</span>
+            <span class="brand-subtitle">Checked-in public dashboard</span>
+          </span>
+        </a>
+        <nav class="header-nav" aria-label="Primary">
+          <a class="nav-link" data-page="home" href="/">Home</a>
+          <a class="nav-link" data-page="live" href="/live/">Live</a>
+          <a class="nav-link" data-page="elastic" href="/elastic/">Elastic</a>
+          <a class="nav-link" data-page="develop" href="/develop/">Develop</a>
+          <a class="nav-link" data-page="trading" href="/leaderboards/trading/">Trading</a>
+          <a class="nav-link" data-page="worker" href="/leaderboards/worker/">Worker</a>
+        </nav>
+        <div class="header-actions">
+          <span class="status-pill" data-role="status-pill">runtime syncing</span>
+          <a class="header-link" href="https://github.com/CrunchyJohnHaven/elastifund" target="_blank" rel="noopener">GitHub</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="route-hero">
+        <div class="container route-hero-grid">
+          <div>
+            <span class="eyebrow">/live/</span>
+            <h1>One public-safe dashboard built from checked-in artifacts only.</h1>
+            <p class="route-copy">
+              This route does not talk directly to Elastic or any private runtime. It reads sanitized checked-in files so the public story can stay fresh without leaking operational access or blending incompatible metrics.
+            </p>
+            <div class="badge-row">
+              <span class="tag neutral freshness-badge" data-freshness-badge="snapshot">snapshot freshness</span>
+              <span class="tag neutral freshness-badge" data-freshness-badge="btc5">btc5 freshness</span>
+              <span class="tag neutral freshness-badge" data-freshness-badge="forecast">forecast freshness</span>
+              <span class="tag neutral freshness-badge" data-freshness-badge="jjn">jj-n freshness</span>
+            </div>
+            <div class="cta-row">
+              <a class="button button-primary" href="/leaderboards/trading/">Open the trading board</a>
+              <a class="button button-secondary" href="/leaderboards/worker/">Open the worker board</a>
+            </div>
+          </div>
+
+          <aside class="proof-card">
+            <div class="proof-card-header">
+              <div>
+                <div class="panel-kicker">Current runtime split</div>
+                <h3 data-fill="runtime_split_summary"></h3>
+              </div>
+              <span class="tag warn"><span data-fill="launch_posture"></span></span>
+            </div>
+            <div class="proof-stat-grid">
+              <div class="proof-stat">
+                <div class="proof-stat-label">Runtime cycles</div>
+                <div class="proof-stat-value" data-fill="runtime_cycles"></div>
+                <div class="proof-stat-note"><span data-fill="live_trades"></span> live trades in the broad runtime</div>
+              </div>
+              <div class="proof-stat">
+                <div class="proof-stat-label">BTC5 proof</div>
+                <div class="proof-stat-value" data-fill="btc5_live_pnl"></div>
+                <div class="proof-stat-note"><span data-fill="btc5_live_rows"></span> live-filled rows</div>
+              </div>
+              <div class="proof-stat">
+                <div class="proof-stat-label">Forecast confidence</div>
+                <div class="proof-stat-value" data-fill="forecast_confidence"></div>
+                <div class="proof-stat-note"><span data-fill="forecast_arr"></span> / <span data-fill="deploy_recommendation"></span></div>
+              </div>
+              <div class="proof-stat">
+                <div class="proof-stat-label">JJ-N phase</div>
+                <div class="proof-stat-value proof-stat-value-small" data-fill="jjn_current_phase_label"></div>
+                <div class="proof-stat-note"><span data-fill="jjn_offer_name"></span></div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="surface-grid">
+            <article class="surface-card">
+              <div class="tag neutral">Runtime posture</div>
+              <h3><span data-fill="runtime_split_summary"></span></h3>
+              <p class="surface-copy">Broad runtime state, dedicated sleeve proof, and claim boundaries stay separated.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag good">BTC5 sleeve</div>
+              <h3><span data-fill="btc5_run_rate"></span></h3>
+              <p class="surface-copy">Allowed sleeve-only realized run rate from <span data-fill="btc5_window_fills"></span> live fills and <span data-fill="btc5_window_pnl"></span>.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag warn">Forecast</div>
+              <h3><span data-fill="forecast_arr"></span></h3>
+              <p class="surface-copy"><span data-fill="forecast_confidence_reasons"></span> from <span data-fill="forecast_source"></span>.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag neutral">JJ-N</div>
+              <h3><span data-fill="jjn_claim_status"></span></h3>
+              <p class="surface-copy"><span data-fill="jjn_claim_reason"></span></p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">Artifact ledger</div>
+            <h2>What the public site is allowed to trust.</h2>
+          </div>
+          <div class="table-wrap">
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Artifact</th>
+                    <th>What it powers</th>
+                    <th>Freshness</th>
+                    <th>Trust rule</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><div class="cell-title">reports/public_runtime_snapshot.json</div></td>
+                    <td>Broad runtime posture and BTC5 sleeve summary</td>
+                    <td><span class="tag neutral freshness-badge" data-freshness-badge="snapshot">snapshot freshness</span></td>
+                    <td>Primary public runtime handoff.</td>
+                  </tr>
+                  <tr>
+                    <td><div class="cell-title">improvement_velocity.json</div></td>
+                    <td>Forecast ARR, velocity, confidence, and deploy recommendation</td>
+                    <td><span class="tag neutral freshness-badge" data-freshness-badge="forecast">forecast freshness</span></td>
+                    <td>Forecast stays labeled as simulated.</td>
+                  </tr>
+                  <tr>
+                    <td><div class="cell-title">jjn_public_report.json</div></td>
+                    <td>JJ-N Phase 0 board and public-safe funnel</td>
+                    <td><span class="tag neutral freshness-badge" data-freshness-badge="jjn">jj-n freshness</span></td>
+                    <td>No live revenue claim until the real loop exists.</td>
+                  </tr>
+                  <tr>
+                    <td><div class="cell-title">reports/root_test_status.json</div></td>
+                    <td>Verification headline and root suite summary</td>
+                    <td><span data-fill="generated_utc"></span></td>
+                    <td>Use the checked-in summary, not hand-written prose.</td>
+                  </tr>
+                  <tr>
+                    <td><div class="cell-title">reports/remote_cycle_status.json</div></td>
+                    <td>Launch posture, service state, and operator next action</td>
+                    <td><span data-fill="service_checked_at"></span></td>
+                    <td>Operational posture stays explicit even when blocked.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container split-grid">
+          <article class="card">
+            <div class="card-kicker">Blocked claim</div>
+            <h3>Fund-level realized ARR is still off-limits.</h3>
+            <p class="card-copy"><span data-fill="fund_claim_reason"></span></p>
+          </article>
+          <article class="card">
+            <div class="card-kicker">Next wedge</div>
+            <h3>JJ-N is visible, but not over-claimed.</h3>
+            <p class="card-copy">Current status: <span data-fill="jjn_claim_status"></span>. Offer: <span data-fill="jjn_offer_name"></span>. The board publishes honest zeros until approval-cleared sends and fulfillment reporting exist.</p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container">
+        <div class="footer-panel">
+          <div>
+            <div class="footer-kicker">Live route</div>
+            <h3>Checked-in artifacts only. No hidden browser access.</h3>
+            <p class="footer-meta">Snapshot source: <span data-fill="snapshot_source"></span>.</p>
+          </div>
+          <div class="footer-links">
+            <a href="/">Home</a>
+            <a href="/leaderboards/trading/">Trading</a>
+            <a href="/leaderboards/worker/">Worker</a>
+            <a href="/develop/">Develop</a>
+          </div>
+          <div class="footer-meta">
+            <div>Verification: <span data-fill="verification_summary"></span>.</div>
+            <div>&copy; <span data-fill="year"></span> Elastifund.</div>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

@@ -274,6 +274,8 @@ def test_summarize_recent_direction_regime_tightens_weaker_direction() -> None:
         weaker_direction_quote_ticks=0,
         min_fills_per_direction=5,
         min_pnl_gap_usd=20.0,
+        enable_one_sided_guardrail=True,
+        one_sided_min_pnl_gap_usd=30.0,
     )
 
     assert regime is not None
@@ -281,6 +283,34 @@ def test_summarize_recent_direction_regime_tightens_weaker_direction() -> None:
     assert regime["favored_direction"] == "DOWN"
     assert regime["weaker_direction"] == "UP"
     assert regime["direction_quote_ticks"] == {"DOWN": 1, "UP": 0}
+    assert regime["one_sided_triggered"] is False
+    assert regime["directional_mode"] == "two_sided"
+
+
+def test_summarize_recent_direction_regime_can_suppress_weaker_direction() -> None:
+    rows = [
+        {"id": idx, "direction": "DOWN", "order_price": 0.48, "pnl_usd": 7.0}
+        for idx in range(1, 7)
+    ] + [
+        {"id": idx + 6, "direction": "UP", "order_price": 0.51, "pnl_usd": 1.0}
+        for idx in range(1, 7)
+    ]
+    regime = summarize_recent_direction_regime(
+        rows,
+        default_quote_ticks=1,
+        weaker_direction_quote_ticks=0,
+        min_fills_per_direction=5,
+        min_pnl_gap_usd=20.0,
+        enable_one_sided_guardrail=True,
+        one_sided_min_pnl_gap_usd=30.0,
+    )
+
+    assert regime is not None
+    assert regime["triggered"] is True
+    assert regime["one_sided_triggered"] is True
+    assert regime["directional_mode"] == "one_sided"
+    assert regime["suppressed_direction"] == "UP"
+    assert regime["allowed_directions"] == ["DOWN"]
 
 
 def test_effective_quote_ticks_prefers_recent_regime_override() -> None:
@@ -410,6 +440,40 @@ def _seed_recent_regime(bot: BTC5MinMakerBot, *, window_start_ts: int) -> None:
                 "order_status": "live_filled",
                 "filled": 1,
                 "reason": "seed",
+                "resolved_side": direction,
+                "won": 1,
+                "pnl_usd": pnl,
+            }
+        )
+
+
+def _seed_strong_recent_regime(bot: BTC5MinMakerBot, *, window_start_ts: int) -> None:
+    start = window_start_ts - (12 * 300)
+    for idx in range(12):
+        direction = "DOWN" if idx < 6 else "UP"
+        pnl = 7.0 if direction == "DOWN" else 1.0
+        order_price = 0.48 if direction == "DOWN" else 0.51
+        ws = start + (idx * 300)
+        bot.db.upsert_window(
+            {
+                "window_start_ts": ws,
+                "window_end_ts": ws + 300,
+                "slug": market_slug_for_window(ws),
+                "decision_ts": ws + 290,
+                "direction": direction,
+                "open_price": 100.0,
+                "current_price": 100.05,
+                "delta": 0.0005,
+                "token_id": f"tok-{direction.lower()}",
+                "best_bid": order_price - 0.01,
+                "best_ask": order_price,
+                "order_price": order_price,
+                "trade_size_usd": 5.0,
+                "shares": round(5.0 / order_price, 2),
+                "order_id": f"strong-hist-{idx}",
+                "order_status": "live_filled",
+                "filled": 1,
+                "reason": "seed_strong",
                 "resolved_side": direction,
                 "won": 1,
                 "pnl_usd": pnl,
@@ -594,6 +658,57 @@ async def test_process_window_uses_less_aggressive_quote_on_weaker_recent_direct
 
 
 @pytest.mark.asyncio
+async def test_process_window_suppresses_weaker_direction_when_one_sided_regime_triggers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=True,
+        db_path=tmp_path / "btc5.db",
+        min_delta=0.0003,
+        max_buy_price=0.95,
+        up_max_buy_price=0.95,
+        down_max_buy_price=0.95,
+        min_buy_price=0.45,
+        tick_size=0.01,
+        enable_recent_regime_skew=True,
+        recent_regime_fills=12,
+        regime_min_fills_per_direction=5,
+        regime_min_pnl_gap_usd=20.0,
+        regime_weaker_direction_quote_ticks=0,
+        enable_recent_regime_one_sided_guardrail=True,
+        regime_one_sided_min_pnl_gap_usd=30.0,
+    )
+    bot = BTC5MinMakerBot(cfg)
+
+    async def fake_resolve(http, through_window_start: int) -> None:
+        return None
+
+    async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
+        return 100.0, 100.05
+
+    monkeypatch.setattr(bot, "_resolve_unsettled", fake_resolve)
+    monkeypatch.setattr(bot, "_get_open_and_current_price", fake_prices)
+
+    window_start_ts = current_window_start(time.time()) - (2 * 300)
+    _seed_strong_recent_regime(bot, window_start_ts=window_start_ts)
+    result = await bot._process_window(window_start_ts=window_start_ts, http=_DummyHTTP())
+
+    assert result["status"] == "skip_direction_suppressed"
+    assert result["directional_mode"] == "one_sided"
+    assert result["suppressed_direction"] == "UP"
+    assert result["regime_triggered"] is True
+
+    with bot.db._connect() as conn:
+        row = conn.execute(
+            "SELECT reason, order_status FROM window_trades WHERE window_start_ts = ?",
+            (window_start_ts,),
+        ).fetchone()
+    assert row["order_status"] == "skip_direction_suppressed"
+    assert "suppressed_direction=UP" in (row["reason"] or "")
+
+
+@pytest.mark.asyncio
 async def test_process_window_records_cancelled_unfilled_live_order(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -657,6 +772,15 @@ async def test_process_window_records_cancelled_unfilled_live_order(
     assert result["status"] == "live_cancelled_unfilled"
     assert result["filled"] == 0
     assert result["size_usd"] == 0.0
+    assert result["order_outcome_attribution"] == "cancel_before_fill"
+
+    with bot.db._connect() as conn:
+        row = conn.execute(
+            "SELECT reason, order_status FROM window_trades WHERE window_start_ts = ?",
+            (window_start_ts,),
+        ).fetchone()
+    assert row["order_status"] == "live_cancelled_unfilled"
+    assert "order_outcome_attribution=cancel_before_fill" in (row["reason"] or "")
 
 
 @pytest.mark.asyncio
@@ -754,6 +878,8 @@ async def test_process_window_retries_post_only_cross_with_safer_quote(
     assert result["price"] == pytest.approx(0.48)
     assert len(bot.clob.calls) == 2
     assert http.calls == 2
+    assert result["placement_failure_attribution"] == "post_only_cross_failure"
+    assert result["order_outcome_attribution"] == "cancel_before_fill"
 
     with bot.db._connect() as conn:
         row = conn.execute(
@@ -764,7 +890,110 @@ async def test_process_window_retries_post_only_cross_with_safer_quote(
     assert row["best_ask"] == pytest.approx(0.50)
     assert row["order_price"] == pytest.approx(0.48)
     assert "post_only_retry" in (row["reason"] or "")
+    assert "placement_failure_attribution=post_only_cross_failure" in (row["reason"] or "")
     assert row["order_status"] == "live_cancelled_unfilled"
+
+
+@pytest.mark.asyncio
+async def test_process_window_flags_bad_book_attribution(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=True,
+        db_path=tmp_path / "btc5.db",
+        min_delta=0.0,
+        max_buy_price=0.95,
+        min_buy_price=0.45,
+        tick_size=0.01,
+    )
+    bot = BTC5MinMakerBot(cfg)
+
+    async def fake_resolve(http, through_window_start: int) -> None:
+        return None
+
+    async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
+        return 100.0, 100.05
+
+    class BadBookHTTP(_DummyHTTP):
+        async def fetch_book(self, token_id: str) -> dict:
+            assert token_id == "tok-up"
+            return {
+                "bids": [{"price": 0.51, "size": 50}],
+                "asks": [{"price": 0.50, "size": 50}],
+            }
+
+    monkeypatch.setattr(bot, "_resolve_unsettled", fake_resolve)
+    monkeypatch.setattr(bot, "_get_open_and_current_price", fake_prices)
+
+    window_start_ts = current_window_start(time.time()) - (2 * 300)
+    result = await bot._process_window(window_start_ts=window_start_ts, http=BadBookHTTP())
+
+    assert result["status"] == "skip_bad_book"
+    assert result["book_failure_attribution"] == "bad_book"
+
+    with bot.db._connect() as conn:
+        row = conn.execute(
+            "SELECT reason, order_status FROM window_trades WHERE window_start_ts = ?",
+            (window_start_ts,),
+        ).fetchone()
+    assert row["order_status"] == "skip_bad_book"
+    assert "book_failure_attribution=bad_book" in (row["reason"] or "")
+
+
+@pytest.mark.asyncio
+async def test_process_window_records_order_placement_failure_attribution(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=False,
+        db_path=tmp_path / "btc5.db",
+        bankroll_usd=250.0,
+        risk_fraction=0.01,
+        max_trade_usd=2.50,
+        min_trade_usd=0.25,
+        min_delta=0.0003,
+        max_buy_price=0.95,
+        min_buy_price=0.90,
+        tick_size=0.01,
+        cancel_seconds_before_close=2,
+    )
+    bot = BTC5MinMakerBot(cfg)
+
+    async def fake_resolve(http, through_window_start: int) -> None:
+        return None
+
+    async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
+        return 100.0, 100.05
+
+    class FailingCLOB:
+        def place_post_only_buy(self, token_id: str, price: float, shares: float) -> PlacementResult:
+            raise RuntimeError("placement unavailable")
+
+        def get_order_state(self, order_id: str) -> LiveOrderState:
+            raise AssertionError("get_order_state should not be called")
+
+        def cancel_order(self, order_id: str) -> bool:
+            raise AssertionError("cancel_order should not be called")
+
+    monkeypatch.setattr(bot, "_resolve_unsettled", fake_resolve)
+    monkeypatch.setattr(bot, "_get_open_and_current_price", fake_prices)
+    bot.clob = FailingCLOB()
+
+    window_start_ts = current_window_start(time.time()) - (2 * 300)
+    result = await bot._process_window(window_start_ts=window_start_ts, http=_DummyHTTP())
+
+    assert result["status"] == "live_order_failed"
+    assert result["placement_failure_attribution"] == "order_placement_failure"
+
+    with bot.db._connect() as conn:
+        row = conn.execute(
+            "SELECT reason, order_status FROM window_trades WHERE window_start_ts = ?",
+            (window_start_ts,),
+        ).fetchone()
+    assert row["order_status"] == "live_order_failed"
+    assert "placement_failure_attribution=order_placement_failure" in (row["reason"] or "")
 
 
 @pytest.mark.asyncio
@@ -1280,3 +1509,134 @@ async def test_process_window_uses_probe_mode_after_daily_loss(
     assert row["order_price"] == pytest.approx(0.48)
     assert "probe_daily_loss" in (row["reason"] or "")
     assert row["order_status"] == "live_cancelled_unfilled"
+
+
+def test_status_summary_includes_intraday_live_summary(tmp_path: Path) -> None:
+    cfg = MakerConfig(db_path=tmp_path / "btc5.db")
+    bot = BTC5MinMakerBot(cfg)
+    now = current_window_start(time.time())
+    rows = [
+        {
+            "window_start_ts": now - 1800,
+            "window_end_ts": now - 1500,
+            "slug": market_slug_for_window(now - 1800),
+            "decision_ts": now - 1510,
+            "direction": "DOWN",
+            "open_price": 100.0,
+            "current_price": 99.95,
+            "delta": -0.0005,
+            "token_id": "tok-down",
+            "best_bid": 0.47,
+            "best_ask": 0.48,
+            "order_price": 0.48,
+            "trade_size_usd": 5.0,
+            "shares": 10.42,
+            "order_id": "fill-down",
+            "order_status": "live_filled",
+            "filled": 1,
+            "reason": "seed_down",
+            "resolved_side": "DOWN",
+            "won": 1,
+            "pnl_usd": 5.4184,
+        },
+        {
+            "window_start_ts": now - 1500,
+            "window_end_ts": now - 1200,
+            "slug": market_slug_for_window(now - 1500),
+            "decision_ts": now - 1210,
+            "direction": "UP",
+            "open_price": 100.0,
+            "current_price": 100.05,
+            "delta": 0.0005,
+            "token_id": "tok-up",
+            "best_bid": 0.49,
+            "best_ask": 0.50,
+            "order_price": 0.50,
+            "trade_size_usd": 5.0,
+            "shares": 10.0,
+            "order_id": "fill-up",
+            "order_status": "live_filled",
+            "filled": 1,
+            "reason": "seed_up",
+            "resolved_side": "DOWN",
+            "won": 0,
+            "pnl_usd": -5.0,
+        },
+        {
+            "window_start_ts": now - 1200,
+            "window_end_ts": now - 900,
+            "slug": market_slug_for_window(now - 1200),
+            "decision_ts": now - 910,
+            "direction": "UP",
+            "open_price": 100.0,
+            "current_price": 100.05,
+            "delta": 0.0005,
+            "token_id": "tok-up",
+            "order_status": "skip_price_outside_guardrails",
+            "reason": "seed_skip",
+            "filled": 0,
+        },
+        {
+            "window_start_ts": now - 900,
+            "window_end_ts": now - 600,
+            "slug": market_slug_for_window(now - 900),
+            "decision_ts": now - 610,
+            "direction": "UP",
+            "open_price": 100.0,
+            "current_price": 100.05,
+            "delta": 0.0005,
+            "token_id": "tok-up",
+            "order_status": "live_order_failed",
+            "reason": "placement_failure_attribution=order_placement_failure | seed_fail",
+            "filled": 0,
+        },
+        {
+            "window_start_ts": now - 600,
+            "window_end_ts": now - 300,
+            "slug": market_slug_for_window(now - 600),
+            "decision_ts": now - 310,
+            "direction": "UP",
+            "open_price": 100.0,
+            "current_price": 100.05,
+            "delta": 0.0005,
+            "token_id": "tok-up",
+            "order_status": "live_cancelled_unfilled",
+            "reason": "order_outcome_attribution=cancel_before_fill | seed_cancel",
+            "filled": 0,
+            "pnl_usd": 0.0,
+            "won": 0,
+        },
+        {
+            "window_start_ts": now - 300,
+            "window_end_ts": now,
+            "slug": market_slug_for_window(now - 300),
+            "decision_ts": now - 10,
+            "direction": "DOWN",
+            "open_price": 100.0,
+            "current_price": 99.95,
+            "delta": -0.0005,
+            "token_id": "tok-down",
+            "order_status": "skip_no_book",
+            "reason": "book_failure_attribution=no_book | seed_no_book",
+            "filled": 0,
+        },
+    ]
+    for row in rows:
+        bot.db.upsert_window(row)
+
+    status = bot.db.status_summary()
+    intraday = status["intraday_live_summary"]
+
+    assert intraday["filled_rows_today"] == 2
+    assert intraday["filled_pnl_usd_today"] == pytest.approx(0.4184)
+    assert intraday["win_rate_today"] == pytest.approx(0.5)
+    assert intraday["recent_5_pnl_usd"] == pytest.approx(0.4184)
+    assert intraday["recent_12_pnl_usd"] == pytest.approx(0.4184)
+    assert intraday["skip_price_count"] == 1
+    assert intraday["order_failed_count"] == 1
+    assert intraday["cancelled_unfilled_count"] == 1
+    assert intraday["order_failure_counts"]["order_placement_failure"] == 1
+    assert intraday["order_failure_counts"]["cancel_before_fill"] == 1
+    assert intraday["order_failure_counts"]["no_book"] == 1
+    assert intraday["best_direction_today"]["label"] == "DOWN"
+    assert intraday["best_price_bucket_today"]["label"] == "<0.49"

@@ -8,11 +8,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from nontrading.models import Account, Meeting, Message, Outcome, Proposal, TelemetryEvent
+from nontrading.models import Account, ApprovalRequest, Meeting, Message, Outcome, Proposal, TelemetryEvent
 from nontrading.store import RevenueStore
 
 PHASE0_EVENT_TYPES = {
     "account_researched",
+    "approval_decision",
+    "approval_gate",
+    "fulfillment_status_changed",
     "message_sent",
     "reply_received",
     "meeting_booked",
@@ -30,6 +33,21 @@ EVENT_METADATA = {
         "engine": "account_intelligence",
         "pipeline_stage": "research",
         "event_alias": "jjn.account.researched",
+    },
+    "approval_decision": {
+        "engine": "approval",
+        "pipeline_stage": "approval",
+        "event_alias": "jjn.approval.decision",
+    },
+    "approval_gate": {
+        "engine": "approval",
+        "pipeline_stage": "approval",
+        "event_alias": "jjn.approval.gate",
+    },
+    "fulfillment_status_changed": {
+        "engine": "fulfillment",
+        "pipeline_stage": "fulfillment",
+        "event_alias": "jjn.fulfillment.status.changed",
     },
     "message_sent": {
         "engine": "outreach",
@@ -56,6 +74,11 @@ EVENT_METADATA = {
         "pipeline_stage": "learning",
         "event_alias": "jjn.outcome.recorded",
     },
+    "cycle_complete": {
+        "engine": "revenue_pipeline",
+        "pipeline_stage": "pipeline",
+        "event_alias": "jjn.cycle.complete",
+    },
 }
 
 
@@ -72,6 +95,62 @@ def _event_metadata(event_type: str, payload: Mapping[str, Any]) -> dict[str, st
         "engine": engine,
         "pipeline_stage": pipeline_stage,
         "event_alias": event_alias,
+    }
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _gross_margin_pct(revenue: float, gross_margin: float) -> float | None:
+    if revenue <= 0:
+        return None
+    return round(gross_margin / revenue, 6)
+
+
+def _fulfillment_status_for_outcome(outcome: Outcome) -> str:
+    explicit = str(outcome.metadata.get("fulfillment_status", "")).strip().lower()
+    if explicit:
+        return explicit
+    if str(outcome.status).strip().lower() in {"won", "simulated_won"}:
+        return "delivery_pending"
+    if str(outcome.status).strip().lower() in {"lost", "simulated_lost"}:
+        return "not_applicable"
+    return "awaiting_outcome"
+
+
+def _cycle_summary_payload(report: Mapping[str, Any]) -> dict[str, Any]:
+    outreach_sent = int(report.get("outreach_sent", 0) or 0)
+    replies_recorded = int(report.get("replies_recorded", 0) or 0)
+    meetings_booked = int(report.get("meetings_booked", 0) or 0)
+    proposals_sent = int(report.get("proposals_sent", 0) or 0)
+    outcomes_recorded = int(report.get("outcomes_recorded", 0) or 0)
+    return {
+        "cycle_id": str(report.get("cycle_id", "revenue_pipeline")),
+        "started_at": str(report.get("started_at", "")),
+        "completed_at": str(report.get("completed_at", "")),
+        "status": str(report.get("status", "completed")),
+        "reason": str(report.get("reason", "")),
+        "blocked_stage": str(report.get("blocked_stage", "")),
+        "scanned_leads": int(report.get("scanned_leads", 0) or 0),
+        "suppressed_leads": int(report.get("suppressed_leads", 0) or 0),
+        "skipped_existing": int(report.get("skipped_existing", 0) or 0),
+        "accounts_researched": int(report.get("accounts_researched", 0) or 0),
+        "qualified_accounts": int(report.get("qualified_accounts", 0) or 0),
+        "outreach_attempted": int(report.get("outreach_attempted", 0) or 0),
+        "outreach_sent": outreach_sent,
+        "approval_pending": int(report.get("approval_pending", 0) or 0),
+        "replies_recorded": replies_recorded,
+        "meetings_booked": meetings_booked,
+        "proposals_sent": proposals_sent,
+        "outcomes_recorded": outcomes_recorded,
+        "reply_rate": round((replies_recorded / outreach_sent), 6) if outreach_sent else None,
+        "meeting_rate": round((meetings_booked / replies_recorded), 6) if replies_recorded else None,
+        "proposal_rate": round((proposals_sent / meetings_booked), 6) if meetings_booked else None,
+        "outcome_rate": round((outcomes_recorded / proposals_sent), 6) if proposals_sent else None,
     }
 
 
@@ -191,6 +270,30 @@ class NonTradingTelemetry:
             },
         )
 
+    def approval_decision(self, request: ApprovalRequest) -> TelemetryEvent:
+        reviewed_latency_hours = None
+        if request.created_at and request.reviewed_at:
+            created = datetime.fromisoformat(request.created_at.replace("Z", "+00:00"))
+            reviewed = datetime.fromisoformat(request.reviewed_at.replace("Z", "+00:00"))
+            reviewed_latency_hours = round(max((reviewed - created).total_seconds() / 3600.0, 0.0), 6)
+        return self.emit(
+            event_type="approval_decision",
+            entity_type=request.entity_type,
+            entity_id=request.entity_id,
+            status=request.status,
+            payload={
+                "request_id": request.id or 0,
+                "action_type": request.action_type,
+                "summary": request.summary,
+                "requested_by": request.requested_by,
+                "reviewed_by": request.reviewed_by,
+                "review_notes": request.review_notes,
+                "created_at": request.created_at or "",
+                "reviewed_at": request.reviewed_at or "",
+                "review_latency_hours": reviewed_latency_hours,
+            },
+        )
+
     def message_sent(self, message: Message) -> TelemetryEvent:
         return self.emit(
             event_type="message_sent",
@@ -247,7 +350,9 @@ class NonTradingTelemetry:
         )
 
     def outcome_recorded(self, outcome: Outcome) -> TelemetryEvent:
-        return self.emit(
+        revenue = _safe_float(outcome.revenue)
+        gross_margin = _safe_float(outcome.gross_margin)
+        event = self.emit(
             event_type="outcome_recorded",
             entity_type="outcome",
             entity_id=str(outcome.id or ""),
@@ -256,8 +361,51 @@ class NonTradingTelemetry:
                 "opportunity_id": outcome.opportunity_id,
                 "proposal_id": outcome.proposal_id or 0,
                 "status": outcome.status,
-                "revenue": outcome.revenue,
-                "gross_margin": outcome.gross_margin,
+                "revenue": revenue,
+                "gross_margin": gross_margin,
+                "gross_margin_pct": _gross_margin_pct(revenue, gross_margin),
+                "is_closed_won": str(outcome.status).strip().lower() in {"won", "simulated_won"},
+                "is_revenue_realized": str(outcome.status).strip().lower() == "won" and revenue > 0.0,
+                "is_simulated": bool(outcome.metadata.get("simulated")),
+            },
+        )
+        fulfillment_status = _fulfillment_status_for_outcome(outcome)
+        self.fulfillment_status_changed(
+            account_id=outcome.account_id,
+            opportunity_id=outcome.opportunity_id,
+            outcome_id=outcome.id or 0,
+            status=fulfillment_status,
+            revenue=revenue,
+            gross_margin=gross_margin,
+            is_simulated=bool(outcome.metadata.get("simulated")),
+        )
+        return event
+
+    def fulfillment_status_changed(
+        self,
+        *,
+        account_id: int,
+        opportunity_id: int,
+        outcome_id: int,
+        status: str,
+        revenue: float = 0.0,
+        gross_margin: float = 0.0,
+        is_simulated: bool = False,
+    ) -> TelemetryEvent:
+        return self.emit(
+            event_type="fulfillment_status_changed",
+            entity_type="opportunity",
+            entity_id=str(opportunity_id),
+            status=status,
+            payload={
+                "account_id": account_id,
+                "opportunity_id": opportunity_id,
+                "outcome_id": outcome_id,
+                "fulfillment_status": status,
+                "revenue": revenue,
+                "gross_margin": gross_margin,
+                "gross_margin_pct": _gross_margin_pct(revenue, gross_margin),
+                "is_simulated": is_simulated,
             },
         )
 
@@ -267,11 +415,15 @@ class NonTradingTelemetry:
         *,
         status: str = "recorded",
     ) -> TelemetryEvent:
+        summary = _cycle_summary_payload(report)
         return self.emit(
             event_type="cycle_complete",
             entity_type="pipeline",
             entity_id=str(report.get("cycle_id", "revenue_pipeline")),
-            payload={"report": dict(report)},
+            payload={
+                **summary,
+                "report": dict(report),
+            },
             status=status,
         )
 

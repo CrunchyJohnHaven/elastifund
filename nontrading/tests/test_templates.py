@@ -38,6 +38,8 @@ def test_service_offer_is_frozen_and_nested_mappings_are_immutable() -> None:
         offer.name = "Changed"
     with pytest.raises(TypeError):
         offer.ideal_customer_profile["industries"] = ("roofing",)
+    assert offer.funnel_stages[0] == "intake"
+    assert offer.funnel_stages[-1] == "outcome"
 
 
 def test_template_selector_prefers_growth_angle_for_leads_with_website_data(tmp_path: Path) -> None:

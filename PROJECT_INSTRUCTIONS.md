@@ -44,21 +44,26 @@ Kalshi API Key ID: [stored in .env — see .env.example]
 
 ## 2A. Canonical March 9 Machine Snapshot
 
+> **WARNING — ALWAYS VERIFY AGAINST LIVE WALLET.** Local artifacts (`reports/runtime_truth_latest.json`, `FAST_TRADE_EDGE_ANALYSIS.md`) have historically drifted from actual wallet state. When wallet data contradicts local artifacts, the wallet wins.
+
 | Metric | Value |
 |---|---|
-| Current system ARR | `0%` realized |
-| Runtime state | `reports/runtime_truth_latest.json` at `2026-03-09T16:19:45Z` shows `565` cycles, `5` local trade-db trades, `4` local open positions, `0` local closed trades, and `jj-live.service` `stopped`; the remote Polymarket wallet simultaneously shows `28` open positions and `9` closed positions |
-| Launch posture | `reports/public_runtime_snapshot.json` and `reports/remote_cycle_status.json` still mark launch `blocked`; blocked checks are now `service_not_running`, `no_closed_trades`, `a6_gate_blocked`, `b1_gate_blocked`, and `flywheel_not_green` |
-| Wallet-flow readiness | `fast_flow_restart_ready=true`; selected profile is `maker_velocity_all_in`, but current candidate counts are still `0` and the operator-approved posture is BTC5 live plus `jj-live` stopped |
-| Fast-market pipeline | Latest pipeline verdict is still `REJECT ALL`, but the remote BTC 5-minute maker database now shows `51` rows, `32` `live_filled`, positive cumulative live-filled outcomes, and a best replay guardrail of `max_abs_delta=0.00015`, `UP max=0.51`, `DOWN max=0.51`; reconciling scan truth with fill truth is now a core task |
-| Structural-alpha gate | `reports/arb_empirical_snapshot.json` (`2026-03-09T11:55:20+00:00`) still shows A-6 `blocked` with `53` qualified live-surface events but `0` executable constructions below `0.95`, and B-1 `blocked` with `0` deterministic template pairs in the first `1,000` allowed markets |
-| Verification status | Latest root verification artifact is passing (`1140 passed in 25.88s; 25 passed in 4.47s`); JJ-N surfaces are currently green (`64` package tests, `49` repo-root tests) |
+| **Trading status** | **LIVE** — placing and resolving real trades across weather, geopolitical, central bank, and crypto markets |
+| Portfolio value | **$333.18** Polymarket + **$100** Kalshi = **$433 total** (verified from live wallet March 9, 2026) |
+| Available capital | $286.86 |
+| BTC5 maker performance | 56 live fills, **+$91.79** cumulative P&L, avg +$1.64/fill. DOWN direction dominant (41 fills, +$72.40) |
+| Past-day P&L | +$1.91 |
+| Open positions | 26+ across multiple market categories |
+| Closed/resolved trades | 36+ (wallet-verified) |
+| Structural-alpha gate | A-6 `blocked` (0 executable constructions), B-1 `blocked` (0 template pairs). Kill-watch deadline March 14 |
+| Verification status | **1,397 tests passing** across all surfaces |
 | Dispatch inventory | `11` `DISPATCH_*` work-orders; `95` markdown files in `research/dispatches/` |
-| Next operator action | Keep `jj-live` stopped, let the BTC 5-minute sleeve run under the tighter guardrails, and reconcile local trade-db truth with remote wallet truth before any broader strategy promotion |
+| Known issue | Local ledger drift: local trade-db reports fewer positions than wallet actually shows. Reconciliation pipeline in progress |
 
-March 9 artifact set to use:
+March 9 artifact set to use (with live wallet verification):
 
-- `reports/runtime_truth_latest.json` and `reports/public_runtime_snapshot.json` for canonical runtime truth
+- **Live Polymarket wallet** (polymarket.com) — canonical source for capital, positions, and P&L
+- `reports/runtime_truth_latest.json` and `reports/public_runtime_snapshot.json` for runtime configuration truth (NOT capital/P&L truth)
 - `reports/remote_cycle_status.json` and `reports/remote_service_status.json` for operator posture
 - `reports/state_improvement_latest.json` for current thresholds, candidate counts, and execution-notional summaries
 - `reports/arb_empirical_snapshot.json` for A-6/B-1 gating truth

@@ -1,20 +1,27 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-label="BTC5 continuation ARR progress">
 <rect width="1280" height="760" fill="#FBF7EE" />
 <text x="90" y="42" font-size="28" font-weight="700" fill="#1E1C18">BTC5 Continuation ARR</text>
-<text x="90" y="66" font-size="16" fill="#5F5A50">Percentage-only strategy estimate. Latest active 4,100,879.4%; latest best 4,524,545.3%; delta 423,665.9%.</text>
+<text x="90" y="66" font-size="16" fill="#5F5A50">Percentage-only strategy estimate. Latest active 3,922,437.7%; latest best 5,900,647.8%; delta 1,978,210.1%.</text>
 <text x="90" y="66" font-size="18" font-weight="600" fill="#1E1C18">ARR Estimate</text>
 <line x1="90.00" y1="80" x2="90.00" y2="420" stroke="#E7E0D4" stroke-width="1" />
-<line x1="665.00" y1="80" x2="665.00" y2="420" stroke="#E7E0D4" stroke-width="1" />
+<line x1="217.78" y1="80" x2="217.78" y2="420" stroke="#E7E0D4" stroke-width="1" />
+<line x1="345.56" y1="80" x2="345.56" y2="420" stroke="#E7E0D4" stroke-width="1" />
+<line x1="473.33" y1="80" x2="473.33" y2="420" stroke="#E7E0D4" stroke-width="1" />
+<line x1="601.11" y1="80" x2="601.11" y2="420" stroke="#E7E0D4" stroke-width="1" />
+<line x1="728.89" y1="80" x2="728.89" y2="420" stroke="#E7E0D4" stroke-width="1" />
+<line x1="856.67" y1="80" x2="856.67" y2="420" stroke="#E7E0D4" stroke-width="1" />
+<line x1="984.44" y1="80" x2="984.44" y2="420" stroke="#E7E0D4" stroke-width="1" />
+<line x1="1112.22" y1="80" x2="1112.22" y2="420" stroke="#E7E0D4" stroke-width="1" />
 <line x1="1240.00" y1="80" x2="1240.00" y2="420" stroke="#E7E0D4" stroke-width="1" />
 <line x1="90" y1="420.00" x2="1240" y2="420.00" stroke="#E7E0D4" stroke-width="1" />
 <line x1="90" y1="250.00" x2="1240" y2="250.00" stroke="#E7E0D4" stroke-width="1" />
 <line x1="90" y1="80.00" x2="1240" y2="80.00" stroke="#E7E0D4" stroke-width="1" />
-<text x="78" y="425.00" text-anchor="end" font-size="16" fill="#5F5A50">4,100,879.4%</text>
-<text x="78" y="255.00" text-anchor="end" font-size="16" fill="#5F5A50">4,312,712.3%</text>
-<text x="78" y="85.00" text-anchor="end" font-size="16" fill="#5F5A50">4,524,545.3%</text>
-<polyline fill="none" stroke="#5B7188" stroke-width="2.0" points="90.00,420.00 665.00,420.00 1240.00,420.00" />
-<polyline fill="none" stroke="#16324F" stroke-width="3.5" points="90.00,420.00 665.00,420.00 1240.00,420.00" />
-<polyline fill="none" stroke="#C56A1A" stroke-width="3.5" points="90.00,80.00 665.00,80.00 1240.00,80.00" />
+<text x="78" y="425.00" text-anchor="end" font-size="16" fill="#5F5A50">3,922,437.7%</text>
+<text x="78" y="255.00" text-anchor="end" font-size="16" fill="#5F5A50">5,169,873.4%</text>
+<text x="78" y="85.00" text-anchor="end" font-size="16" fill="#5F5A50">6,417,309.0%</text>
+<polyline fill="none" stroke="#5B7188" stroke-width="2.0" points="90.00,395.68 217.78,395.68 345.56,395.68 473.33,369.99 601.11,369.99 728.89,369.99 856.67,319.63 984.44,291.17 1112.22,290.78 1240.00,290.78" />
+<polyline fill="none" stroke="#16324F" stroke-width="3.5" points="90.00,395.68 217.78,395.68 345.56,395.68 473.33,369.99 601.11,369.99 728.89,369.99 856.67,319.63 984.44,291.17 1112.22,290.78 1240.00,420.00" />
+<polyline fill="none" stroke="#C56A1A" stroke-width="3.5" points="90.00,337.95 217.78,337.95 345.56,337.95 473.33,343.16 601.11,343.16 728.89,343.16 856.67,305.86 984.44,115.73 1112.22,80.00 1240.00,150.41" />
 <text x="1240" y="66" text-anchor="end" font-size="15" fill="#16324F">Active</text>
 <text x="1170" y="66" text-anchor="end" font-size="15" fill="#C56A1A">Best candidate</text>
 <text x="1010" y="66" text-anchor="end" font-size="15" fill="#5B7188">Frontier active</text>
@@ -24,11 +31,11 @@
 <line x1="90" y1="500.00" x2="1240" y2="500.00" stroke="#E7E0D4" stroke-width="1" />
 <text x="78" y="685.00" text-anchor="end" font-size="16" fill="#5F5A50">0.0%</text>
 <text x="78" y="685.00" text-anchor="end" font-size="16" fill="#5F5A50">0.0%</text>
-<text x="78" y="505.00" text-anchor="end" font-size="16" fill="#5F5A50">423,665.9%</text>
-<polyline fill="none" stroke="#1E8A5C" stroke-width="3.0" points="90.00,500.00 665.00,500.00 1240.00,500.00" />
+<text x="78" y="505.00" text-anchor="end" font-size="16" fill="#5F5A50">1,978,210.1%</text>
+<polyline fill="none" stroke="#1E8A5C" stroke-width="3.0" points="90.00,641.45 217.78,641.45 345.56,641.45 473.33,662.08 601.11,662.08 728.89,662.08 856.67,670.81 984.44,562.86 1112.22,539.27 1240.00,500.00" />
 <line x1="90" y1="680.00" x2="1240" y2="680.00" stroke="#8E8A80" stroke-width="1.5" stroke-dasharray="4 4" />
 <circle cx="1240.00" cy="420.00" r="6" fill="#16324F" />
-<circle cx="1240.00" cy="80.00" r="6" fill="#C56A1A" />
+<circle cx="1240.00" cy="150.41" r="6" fill="#C56A1A" />
 <circle cx="1240.00" cy="500.00" r="6" fill="#1E8A5C" />
-<text x="1240" y="714" text-anchor="end" font-size="15" fill="#5F5A50">Last cycle 3 at 2026-03-09T18:44:10.960645+00:00</text>
+<text x="1240" y="714" text-anchor="end" font-size="15" fill="#5F5A50">Last cycle 10 at 2026-03-10T12:44:55.402965+00:00</text>
 </svg>

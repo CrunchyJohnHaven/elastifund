@@ -131,6 +131,22 @@ def test_build_summary_finds_session_override_that_beats_current() -> None:
     assert "validation_live_filled_rows" in summary
     assert "generalization_ratio" in summary
     assert "evidence_band" in summary
+    assert "last_improvement_at" in summary
+    assert "hours_since_last_improvement" in summary
+    assert summary["last_improvement_at"] is None or summary["last_improvement_at"].endswith("Z")
+    assert summary["hours_since_last_improvement"] is None or summary["hours_since_last_improvement"] >= 0.0
+    stress = summary["capacity_stress_candidates"]
+    assert isinstance(stress, list)
+    assert stress
+    assert {
+        "name",
+        "session_name",
+        "variant",
+        "expected_fill_lift",
+        "expected_median_pnl_delta_usd",
+        "expected_p05_arr_delta_pct",
+        "evidence_band",
+    }.issubset(stress[0].keys())
     follow_ups = summary["follow_up_candidates"]
     assert isinstance(follow_ups, list)
     assert 1 <= len(follow_ups) <= 5
@@ -147,9 +163,30 @@ def test_build_summary_finds_session_override_that_beats_current() -> None:
         "generalization_ratio",
         "validation_median_arr_pct",
         "validation_p05_arr_pct",
+        "arr_improvement_vs_active_pct",
+        "fill_retention_vs_active",
+        "execution_realism_score",
+        "execution_realism_label",
+        "follow_up_families",
     }.issubset(follow_ups[0].keys())
     scores = [candidate["ranking_score"] for candidate in follow_ups]
     assert scores == sorted(scores, reverse=True)
+    assert "best_live_followups" in summary
+    assert "best_one_sided_followups" in summary
+    assert isinstance(summary["best_live_followups"], list)
+    assert isinstance(summary["best_one_sided_followups"], list)
+    assert "loss_cluster_suppression_candidates" in summary
+    assert isinstance(summary["loss_cluster_suppression_candidates"], list)
+    assert summary["loss_cluster_suppression_candidates"]
+    assert {
+        "direction",
+        "session_name",
+        "price_bucket",
+        "delta_bucket",
+        "loss_rows",
+        "total_loss_usd",
+        "suggested_action",
+    }.issubset(summary["loss_cluster_suppression_candidates"][0].keys())
 
 
 def test_build_summary_can_promote_two_session_policy() -> None:

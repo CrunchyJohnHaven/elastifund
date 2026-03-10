@@ -186,36 +186,94 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 
 ## Current State (Update this section each cycle)
 
-**Date:** 2026-03-09 (hourly ops — updated by JJ automated check)
-**Cycle:** Flywheel Cycle 2 — Structural Alpha & Microstructure Defense
-**Capital:** $245.65 Polymarket (USDC; $227.38 available cash) + $100 Kalshi (USD) = $345.65 total
-**Live trading:** MAKER VELOCITY LIVE — `maker_velocity_live` profile is the active deploy target for live maker orders on fast-resolving markets.
-**Paper trades executed:** Historical pre-deployment paper trades are retained for baseline reference.
-**Open positions:** 3 existing maker-velocity positions remain open (~$18 deployed); do not liquidate during profile switch.
-**Live config:** $10/position, 30 max open positions, uncapped daily loss, 0.25 Kelly, 24h max resolution, 30s scan interval
+> **CRITICAL: ALWAYS VERIFY AGAINST LIVE WALLET DATA.**
+> The local ledger, the checked-in runtime/public artifacts under `reports/`, and `FAST_TRADE_EDGE_ANALYSIS.md` have historically drifted from actual on-chain and wallet state. Before citing capital, P&L, or position numbers, check the live Polymarket portfolio and Kalshi account. If live wallet data contradicts local artifacts, the wallet wins.
+
+**Date:** 2026-03-10 12:50 UTC
+**Cycle:** Cleanup pass after the March 10 capital-gate and Kalshi repair work
+**Last loop cycle report:** `reports/loop_cycle_20260310_2311.md`
+
+### Manual Wallet-Export Read (March 10, 2026)
+**Bottom line:** the BTC sleeve still looks genuinely profitable. The wallet-history export now has the March 10 losses closed out, so the picture is cleaner. The live edge is narrow but real: short-duration BTC maker trading, not broad prediction-market skill.
+
+**Closed BTC sleeve batch (manual export read):**
+- BTC closed cashflow: `+131.52` USDC
+- BTC contracts resolved: `128`
+- Wins / losses: `75 / 53`
+- Profit factor: `1.49`
+- Average win / loss: `+5.35 / -5.10`
+
+**How to interpret ARR honestly:**
+- Realized BTC sleeve run-rate is mechanically very large on this short window: roughly `19,060%` on the initial `$247.51` deposit or `12,483%` on the current `$377.91` portfolio value.
+- A more conservative all-book closed-net read is still strongly positive: `+84.60` USDC closed net with `43.10` USDC of open non-BTC notional still unresolved, roughly `4,133%` annualized over the export window.
+- Forecast ARR remains extremely high in the research loop and should stay an internal ranking signal, not a literal investor ARR claim.
+
+**Operator interpretation:**
+- The BTC sleeve is working.
+- The system is learning quickly enough.
+- The real bottleneck is truth plumbing, execution quality, and turning research wins into clean operator confidence.
+- Do not turn the short-window BTC sleeve run-rate into a fund-level realized ARR claim.
+
+### Regenerated Machine/Public Cleanup State
+**Runtime/public snapshots (generated 2026-03-10 12:45 UTC):**
+- `fund.status = hold`
+- `kalshi_weather.status = hold`
+- `next_1000_usd.status = hold`
+- `polymarket_btc5.status = hold`
+- `fund_realized_arr_claim_status = blocked`
+
+**Why the public surfaces are still conservative after cleanup:**
+- Fund-level capital truth is still not reconciled. Current runtime truth shows `capital_accounting_delta_usd = -166.31`.
+- Polymarket wallet now reads `50` closed positions, `7` open positions, and `$370.61` total wallet value, while the local ledger still tracks `0` closed and `4` open.
+- The dedicated BTC5 sleeve is positive in machine truth too: `123` live-filled rows and `+$108.86` PnL in the remote probe, but the public contract still blocks a fund-level realized ARR claim.
+- Kalshi settlement reconciliation is working mechanically, but the latest settlement pass still yielded `matched=0/57`, so capital remains blocked there.
+
+### Best Current Research Directions
+- Fully validate and tighten the session-aware BTC runtime package that the loop still marks `promote / high confidence`.
+- Try one-sided ultra-tight DOWN-biased BTC modes where the live edge still looks strongest.
+- Reduce execution drag: queue priority, maker-only quality, and fewer failed or cancelled orders.
+- Use the fully closed March 10 loss clusters to suppress the worst session, bucket, and delta combinations.
+- Keep Kalshi and non-BTC from diluting the BTC signal until they have comparable evidence quality.
+
+### System Configuration
+**Live trading:** MAKER VELOCITY LIVE — `maker_velocity_live` profile is the active deploy target
+**Live config:** $10/position (main), $5/trade (BTC 5-min), 30 max open positions, uncapped daily loss, 0.25 Kelly, 24h max resolution, 30s scan interval
 **Execution mode:** 100% Post-Only maker orders (Dispatch #75 pivot)
-**Data target:** 100 resolved trades in 7 days for live calibration data — ACTIVE COLLECTION (first review at 50 resolved trades)
-**Fast-market pipeline:** Latest checked-in report (v2.8.0) at `2026-03-09T01:58:34+00:00` still says `REJECT ALL`; 7,050 active markets pulled, 22 fast BTC markets discovered, 0 passing current category gate. Threshold sensitivity: 0 at current (YES 0.15/NO 0.05), 6 at aggressive (YES 0.08/NO 0.03), 6 at wide-open (YES 0.05/NO 0.02). 2,858 trade records, 1,627 tracked wallets.
+**BTC 5-min maker:** Instance 2 (`btc-5min-maker.service`). 97 total rows (remote_probe DB), 55 live filled, +$85.68 P&L. DOWN direction dominant (40 fills, +$66.28, 65% win rate). UP: 15 fills, +$19.40, 60% win rate.
+
+### Pipeline & Strategy Status
+**Fast-market pipeline:** v2.8.0 says `REJECT ALL` (last run 01:34 UTC Mar 9, now ~73h stale). All 9 tested strategies failed kill rules. Pipeline and execution layer are decoupled — wallet trades regardless.
+**Next best hypothesis:** Early Informed-Flow Convergence — CONTINUE_DATA_COLLECTION (3 raw signals, 0 resolved).
 **Strategies in backlog:** 131 tracked total (7 deployed, 6 building, 2 structural alpha, 10 rejected, 8 pre-rejected, 1 re-evaluating, 97 research pipeline)
-**Structural gates:** A-6/B-1 are disabled in `maker_velocity_live`; kill-watch evidence collection remains active through the March 14 deadline.
-**New modules (Cycle 2):**
-  - bot/ws_trade_stream.py — WebSocket CLOB feed → VPIN + OFI (5-level weighted)
-  - bot/lead_lag_engine.py — Semantic Lead-Lag Arbitrage (Granger causality + LLM semantic filter)
-  - bot/kill_rules.py — Updated kill rules (semantic decay, toxicity survival, cost stress polynomial, calibration enforcement)
-  - All wired into jj_live.py as signal sources #5 (VPIN/OFI) and #6 (LeadLag)
-**Verification status:** `make test`, `make test-polymarket`, and `make test-nontrading` passed. The current root suite is passing (`962 passed in 18.12s; 22 passed in 3.83s`), the repo-root `tests/` sync pass is green (`421 passed in 14.01s`), and the current full multi-surface green baseline is `1,397` total verified (`962 + 22` root, `374` polymarket, `39` non-trading).
+**Structural gates:** A-6/B-1 kill-watch deadline is March 14, 2026 (4 days). Both remain blocked with zero executable constructions / zero template pairs. Recommendation: KILL both lanes at deadline.
+**BTC5 autoresearch:** 1 cycle completed. Latest hypothesis `hyp_down_up0.49_down0.51_hour_et_11` (DOWN bias, exploratory evidence, 5 validation fills).
+
+### Infrastructure Health
+**Verification status:** `make test`, `make test-polymarket`, and `make test-nontrading` passed. Full multi-surface green baseline: `1,397` total verified.
+**Code health:** 48/48 bot/*.py pass syntax. Zero TODO/FIXME.
+**Calibration:** Static Platt A=0.5914, B=-0.3977 remain optimal (walk-forward validated on 532 markets, Brier 0.2134).
 **Dispatch inventory:** `11` `DISPATCH_*` work-orders; `95` markdown files in `research/dispatches/`
 **Sprint plan:** 60-day, 4 cycles (VPIN → Debate → Conformal → Risk Parity)
-**Code health:** 48/48 bot/*.py pass syntax. Zero TODO/FIXME. All three LLM prompt templates confirmed with temporal grounding (debate_pipeline.py, lead_lag_engine.py, ensemble_estimator.py all include `Today's date: {current_date}`).
-**Calibration:** Static Platt A=0.5914, B=-0.3977 remain optimal. Walk-forward validation (532 markets): static Brier 0.2134 beats rolling-50 (0.2192), rolling-100 (0.2147), rolling-200 (0.2170). No drift — 0 live trades means 0 adaptive samples.
-**SignalDedupCache:** Present at line 708 of jj_live.py, instantiated at line 2881 with `SIGNAL_DEDUP_TTL_SECONDS`. Functioning.
-**Category filter:** Maker-velocity category gates are active: `crypto=3` (unlocked), `politics=3`, `weather=3`, `economic=2`, with lower-priority lanes (`geopolitical`, `financial_speculation`) available per profile mapping.
-**BTC 5-min maker:** Instance 2 runs as a separate service target (`btc-5min-maker.service`) with $5/trade sizing and uncapped daily loss for high-frequency data collection.
-**JJ-N foundations:** JJ-N is now in a partial-completion state. Repo truth includes the CRM schema, store-backed registry work, a unified approval gate, Website Growth Audit offer/templates, a telemetry event writer, an Elastic index template, a JJ-N dashboard asset, and the five engine modules plus `RevenuePipeline`; `make test-nontrading` passes with `53` tests.
-**JJ-N pipeline status:** The pipeline exists in `nontrading/pipeline.py`, but `nontrading/main.py` still runs the legacy campaign harness. The repo-root `tests/nontrading` surface currently fails one persisted-registry ranking test after reload, domain auth still points at `example.invalid`, and live sending remains blocked on verified domain/auth plus explicit approval.
-**Governance scaffold:** `13` numbered docs now live under `docs/numbered/`, and the public-messaging lint is passing.
-**Vision integration (March 9):** Elastic Vision Document and Platform Vision Document integrated into all admin files. Product definition expanded: trading + non-trading workers on a shared Elastic substrate. Six-layer master architecture, five-engine non-trading architecture (Account Intelligence, Outreach, Interaction, Proposal, Learning), numbered-docs governance plan, messaging system, opportunity scoring framework, and JJ-N 90-day rollout plan are now canonical across COMMAND_NODE v2.9.2, PROJECT_INSTRUCTIONS v3.9.2, `docs/numbered/`, REPLIT_NEXT_BUILD, and README. Non-trading revenue worker (JJ-N) is the first-class front door.
-**Next action:** Monitor fill rates, win rates, and VPIN accuracy under maker velocity deployment. Run first structured data review at 50 resolved trades.
+
+### Non-Trading (JJ-N)
+**JJ-N status:** Partial-completion. RevenuePipeline built, Website Growth Audit offer coded ($500-$2500), CRM/store/telemetry foundation in place. Tests green.
+**Blocking JJ-N revenue launch:** Verified sending domain, curated leads, explicit approval for live sends, paid fulfillment loop.
+**Governance scaffold:** `13` numbered docs under `docs/numbered/`, public-messaging lint passing.
+
+### Known Artifact Drift Issues
+**CRITICAL — DO NOT TRUST WITHOUT LIVE VERIFICATION:**
+- Local ledger vs wallet: local says 4 open / 0 closed; remote probe says 26 open / 36 closed. Delta: +22 open, +36 closed untracked locally.
+- `jj_state.json` contains 4 paper-tagged LLM positions including mutually exclusive Weinstein sentencing bets (YES on <5yr AND YES on 20-30yr). Probability estimation bug.
+- `FAST_TRADE_EDGE_ANALYSIS.md` — says REJECT ALL, ~73h stale, while BTC 5-min maker has been actively filling profitably.
+- Pipeline and execution layer fully decoupled. Pipeline does not govern what actually trades.
+- BTC 5-min P&L corrected: +$85.68 on 55 fills (remote_probe DB canonical), not +$91.79 on 56 as previously stated.
+- 30+ hour fill gap on BTC 5-min maker. BTC at $70.8K likely above guardrails. Unknown if service running or stopped.
+- Kalshi has no local ledger integration — all tracking is manual via browser.
+
+### Top 3 Action Items
+1. **URGENT: Verify VPS btc-5min-maker service status** — 30+ hour fill gap since 2026-03-09 20:35 UTC. BTC rallied to $70.8K (+4.17%) — likely above configured guardrail ceiling causing continuous `skip_price_outside_guardrails`. Run `systemctl status btc-5min-maker && journalctl -u btc-5min-maker --since "30 min ago"` on VPS. If guardrails are the issue, widen them to accommodate $68K-$75K range. We are missing fills in a favorable extreme-fear environment.
+2. **Scale BTC 5-min maker to $10/trade** — 55 fills, 63.6% win rate, +$1.56/fill avg. Edge validated. Extreme fear (index 21, recovering from 10-12), whale accumulation 270K BTC, $700M ETF inflows in March. Double position size after confirming service health.
+3. **Kill A-6/B-1 at March 14 deadline** — Both at zero. Reallocate to BTC 5-min guardrail optimization + Kalshi weather city-specific calibration (Miami subtropical bias fix).
 
 ---
 

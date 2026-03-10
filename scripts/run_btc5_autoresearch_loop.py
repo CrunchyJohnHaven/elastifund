@@ -297,8 +297,14 @@ def _build_entry(
     best_profile = ((cycle_payload or {}).get("best_candidate") or {}).get("profile") or {}
     active_profile = (cycle_payload or {}).get("active_profile") or {}
     arr = (cycle_payload or {}).get("arr_tracking") or {}
+    public_forecast_selection = (cycle_payload or {}).get("public_forecast_selection") or {}
+    public_selected = public_forecast_selection.get("selected") or {}
     package_confidence_reasons = list((cycle_payload or {}).get("package_confidence_reasons") or [])
     package_missing_evidence = list((cycle_payload or {}).get("package_missing_evidence") or [])
+    best_live_package = (cycle_payload or {}).get("best_live_package") or {}
+    best_raw_package = (cycle_payload or {}).get("best_raw_research_package") or {}
+    execution_drag_summary = (cycle_payload or {}).get("execution_drag_summary") or {}
+    one_sided_bias_recommendation = (cycle_payload or {}).get("one_sided_bias_recommendation") or {}
     return {
         "started_at": started_at.isoformat(),
         "finished_at": finished_at.isoformat(),
@@ -328,11 +334,97 @@ def _build_entry(
         "package_missing_evidence": package_missing_evidence,
         "validation_live_filled_rows": int((cycle_payload or {}).get("validation_live_filled_rows") or 0),
         "generalization_ratio": float((cycle_payload or {}).get("generalization_ratio") or 0.0),
+        "public_forecast_selection": public_forecast_selection,
+        "public_forecast_source_artifact": (cycle_payload or {}).get("public_forecast_source_artifact") or public_selected.get("source_artifact"),
+        "public_forecast_arr_delta_pct": float(public_selected.get("forecast_arr_delta_pct") or 0.0),
+        "best_live_package": best_live_package,
+        "best_raw_research_package": best_raw_package,
+        "execution_drag_summary": execution_drag_summary,
+        "one_sided_bias_recommendation": one_sided_bias_recommendation,
+        "runtime_load_status": (cycle_payload or {}).get("runtime_load_status") or {},
+        "capital_scale_recommendation": (cycle_payload or {}).get("capital_scale_recommendation") or {},
         "recommended_session_policy": (cycle_payload or {}).get("recommended_session_policy") or [],
         "artifacts": (cycle_payload or {}).get("artifacts") or {},
         "hook": hook_result,
         "stdout_tail": (cycle_result.stdout or "").strip()[-1000:],
         "stderr_tail": (cycle_result.stderr or "").strip()[-1000:],
+    }
+
+
+def _parse_history_entries(path: Path) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    if not path.exists():
+        return entries
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            item = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            entries.append(item)
+    return entries
+
+
+def _safe_finished_at(entry: dict[str, Any]) -> datetime | None:
+    raw = str(entry.get("finished_at") or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _velocity_window(entries: list[dict[str, Any]], *, hours: int, now: datetime) -> dict[str, Any]:
+    cutoff = now.timestamp() - float(hours * 3600)
+    in_window = [
+        entry
+        for entry in entries
+        if (_safe_finished_at(entry) is not None and _safe_finished_at(entry).timestamp() >= cutoff)
+    ]
+    in_window.sort(key=lambda item: _safe_finished_at(item) or now)
+    cycles = len(in_window)
+    if cycles == 0:
+        return {
+            "window_hours": float(hours),
+            "cycles_in_window": 0,
+            "forecast_arr_gain_pct": 0.0,
+            "forecast_arr_gain_pct_per_day": 0.0,
+            "validation_fill_growth": 0,
+            "validation_fill_growth_per_day": 0.0,
+            "promotion_rate": 0.0,
+        }
+    first = in_window[0]
+    last = in_window[-1]
+    first_arr = float(first.get("public_forecast_arr_delta_pct") or 0.0)
+    last_arr = float(last.get("public_forecast_arr_delta_pct") or 0.0)
+    first_fills = int(first.get("validation_live_filled_rows") or 0)
+    last_fills = int(last.get("validation_live_filled_rows") or 0)
+    gain = last_arr - first_arr
+    fill_growth = last_fills - first_fills
+    elapsed_hours = max(1e-9, (_safe_finished_at(last) - _safe_finished_at(first)).total_seconds() / 3600.0) if cycles > 1 else float(hours)
+    promotions = sum(1 for entry in in_window if str((entry.get("decision") or {}).get("action") or "").lower() == "promote")
+    return {
+        "window_hours": float(hours),
+        "cycles_in_window": cycles,
+        "forecast_arr_gain_pct": round(gain, 4),
+        "forecast_arr_gain_pct_per_day": round(gain / (elapsed_hours / 24.0), 4) if elapsed_hours > 0 else 0.0,
+        "validation_fill_growth": int(fill_growth),
+        "validation_fill_growth_per_day": round(fill_growth / (elapsed_hours / 24.0), 4) if elapsed_hours > 0 else 0.0,
+        "promotion_rate": round(promotions / float(cycles), 4),
+    }
+
+
+def _build_velocity_summary(entries: list[dict[str, Any]], *, now: datetime) -> dict[str, Any]:
+    return {
+        "window_24h": _velocity_window(entries, hours=24, now=now),
+        "window_7d": _velocity_window(entries, hours=24 * 7, now=now),
     }
 
 
@@ -355,6 +447,9 @@ def _write_loop_reports(loop_report_dir: Path, entry: dict[str, Any]) -> dict[st
         "last_cycle_finished_at": entry["finished_at"],
     }
     payload = {"summary": summary, "latest_entry": entry}
+    history_entries = _parse_history_entries(history_path)
+    history_entries.append(entry)
+    payload["velocity_summary"] = _build_velocity_summary(history_entries, now=_now_utc())
     latest_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     with history_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry, sort_keys=True) + "\n")
@@ -379,13 +474,42 @@ def _write_loop_reports(loop_report_dir: Path, entry: dict[str, Any]) -> dict[st
                 f"- Last package confidence: `{entry.get('package_confidence_label', 'low')}`",
                 f"- Last package confidence reasons: `{'; '.join(entry.get('package_confidence_reasons') or ['none'])}`",
                 f"- Last missing evidence: `{'; '.join(entry.get('package_missing_evidence') or ['none'])}`",
+                f"- Last public forecast source: `{entry.get('public_forecast_source_artifact', 'none')}`",
+                f"- Last public forecast selection reason: `{((entry.get('public_forecast_selection') or {}).get('selection_reason') or 'none')}`",
                 f"- Last best package profile: `{((entry.get('best_runtime_package') or {}).get('profile') or {}).get('name', 'none')}`",
                 f"- Last active package profile: `{((entry.get('active_runtime_package') or {}).get('profile') or {}).get('name', 'none')}`",
                 f"- Last best package session-policy records: `{len(((entry.get('best_runtime_package') or {}).get('session_policy') or []))}`",
+                f"- Last best live package source: `{(entry.get('best_live_package') or {}).get('source', 'none')}`",
+                f"- Last best raw package source: `{(entry.get('best_raw_research_package') or {}).get('source', 'none')}`",
+                f"- Last one-sided bias recommendation: `{(entry.get('one_sided_bias_recommendation') or {}).get('recommendation', 'balanced_directional_bias')}`",
                 f"- Last median ARR delta: `{(entry.get('arr') or {}).get('median_arr_delta_pct', 0.0)}`",
                 f"- Last replay PnL delta (USD): `{(entry.get('arr') or {}).get('replay_pnl_delta_usd', 0.0)}`",
                 f"- Last profit-probability delta: `{(entry.get('arr') or {}).get('profit_probability_delta', 0.0)}`",
                 f"- Last fill lift: `{(entry.get('arr') or {}).get('fill_lift', 0)}`",
+                f"- Last skip-price count: `{(entry.get('execution_drag_summary') or {}).get('skip_price_count', 0)}`",
+                f"- Last order-failed count: `{(entry.get('execution_drag_summary') or {}).get('order_failed_count', 0)}`",
+                f"- Last cancelled-unfilled count: `{(entry.get('execution_drag_summary') or {}).get('cancelled_unfilled_count', 0)}`",
+                f"- Last runtime override written: `{((entry.get('runtime_load_status') or {}).get('override_env_written'))}`",
+                f"- Last runtime session-policy records: `{((entry.get('runtime_load_status') or {}).get('session_policy_records'))}`",
+                f"- Last runtime restart requested: `{((entry.get('runtime_load_status') or {}).get('service_restart_requested'))}`",
+                f"- Last capital status: `{((entry.get('capital_scale_recommendation') or {}).get('status') or 'hold')}`",
+                f"- Last capital tranche (USD): `{((entry.get('capital_scale_recommendation') or {}).get('recommended_tranche_usd') or 0)}`",
+                f"- Last capital reason: `{((entry.get('capital_scale_recommendation') or {}).get('reason') or 'none')}`",
+                "",
+                "## Timebound Velocity",
+                "",
+                f"- 24h cycles: `{payload['velocity_summary']['window_24h']['cycles_in_window']}`",
+                f"- 24h forecast ARR gain (%): `{payload['velocity_summary']['window_24h']['forecast_arr_gain_pct']}`",
+                f"- 24h forecast ARR gain (%/day): `{payload['velocity_summary']['window_24h']['forecast_arr_gain_pct_per_day']}`",
+                f"- 24h validation fill growth: `{payload['velocity_summary']['window_24h']['validation_fill_growth']}`",
+                f"- 24h validation fill growth/day: `{payload['velocity_summary']['window_24h']['validation_fill_growth_per_day']}`",
+                f"- 24h promotion rate: `{payload['velocity_summary']['window_24h']['promotion_rate']}`",
+                f"- 7d cycles: `{payload['velocity_summary']['window_7d']['cycles_in_window']}`",
+                f"- 7d forecast ARR gain (%): `{payload['velocity_summary']['window_7d']['forecast_arr_gain_pct']}`",
+                f"- 7d forecast ARR gain (%/day): `{payload['velocity_summary']['window_7d']['forecast_arr_gain_pct_per_day']}`",
+                f"- 7d validation fill growth: `{payload['velocity_summary']['window_7d']['validation_fill_growth']}`",
+                f"- 7d validation fill growth/day: `{payload['velocity_summary']['window_7d']['validation_fill_growth_per_day']}`",
+                f"- 7d promotion rate: `{payload['velocity_summary']['window_7d']['promotion_rate']}`",
                 f"- Last finished at: `{entry['finished_at']}`",
             ]
         )

@@ -12,6 +12,7 @@ from hft_shadow_validator import (
     TradePrint,
     ShadowCase,
     MakerIntent,
+    Re1ShadowThresholds,
 )
 
 
@@ -148,6 +149,8 @@ class TestPnLAndFees:
         assert result.posted
         assert not result.filled
         assert result.maker_pnl == 0.0
+        assert result.theoretical_maker_pnl != 0.0
+        assert result.post_fill_edge_vs_taker != result.theoretical_edge_vs_taker
 
 
 class TestBatchMetrics:
@@ -199,3 +202,107 @@ class TestBatchMetrics:
         assert metrics.posted == 2
         assert metrics.filled == 0
         assert not metrics.qualifies
+
+
+class TestRe1ShadowReport:
+    def test_report_schema_and_go_verdict(self):
+        v = HFTShadowValidator(min_confidence=0.2)
+        cases = []
+        for i in range(12):
+            cases.append(
+                ShadowCase(
+                    snapshot=_snapshot(
+                        condition_id=f"up-{i}",
+                        timestamp_ms=1_000_000 + i * 10_000,
+                        binance_price=100.7,
+                        chainlink_price=100.1,
+                    ),
+                    trades=[TradePrint(timestamp_ms=1_000_500 + i * 10_000, price=0.57, outcome_side="UP")],
+                    resolution="UP",
+                )
+            )
+            cases.append(
+                ShadowCase(
+                    snapshot=_snapshot(
+                        condition_id=f"down-{i}",
+                        timestamp_ms=2_000_000 + i * 10_000,
+                        binance_price=99.2,
+                        chainlink_price=99.8,
+                        yes_bid=0.34,
+                        yes_ask=0.36,
+                        no_bid=0.64,
+                        no_ask=0.66,
+                        book_imbalance=-0.4,
+                    ),
+                    trades=[TradePrint(timestamp_ms=2_000_400 + i * 10_000, price=0.65, outcome_side="DOWN")],
+                    resolution="DOWN",
+                )
+            )
+
+        report = v.build_re1_shadow_report(
+            cases,
+            run_started_ms=1_000_000,
+            run_ended_ms=1_000_000 + 72 * 3600 * 1000,
+            thresholds=Re1ShadowThresholds(min_signal_count=20, min_fill_rate=0.15),
+        )
+
+        payload = report.to_dict()
+        assert payload["schema_version"] == "re1.shadow.v1"
+        assert payload["signal_count"] >= 20
+        assert "maker_fill_probability_assumptions" in payload
+        assert "realized_vs_theoretical_edge" in payload
+        assert "tie_band_breakdown" in payload
+        assert "barrier_breakdown" in payload
+        assert payload["verdict"] == "GO"
+        assert payload["promotion_policy"] == "shadow_only_do_not_promote_live"
+        assert (
+            payload["realized_vs_theoretical_edge"]["theoretical_edge_per_signal_usd"]
+            >= payload["realized_vs_theoretical_edge"]["post_fill_edge_per_signal_usd"]
+        )
+
+    def test_report_verdict_insufficient_data(self):
+        v = HFTShadowValidator(min_confidence=0.2)
+        cases = [
+            ShadowCase(
+                snapshot=_snapshot(condition_id="a", timestamp_ms=1_000_000),
+                trades=[TradePrint(timestamp_ms=1_000_300, price=0.57, outcome_side="UP")],
+                resolution="UP",
+            ),
+            ShadowCase(
+                snapshot=_snapshot(condition_id="b", timestamp_ms=2_000_000),
+                trades=[],
+                resolution="UP",
+            ),
+        ]
+        report = v.build_re1_shadow_report(
+            cases,
+            thresholds=Re1ShadowThresholds(min_signal_count=5, min_fill_rate=0.15),
+        )
+        assert report.verdict == "INSUFFICIENT_DATA"
+        assert "Need >=" in report.verdict_reason
+
+    def test_report_verdict_no_go_when_fill_rate_below_threshold(self):
+        v = HFTShadowValidator(min_confidence=0.2)
+        cases = [
+            ShadowCase(
+                snapshot=_snapshot(condition_id="a", timestamp_ms=1_000_000),
+                trades=[],
+                resolution="UP",
+            ),
+            ShadowCase(
+                snapshot=_snapshot(condition_id="b", timestamp_ms=2_000_000),
+                trades=[],
+                resolution="UP",
+            ),
+            ShadowCase(
+                snapshot=_snapshot(condition_id="c", timestamp_ms=3_000_000),
+                trades=[TradePrint(timestamp_ms=3_000_300, price=0.57, outcome_side="UP")],
+                resolution="UP",
+            ),
+        ]
+        report = v.build_re1_shadow_report(
+            cases,
+            thresholds=Re1ShadowThresholds(min_signal_count=3, min_fill_rate=0.80),
+        )
+        assert report.verdict == "NO_GO"
+        assert "Maker fill rate" in report.verdict_reason

@@ -6,9 +6,11 @@ Kalshi fee calculation, arb detection, signal format, and market parsing.
 """
 
 import asyncio
+import json
 import math
 import pytest
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Ensure bot/ is importable
@@ -19,6 +21,7 @@ from cross_platform_arb import (
     ArbOpportunity,
     MarketListing,
     arb_to_signal,
+    build_matched_surface_artifact,
     detect_arb,
     extract_keywords,
     get_signals_for_engine,
@@ -423,3 +426,121 @@ class TestSignalEntryPoints:
 
         assert calls["count"] == 1
         assert signals == expected
+
+
+class _MarketsResp:
+    def __init__(self, markets=None, cursor=None):
+        self.markets = markets or []
+        self.cursor = cursor
+
+
+class _EventsResp:
+    def __init__(self, events=None, cursor=None):
+        self.events = events or []
+        self.cursor = cursor
+
+
+class _Event:
+    def __init__(self, event_ticker: str):
+        self.event_ticker = event_ticker
+
+
+class _KalshiMarket:
+    def __init__(self, ticker: str, title: str):
+        self.ticker = ticker
+        self.title = title
+        self.subtitle = title
+        self.yes_bid = 45
+        self.yes_ask = 47
+        self.no_bid = 53
+        self.no_ask = 55
+        self.volume = 1000
+        self.close_time = "2026-03-09T13:00:00Z"
+        self.status = "open"
+
+
+class TestKalshiFetchResilience:
+    def test_kalshi_fetch_uses_cache_when_throttled(self, monkeypatch, tmp_path):
+        cache_path = tmp_path / "kalshi_cache.json"
+        cached_market = _make_listing("kalshi", "KXBTC-CACHED", "Will BTC close above 80k?", 0.45, 0.47, 0.53, 0.55)
+        cache_path.write_text(
+            json.dumps(
+                {
+                    "generated_at": "2026-03-09T12:00:00+00:00",
+                    "market_count": 1,
+                    "markets": [arb_module.asdict(cached_market)],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        class _AlwaysThrottleClient:
+            def get_markets(self, **kwargs):
+                raise RuntimeError("429 Too Many Requests")
+
+            def get_events(self, **kwargs):
+                raise RuntimeError("429 Too Many Requests")
+
+        monkeypatch.setattr(arb_module, "KALSHI_MARKET_CACHE_FILE", cache_path)
+        monkeypatch.setattr(arb_module.time, "sleep", lambda *_args, **_kwargs: None)
+        monkeypatch.setenv("JJ_KALSHI_FETCH_CACHE_TTL_SECONDS", "999999")
+
+        markets, diagnostics = arb_module.fetch_kalshi_markets_with_diagnostics(_AlwaysThrottleClient(), max_pages=1)
+
+        assert len(markets) == 1
+        assert markets[0].market_id == "KXBTC-CACHED"
+        assert diagnostics["used_cache"] is True
+        assert diagnostics["throttle_events"] > 0
+
+    def test_kalshi_fetch_retries_then_recovers_without_cache(self, monkeypatch, tmp_path):
+        cache_path = tmp_path / "kalshi_cache.json"
+        call_counts = {"general": 0}
+
+        class _RetryThenRecoverClient:
+            def get_events(self, **kwargs):
+                return _EventsResp(events=[_Event("KXBTC-EVT")])
+
+            def get_markets(self, **kwargs):
+                if kwargs.get("status") == "open":
+                    call_counts["general"] += 1
+                    if call_counts["general"] == 1:
+                        raise RuntimeError("HTTP 429 throttled")
+                    return _MarketsResp(markets=[_KalshiMarket("KXBTC-RECOVER", "Will Bitcoin close above 85k?")])
+                if kwargs.get("event_ticker"):
+                    return _MarketsResp(markets=[])
+                return _MarketsResp(markets=[])
+
+        monkeypatch.setattr(arb_module, "KALSHI_MARKET_CACHE_FILE", cache_path)
+        monkeypatch.setattr(arb_module.time, "sleep", lambda *_args, **_kwargs: None)
+
+        markets, diagnostics = arb_module.fetch_kalshi_markets_with_diagnostics(_RetryThenRecoverClient(), max_pages=1)
+
+        assert len(markets) >= 1
+        assert diagnostics["used_cache"] is False
+        assert diagnostics["retry_attempts"] >= 1
+        assert diagnostics["throttle_events"] >= 1
+        assert cache_path.exists()
+
+
+class TestMatchedSurfaceArtifact:
+    def test_build_matched_surface_artifact_includes_horizon_spread_and_route_score(self):
+        now = datetime(2026, 3, 9, 12, 0, tzinfo=timezone.utc)
+        poly = _make_listing("polymarket", "poly-1", "Will Bitcoin close above 85k at 1 PM?", 0.40, 0.42, 0.58, 0.60)
+        poly.end_date = "2026-03-09T13:00:00+00:00"
+        kalshi = _make_listing("kalshi", "KXBTC-1", "Will Bitcoin close above 85k at 1 PM?", 0.43, 0.45, 0.55, 0.57)
+        kalshi.end_date = "2026-03-09T13:00:00+00:00"
+
+        artifact = build_matched_surface_artifact(
+            poly_markets=[poly],
+            kalshi_markets=[kalshi],
+            match_threshold=0.2,
+            generated_at=now,
+        )
+
+        assert artifact["schema_version"] == "instance06.v1"
+        assert artifact["counts"]["matched_surfaces"] == 1
+        row = artifact["matched_surface"][0]
+        assert "horizon_hours" in row
+        assert "spread" in row
+        assert "route_score" in row
+        assert row["venues"]["primary"] == "polymarket"

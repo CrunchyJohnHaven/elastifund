@@ -65,24 +65,40 @@ Mission constraint:
 
 ## 4. Canonical Machine Truth (March 9, 2026)
 
-As of `reports/runtime_truth_latest.json` generated at `2026-03-09T16:19:45.682469+00:00`:
+> **WARNING — ARTIFACT TRUST POLICY (added 2026-03-09):**
+> `reports/runtime_truth_latest.json` and local ledger data have proven unreliable. They reported "0 closed trades" and "0% realized ARR" while the live Polymarket wallet showed active positions being filled and resolved with real P&L. **Always verify capital, position, and P&L claims against the live Polymarket portfolio and Kalshi account before citing them.** If wallet data contradicts local artifacts, the wallet wins.
+
+### Live Wallet Truth (verified 2026-03-09 from Polymarket web UI)
 
 | Area | Current truth | Why it matters |
 |---|---|---|
-| Runtime selector | `maker_velocity_all_in` | This is the selected runtime profile, but the effective runtime differs from the checked-in profile defaults. |
-| Effective mode | `agent_run_mode=shadow`, `execution_mode=shadow`, `paper_trading=false`, `allow_order_submission=true`, `order_submit_enabled=false` | The bot is not in plain paper mode, but it also is not in a clean launch-ready state. |
-| Service posture | `jj-live.service` is now `stopped`; the dedicated BTC 5-minute maker is the only intended live sleeve | Service-state drift has been resolved, but broader launch posture remains blocked. |
-| Runtime accounting | `565` cycles, `5` trade-db trades, `4` local open positions, `0` local closed trades, `25.00` executed notional total | The local runtime ledger still looks thin and incomplete. |
-| Remote Polymarket wallet | `28` open positions, `9` closed positions, and wallet-versus-ledger drift still unresolved | Wallet truth is materially ahead of local accounting and must be reconciled before making claims. |
-| BTC 5-minute maker evidence | `51` total rows, `32` `live_filled`, positive cumulative filled outcomes, latest guardrail recommendation `max_abs_delta=0.00015`, `UP max=0.51`, `DOWN max=0.51` | There is real short-horizon trading evidence in the remote SQLite surface, and it now informs bounded guardrails. |
-| Candidate generation now | `0` Polymarket, `0` Kalshi, `0` total | Current edge reachability is still zero in the latest improvement report. |
-| Latest pipeline verdict | `REJECT ALL` | The older scan says nothing is tradeable, which conflicts with later BTC maker evidence. |
-| Structural alpha A-6 | `blocked`; `53` qualified live-surface events, `0` executable constructions below `0.95` | No promotion. The lane still lacks executable evidence. |
-| Structural alpha B-1 | `blocked`; `0` deterministic template pairs in first `1,000` allowed markets | No promotion. Density remains too low. |
-| Current system ARR | `0%` realized | This is the public-safe current ARR from `improvement_velocity.json`; target and theoretical references stay separate from realized performance. |
-| Root verification artifact | `1140 passed in 25.88s; 25 passed in 4.47s` | The root suite is green in the latest artifact set. |
-| JJ-N repo truth | `nontrading/main.py` builds and runs `RevenuePipeline`; `make test-nontrading` is green at `61`; repo-root JJ-N tests are green at `49` | The non-trading lane is implemented and safety-gated, but not revenue-live. |
-| First non-trading wedge | Website Growth Audit exists in code, priced at `$500-$2500`, `5` delivery days, fulfillment type `hybrid` | This is the best current path to first non-trading dollars. |
+| Polymarket portfolio | $333.18 total, $286.86 available, ~$46.32 deployed | This is the real capital number. Prior artifacts understated this. |
+| Kalshi | $100 USD | Unchanged. |
+| Total capital | ~$433.18 | Up from prior reports of $345.65 — reflects $247.51 deposit + trading activity. |
+| Realized trading status | **LIVE AND TRADING** — positions opening AND resolving, past-day P&L +$1.91 | The system is generating real P&L, not paper-trading. |
+| Known resolved trade | Seattle weather (highest temp 54-55°F March 7) — NO position — LOST | At least one position has resolved to completion with real money at risk. |
+| Active position categories | Weather, geopolitical (Yemen strikes, Morocco PM), central bank (Bank of Russia rate), plus others | Trading across multiple category lanes, not just crypto. |
+| Recent deposit | $247.51 deposited ~2 days ago | Capital base was increased. |
+
+### Local Artifact Truth (KNOWN STALE — use with caution)
+
+| Area | Local artifact says | Why it's wrong |
+|---|---|---|
+| Runtime accounting | `565` cycles, `5` trade-db trades, `4` open, `0` closed | Wallet shows 28+ open, 9+ closed historically. Local ledger massively understates activity. |
+| Pipeline verdict | `REJECT ALL` | Wallet is actively trading and filling orders. The scan is stale or mis-scoped. |
+| System ARR | `0%` realized | **FALSE.** System has real P&L from live fills and resolutions. |
+| Effective mode | `agent_run_mode=shadow`, `order_submit_enabled=false` | Contradicted by real fills in the wallet. Orders ARE being submitted. |
+
+### Unchanged Status
+
+| Area | Current truth | Why it matters |
+|---|---|---|
+| Structural alpha A-6 | `blocked`; `0` executable constructions below `0.95` | No promotion. Kill-watch deadline March 14. |
+| Structural alpha B-1 | `blocked`; `0` deterministic template pairs | No promotion. Kill-watch deadline March 14. |
+| BTC 5-minute maker | `51` rows, `32` live_filled, positive cumulative outcomes | Real short-horizon evidence exists. |
+| Root verification | `1140 passed in 25.88s; 25 passed in 4.47s` | Green. |
+| JJ-N repo truth | `RevenuePipeline` builds; tests green at `61` + `49` | Implemented but not revenue-live. |
+| First non-trading wedge | Website Growth Audit, $500-$2500, 5-day delivery | Best path to first non-trading dollars. |
 
 Strategy catalog truth from `research/edge_backlog_ranked.md`:
 

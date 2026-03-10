@@ -2,7 +2,7 @@
 """
 Kalshi Weather + NWS Arbitrage Scanner (Instance 5).
 
-Default mode is paper-only. Live order placement requires --execute.
+Default mode is paper-only. Live order placement requires explicit live mode.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import uuid
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 import requests
 
@@ -48,8 +48,11 @@ DATA_DIR = Path("data")
 SIGNALS_LOG = DATA_DIR / "kalshi_weather_signals.jsonl"
 ORDERS_LOG = DATA_DIR / "kalshi_weather_orders.jsonl"
 DECISIONS_LOG = DATA_DIR / "kalshi_weather_decisions.jsonl"
+SETTLEMENT_LOG = DATA_DIR / "kalshi_weather_settlements.jsonl"
+FORECAST_SNAPSHOT_LOG = DATA_DIR / "kalshi_weather_forecast_snapshots.jsonl"
 MAX_FORECAST_HORIZON_DAYS = 7
 DEFAULT_HOURLY_BUDGET_USD = 50.0
+DEFAULT_MAX_CONTRACT_NOTIONAL_USD = 5.0
 
 CITY_CONFIG = {
     "NYC": {
@@ -188,12 +191,10 @@ def _parse_timestamp(raw: str) -> Optional[datetime]:
     return dt.astimezone(timezone.utc)
 
 
-def _already_ordered_tickers(*, orders_log: Path = ORDERS_LOG) -> set[tuple[str, str]]:
-    """Return set of (ticker, side) pairs already ordered to prevent duplicate submissions."""
-    seen: set[tuple[str, str]] = set()
-    if not orders_log.exists():
-        return seen
-    with orders_log.open("r", encoding="utf-8") as f:
+def _iter_jsonl_rows(path: Path) -> Iterator[dict[str, Any]]:
+    if not path.exists():
+        return
+    with path.open("r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -202,23 +203,123 @@ def _already_ordered_tickers(*, orders_log: Path = ORDERS_LOG) -> set[tuple[str,
                 row = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            execution_result = str(row.get("execution_result", "")).strip().lower()
-            if not execution_result:
-                order = row.get("order", {})
-                execution_result = str(order.get("status", "") if isinstance(order, dict) else "").strip().lower()
-            if execution_result not in {"paper", "live"}:
-                continue
-            ticker = str(row.get("market_ticker", "")).strip()
-            if not ticker:
-                signal = row.get("signal", {})
-                ticker = str(signal.get("market_ticker", "") if isinstance(signal, dict) else "").strip()
-            side = str(row.get("side", "")).strip()
-            if not side:
-                signal = row.get("signal", {})
-                side = str(signal.get("side", "") if isinstance(signal, dict) else "").strip()
-            if ticker and side:
-                seen.add((ticker, side))
+            if isinstance(row, dict):
+                yield row
+
+
+def _row_signal(row: dict[str, Any]) -> dict[str, Any]:
+    signal = row.get("signal", {})
+    return signal if isinstance(signal, dict) else {}
+
+
+def _row_order(row: dict[str, Any]) -> dict[str, Any]:
+    order = row.get("order", {})
+    return order if isinstance(order, dict) else {}
+
+
+def _row_execution_result(row: dict[str, Any]) -> str:
+    execution_result = str(row.get("execution_result", "")).strip().lower()
+    if execution_result:
+        return execution_result
+    execution_result = str(_row_order(row).get("status", "")).strip().lower()
+    if execution_result:
+        return execution_result
+    execute = row.get("execute")
+    if execute is True:
+        return "live"
+    if execute is False and (_row_order(row) or _row_signal(row)):
+        return "paper"
+    return ""
+
+
+def _row_market_ticker(row: dict[str, Any]) -> str:
+    for candidate in (
+        row.get("market_ticker"),
+        _row_signal(row).get("market_ticker"),
+        _row_order(row).get("ticker"),
+    ):
+        value = str(candidate or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _row_side(row: dict[str, Any]) -> str:
+    for candidate in (
+        row.get("side"),
+        _row_signal(row).get("side"),
+        _row_order(row).get("side"),
+    ):
+        value = str(candidate or "").strip().lower()
+        if value:
+            return value
+    return ""
+
+
+def _row_order_client_id(row: dict[str, Any]) -> str:
+    for candidate in (
+        row.get("order_client_id"),
+        _row_order(row).get("client_order_id"),
+    ):
+        value = str(candidate or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _row_notional_usd(row: dict[str, Any]) -> float:
+    for candidate in (
+        row.get("notional_usd"),
+        _row_signal(row).get("size_usd"),
+    ):
+        value = _safe_float(candidate, None)
+        if value is not None:
+            return round(max(0.0, value), 2)
+    return 0.0
+
+
+def _already_ordered_tickers(*, orders_log: Path = ORDERS_LOG) -> set[tuple[str, str]]:
+    """Return set of (ticker, side) pairs already ordered to prevent duplicate submissions."""
+    seen: set[tuple[str, str]] = set()
+    for row in _iter_jsonl_rows(orders_log):
+        execution_result = _row_execution_result(row)
+        if execution_result not in {"paper", "live"}:
+            continue
+        ticker = _row_market_ticker(row)
+        side = _row_side(row)
+        if ticker and side:
+            seen.add((ticker, side))
     return seen
+
+
+def _settled_order_client_ids(*, settlement_log: Path = SETTLEMENT_LOG) -> set[str]:
+    settled: set[str] = set()
+    for row in _iter_jsonl_rows(settlement_log):
+        client_id = _row_order_client_id(row)
+        if client_id:
+            settled.add(client_id)
+    return settled
+
+
+def _outstanding_contract_notional(
+    *,
+    orders_log: Path = ORDERS_LOG,
+    settlement_log: Path = SETTLEMENT_LOG,
+) -> dict[str, float]:
+    outstanding: dict[str, float] = {}
+    settled_client_ids = _settled_order_client_ids(settlement_log=settlement_log)
+    for row in _iter_jsonl_rows(orders_log):
+        execution_result = _row_execution_result(row)
+        if execution_result not in {"paper", "live"}:
+            continue
+        client_id = _row_order_client_id(row)
+        if client_id and client_id in settled_client_ids:
+            continue
+        ticker = _row_market_ticker(row)
+        if not ticker:
+            continue
+        outstanding[ticker] = round(outstanding.get(ticker, 0.0) + _row_notional_usd(row), 2)
+    return outstanding
 
 
 def _current_hourly_usage(
@@ -234,25 +335,17 @@ def _current_hourly_usage(
     if not orders_log.exists():
         return usage
 
-    with orders_log.open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            ts = _parse_timestamp(str(row.get("timestamp", "")).strip())
-            if ts is None or ts < cutoff:
-                continue
+    for row in _iter_jsonl_rows(orders_log):
+        ts = _parse_timestamp(str(row.get("timestamp", "")).strip())
+        if ts is None or ts < cutoff:
+            continue
 
-            execution_result = str(row.get("execution_result", "")).strip().lower()
-            if execution_result not in {"paper", "live"}:
-                continue
+        execution_result = _row_execution_result(row)
+        if execution_result not in {"paper", "live"}:
+            continue
 
-            usage.order_count += 1
-            usage.notional_usd += max(0.0, _safe_float(row.get("notional_usd"), 0.0) or 0.0)
+        usage.order_count += 1
+        usage.notional_usd += _row_notional_usd(row)
     usage.notional_usd = round(usage.notional_usd, 2)
     return usage
 
@@ -280,15 +373,37 @@ def _resolve_hourly_budget_usd(
     return DEFAULT_HOURLY_BUDGET_USD
 
 
+def _resolve_max_contract_notional_usd(
+    explicit_cap: Optional[float],
+    *,
+    env: Optional[dict[str, str]] = None,
+) -> float:
+    if explicit_cap is not None:
+        return float(explicit_cap)
+    env_source = env or os.environ
+    for key in (
+        "KALSHI_WEATHER_MAX_CONTRACT_NOTIONAL_USD",
+        "KALSHI_WEATHER_MAX_ORDER_USD",
+    ):
+        raw = str(env_source.get(key, "")).strip()
+        if not raw:
+            continue
+        try:
+            return float(raw)
+        except ValueError:
+            continue
+    return DEFAULT_MAX_CONTRACT_NOTIONAL_USD
+
+
 def _normalize_mode(args: argparse.Namespace) -> None:
     mode = str(getattr(args, "mode", "paper") or "paper").strip().lower()
     if mode not in {"paper", "live"}:
         raise ValueError(f"unsupported mode {mode!r}; expected 'paper' or 'live'")
     execute_flag = bool(getattr(args, "execute", False))
-    if mode == "paper" and execute_flag:
-        raise ValueError("conflicting mode flags: --mode paper cannot be combined with --execute")
+    if execute_flag and mode != "live":
+        raise ValueError("live execution requires --mode live or KALSHI_WEATHER_MODE=live")
     args.mode = mode
-    args.execute = mode == "live" or execute_flag
+    args.execute = mode == "live"
 
 
 def _validate_args(args: argparse.Namespace) -> None:
@@ -316,6 +431,8 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--max-orders-per-hour must be >= 0")
     if float(args.hourly_budget_usd) <= 0.0:
         raise ValueError("--hourly-budget-usd must be > 0")
+    if float(args.max_contract_notional_usd) <= 0.0:
+        raise ValueError("--max-contract-notional-usd must be > 0")
     if int(args.interval_seconds) < 1:
         raise ValueError("--interval-seconds must be >= 1")
 
@@ -327,28 +444,207 @@ def _record_decision(
     execution_result: str,
     reason_code: str,
     execute: bool,
+    order_client_id: str | None = None,
 ) -> None:
-    _append_jsonl(
-        DECISIONS_LOG,
-        {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "venue": "kalshi",
-            "source": signal.source,
-            "market_ticker": signal.market_ticker,
-            "market_title": signal.market_title,
-            "city": signal.city,
-            "side": signal.side,
-            "edge": signal.edge,
-            "reason": signal.reason,
-            "confidence": signal.confidence,
-            "spread": signal.spread,
-            "order_probability": signal.order_probability,
-            "notional_usd": round(max(0.0, float(size_usd)), 2),
-            "execution_mode": "live" if execute else "paper",
+    row = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "venue": "kalshi",
+        "source": signal.source,
+        "market_ticker": signal.market_ticker,
+        "market_title": signal.market_title,
+        "city": signal.city,
+        "side": signal.side,
+        "edge": signal.edge,
+        "reason": signal.reason,
+        "confidence": signal.confidence,
+        "spread": signal.spread,
+        "order_probability": signal.order_probability,
+        "notional_usd": round(max(0.0, float(size_usd)), 2),
+        "execution_mode": "live" if execute else "paper",
+        "execution_result": execution_result,
+        "reason_code": reason_code,
+    }
+    if order_client_id:
+        row["order_client_id"] = str(order_client_id)
+    _append_jsonl(DECISIONS_LOG, row)
+
+
+def archive_forecast_snapshot(
+    snapshot: ForecastSnapshot,
+    *,
+    captured_at: datetime | None = None,
+    archive_path: Path = FORECAST_SNAPSHOT_LOG,
+) -> dict[str, Any]:
+    capture_ts = captured_at or datetime.now(timezone.utc)
+    row = {
+        "captured_at": capture_ts.isoformat(),
+        "city": snapshot.city,
+        "target_date": snapshot.target_date,
+        "high_temp_f": snapshot.high_temp_f,
+        "pop_probability": snapshot.pop_probability,
+        "source_period": snapshot.source_period,
+    }
+    _append_jsonl(archive_path, row)
+    return row
+
+
+def load_forecast_snapshot_archive(
+    *,
+    archive_path: Path = FORECAST_SNAPSHOT_LOG,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if not archive_path.exists():
+        return rows
+    with archive_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+    return rows
+
+
+def _load_executed_decision_surface(
+    *,
+    decisions_log: Path = DECISIONS_LOG,
+    orders_log: Path = ORDERS_LOG,
+) -> tuple[list[dict[str, Any]], str]:
+    decisions: list[dict[str, Any]] = []
+    for row in _iter_jsonl_rows(decisions_log):
+        execution_result = _row_execution_result(row)
+        if execution_result not in {"paper", "live"}:
+            continue
+        materialized = dict(row)
+        materialized.setdefault("execution_result", execution_result)
+        materialized.setdefault("execution_mode", execution_result)
+        if not materialized.get("market_ticker"):
+            materialized["market_ticker"] = _row_market_ticker(row)
+        if not materialized.get("side"):
+            materialized["side"] = _row_side(row)
+        client_id = _row_order_client_id(row)
+        if client_id and not materialized.get("order_client_id"):
+            materialized["order_client_id"] = client_id
+        decisions.append(materialized)
+    if decisions:
+        return decisions, "decisions_log"
+
+    synthesized: list[dict[str, Any]] = []
+    for row in _iter_jsonl_rows(orders_log):
+        execution_result = _row_execution_result(row)
+        if execution_result not in {"paper", "live"}:
+            continue
+        signal = _row_signal(row)
+        market_ticker = _row_market_ticker(row)
+        side = _row_side(row)
+        if not market_ticker or not side:
+            continue
+        decision = {
+            "timestamp": str(row.get("timestamp") or signal.get("timestamp") or ""),
+            "venue": str(row.get("venue") or "kalshi"),
+            "source": str(row.get("source") or signal.get("source") or "kalshi_weather_nws"),
+            "market_ticker": market_ticker,
+            "market_title": str(row.get("market_title") or signal.get("market_title") or ""),
+            "city": str(row.get("city") or signal.get("city") or ""),
+            "side": side,
+            "edge": _safe_float(row.get("edge"), _safe_float(signal.get("edge"), 0.0)) or 0.0,
+            "reason": str(row.get("reason") or signal.get("reason") or ""),
+            "confidence": _safe_float(row.get("confidence"), _safe_float(signal.get("confidence"), 0.0)) or 0.0,
+            "spread": _safe_float(row.get("spread"), _safe_float(signal.get("spread"), 0.0)) or 0.0,
+            "order_probability": _safe_float(
+                row.get("order_probability"),
+                _safe_float(signal.get("order_probability"), 0.0),
+            ) or 0.0,
+            "notional_usd": _row_notional_usd(row),
+            "execution_mode": str(row.get("execution_mode") or execution_result).strip().lower() or execution_result,
             "execution_result": execution_result,
-            "reason_code": reason_code,
-        },
+            "reason_code": str(row.get("reason_code") or "orders_log_backfill"),
+            "decision_source": "orders_log_backfill",
+        }
+        client_id = _row_order_client_id(row)
+        if client_id:
+            decision["order_client_id"] = client_id
+        synthesized.append(decision)
+    return synthesized, "orders_log_backfill" if synthesized else "none"
+
+
+def reconcile_decisions_with_settlements(
+    *,
+    decisions_log: Path = DECISIONS_LOG,
+    settlement_log: Path = SETTLEMENT_LOG,
+    orders_log: Path = ORDERS_LOG,
+) -> dict[str, Any]:
+    settlement_rows: list[dict[str, Any]] = list(_iter_jsonl_rows(settlement_log))
+    settlements_by_client_id: dict[str, int] = {}
+    settlements_by_market_side: dict[tuple[str, str], list[int]] = {}
+    for row_id, row in enumerate(settlement_rows):
+        client_id = _row_order_client_id(row)
+        if client_id:
+            settlements_by_client_id[client_id] = row_id
+        market = _row_market_ticker(row)
+        side = _row_side(row)
+        if market and side:
+            settlements_by_market_side.setdefault((market, side), []).append(row_id)
+
+    matched = 0
+    unmatched = 0
+    by_mode: dict[str, dict[str, int]] = {
+        "paper": {"matched": 0, "unmatched": 0},
+        "live": {"matched": 0, "unmatched": 0},
+    }
+    decisions, decision_source = _load_executed_decision_surface(
+        decisions_log=decisions_log,
+        orders_log=orders_log,
     )
+    used_settlement_ids: set[int] = set()
+    for decision in decisions:
+        execution_result = _row_execution_result(decision)
+        if execution_result not in {"paper", "live"}:
+            continue
+        mode = str(decision.get("execution_mode", execution_result)).strip().lower() or execution_result
+        if mode not in by_mode:
+            by_mode[mode] = {"matched": 0, "unmatched": 0}
+
+        matched_row_id: Optional[int] = None
+        client_id = _row_order_client_id(decision)
+        if client_id:
+            row_id = settlements_by_client_id.get(client_id)
+            if row_id is not None and row_id not in used_settlement_ids:
+                matched_row_id = row_id
+        if matched_row_id is None:
+            market = _row_market_ticker(decision)
+            side = _row_side(decision)
+            for row_id in settlements_by_market_side.get((market, side), []):
+                if row_id not in used_settlement_ids:
+                    matched_row_id = row_id
+                    break
+
+        if matched_row_id is not None:
+            used_settlement_ids.add(matched_row_id)
+            matched += 1
+            by_mode[mode]["matched"] += 1
+        else:
+            unmatched += 1
+            by_mode[mode]["unmatched"] += 1
+
+    total = matched + unmatched
+    return {
+        "total_executed_decisions": total,
+        "matched_settlements": matched,
+        "unmatched_settlements": unmatched,
+        "match_rate": round((matched / total), 4) if total else 0.0,
+        "by_execution_mode": by_mode,
+        "settlement_rows": len(settlement_rows),
+        "decision_source": decision_source,
+        "reconciliation_summary": (
+            f"matched={matched}/{total} unmatched={unmatched} "
+            f"match_rate={(matched / total):.2%}" if total else "matched=0/0 unmatched=0 match_rate=0.00%"
+        ),
+    }
 
 
 def _norm_cdf(x: float, mean: float, std: float) -> float:
@@ -939,6 +1235,7 @@ def scan_weather_signals(
             )
             continue
 
+        archive_forecast_snapshot(snapshot)
         adaptive_std = _adaptive_temp_std(target_day, city_code, base_std=temp_std_f)
         for market in city_markets:
             sig = build_weather_signal(
@@ -987,6 +1284,7 @@ def run_once(args: argparse.Namespace) -> int:
 
     orders_placed = 0
     already_ordered = _already_ordered_tickers()
+    outstanding_notional = _outstanding_contract_notional()
     hourly_usage = _current_hourly_usage()
     hour_orders_placed = hourly_usage.order_count
     hour_notional = hourly_usage.notional_usd
@@ -997,6 +1295,19 @@ def run_once(args: argparse.Namespace) -> int:
                 size_usd=0.0,
                 execution_result="rejected",
                 reason_code="already_ordered",
+                execute=args.execute,
+            )
+            continue
+        remaining_contract_capacity = max(
+            0.0,
+            float(args.max_contract_notional_usd) - outstanding_notional.get(sig.market_ticker, 0.0),
+        )
+        if remaining_contract_capacity < 1.0:
+            _record_decision(
+                signal=sig,
+                size_usd=0.0,
+                execution_result="rejected",
+                reason_code="contract_notional_cap_reached",
                 execute=args.execute,
             )
             continue
@@ -1036,14 +1347,23 @@ def run_once(args: argparse.Namespace) -> int:
                 execute=args.execute,
             )
             break
-        size_usd = min(size_usd, remaining_hourly_budget, float(args.max_order_usd))
+        size_usd = min(
+            size_usd,
+            remaining_hourly_budget,
+            float(args.max_order_usd),
+            remaining_contract_capacity,
+        )
         size_usd = round(size_usd, 2)
         if size_usd < 1.0:
             _record_decision(
                 signal=sig,
                 size_usd=size_usd,
                 execution_result="rejected",
-                reason_code="remaining_budget_too_small",
+                reason_code=(
+                    "contract_capacity_too_small"
+                    if remaining_contract_capacity < 1.0
+                    else "remaining_budget_too_small"
+                ),
                 execute=args.execute,
             )
             continue
@@ -1079,12 +1399,17 @@ def run_once(args: argparse.Namespace) -> int:
             execution_result=execution_result,
             reason_code=order_row["reason_code"],
             execute=args.execute,
+            order_client_id=str(order.get("client_order_id", "")).strip() or None,
         )
         orders_placed += 1
         if execution_result in {"paper", "live"}:
             hour_orders_placed += 1
             hour_notional = round(hour_notional + size_usd, 2)
             already_ordered.add((sig.market_ticker, sig.side))
+            outstanding_notional[sig.market_ticker] = round(
+                outstanding_notional.get(sig.market_ticker, 0.0) + size_usd,
+                2,
+            )
 
         print(
             f"[{sig.city}] {sig.market_ticker} {sig.side.upper()} "
@@ -1102,57 +1427,34 @@ def run_once(args: argparse.Namespace) -> int:
     )
     return 0
 
-
-SETTLEMENT_LOG = DATA_DIR / "kalshi_weather_settlements.jsonl"
-
-
-def log_settlement_outcomes(session: KalshiSession) -> int:
+def log_settlement_outcomes(
+    session: KalshiSession,
+    *,
+    orders_log: Path = ORDERS_LOG,
+    settlement_log: Path = SETTLEMENT_LOG,
+) -> int:
     """Check settled markets and log actual outcomes vs model predictions for calibration.
 
     Reads orders log, finds settled markets, records predicted vs actual outcome.
     Returns count of newly logged settlements.
     """
-    if not ORDERS_LOG.exists():
+    if not orders_log.exists():
         logger.info("No orders log to check for settlements.")
         return 0
 
     # Load already-logged settlements to avoid duplicates.
-    logged: set[str] = set()
-    if SETTLEMENT_LOG.exists():
-        with SETTLEMENT_LOG.open("r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    row = json.loads(line)
-                    logged.add(str(row.get("order_client_id", "")))
-                except json.JSONDecodeError:
-                    continue
+    logged = _settled_order_client_ids(settlement_log=settlement_log)
 
     # Collect unique (ticker, side) orders from the log.
     orders_to_check: dict[str, dict] = {}
-    with ORDERS_LOG.open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            order = row.get("order", {})
-            if not isinstance(order, dict):
-                continue
-            client_id = str(order.get("client_order_id", "")).strip()
-            if not client_id or client_id in logged:
-                continue
-            execution_result = str(row.get("execution_result", "")).strip().lower()
-            if not execution_result:
-                execution_result = str(order.get("status", "")).strip().lower()
-            if execution_result not in {"paper", "live"}:
-                continue
-            orders_to_check[client_id] = row
+    for row in _iter_jsonl_rows(orders_log):
+        client_id = _row_order_client_id(row)
+        if not client_id or client_id in logged:
+            continue
+        execution_result = _row_execution_result(row)
+        if execution_result not in {"paper", "live"}:
+            continue
+        orders_to_check[client_id] = row
 
     if not orders_to_check:
         logger.info("No unsettled orders to check.")
@@ -1162,10 +1464,8 @@ def log_settlement_outcomes(session: KalshiSession) -> int:
     settled_count = 0
     tickers_checked: set[str] = set()
     for client_id, order_row in orders_to_check.items():
-        signal = order_row.get("signal", {})
-        if not isinstance(signal, dict):
-            continue
-        ticker = str(signal.get("market_ticker", "")).strip()
+        signal = _row_signal(order_row)
+        ticker = _row_market_ticker(order_row)
         if not ticker or ticker in tickers_checked:
             # Still log the calibration row for this order using cached result.
             pass
@@ -1190,7 +1490,7 @@ def log_settlement_outcomes(session: KalshiSession) -> int:
         if result_str is None:
             continue
 
-        side = str(signal.get("side", "")).strip()
+        side = _row_side(order_row)
         model_prob = float(signal.get("model_probability", 0.0))
         order_prob = float(signal.get("order_probability", 0.0))
         edge = float(signal.get("edge", 0.0))
@@ -1200,17 +1500,21 @@ def log_settlement_outcomes(session: KalshiSession) -> int:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "order_client_id": client_id,
             "market_ticker": ticker,
-            "city": str(signal.get("city", "")),
+            "city": str(order_row.get("city") or signal.get("city", "")),
             "side": side,
             "result": result_str,
             "won": won,
             "model_probability": model_prob,
             "order_probability": order_prob,
             "edge": edge,
-            "notional_usd": float(order_row.get("notional_usd", 0.0)),
-            "reason": str(signal.get("reason", "")),
+            "notional_usd": _row_notional_usd(order_row),
+            "reason": str(order_row.get("reason") or signal.get("reason", "")),
+            "matched": True,
+            "match_status": "matched",
+            "decision_matched": True,
+            "source_execution_result": _row_execution_result(order_row),
         }
-        _append_jsonl(SETTLEMENT_LOG, settlement_row)
+        _append_jsonl(settlement_log, settlement_row)
         settled_count += 1
         logger.info(
             "Settlement: %s %s %s result=%s won=%s model_p=%.3f edge=%.3f",
@@ -1229,7 +1533,7 @@ def log_settlement_outcomes(session: KalshiSession) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Kalshi weather + NWS arbitrage")
     p.add_argument("--mode", choices=("paper", "live"), default=os.environ.get("KALSHI_WEATHER_MODE", "paper"), help="Explicit run mode")
-    p.add_argument("--execute", action="store_true", help="Legacy alias for --mode live")
+    p.add_argument("--execute", action="store_true", help="Legacy safety flag; only valid together with --mode live")
     p.add_argument("--edge-threshold", type=float, default=float(os.environ.get("KALSHI_WEATHER_EDGE_THRESHOLD", "0.10")))
     p.add_argument("--max-spread", type=float, default=float(os.environ.get("KALSHI_WEATHER_MAX_SPREAD", "0.15")))
     p.add_argument("--temp-std-f", type=float, default=float(os.environ.get("KALSHI_WEATHER_TEMP_STD_F", "3.0")))
@@ -1242,6 +1546,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=_resolve_hourly_budget_usd(None),
         help="Rolling 60-minute notional budget cap",
+    )
+    p.add_argument(
+        "--max-contract-notional-usd",
+        type=float,
+        default=_resolve_max_contract_notional_usd(None),
+        help="Outstanding notional cap per contract ticker until settlement",
     )
     p.add_argument("--max-pages", type=int, default=int(os.environ.get("KALSHI_WEATHER_MAX_PAGES", "3")))
     p.add_argument("--max-signals", type=int, default=int(os.environ.get("KALSHI_WEATHER_MAX_SIGNALS", "20")))
@@ -1283,6 +1593,14 @@ def main() -> int:
             session = get_kalshi_client(execute=False)
             settled = log_settlement_outcomes(session)
             print(f"Logged {settled} settlement outcomes to {SETTLEMENT_LOG}")
+            summary = reconcile_decisions_with_settlements()
+            print(
+                "Reconciliation summary: "
+                f"source={summary['decision_source']} "
+                f"matched={summary['matched_settlements']}/{summary['total_executed_decisions']} "
+                f"unmatched={summary['unmatched_settlements']} "
+                f"match_rate={summary['match_rate']:.2%}"
+            )
             return 0
 
         if not args.loop:

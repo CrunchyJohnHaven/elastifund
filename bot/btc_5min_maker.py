@@ -26,7 +26,7 @@ import math
 import os
 import sqlite3
 import time
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_FLOOR
 from datetime import datetime, timezone
@@ -62,6 +62,16 @@ CLOB_HARD_MIN_NOTIONAL_USD = 5.0
 PROBE_DEFAULT_UP_MAX_BUY_PRICE = 0.49
 PROBE_DEFAULT_DOWN_MAX_BUY_PRICE = 0.51
 ET_ZONE = ZoneInfo("America/New_York")
+LIVE_FILLED_STATUSES = {
+    "live_filled",
+    "live_partial_fill_cancelled",
+    "live_partial_fill_open",
+}
+BTC5_ATTRIBUTION_REASON_KEYS = (
+    "book_failure_attribution",
+    "placement_failure_attribution",
+    "order_outcome_attribution",
+)
 
 
 def _safe_float(value: Any, default: float | None = None) -> float | None:
@@ -95,6 +105,34 @@ def _join_reasons(*parts: str | None) -> str | None:
     return text or None
 
 
+def _reason_tag(name: str, value: str | None) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return f"{name}={text}"
+
+
+def _parse_reason_tags(reason: Any) -> dict[str, str]:
+    tags: dict[str, str] = {}
+    text = str(reason or "").strip()
+    if not text:
+        return tags
+    for part in text.split("|"):
+        piece = part.strip()
+        if "=" not in piece:
+            continue
+        key, value = piece.split("=", 1)
+        key = key.strip()
+        if key in BTC5_ATTRIBUTION_REASON_KEYS:
+            tags[key] = value.strip()
+    return tags
+
+
+def _is_post_only_cross_text(error_msg: Any) -> bool:
+    text = str(error_msg or "").strip().lower()
+    return "post-only" in text and "crosses book" in text
+
+
 def parse_json_list(value: Any) -> list[Any]:
     if isinstance(value, list):
         return value
@@ -115,6 +153,98 @@ def _normalized_env_optional_float(value: Any) -> float | None:
     if parsed is None or parsed <= 0:
         return None
     return float(parsed)
+
+
+def _day_start_utc_ts(now_ts: float | None = None) -> int:
+    now = datetime.fromtimestamp(float(now_ts) if now_ts is not None else time.time(), tz=timezone.utc)
+    return int(datetime(now.year, now.month, now.day, tzinfo=timezone.utc).timestamp())
+
+
+def _won_flag(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return 1 if int(value) == 1 else 0
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_live_filled_status(order_status: Any, filled: Any) -> bool:
+    status = str(order_status or "").strip().lower()
+    if status in LIVE_FILLED_STATUSES:
+        return True
+    try:
+        return bool(int(filled) == 1 and status.startswith("live_"))
+    except (TypeError, ValueError):
+        return False
+
+
+def _btc5_price_bucket(order_price: Any) -> str:
+    price = _safe_float(order_price, None)
+    if price is None:
+        return "unknown"
+    rounded = round(float(price), 2)
+    if rounded < 0.49:
+        return "<0.49"
+    if rounded < 0.50:
+        return "0.49"
+    if rounded < 0.51:
+        return "0.50"
+    return "0.51+"
+
+
+def _rollup_trade_group(group_rows: list[dict[str, Any]], *, label: str) -> dict[str, Any]:
+    fills = len(group_rows)
+    pnl = round(sum(_safe_float(row.get("pnl_usd"), 0.0) for row in group_rows), 4)
+    avg_pnl = round(pnl / fills, 4) if fills else 0.0
+    avg_price = round(
+        sum(_safe_float(row.get("order_price"), 0.0) for row in group_rows) / fills,
+        4,
+    ) if fills else 0.0
+    settled = [row for row in group_rows if _won_flag(row.get("won")) is not None]
+    wins = sum(1 for row in settled if _won_flag(row.get("won")) == 1)
+    return {
+        "label": label,
+        "fills": fills,
+        "pnl_usd": pnl,
+        "avg_pnl_usd": avg_pnl,
+        "avg_order_price": avg_price,
+        "settled_fills": len(settled),
+        "wins": wins,
+        "win_rate": round(wins / len(settled), 4) if settled else None,
+    }
+
+
+def _infer_row_attributions(row: dict[str, Any]) -> dict[str, str]:
+    tags = _parse_reason_tags(row.get("reason"))
+    status = str(row.get("order_status") or "").strip().lower()
+    if "book_failure_attribution" not in tags:
+        if status == "skip_no_book":
+            tags["book_failure_attribution"] = "no_book"
+        elif status == "skip_bad_book":
+            tags["book_failure_attribution"] = "bad_book"
+    if "placement_failure_attribution" not in tags and status == "live_order_failed":
+        tags["placement_failure_attribution"] = (
+            "post_only_cross_failure"
+            if _is_post_only_cross_text(row.get("reason"))
+            else "order_placement_failure"
+        )
+    if "order_outcome_attribution" not in tags:
+        if status == "live_cancelled_unfilled":
+            tags["order_outcome_attribution"] = "cancel_before_fill"
+        elif status == "live_partial_fill_cancelled":
+            tags["order_outcome_attribution"] = "partial_fill_then_cancel"
+    return tags
+
+
+def _classify_book_quotes(best_bid: float | None, best_ask: float | None) -> tuple[str | None, str | None]:
+    if best_bid is None or best_ask is None:
+        return "bad_book", f"best_bid={best_bid} best_ask={best_ask}"
+    if best_bid < 0.0 or best_bid > 1.0 or best_ask <= 0.0 or best_ask > 1.0:
+        return "bad_book", f"best_bid={best_bid} best_ask={best_ask}"
+    if best_bid >= best_ask:
+        return "bad_book", f"best_bid={best_bid} best_ask={best_ask} crossed_or_inverted_book"
+    return None, None
 
 
 def current_window_start(ts: float | None = None) -> int:
@@ -363,6 +493,8 @@ def summarize_recent_direction_regime(
     weaker_direction_quote_ticks: int,
     min_fills_per_direction: int,
     min_pnl_gap_usd: float,
+    enable_one_sided_guardrail: bool,
+    one_sided_min_pnl_gap_usd: float,
 ) -> dict[str, Any] | None:
     if not rows:
         return None
@@ -377,24 +509,8 @@ def summarize_recent_direction_regime(
     if not direction_groups:
         return None
 
-    def _rollup(direction: str, group_rows: list[dict[str, Any]]) -> dict[str, Any]:
-        fills = len(group_rows)
-        pnl = round(sum(_safe_float(row.get("pnl_usd"), 0.0) for row in group_rows), 4)
-        avg_pnl = round(pnl / fills, 4) if fills else 0.0
-        avg_price = round(
-            sum(_safe_float(row.get("order_price"), 0.0) for row in group_rows) / fills,
-            4,
-        ) if fills else 0.0
-        return {
-            "label": direction,
-            "fills": fills,
-            "pnl_usd": pnl,
-            "avg_pnl_usd": avg_pnl,
-            "avg_order_price": avg_price,
-        }
-
     by_direction = sorted(
-        (_rollup(direction, group_rows) for direction, group_rows in direction_groups.items()),
+        (_rollup_trade_group(group_rows, label=direction) for direction, group_rows in direction_groups.items()),
         key=lambda item: (-item["pnl_usd"], -item["fills"], item["label"]),
     )
     regime = {
@@ -403,10 +519,17 @@ def summarize_recent_direction_regime(
         "weaker_direction_quote_ticks": max(0, int(weaker_direction_quote_ticks)),
         "min_fills_per_direction": max(1, int(min_fills_per_direction)),
         "min_pnl_gap_usd": round(max(0.0, float(min_pnl_gap_usd)), 4),
+        "enable_one_sided_guardrail": bool(enable_one_sided_guardrail),
+        "one_sided_min_pnl_gap_usd": round(max(0.0, float(one_sided_min_pnl_gap_usd)), 4),
         "by_direction": by_direction,
         "triggered": False,
         "trigger_reason": "insufficient_directions",
         "direction_quote_ticks": {},
+        "directional_mode": "two_sided",
+        "allowed_directions": [item["label"] for item in by_direction],
+        "suppressed_direction": None,
+        "one_sided_triggered": False,
+        "one_sided_trigger_reason": "insufficient_directions",
     }
     if len(by_direction) < 2:
         return regime
@@ -425,12 +548,15 @@ def summarize_recent_direction_regime(
     min_fills = regime["min_fills_per_direction"]
     if favored["fills"] < min_fills or weaker["fills"] < min_fills:
         regime["trigger_reason"] = "insufficient_fills"
+        regime["one_sided_trigger_reason"] = "insufficient_fills"
         return regime
     if favored["avg_pnl_usd"] <= weaker["avg_pnl_usd"]:
         regime["trigger_reason"] = "no_avg_pnl_edge"
+        regime["one_sided_trigger_reason"] = "no_avg_pnl_edge"
         return regime
     if pnl_gap < regime["min_pnl_gap_usd"]:
         regime["trigger_reason"] = "pnl_gap_below_threshold"
+        regime["one_sided_trigger_reason"] = "pnl_gap_below_threshold"
         return regime
 
     regime["triggered"] = True
@@ -439,6 +565,13 @@ def summarize_recent_direction_regime(
         favored["label"]: regime["default_quote_ticks"],
         weaker["label"]: regime["weaker_direction_quote_ticks"],
     }
+    regime["one_sided_trigger_reason"] = "disabled" if not enable_one_sided_guardrail else "pnl_gap_below_one_sided_threshold"
+    if enable_one_sided_guardrail and pnl_gap >= regime["one_sided_min_pnl_gap_usd"]:
+        regime["one_sided_triggered"] = True
+        regime["one_sided_trigger_reason"] = "weaker_direction_suppressed"
+        regime["directional_mode"] = "one_sided"
+        regime["suppressed_direction"] = weaker["label"]
+        regime["allowed_directions"] = [favored["label"]]
     return regime
 
 
@@ -543,6 +676,13 @@ class MakerConfig:
     regime_min_pnl_gap_usd: float = float(os.environ.get("BTC5_REGIME_MIN_PNL_GAP_USD", "20.0"))
     regime_weaker_direction_quote_ticks: int = int(
         os.environ.get("BTC5_REGIME_WEAKER_DIRECTION_QUOTE_TICKS", "0")
+    )
+    enable_recent_regime_one_sided_guardrail: bool = os.environ.get(
+        "BTC5_ENABLE_RECENT_REGIME_ONE_SIDED_GUARDRAIL",
+        "true",
+    ).lower() in {"1", "true", "yes"}
+    regime_one_sided_min_pnl_gap_usd: float = float(
+        os.environ.get("BTC5_REGIME_ONE_SIDED_MIN_PNL_GAP_USD", "30.0")
     )
     min_buy_price: float = float(os.environ.get("BTC5_MIN_BUY_PRICE", "0.90"))
     tick_size: float = float(os.environ.get("BTC5_TICK_SIZE", "0.01"))
@@ -771,8 +911,7 @@ class TradeDB:
         return rows
 
     def today_realized_pnl(self) -> float:
-        now = datetime.now(timezone.utc)
-        day_start = int(datetime(now.year, now.month, now.day, tzinfo=timezone.utc).timestamp())
+        day_start = _day_start_utc_ts()
         with self._connect() as conn:
             row = conn.execute(
                 """
@@ -806,6 +945,97 @@ class TradeDB:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def intraday_live_summary(self, *, now_ts: float | None = None) -> dict[str, Any]:
+        day_start = _day_start_utc_ts(now_ts)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    id,
+                    decision_ts,
+                    direction,
+                    order_price,
+                    order_status,
+                    filled,
+                    reason,
+                    won,
+                    pnl_usd
+                FROM window_trades
+                WHERE decision_ts >= ?
+                ORDER BY decision_ts ASC, id ASC
+                """,
+                (day_start,),
+            ).fetchall()
+        day_rows = [dict(row) for row in rows]
+        live_filled_rows = [
+            row for row in day_rows if _is_live_filled_status(row.get("order_status"), row.get("filled"))
+        ]
+        skip_counts = Counter(
+            str(row.get("order_status") or "").strip().lower()
+            for row in day_rows
+            if str(row.get("order_status") or "").strip().lower().startswith("skip_")
+        )
+        order_failure_counts: Counter[str] = Counter()
+        for row in day_rows:
+            for attribution in _infer_row_attributions(row).values():
+                order_failure_counts[attribution] += 1
+
+        direction_groups: dict[str, list[dict[str, Any]]] = {}
+        price_bucket_groups: dict[str, list[dict[str, Any]]] = {}
+        for row in live_filled_rows:
+            direction = str(row.get("direction") or "UNKNOWN").strip().upper() or "UNKNOWN"
+            direction_groups.setdefault(direction, []).append(row)
+            price_bucket_groups.setdefault(_btc5_price_bucket(row.get("order_price")), []).append(row)
+
+        direction_performance = sorted(
+            (_rollup_trade_group(group_rows, label=direction) for direction, group_rows in direction_groups.items()),
+            key=lambda item: (-item["pnl_usd"], -item["fills"], item["label"]),
+        )
+        bucket_order = {"<0.49": 0, "0.49": 1, "0.50": 2, "0.51+": 3, "unknown": 99}
+        price_bucket_performance = sorted(
+            (_rollup_trade_group(group_rows, label=bucket) for bucket, group_rows in price_bucket_groups.items()),
+            key=lambda item: bucket_order.get(item["label"], 99),
+        )
+        settled_live = [row for row in live_filled_rows if _won_flag(row.get("won")) is not None]
+        wins = sum(1 for row in settled_live if _won_flag(row.get("won")) == 1)
+
+        def _recent_live_pnl(limit: int) -> float:
+            recent_rows = self.recent_live_filled(limit=limit)
+            return round(sum(_safe_float(row.get("pnl_usd"), 0.0) for row in recent_rows), 4)
+
+        best_direction_today = direction_performance[0] if direction_performance else None
+        best_price_bucket_today = max(
+            price_bucket_performance,
+            key=lambda item: (item["pnl_usd"], item["fills"], -bucket_order.get(item["label"], 99)),
+            default=None,
+        )
+        return {
+            "filled_rows_today": len(live_filled_rows),
+            "filled_pnl_usd_today": round(
+                sum(_safe_float(row.get("pnl_usd"), 0.0) for row in live_filled_rows),
+                4,
+            ),
+            "win_rate_today": round(wins / len(settled_live), 4) if settled_live else 0.0,
+            "recent_5_pnl_usd": _recent_live_pnl(5),
+            "recent_12_pnl_usd": _recent_live_pnl(12),
+            "recent_20_pnl_usd": _recent_live_pnl(20),
+            "skip_price_count": int(skip_counts.get("skip_price_outside_guardrails", 0)),
+            "order_failed_count": sum(
+                1 for row in day_rows if str(row.get("order_status") or "").strip().lower() == "live_order_failed"
+            ),
+            "cancelled_unfilled_count": sum(
+                1
+                for row in day_rows
+                if str(row.get("order_status") or "").strip().lower() == "live_cancelled_unfilled"
+            ),
+            "skip_counts": dict(sorted(skip_counts.items())),
+            "order_failure_counts": dict(sorted(order_failure_counts.items())),
+            "direction_performance_today": direction_performance,
+            "price_bucket_performance_today": price_bucket_performance,
+            "best_direction_today": best_direction_today,
+            "best_price_bucket_today": best_price_bucket_today,
+        }
+
     def status_summary(self) -> dict[str, Any]:
         with self._connect() as conn:
             totals = conn.execute(
@@ -834,6 +1064,7 @@ class TradeDB:
             "win_rate": (wins / settled_fills) if settled_fills else 0.0,
             "total_pnl_usd": float(totals["total_pnl"] or 0.0),
             "today_pnl_usd": self.today_realized_pnl(),
+            "intraday_live_summary": self.intraday_live_summary(),
         }
 
 
@@ -1160,6 +1391,8 @@ class BTC5MinMakerBot:
             weaker_direction_quote_ticks=self.cfg.regime_weaker_direction_quote_ticks,
             min_fills_per_direction=self.cfg.regime_min_fills_per_direction,
             min_pnl_gap_usd=self.cfg.regime_min_pnl_gap_usd,
+            enable_one_sided_guardrail=self.cfg.enable_recent_regime_one_sided_guardrail,
+            one_sided_min_pnl_gap_usd=self.cfg.regime_one_sided_min_pnl_gap_usd,
         )
 
     def _probe_max_buy_price(self, direction: str) -> float:
@@ -1228,8 +1461,7 @@ class BTC5MinMakerBot:
 
     @staticmethod
     def _is_post_only_cross_error(error_msg: str | None) -> bool:
-        text = str(error_msg or "").strip().lower()
-        return "post-only" in text and "crosses book" in text
+        return _is_post_only_cross_text(error_msg)
 
     async def _retry_post_only_cross(
         self,
@@ -1422,7 +1654,7 @@ class BTC5MinMakerBot:
         order_id: str,
         requested_shares: float,
         window_end_ts: int,
-    ) -> tuple[str, int | None, float | None, str | None]:
+    ) -> tuple[str, int | None, float | None, str | None, str | None]:
         cancel_at = window_end_ts - self.cfg.cancel_seconds_before_close
         wait_seconds = max(0.0, cancel_at - time.time())
         if wait_seconds > 0:
@@ -1430,11 +1662,11 @@ class BTC5MinMakerBot:
 
         before_cancel = self.clob.get_order_state(order_id)
         if before_cancel and before_cancel.fully_filled:
-            return "live_filled", 1, before_cancel.size_matched or requested_shares, None
+            return "live_filled", 1, before_cancel.size_matched or requested_shares, None, None
         if before_cancel and before_cancel.partially_filled and before_cancel.is_cancelled:
-            return "live_partial_fill_cancelled", 1, before_cancel.size_matched, None
+            return "live_partial_fill_cancelled", 1, before_cancel.size_matched, None, "partial_fill_then_cancel"
         if before_cancel and before_cancel.is_cancelled and before_cancel.size_matched <= 0:
-            return "live_cancelled_unfilled", 0, 0.0, None
+            return "live_cancelled_unfilled", 0, 0.0, None, "cancel_before_fill"
 
         cancelled = self.clob.cancel_order(order_id)
         after_cancel = self.clob.get_order_state(order_id)
@@ -1442,22 +1674,23 @@ class BTC5MinMakerBot:
 
         if final_state:
             if final_state.fully_filled:
-                return "live_filled", 1, final_state.size_matched or requested_shares, None
+                return "live_filled", 1, final_state.size_matched or requested_shares, None, None
             if final_state.partially_filled:
                 return (
                     "live_partial_fill_cancelled" if cancelled or final_state.is_cancelled else "live_partial_fill_open",
                     1,
                     final_state.size_matched,
                     None,
+                    "partial_fill_then_cancel" if cancelled or final_state.is_cancelled else None,
                 )
             if final_state.is_cancelled:
-                return "live_cancelled_unfilled", 0, 0.0, None
+                return "live_cancelled_unfilled", 0, 0.0, None, "cancel_before_fill"
             if final_state.is_live:
-                return "live_cancel_unknown", None, None, f"status={final_state.normalized_status}"
+                return "live_cancel_unknown", None, None, f"status={final_state.normalized_status}", None
 
         if cancelled:
-            return "live_cancelled_unfilled", 0, 0.0, None
-        return "live_cancel_unknown", None, None, "order_status_unavailable"
+            return "live_cancelled_unfilled", 0, 0.0, None, "cancel_before_fill"
+        return "live_cancel_unknown", None, None, "order_status_unavailable", None
 
     async def _process_window(self, *, window_start_ts: int, http: MarketHttpClient) -> dict[str, Any]:
         window_end_ts = window_start_ts + WINDOW_SECONDS
@@ -1465,12 +1698,27 @@ class BTC5MinMakerBot:
         session_override = active_session_guardrail_override(self.cfg, window_start_ts=window_start_ts)
         session_policy_name = session_override.session_name if session_override is not None else None
         session_reason = session_guardrail_reason(session_override, window_start_ts=window_start_ts)
+        recent_regime: dict[str, Any] | None = None
 
         def _result(payload: dict[str, Any]) -> dict[str, Any]:
             if "session_override_triggered" not in payload:
                 payload["session_override_triggered"] = session_override is not None
             if "session_policy_name" not in payload:
                 payload["session_policy_name"] = session_policy_name
+            if "directional_mode" not in payload:
+                payload["directional_mode"] = (
+                    str((recent_regime or {}).get("directional_mode") or "two_sided")
+                    if recent_regime
+                    else "two_sided"
+                )
+            if "suppressed_direction" not in payload:
+                payload["suppressed_direction"] = (recent_regime or {}).get("suppressed_direction")
+            if "book_failure_attribution" not in payload:
+                payload["book_failure_attribution"] = None
+            if "placement_failure_attribution" not in payload:
+                payload["placement_failure_attribution"] = None
+            if "order_outcome_attribution" not in payload:
+                payload["order_outcome_attribution"] = None
             return payload
 
         if self.db.window_exists(window_start_ts):
@@ -1577,6 +1825,10 @@ class BTC5MinMakerBot:
                 "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
             })
 
+        recent_regime = self._recent_direction_regime()
+        directional_mode = str((recent_regime or {}).get("directional_mode") or "two_sided")
+        suppressed_direction = str((recent_regime or {}).get("suppressed_direction") or "").strip().upper() or None
+        quote_ticks: int | None = None
         market = await http.fetch_market_by_slug(slug)
         if not market:
             row = {
@@ -1609,6 +1861,41 @@ class BTC5MinMakerBot:
             self.db.upsert_window(row)
             return _result({"window_start_ts": window_start_ts, "status": row["order_status"]})
 
+        regime_reason = None
+        if recent_regime and recent_regime.get("triggered"):
+            favored = recent_regime.get("favored_direction") or "n/a"
+            weaker = recent_regime.get("weaker_direction") or "n/a"
+            regime_reason = f"recent_regime favored={favored} weaker={weaker} directional_mode={directional_mode}"
+        if suppressed_direction and direction == suppressed_direction:
+            row = {
+                "window_start_ts": window_start_ts,
+                "window_end_ts": window_end_ts,
+                "slug": slug,
+                "direction": direction,
+                "open_price": open_price,
+                "current_price": current_price,
+                "delta": delta,
+                "token_id": token_id,
+                "order_status": "skip_direction_suppressed",
+                "reason": _join_reasons(
+                    probe_reason,
+                    session_reason,
+                    regime_reason,
+                    _reason_tag("suppressed_direction", suppressed_direction),
+                ),
+            }
+            self.db.upsert_window(row)
+            return _result(
+                {
+                    "window_start_ts": window_start_ts,
+                    "status": row["order_status"],
+                    "direction": direction,
+                    "delta": delta,
+                    "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
+                    "regime_triggered": bool(recent_regime and recent_regime.get("triggered")),
+                }
+            )
+
         book = await http.fetch_book(token_id)
         if not book:
             row = {
@@ -1621,12 +1908,58 @@ class BTC5MinMakerBot:
                 "delta": delta,
                 "token_id": token_id,
                 "order_status": "skip_no_book",
-                "reason": session_reason,
+                "reason": _join_reasons(
+                    probe_reason,
+                    session_reason,
+                    regime_reason,
+                    _reason_tag("book_failure_attribution", "no_book"),
+                ),
             }
             self.db.upsert_window(row)
-            return _result({"window_start_ts": window_start_ts, "status": row["order_status"]})
+            return _result(
+                {
+                    "window_start_ts": window_start_ts,
+                    "status": row["order_status"],
+                    "direction": direction,
+                    "delta": delta,
+                    "book_failure_attribution": "no_book",
+                }
+            )
 
-        recent_regime = self._recent_direction_regime()
+        best_bid, best_ask = http.top_of_book(book)
+        book_failure_attribution, book_detail = _classify_book_quotes(best_bid, best_ask)
+        if book_failure_attribution is not None:
+            row = {
+                "window_start_ts": window_start_ts,
+                "window_end_ts": window_end_ts,
+                "slug": slug,
+                "direction": direction,
+                "open_price": open_price,
+                "current_price": current_price,
+                "delta": delta,
+                "token_id": token_id,
+                "best_bid": best_bid,
+                "best_ask": best_ask,
+                "order_status": "skip_bad_book",
+                "reason": _join_reasons(
+                    probe_reason,
+                    session_reason,
+                    regime_reason,
+                    _reason_tag("book_failure_attribution", book_failure_attribution),
+                    book_detail,
+                ),
+            }
+            self.db.upsert_window(row)
+            return _result(
+                {
+                    "window_start_ts": window_start_ts,
+                    "status": row["order_status"],
+                    "direction": direction,
+                    "delta": delta,
+                    "book_failure_attribution": book_failure_attribution,
+                }
+            )
+
         quote_ticks = effective_quote_ticks(
             self.cfg,
             direction,
@@ -1635,7 +1968,6 @@ class BTC5MinMakerBot:
         )
         if probe_mode:
             quote_ticks = min(int(quote_ticks), int(probe_mode["quote_ticks"]))
-        regime_reason = None
         if recent_regime and recent_regime.get("triggered"):
             favored = recent_regime.get("favored_direction") or "n/a"
             weaker = recent_regime.get("weaker_direction") or "n/a"
@@ -1643,13 +1975,14 @@ class BTC5MinMakerBot:
                 f"recent_regime favored={favored} weaker={weaker} "
                 f"{direction}_quote_ticks={quote_ticks}"
             )
+            if recent_regime.get("one_sided_triggered"):
+                regime_reason = f"{regime_reason} suppressed_direction={suppressed_direction}"
         mode_max_buy_price = effective_max_buy_price(self.cfg, direction, session_override=session_override)
         if probe_mode and direction == "UP":
             mode_max_buy_price = min(mode_max_buy_price, float(probe_mode["up_max_buy_price"]))
         elif probe_mode and direction == "DOWN":
             mode_max_buy_price = min(mode_max_buy_price, float(probe_mode["down_max_buy_price"]))
 
-        best_bid, best_ask = http.top_of_book(book)
         order_price = choose_maker_buy_price(
             best_bid=best_bid,
             best_ask=best_ask,
@@ -1742,6 +2075,8 @@ class BTC5MinMakerBot:
         order_status = "order_error"
         reason: str | None = _join_reasons(probe_reason, session_reason, regime_reason)
         executed_shares = shares
+        placement_failure_attribution: str | None = None
+        order_outcome_attribution: str | None = None
 
         if self.cfg.paper_trading:
             order_id = f"paper-{window_start_ts}"
@@ -1768,6 +2103,7 @@ class BTC5MinMakerBot:
                 )
 
             if not placement.success and self._is_post_only_cross_error(placement.error_msg):
+                placement_failure_attribution = "post_only_cross_failure"
                 retry_payload = await self._retry_post_only_cross(
                     http=http,
                     token_id=token_id,
@@ -1800,20 +2136,45 @@ class BTC5MinMakerBot:
             if placement.success:
                 order_id = placement.order_id
                 order_status = f"live_{placement.status}" if placement.status else "live_order_placed"
-                reason = _join_reasons(reason, retry_note)
+                reason = _join_reasons(
+                    reason,
+                    retry_note,
+                    _reason_tag("placement_failure_attribution", placement_failure_attribution),
+                )
             else:
                 order_status = "live_order_failed"
+                if placement_failure_attribution is None:
+                    placement_failure_attribution = (
+                        "post_only_cross_failure"
+                        if self._is_post_only_cross_error(placement.error_msg)
+                        else "order_placement_failure"
+                    )
                 if placement.error_msg:
                     logger.error("Live order placement failed: %s", placement.error_msg)
-                reason = _join_reasons(reason, retry_note, placement.error_msg)
+                reason = _join_reasons(
+                    reason,
+                    retry_note,
+                    _reason_tag("placement_failure_attribution", placement_failure_attribution),
+                    placement.error_msg,
+                )
 
             if order_id and placement.success:
-                order_status, filled, executed_shares, reconcile_reason = await self._reconcile_live_order(
+                (
+                    order_status,
+                    filled,
+                    executed_shares,
+                    reconcile_reason,
+                    order_outcome_attribution,
+                ) = await self._reconcile_live_order(
                     order_id=order_id,
                     requested_shares=shares,
                     window_end_ts=window_end_ts,
                 )
-                reason = _join_reasons(reason, reconcile_reason)
+                reason = _join_reasons(
+                    reason,
+                    _reason_tag("order_outcome_attribution", order_outcome_attribution),
+                    reconcile_reason,
+                )
             else:
                 filled = 0
                 executed_shares = 0.0
@@ -1851,6 +2212,8 @@ class BTC5MinMakerBot:
             "quote_ticks": quote_ticks,
             "regime_triggered": bool(recent_regime and recent_regime.get("triggered")),
             "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
+            "placement_failure_attribution": placement_failure_attribution,
+            "order_outcome_attribution": order_outcome_attribution,
         })
 
     async def run_windows(self, *, count: int, continuous: bool) -> None:
@@ -1901,6 +2264,9 @@ class BTC5MinMakerBot:
             http = MarketHttpClient(self.cfg, session)
             ws = current_window_start()
             return await self._process_window(window_start_ts=ws, http=http)
+
+    def live_summary(self) -> dict[str, Any]:
+        return self.db.intraday_live_summary()
 
     def print_status(self) -> None:
         status = self.db.status_summary()

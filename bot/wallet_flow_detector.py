@@ -40,6 +40,7 @@ import os
 import sys
 import json
 import time
+import re
 import sqlite3
 import logging
 import argparse
@@ -48,6 +49,7 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass, asdict, field
 from typing import Any, Optional, Dict, List
+from zoneinfo import ZoneInfo
 
 logging.basicConfig(
     level=logging.INFO,
@@ -128,6 +130,15 @@ class WalletFlowSignal:
     avg_smart_score: float      # Average activity score of agreeing wallets
     signal_age_seconds: float   # How old the earliest trade in consensus is
     timestamp: str
+    wallet_consensus_wallets: Optional[int] = None
+    wallet_consensus_notional_usd: Optional[float] = None
+    wallet_consensus_share: Optional[float] = None
+    wallet_opposition_wallets: Optional[int] = None
+    wallet_opposition_notional_usd: Optional[float] = None
+    wallet_signal_age_seconds: Optional[float] = None
+    wallet_window_start_ts: Optional[str] = None
+    wallet_window_minutes: Optional[int] = None
+    wallet_conflict_resolution: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -218,6 +229,52 @@ def _resolve_conflicting_market_signals(raw_signals: List[Dict[str, Any]]) -> li
         resolved.append(top)
 
     return resolved
+
+
+def _parse_window_metadata_from_title(
+    title: str,
+    *,
+    reference_ts: int,
+) -> tuple[Optional[str], Optional[int]]:
+    """
+    Parse BTC fast-window metadata from market title text when available.
+
+    Returns:
+      (window_start_ts_utc_iso, window_minutes)
+    """
+    text = str(title or "")
+    lowered = text.lower()
+
+    window_minutes = None
+    minutes_match = re.search(r"(\d{1,2})\s*(?:m|min|minute)s?\b", lowered)
+    if minutes_match:
+        try:
+            window_minutes = int(minutes_match.group(1))
+        except ValueError:
+            window_minutes = None
+
+    start_ts = None
+    et_match = re.search(
+        r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*et\b",
+        lowered,
+        flags=re.IGNORECASE,
+    )
+    if et_match:
+        try:
+            hour = int(et_match.group(1))
+            minute = int(et_match.group(2) or "0")
+            am_pm = str(et_match.group(3)).lower()
+            if hour == 12:
+                hour = 0
+            if am_pm == "pm":
+                hour += 12
+            ref_et = datetime.fromtimestamp(int(reference_ts), tz=ZoneInfo("America/New_York"))
+            start_et = ref_et.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            start_ts = start_et.astimezone(timezone.utc).isoformat()
+        except Exception:
+            start_ts = None
+
+    return start_ts, window_minutes
 
 
 def is_crypto_fast_market(title: str) -> bool:
@@ -892,6 +949,7 @@ class FlowMonitor:
         agree on the same effective outcome.
         """
         market_sides = {}  # {(conditionId, effective_outcome): [trades]}
+        market_all_sides: Dict[str, Dict[int, list]] = {}
 
         for t in self._recent_trades:
             wallet = t.get("proxyWallet", "")
@@ -910,6 +968,7 @@ class FlowMonitor:
             if key not in market_sides:
                 market_sides[key] = []
             market_sides[key].append(t)
+            market_all_sides.setdefault(cid, {}).setdefault(effective, []).append(t)
 
         # Check for consensus
         signals = []
@@ -941,11 +1000,28 @@ class FlowMonitor:
             wallet_factor = min(0.3, (len(unique_wallets) - 2) * 0.1)
             quality_factor = min(0.2, (avg_score / 100) * 0.2)
             size_factor = min(0.15, (total_size / 100) * 0.15)
-            confidence = min(0.95, 0.35 + wallet_factor + quality_factor + size_factor)
+            base_confidence = min(0.95, 0.35 + wallet_factor + quality_factor + size_factor)
+
+            opposite_outcome = 1 - int(effective_outcome)
+            opposing_trades = market_all_sides.get(cid, {}).get(opposite_outcome, [])
+            opposing_wallets = {t.get("proxyWallet", "") for t in opposing_trades if t.get("proxyWallet", "")}
+            opposing_size = sum(float(t.get("size", 0) or 0) for t in opposing_trades)
+
+            combined_size = max(1e-6, total_size + opposing_size)
+            consensus_share = max(0.0, min(1.0, total_size / combined_size))
+            opposition_penalty = min(0.20, (1.0 - consensus_share) * 0.35)
+
+            max_age_seconds = max(1, CONSENSUS_WINDOW_MINUTES * 60)
+            freshness_factor = max(0.40, 1.0 - (signal_age / (max_age_seconds * 1.25)))
+            confidence = min(0.95, max(0.01, (base_confidence * freshness_factor) - opposition_penalty))
 
             title = trades[0].get("title", "Unknown Market")
             outcome_name = trades[0].get("outcome", f"Outcome {effective_outcome}")
             direction = f"outcome_{effective_outcome}"
+            window_start_ts, window_minutes = _parse_window_metadata_from_title(
+                title,
+                reference_ts=earliest_ts,
+            )
 
             signal = WalletFlowSignal(
                 market_id=cid,
@@ -958,14 +1034,23 @@ class FlowMonitor:
                 avg_smart_score=avg_score,
                 signal_age_seconds=signal_age,
                 timestamp=datetime.now(timezone.utc).isoformat(),
+                wallet_consensus_wallets=len(unique_wallets),
+                wallet_consensus_notional_usd=round(total_size, 4),
+                wallet_consensus_share=round(consensus_share, 4),
+                wallet_opposition_wallets=len(opposing_wallets),
+                wallet_opposition_notional_usd=round(opposing_size, 4),
+                wallet_signal_age_seconds=round(float(signal_age), 4),
+                wallet_window_start_ts=window_start_ts,
+                wallet_window_minutes=window_minutes,
             )
             signals.append(signal)
 
             logger.info(
                 f"CONSENSUS SIGNAL: {outcome_name} ({direction}) on {title[:50]}\n"
                 f"  Wallets: {len(unique_wallets)} | Size: ${total_size:.2f} | "
+                f"Opposition: {len(opposing_wallets)} wallets ${opposing_size:.2f} | "
                 f"Confidence: {confidence:.2f} | Avg Score: {avg_score:.0f} | "
-                f"Age: {signal_age}s"
+                f"Age: {signal_age}s | Share: {consensus_share:.2f}"
             )
 
         return signals
@@ -1021,7 +1106,13 @@ def scan_for_signals() -> list:
     _persistent_monitor.poll_trades()
     signals = _persistent_monitor.get_consensus_signals()
 
-    return [asdict(s) for s in signals]
+    out: list[Dict[str, Any]] = []
+    for signal in signals:
+        if isinstance(signal, WalletFlowSignal):
+            out.append(asdict(signal))
+        elif isinstance(signal, dict):
+            out.append(signal)
+    return out
 
 
 def get_signals_for_engine() -> list:
@@ -1069,7 +1160,7 @@ def get_signals_for_engine() -> list:
                 f"({suppressed_direction}, {suppressed_wallets} wallets, ${suppressed_size:.2f})"
             )
 
-        engine_signals.append({
+        payload: Dict[str, Any] = {
             "market_id": sig.get("market_id", ""),
             "question": sig.get("market_title", ""),
             "direction": direction,
@@ -1083,7 +1174,41 @@ def get_signals_for_engine() -> list:
             "category": "crypto",
             "resolution_hours": 0.25,  # Fast markets (15 min default)
             "velocity_score": edge * 365 * 24 / 0.25,  # Annualized edge / lockup
-        })
+        }
+
+        consensus_wallets = sig.get("wallet_consensus_wallets")
+        if consensus_wallets is None:
+            consensus_wallets = sig.get("smart_wallets_count")
+        if consensus_wallets is not None:
+            payload["wallet_consensus_wallets"] = int(consensus_wallets)
+
+        consensus_notional = sig.get("wallet_consensus_notional_usd")
+        if consensus_notional is None:
+            consensus_notional = sig.get("total_smart_size")
+        if consensus_notional is not None:
+            payload["wallet_consensus_notional_usd"] = float(consensus_notional)
+
+        if sig.get("wallet_consensus_share") is not None:
+            payload["wallet_consensus_share"] = float(sig.get("wallet_consensus_share"))
+        if sig.get("wallet_opposition_wallets") is not None:
+            payload["wallet_opposition_wallets"] = int(sig.get("wallet_opposition_wallets"))
+        if sig.get("wallet_opposition_notional_usd") is not None:
+            payload["wallet_opposition_notional_usd"] = float(sig.get("wallet_opposition_notional_usd"))
+
+        signal_age = sig.get("wallet_signal_age_seconds")
+        if signal_age is None:
+            signal_age = sig.get("signal_age_seconds")
+        if signal_age is not None:
+            payload["wallet_signal_age_seconds"] = float(signal_age)
+
+        if sig.get("wallet_window_start_ts"):
+            payload["wallet_window_start_ts"] = sig.get("wallet_window_start_ts")
+        if sig.get("wallet_window_minutes") is not None:
+            payload["wallet_window_minutes"] = int(sig.get("wallet_window_minutes"))
+        if isinstance(conflict_resolution, dict):
+            payload["wallet_conflict_resolution"] = conflict_resolution
+
+        engine_signals.append(payload)
 
     return engine_signals
 

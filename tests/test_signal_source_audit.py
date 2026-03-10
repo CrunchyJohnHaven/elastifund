@@ -34,6 +34,10 @@ def test_build_audit_payload_handles_empty_runtime(tmp_path):
     assert payload["state_snapshot"]["cycles_completed"] == 314
     assert payload["recommendations"]["wallet_flow"]["recommendation"] == "collect_more_data"
     assert payload["recommendations"]["microstructure_gate"]["recommendation"] == "keep_as_gate"
+    assert "combined_sources_vs_single_source" in payload
+    assert "ranking_snapshot" in payload
+    assert payload["capital_ranking_support"]["stale_threshold_hours"] == 6.0
+    assert payload["capital_ranking_support"]["trade_attribution_ready"] is False
 
 
 def test_build_audit_payload_compares_wallet_flow_against_llm(tmp_path):
@@ -136,6 +140,14 @@ def test_build_audit_payload_compares_wallet_flow_against_llm(tmp_path):
     assert llm_metrics["total_trades"] == 2
     assert llm_metrics["wins"] == 1
     assert comparison["status"] == "ready"
+    assert comparison["winner"] == "wallet_flow"
     assert comparison["wallet_flow_any_win_rate_delta_vs_llm_only"] == 0.5
+    assert payload["combined_sources_vs_single_source"]["status"] == "insufficient_data"
+    assert payload["combined_sources_vs_single_source"]["combined_sources_beat_single_source_lanes"] is None
+    assert payload["ranking_snapshot"]["best_component_source"]["source"] == "wallet_flow"
+    assert payload["ranking_snapshot"]["best_component_source"]["win_rate"] == 1.0
     assert payload["recommendations"]["wallet_flow"]["recommendation"] == "keep"
     assert payload["state_snapshot"]["trade_log_has_source_attribution"] is True
+    assert payload["capital_ranking_support"]["trade_attribution_ready"] is True
+    assert payload["capital_ranking_support"]["wallet_flow_vs_llm_status"] == "ready"
+    assert payload["capital_ranking_support"]["best_component_source"] == "wallet_flow"

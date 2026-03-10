@@ -45,7 +45,22 @@ DEFAULT_WALLET_SCORES_PATH = Path("data/smart_wallets.json")
 DEFAULT_WALLET_DB_PATH = Path("data/wallet_scores.db")
 DEFAULT_TRADES_DB_PATH = Path("data/jj_trades.db")
 DEFAULT_BTC5_DB_PATH = Path("data/btc_5min_maker.db")
+DEFAULT_BTC5_WINDOW_ROWS_PATH = Path("reports/tmp_remote_btc5_window_rows.json")
 DEFAULT_LAUNCH_CHECKLIST_PATH = Path("docs/ops/TRADING_LAUNCH_CHECKLIST.md")
+BTC5_RESEARCH_STALE_HOURS = 6.0
+BTC5_RESEARCH_PRIMARY_PATHS: tuple[Path, ...] = (
+    Path("reports/btc5_autoresearch/latest.json"),
+    Path("reports/btc5_autoresearch_loop/latest.json"),
+)
+BTC5_RESEARCH_OPTIONAL_PATHS: tuple[Path, ...] = (
+    Path("reports/btc5_hypothesis_lab/summary.json"),
+    Path("reports/btc5_regime_policy_lab/summary.json"),
+)
+BTC5_PUBLIC_FORECAST_PATHS: tuple[Path, ...] = (
+    Path("reports/btc5_autoresearch/latest.json"),
+    Path("reports/btc5_autoresearch_current_probe/latest.json"),
+    Path("reports/btc5_autoresearch_loop/latest.json"),
+)
 DEFAULT_ROOT_TEST_COMMAND = ("make", "test")
 RESULT_SUMMARY_RE = re.compile(
     r"\b\d+\s+(?:passed|failed|error|errors|skipped|xfailed|xpassed)\b",
@@ -392,6 +407,143 @@ def _fetch_json_url(url: str, *, timeout_seconds: int = 20) -> Any:
         return json.loads(response.read().decode("utf-8"))
 
 
+def _fetch_paginated_polymarket_endpoint(
+    *,
+    base_url: str,
+    params: dict[str, Any],
+    limit: int = 200,
+    max_pages: int = 20,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    offset = 0
+    page_count = 0
+    while page_count < max(1, int(max_pages)):
+        query = dict(params)
+        query["limit"] = str(max(1, int(limit)))
+        query["offset"] = str(max(0, int(offset)))
+        payload = _fetch_json_url(base_url + "?" + urllib.parse.urlencode(query))
+        if not isinstance(payload, list) or not payload:
+            break
+        page_rows = [item for item in payload if isinstance(item, dict)]
+        if not page_rows:
+            break
+        rows.extend(page_rows)
+        page_count += 1
+        if len(page_rows) < limit:
+            break
+        offset += len(page_rows)
+    return rows
+
+
+def _position_market_text(item: dict[str, Any]) -> str:
+    parts = [
+        item.get("title"),
+        item.get("question"),
+        item.get("market"),
+        item.get("slug"),
+        item.get("ticker"),
+        item.get("conditionId"),
+        item.get("asset"),
+    ]
+    return " ".join(str(part or "").strip().lower() for part in parts if part is not None).strip()
+
+
+def _looks_like_btc5_contract(item: dict[str, Any]) -> bool:
+    text = _position_market_text(item)
+    if "btc" not in text:
+        return False
+    if any(token in text for token in ("5m", "5 min", "5-minute", "5 minute", "up or down", "up/down")):
+        return True
+    return "btc-updown" in text
+
+
+def _extract_position_event_ts(item: dict[str, Any]) -> datetime | None:
+    for key in (
+        "endDate",
+        "resolvedAt",
+        "resolved_at",
+        "updatedAt",
+        "updated_at",
+        "createdAt",
+        "created_at",
+        "timestamp",
+    ):
+        parsed = _parse_datetime_like(item.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _position_cashflow_usd(item: dict[str, Any]) -> float:
+    return round(
+        _safe_float(
+            _first_nonempty(
+                item.get("cashPnl"),
+                item.get("realizedPnl"),
+                item.get("pnl"),
+            ),
+            0.0,
+        ),
+        4,
+    )
+
+
+def _wallet_closed_batch_metrics(
+    *,
+    open_positions: list[dict[str, Any]],
+    closed_positions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    btc_closed = [item for item in closed_positions if _looks_like_btc5_contract(item)]
+    btc_cashflows = [_position_cashflow_usd(item) for item in btc_closed]
+    btc_wins = [value for value in btc_cashflows if value > 0.0]
+    btc_losses = [value for value in btc_cashflows if value < 0.0]
+    btc_sum = round(sum(btc_cashflows), 4)
+    gross_wins = round(sum(btc_wins), 4)
+    gross_losses_abs = round(abs(sum(btc_losses)), 4)
+    btc_profit_factor = None
+    if gross_losses_abs > 0:
+        btc_profit_factor = round(gross_wins / gross_losses_abs, 4)
+
+    btc_ts = [ts for ts in (_extract_position_event_ts(item) for item in btc_closed) if ts is not None]
+    btc_window_hours = None
+    if len(btc_ts) >= 2:
+        btc_window_hours = max(1.0 / 60.0, (max(btc_ts) - min(btc_ts)).total_seconds() / 3600.0)
+
+    all_closed_cashflow = round(sum(_position_cashflow_usd(item) for item in closed_positions), 4)
+    all_ts = [ts for ts in (_extract_position_event_ts(item) for item in closed_positions) if ts is not None]
+    all_window_hours = None
+    if len(all_ts) >= 2:
+        all_window_hours = max(1.0 / 60.0, (max(all_ts) - min(all_ts)).total_seconds() / 3600.0)
+
+    open_non_btc = [item for item in open_positions if not _looks_like_btc5_contract(item)]
+    open_non_btc_notional = round(
+        sum(
+            _safe_float(
+                _first_nonempty(item.get("initialValue"), item.get("currentValue"), item.get("size"), item.get("notional")),
+                0.0,
+            )
+            for item in open_non_btc
+        ),
+        4,
+    )
+    conservative_closed_net = round(all_closed_cashflow - open_non_btc_notional, 4)
+
+    return {
+        "btc_closed_cashflow_usd": btc_sum,
+        "btc_contracts_resolved": len(btc_closed),
+        "btc_wins": len(btc_wins),
+        "btc_losses": len(btc_losses),
+        "btc_profit_factor": btc_profit_factor,
+        "btc_average_win_usd": round((sum(btc_wins) / len(btc_wins)), 4) if btc_wins else None,
+        "btc_average_loss_usd": round((sum(btc_losses) / len(btc_losses)), 4) if btc_losses else None,
+        "btc_closed_window_hours": round(btc_window_hours, 4) if btc_window_hours is not None else None,
+        "all_book_closed_cashflow_usd": all_closed_cashflow,
+        "open_non_btc_notional_usd": open_non_btc_notional,
+        "conservative_closed_net_usd": conservative_closed_net,
+        "all_book_closed_window_hours": round(all_window_hours, 4) if all_window_hours is not None else None,
+    }
+
+
 def _micro_usdc_to_usd(value: Any) -> float:
     parsed = _float_or_none(value)
     if parsed is None:
@@ -512,6 +664,115 @@ def _summarize_btc5_fill_attribution(rows: list[dict[str, Any]]) -> dict[str, An
     }
 
 
+def _summarize_btc5_intraday_live(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "filled_rows_today": 0,
+            "filled_pnl_usd_today": 0.0,
+            "win_rate_today": None,
+            "recent_5_pnl_usd": 0.0,
+            "recent_12_pnl_usd": 0.0,
+            "recent_20_pnl_usd": 0.0,
+            "skip_price_count": 0,
+            "order_failed_count": 0,
+            "cancelled_unfilled_count": 0,
+            "best_direction_today": None,
+            "best_price_bucket_today": None,
+        }
+
+    parsed_rows: list[dict[str, Any]] = []
+    latest_ts: datetime | None = None
+    for row in rows:
+        ts = _parse_datetime_like(_first_nonempty(row.get("updated_at"), row.get("created_at")))
+        parsed = dict(row)
+        parsed["_event_ts"] = ts
+        parsed_rows.append(parsed)
+        if ts is not None and (latest_ts is None or ts > latest_ts):
+            latest_ts = ts
+
+    if latest_ts is None:
+        today_rows = parsed_rows
+    else:
+        today_rows = [row for row in parsed_rows if row.get("_event_ts") and row["_event_ts"].date() == latest_ts.date()]
+
+    def _status_text(row: dict[str, Any]) -> str:
+        return str(row.get("order_status") or "").strip().lower()
+
+    today_live_filled = [
+        row for row in today_rows if _status_text(row) == "live_filled"
+    ]
+    recent_live_filled = [
+        row for row in parsed_rows if _status_text(row) == "live_filled"
+    ]
+    recent_live_filled.sort(
+        key=lambda row: (
+            _int_or_none(row.get("id")) or 0,
+            (_parse_datetime_like(_first_nonempty(row.get("updated_at"), row.get("created_at")))
+             or datetime.fromtimestamp(0, tz=timezone.utc)).timestamp(),
+        ),
+        reverse=True,
+    )
+
+    def _sum_recent(n: int) -> float:
+        return round(sum(_safe_float(row.get("pnl_usd"), 0.0) for row in recent_live_filled[:n]), 4)
+
+    filled_rows_today = len(today_live_filled)
+    filled_pnl_usd_today = round(sum(_safe_float(row.get("pnl_usd"), 0.0) for row in today_live_filled), 4)
+    win_rate_today = (
+        round(sum(1 for row in today_live_filled if _safe_float(row.get("pnl_usd"), 0.0) > 0) / filled_rows_today, 4)
+        if filled_rows_today
+        else None
+    )
+
+    status_rows_today = [_status_text(row) for row in today_rows]
+    skip_price_count = sum(1 for status in status_rows_today if status == "skip_price_outside_guardrails" or "skip_price" in status)
+    order_failed_count = sum(1 for status in status_rows_today if status == "live_order_failed" or "order_failed" in status or status.endswith("_failed"))
+    cancelled_unfilled_count = sum(
+        1 for status in status_rows_today if status == "live_cancelled_unfilled" or "cancelled_unfilled" in status
+    )
+
+    best_direction_today = None
+    best_price_bucket_today = None
+    if today_live_filled:
+        by_direction: dict[str, list[dict[str, Any]]] = {}
+        by_bucket: dict[str, list[dict[str, Any]]] = {}
+        for row in today_live_filled:
+            direction = str(row.get("direction") or "UNKNOWN").strip().upper() or "UNKNOWN"
+            bucket = _btc5_price_bucket(row.get("order_price"))
+            by_direction.setdefault(direction, []).append(row)
+            by_bucket.setdefault(bucket, []).append(row)
+
+        def _rollup(label: str, group_rows: list[dict[str, Any]]) -> dict[str, Any]:
+            fills = len(group_rows)
+            pnl = round(sum(_safe_float(item.get("pnl_usd"), 0.0) for item in group_rows), 4)
+            return {"label": label, "fills": fills, "pnl_usd": pnl}
+
+        direction_rollups = [_rollup(label, group_rows) for label, group_rows in by_direction.items()]
+        direction_rollups.sort(key=lambda item: (-item["pnl_usd"], -item["fills"], item["label"]))
+        if direction_rollups:
+            best_direction_today = direction_rollups[0]
+
+        bucket_order = {"<0.49": 0, "0.49": 1, "0.50": 2, "0.51+": 3}
+        bucket_rollups = [_rollup(label, group_rows) for label, group_rows in by_bucket.items()]
+        bucket_rollups.sort(key=lambda item: (-item["pnl_usd"], -item["fills"], bucket_order.get(item["label"], 99)))
+        if bucket_rollups:
+            best_price_bucket_today = bucket_rollups[0]
+
+    return {
+        "filled_rows_today": filled_rows_today,
+        "filled_pnl_usd_today": filled_pnl_usd_today,
+        "win_rate_today": win_rate_today,
+        "recent_5_pnl_usd": _sum_recent(5),
+        "recent_12_pnl_usd": _sum_recent(12),
+        "recent_20_pnl_usd": _sum_recent(20),
+        "skip_price_count": skip_price_count,
+        "order_failed_count": order_failed_count,
+        "cancelled_unfilled_count": cancelled_unfilled_count,
+        "best_direction_today": best_direction_today,
+        "best_price_bucket_today": best_price_bucket_today,
+    }
+
+
 def _load_polymarket_wallet_state(root: Path) -> dict[str, Any]:
     env = _parse_env_file(root / DEFAULT_ENV_PATH)
     ssh_key = env.get("LIGHTSAIL_KEY")
@@ -610,12 +871,12 @@ PY""".replace("__REMOTE_BOT_DIR__", shlex.quote(REMOTE_BOT_DIR)).replace(
         warnings.append(f"positions_fetch_failed:{exc}")
 
     try:
-        payload = _fetch_json_url(
-            "https://data-api.polymarket.com/closed-positions?"
-            + urllib.parse.urlencode({"user": maker_address, "limit": "50", "offset": "0"})
+        closed_positions = _fetch_paginated_polymarket_endpoint(
+            base_url="https://data-api.polymarket.com/closed-positions",
+            params={"user": maker_address},
+            limit=200,
+            max_pages=20,
         )
-        if isinstance(payload, list):
-            closed_positions = [item for item in payload if isinstance(item, dict)]
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
         warnings.append(f"closed_positions_fetch_failed:{exc}")
 
@@ -625,6 +886,10 @@ PY""".replace("__REMOTE_BOT_DIR__", shlex.quote(REMOTE_BOT_DIR)).replace(
     realized_pnl = round(sum(_safe_float(item.get("realizedPnl"), 0.0) for item in closed_positions), 4)
     free_collateral = _micro_usdc_to_usd(remote_payload.get("free_collateral_usd"))
     reserved_order_usd = round(_safe_float(remote_payload.get("reserved_order_usd"), 0.0), 4)
+    closed_batch_metrics = _wallet_closed_batch_metrics(
+        open_positions=positions,
+        closed_positions=closed_positions,
+    )
 
     return {
         "status": "ok",
@@ -641,6 +906,7 @@ PY""".replace("__REMOTE_BOT_DIR__", shlex.quote(REMOTE_BOT_DIR)).replace(
         "positions_unrealized_pnl_usd": unrealized_pnl,
         "closed_positions_count": len(closed_positions),
         "closed_positions_realized_pnl_usd": realized_pnl,
+        "closed_batch_metrics": closed_batch_metrics,
         "total_wallet_value_usd": round(free_collateral + reserved_order_usd + current_value, 4),
         "warnings": warnings,
     }
@@ -838,6 +1104,19 @@ def _load_btc5_maker_state_from_db(
             WHERE order_status = 'live_filled'
             """
         ).fetchall()
+        intraday_rows = conn.execute(
+            """
+            SELECT
+                id,
+                direction,
+                order_price,
+                pnl_usd,
+                order_status,
+                created_at,
+                updated_at
+            FROM window_trades
+            """
+        ).fetchall()
     except sqlite3.DatabaseError as exc:
         return {
             "status": "unavailable",
@@ -854,8 +1133,10 @@ def _load_btc5_maker_state_from_db(
     latest_summary = dict(latest_row) if latest_row is not None else {}
     recent_rows = [dict(row) for row in recent_live_filled]
     all_live_filled_rows = [dict(row) for row in all_live_filled]
+    intraday_rows_all = [dict(row) for row in intraday_rows]
     guardrail_recommendation = _recommend_btc5_guardrails(all_live_filled_rows)
     fill_attribution = _summarize_btc5_fill_attribution(all_live_filled_rows)
+    intraday_live_summary = _summarize_btc5_intraday_live(intraday_rows_all)
     return {
         "status": "ok",
         "checked_at": checked_at,
@@ -882,6 +1163,7 @@ def _load_btc5_maker_state_from_db(
         "recent_live_filled": recent_rows,
         "guardrail_recommendation": guardrail_recommendation,
         "fill_attribution": fill_attribution,
+        "intraday_live_summary": intraday_live_summary,
     }
 
 
@@ -953,6 +1235,7 @@ def _merge_btc5_maker_observation(
     runtime = status.setdefault("runtime", {})
     latest_trade = btc5_maker.get("latest_trade") or {}
     fill_attribution = btc5_maker.get("fill_attribution") or {}
+    intraday_summary = btc5_maker.get("intraday_live_summary") or {}
     recent_regime = fill_attribution.get("recent_direction_regime") or {}
     runtime.update(
         {
@@ -991,6 +1274,7 @@ def _merge_btc5_maker_observation(
             "btc5_recent_regime_favored_direction": recent_regime.get("favored_direction"),
             "btc5_recent_regime_weaker_direction": recent_regime.get("weaker_direction"),
             "btc5_recent_regime_pnl_gap_usd": _float_or_none(recent_regime.get("pnl_gap_usd")),
+            "btc5_intraday_live_summary": intraday_summary,
         }
     )
 
@@ -1055,6 +1339,189 @@ def _refresh_remote_observation_cadence(
     )
 
 
+def _source_freshness_confidence(
+    *,
+    checked_at: Any,
+    source_status: str,
+    source_path: str | None = None,
+    warning_count: int = 0,
+) -> dict[str, Any]:
+    checked = _parse_datetime_like(checked_at)
+    age_minutes = (
+        round(max(0.0, (datetime.now(timezone.utc) - checked).total_seconds()) / 60.0, 1)
+        if checked is not None
+        else None
+    )
+    freshness = "unknown"
+    if age_minutes is not None:
+        if age_minutes <= 45.0:
+            freshness = "fresh"
+        elif age_minutes <= 180.0:
+            freshness = "aging"
+        else:
+            freshness = "stale"
+
+    confidence_score = 0.2
+    confidence_label = "low"
+    if source_status == "ok":
+        confidence_score = 0.9
+        confidence_label = "high"
+        if warning_count > 0:
+            confidence_score = max(0.55, confidence_score - (0.1 * min(warning_count, 3)))
+            confidence_label = "medium" if confidence_score < 0.85 else "high"
+        if freshness == "aging":
+            confidence_score = max(0.5, confidence_score - 0.15)
+            confidence_label = "medium"
+        elif freshness == "stale":
+            confidence_score = max(0.35, confidence_score - 0.3)
+            confidence_label = "low"
+    elif source_status in {"missing", "unavailable", "error"}:
+        confidence_score = 0.1
+        confidence_label = "low"
+
+    return {
+        "checked_at": checked.isoformat() if checked is not None else None,
+        "age_minutes": age_minutes,
+        "freshness": freshness,
+        "confidence_score": round(confidence_score, 2),
+        "confidence_label": confidence_label,
+        "status": source_status,
+        "source_path": source_path,
+    }
+
+
+def _build_accounting_reconciliation(status: dict[str, Any], *, root: Path) -> dict[str, Any]:
+    runtime = status.get("runtime", {})
+    capital = status.get("capital", {})
+    polymarket_wallet = status.get("polymarket_wallet", {})
+    btc5_maker = status.get("btc_5min_maker", {})
+
+    local_total_trades = int(runtime.get("trade_db_total_trades") or 0)
+    local_closed_positions = int(runtime.get("closed_trades") or 0)
+    local_open_positions = int(runtime.get("open_positions") or 0)
+
+    wallet_status = str(polymarket_wallet.get("status") or "unavailable").strip().lower()
+    remote_open_positions = int(polymarket_wallet.get("open_positions_count") or 0)
+    remote_closed_positions = int(polymarket_wallet.get("closed_positions_count") or 0)
+    wallet_live_orders = int(polymarket_wallet.get("live_orders_count") or 0)
+
+    btc5_status = str(btc5_maker.get("status") or "unavailable").strip().lower()
+    btc5_live_filled_rows = int(btc5_maker.get("live_filled_rows") or 0)
+    btc5_total_rows = int(btc5_maker.get("total_rows") or 0)
+
+    open_delta = remote_open_positions - local_open_positions
+    closed_delta = remote_closed_positions - local_closed_positions
+    accounting_delta_usd = round(
+        _safe_float(capital.get("polymarket_accounting_delta_usd"), 0.0),
+        4,
+    )
+    drift_reasons: list[str] = []
+    if wallet_status != "ok":
+        drift_reasons.append(
+            f"remote_wallet_unavailable:{polymarket_wallet.get('reason') or 'unknown'}"
+        )
+    if open_delta != 0:
+        drift_reasons.append(
+            f"open_positions_mismatch: local={local_open_positions} remote={remote_open_positions} delta={open_delta:+d}"
+        )
+    if closed_delta != 0:
+        drift_reasons.append(
+            f"closed_positions_mismatch: local={local_closed_positions} remote={remote_closed_positions} delta={closed_delta:+d}"
+        )
+    if abs(accounting_delta_usd) >= 5.0:
+        drift_reasons.append(
+            f"capital_accounting_delta_usd={accounting_delta_usd:+.2f}"
+        )
+
+    local_trade_db_path = root / DEFAULT_TRADES_DB_PATH
+    local_trade_db_checked_at = _safe_iso_mtime(local_trade_db_path)
+    local_ledger_freshness = _source_freshness_confidence(
+        checked_at=local_trade_db_checked_at or status.get("generated_at"),
+        source_status=(
+            "ok"
+            if str(runtime.get("trade_db_source") or "").strip().lower() == "data/jj_trades.db"
+            else "missing"
+        ),
+        source_path=_relative_path_text(root, local_trade_db_path),
+    )
+    remote_wallet_freshness = _source_freshness_confidence(
+        checked_at=polymarket_wallet.get("checked_at"),
+        source_status=wallet_status,
+        source_path="remote CLOB + Polymarket data API",
+        warning_count=len(polymarket_wallet.get("warnings") or []),
+    )
+    btc5_freshness = _source_freshness_confidence(
+        checked_at=btc5_maker.get("checked_at"),
+        source_status=btc5_status,
+        source_path=(
+            str(btc5_maker.get("source") or btc5_maker.get("db_path") or DEFAULT_BTC5_DB_PATH)
+        ),
+    )
+
+    drift_detected = bool(drift_reasons)
+    return {
+        "status": (
+            "drift_detected"
+            if drift_detected
+            else ("reconciled" if wallet_status == "ok" else "remote_wallet_unavailable")
+        ),
+        "drift_detected": drift_detected,
+        "drift_reasons": drift_reasons,
+        "local_ledger_counts": {
+            "source": runtime.get("trade_db_source") or "unknown",
+            "total_trades": local_total_trades,
+            "open_positions": local_open_positions,
+            "closed_positions": local_closed_positions,
+        },
+        "remote_wallet_counts": {
+            "status": wallet_status,
+            "source": "remote CLOB + Polymarket data API",
+            "open_positions": remote_open_positions,
+            "closed_positions": remote_closed_positions,
+            "live_orders": wallet_live_orders,
+            "free_collateral_usd": _float_or_none(polymarket_wallet.get("free_collateral_usd")),
+            "reserved_order_usd": _float_or_none(polymarket_wallet.get("reserved_order_usd")),
+            "total_wallet_value_usd": _float_or_none(polymarket_wallet.get("total_wallet_value_usd")),
+        },
+        "btc_5min_maker_counts": {
+            "status": btc5_status,
+            "source": btc5_maker.get("source") or btc5_maker.get("db_path"),
+            "total_rows": btc5_total_rows,
+            "live_filled_rows": btc5_live_filled_rows,
+            "live_filled_pnl_usd": _float_or_none(btc5_maker.get("live_filled_pnl_usd")),
+            "latest_live_filled_at": btc5_maker.get("latest_live_filled_at"),
+        },
+        "unmatched_open_positions": {
+            "local_ledger": local_open_positions,
+            "remote_wallet": remote_open_positions,
+            "delta_remote_minus_local": open_delta,
+            "absolute_delta": abs(open_delta),
+            "direction": (
+                "remote_excess"
+                if open_delta > 0
+                else ("local_excess" if open_delta < 0 else "matched")
+            ),
+        },
+        "unmatched_closed_positions": {
+            "local_ledger": local_closed_positions,
+            "remote_wallet": remote_closed_positions,
+            "delta_remote_minus_local": closed_delta,
+            "absolute_delta": abs(closed_delta),
+            "direction": (
+                "remote_excess"
+                if closed_delta > 0
+                else ("local_excess" if closed_delta < 0 else "matched")
+            ),
+        },
+        "capital_accounting_delta_usd": accounting_delta_usd,
+        "source_confidence_freshness": {
+            "local_ledger": local_ledger_freshness,
+            "remote_wallet": remote_wallet_freshness,
+            "btc_5min_maker": btc5_freshness,
+        },
+    }
+
+
 def build_remote_cycle_status(
     root: Path,
     *,
@@ -1086,6 +1553,8 @@ def build_remote_cycle_status(
     btc5_maker = _load_btc5_maker_state(repo_root)
     _merge_polymarket_wallet_observation(status, polymarket_wallet)
     _merge_btc5_maker_observation(status, btc5_maker)
+    accounting_reconciliation = _build_accounting_reconciliation(status, root=repo_root)
+    status["accounting_reconciliation"] = accounting_reconciliation
     _refresh_remote_observation_cadence(
         status,
         service=service,
@@ -1107,6 +1576,7 @@ def build_remote_cycle_status(
         wallet_flow=wallet_flow,
         a6_gate=a6_gate,
         b1_gate=b1_gate,
+        accounting_reconciliation=accounting_reconciliation,
     )
     runtime_truth = _build_runtime_truth(
         status=status,
@@ -1114,6 +1584,7 @@ def build_remote_cycle_status(
         intel_snapshot=intel_snapshot,
         service=service,
         launch=launch,
+        accounting_reconciliation=accounting_reconciliation,
     )
 
     status["service"] = service
@@ -1159,6 +1630,7 @@ def render_remote_cycle_status_markdown(status: dict[str, Any]) -> str:
     gates = status["structural_gates"]
     launch = status["launch"]
     truth = status["runtime_truth"]
+    accounting_reconciliation = status.get("accounting_reconciliation") or {}
 
     lines = [
         "# Remote Cycle Status",
@@ -1170,6 +1642,7 @@ def render_remote_cycle_status_markdown(status: dict[str, Any]) -> str:
         f"- A-6 gate: {gates['a6']['status']}",
         f"- B-1 gate: {gates['b1']['status']}",
         f"- Runtime drift detected: {'yes' if truth['drift_detected'] else 'no'}",
+        f"- Accounting reconciliation drift: {'yes' if accounting_reconciliation.get('drift_detected') else 'no'}",
         f"- Live launch blocked: {'yes' if launch['live_launch_blocked'] else 'no'}",
         f"- Next operator action: {launch['next_operator_action']}",
         "",
@@ -1412,6 +1885,44 @@ def render_remote_cycle_status_markdown(status: dict[str, Any]) -> str:
 
     drift_reasons = truth.get("drift_reasons") or ["none"]
     lines.extend(f"- {reason}" for reason in drift_reasons)
+    lines.extend(
+        [
+            "",
+            "## Accounting Reconciliation",
+            "",
+            f"- Status: {accounting_reconciliation.get('status') or 'unknown'}",
+            f"- Drift detected: {'yes' if accounting_reconciliation.get('drift_detected') else 'no'}",
+            (
+                f"- Local ledger counts: total={((accounting_reconciliation.get('local_ledger_counts') or {}).get('total_trades', 0))}, "
+                f"open={((accounting_reconciliation.get('local_ledger_counts') or {}).get('open_positions', 0))}, "
+                f"closed={((accounting_reconciliation.get('local_ledger_counts') or {}).get('closed_positions', 0))}"
+            ),
+            (
+                f"- Remote wallet counts: open={((accounting_reconciliation.get('remote_wallet_counts') or {}).get('open_positions', 0))}, "
+                f"closed={((accounting_reconciliation.get('remote_wallet_counts') or {}).get('closed_positions', 0))}, "
+                f"live_orders={((accounting_reconciliation.get('remote_wallet_counts') or {}).get('live_orders', 0))}"
+            ),
+            (
+                f"- BTC 5-min maker counts: total_rows={((accounting_reconciliation.get('btc_5min_maker_counts') or {}).get('total_rows', 0))}, "
+                f"live_filled_rows={((accounting_reconciliation.get('btc_5min_maker_counts') or {}).get('live_filled_rows', 0))}"
+            ),
+            (
+                f"- Unmatched open positions: {((accounting_reconciliation.get('unmatched_open_positions') or {}).get('delta_remote_minus_local', 0)):+d} "
+                f"(local={((accounting_reconciliation.get('unmatched_open_positions') or {}).get('local_ledger', 0))}, "
+                f"remote={((accounting_reconciliation.get('unmatched_open_positions') or {}).get('remote_wallet', 0))})"
+            ),
+            (
+                f"- Unmatched closed positions: {((accounting_reconciliation.get('unmatched_closed_positions') or {}).get('delta_remote_minus_local', 0)):+d} "
+                f"(local={((accounting_reconciliation.get('unmatched_closed_positions') or {}).get('local_ledger', 0))}, "
+                f"remote={((accounting_reconciliation.get('unmatched_closed_positions') or {}).get('remote_wallet', 0))})"
+            ),
+            "",
+            "### Reconciliation Drift Reasons",
+            "",
+        ]
+    )
+    accounting_drift_reasons = accounting_reconciliation.get("drift_reasons") or ["none"]
+    lines.extend(f"- {reason}" for reason in accounting_drift_reasons)
     lines.extend(
         [
             "",
@@ -2209,7 +2720,10 @@ def build_runtime_truth_snapshot(
         root=repo_root,
         generated_at=datetime.now(timezone.utc),
         runtime=status["runtime"],
+        capital=status["capital"],
         btc5_maker=status.get("btc_5min_maker") or {},
+        polymarket_wallet=status.get("polymarket_wallet") or {},
+        accounting_reconciliation=status.get("accounting_reconciliation") or {},
         launch=launch,
         latest_edge_scan=latest_edge_scan,
         latest_pipeline=latest_pipeline,
@@ -2341,13 +2855,16 @@ def build_runtime_truth_snapshot(
                 ),
                 "latest_trade": status.get("btc_5min_maker", {}).get("latest_trade") or {},
                 "fill_attribution": status.get("btc_5min_maker", {}).get("fill_attribution") or {},
+                "intraday_live_summary": status.get("btc_5min_maker", {}).get("intraday_live_summary") or {},
             },
+            "accounting": status.get("accounting_reconciliation") or {},
         },
         "capital": status["capital"],
         "runtime": status["runtime"],
         "wallet_flow": status["wallet_flow"],
         "polymarket_wallet": status.get("polymarket_wallet") or {},
         "btc_5min_maker": status.get("btc_5min_maker") or {},
+        "accounting_reconciliation": status.get("accounting_reconciliation") or {},
         "service": {
             "status": service["status"],
             "systemctl_state": service.get("systemctl_state"),
@@ -2461,6 +2978,7 @@ def build_public_runtime_snapshot(runtime_truth_snapshot: dict[str, Any]) -> dic
             "btc5_live_filled_rows": runtime.get("btc5_live_filled_rows"),
             "btc5_live_filled_pnl_usd": runtime.get("btc5_live_filled_pnl_usd"),
             "btc5_latest_order_status": runtime.get("btc5_latest_order_status"),
+            "btc5_intraday_live_summary": runtime.get("btc5_intraday_live_summary") or {},
         },
         "runtime_mode": {
             "remote_runtime_profile": runtime_truth_snapshot.get("remote_runtime_profile"),
@@ -2518,6 +3036,7 @@ def build_public_runtime_snapshot(runtime_truth_snapshot: dict[str, Any]) -> dic
             "latest_trade": btc5_maker.get("latest_trade") or {},
             "recent_live_filled": list(btc5_maker.get("recent_live_filled") or []),
             "fill_attribution": btc5_maker.get("fill_attribution") or {},
+            "intraday_live_summary": btc5_maker.get("intraday_live_summary") or {},
         },
         "structural_gates": {
             "a6": {
@@ -2556,6 +3075,7 @@ def build_public_runtime_snapshot(runtime_truth_snapshot: dict[str, Any]) -> dic
             ),
             "reject_reasons": state_improvement.get("reject_reasons") or [],
             "improvement_velocity": state_improvement.get("improvement_velocity") or {},
+            "strategy_recommendations": state_improvement.get("strategy_recommendations") or {},
         },
         "operator_headlines": _build_public_headlines(
             launch=launch,
@@ -3139,6 +3659,7 @@ def _build_launch_status(
     wallet_flow: dict[str, Any],
     a6_gate: dict[str, Any],
     b1_gate: dict[str, Any],
+    accounting_reconciliation: dict[str, Any],
 ) -> dict[str, Any]:
     runtime = status["runtime"]
     flywheel = status["flywheel"]
@@ -3173,20 +3694,39 @@ def _build_launch_status(
             status["capital"].get("polymarket_actual_deployable_usd"),
             0.0,
         )
-        accounting_delta = _safe_float(
-            status["capital"].get("polymarket_accounting_delta_usd"),
-            0.0,
-        )
         if actual_deployable <= 0:
             blocked_checks.append("no_polymarket_free_collateral")
             blocked_reasons.append(
                 "Observed Polymarket wallet has no free collateral for new maker orders."
             )
-        if abs(accounting_delta) >= 5.0:
+        if accounting_reconciliation.get("drift_detected"):
+            open_delta = int(
+                (accounting_reconciliation.get("unmatched_open_positions") or {}).get(
+                    "delta_remote_minus_local", 0
+                )
+                or 0
+            )
+            closed_delta = int(
+                (accounting_reconciliation.get("unmatched_closed_positions") or {}).get(
+                    "delta_remote_minus_local", 0
+                )
+                or 0
+            )
+            accounting_delta = _safe_float(
+                accounting_reconciliation.get("capital_accounting_delta_usd"),
+                0.0,
+            )
             blocked_checks.append("polymarket_capital_truth_drift")
+            blocked_checks.append("accounting_reconciliation_drift")
             blocked_reasons.append(
-                "Observed Polymarket wallet differs from tracked capital plus observed PnL by "
-                f"{_format_money(accounting_delta)}."
+                "Accounting drift: "
+                f"local ledger open={((accounting_reconciliation.get('local_ledger_counts') or {}).get('open_positions', 0))} "
+                f"vs remote wallet open={((accounting_reconciliation.get('remote_wallet_counts') or {}).get('open_positions', 0))} "
+                f"(delta {open_delta:+d}); "
+                f"local ledger closed={((accounting_reconciliation.get('local_ledger_counts') or {}).get('closed_positions', 0))} "
+                f"vs remote wallet closed={((accounting_reconciliation.get('remote_wallet_counts') or {}).get('closed_positions', 0))} "
+                f"(delta {closed_delta:+d}); "
+                f"capital delta={_format_money(accounting_delta)}."
             )
     if a6_gate["status"] == "blocked":
         blocked_checks.append("a6_gate_blocked")
@@ -3225,8 +3765,23 @@ def _build_launch_status(
         check in blocked_checks
         for check in ("no_polymarket_free_collateral", "polymarket_capital_truth_drift")
     ):
+        open_delta = int(
+            (accounting_reconciliation.get("unmatched_open_positions") or {}).get(
+                "delta_remote_minus_local", 0
+            )
+            or 0
+        )
+        closed_delta = int(
+            (accounting_reconciliation.get("unmatched_closed_positions") or {}).get(
+                "delta_remote_minus_local", 0
+            )
+            or 0
+        )
         next_operator_action = (
-            "Reconcile the observed Polymarket wallet balance against tracked capital, refresh runtime truth, and do not route new orders until free collateral is visible."
+            "Resolve accounting drift before any restart: "
+            f"open delta={open_delta:+d}, closed delta={closed_delta:+d}, "
+            f"capital delta={_format_money(_safe_float(accounting_reconciliation.get('capital_accounting_delta_usd'), 0.0))}. "
+            "Refresh runtime truth and do not route new orders until reconciliation is clean and free collateral is visible."
         )
     elif blocked_checks:
         next_operator_action = (
@@ -3258,6 +3813,7 @@ def _build_runtime_truth(
     intel_snapshot: dict[str, Any],
     service: dict[str, Any],
     launch: dict[str, Any],
+    accounting_reconciliation: dict[str, Any],
 ) -> dict[str, Any]:
     runtime = status["runtime"]
 
@@ -3304,7 +3860,27 @@ def _build_runtime_truth(
     service_drift_detected = service["status"] == "running" and launch["live_launch_blocked"]
     if service_drift_detected:
         drift_reasons.append(
-            "jj-live.service is running while launch posture remains blocked; confirm the remote mode is paper or shadow."
+            "Service-state drift: jj-live.service is running while launch posture remains blocked; confirm the remote mode is paper or shadow."
+        )
+    accounting_drift_detected = bool(accounting_reconciliation.get("drift_detected"))
+    if accounting_drift_detected:
+        open_delta = int(
+            (accounting_reconciliation.get("unmatched_open_positions") or {}).get(
+                "delta_remote_minus_local", 0
+            )
+            or 0
+        )
+        closed_delta = int(
+            (accounting_reconciliation.get("unmatched_closed_positions") or {}).get(
+                "delta_remote_minus_local", 0
+            )
+            or 0
+        )
+        drift_reasons.append(
+            "Accounting drift: "
+            f"open delta {open_delta:+d}, "
+            f"closed delta {closed_delta:+d}, "
+            f"capital delta {_format_money(_safe_float(accounting_reconciliation.get('capital_accounting_delta_usd'), 0.0))}."
         )
 
     return {
@@ -3313,6 +3889,7 @@ def _build_runtime_truth(
         "launch_blocked": launch["live_launch_blocked"],
         "drift_detected": bool(drift_reasons),
         "service_drift_detected": service_drift_detected,
+        "accounting_drift_detected": accounting_drift_detected,
         "jj_state_drift_detected": jj_state_drift_detected,
         "next_action": launch["next_operator_action"],
         "drift_reasons": drift_reasons,
@@ -3455,12 +4032,886 @@ def _summarize_pipeline(root: Path, path: Path | None) -> dict[str, Any]:
     }
 
 
+def _normalize_runtime_policy_record(raw_policy: dict[str, Any]) -> dict[str, Any] | None:
+    if not isinstance(raw_policy, dict):
+        return None
+    name = str(raw_policy.get("name") or raw_policy.get("session_name") or "").strip()
+    raw_hours = raw_policy.get("et_hours")
+    et_hours: list[int] = []
+    if isinstance(raw_hours, list):
+        for value in raw_hours:
+            try:
+                hour = int(value)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= hour <= 23 and hour not in et_hours:
+                et_hours.append(hour)
+    if not name or not et_hours:
+        return None
+
+    payload: dict[str, Any] = {"name": name, "et_hours": et_hours}
+    for key in (
+        "min_delta",
+        "max_abs_delta",
+        "up_max_buy_price",
+        "down_max_buy_price",
+    ):
+        value = _float_or_none(raw_policy.get(key))
+        if value is not None:
+            payload[key] = value
+    maker_ticks = _int_or_none(raw_policy.get("maker_improve_ticks"))
+    if maker_ticks is not None and maker_ticks >= 0:
+        payload["maker_improve_ticks"] = maker_ticks
+    return payload
+
+
+def _derive_session_policy_from_hypothesis(raw_hypothesis: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(raw_hypothesis, dict):
+        return []
+    normalized = _normalize_runtime_policy_record(raw_hypothesis)
+    return [normalized] if normalized is not None else []
+
+
+def _pick_first_policy_list(*candidates: Any) -> list[dict[str, Any]]:
+    for candidate in candidates:
+        if not isinstance(candidate, list):
+            continue
+        policies: list[dict[str, Any]] = []
+        for item in candidate:
+            if not isinstance(item, dict):
+                continue
+            normalized = _normalize_runtime_policy_record(item)
+            if normalized is not None:
+                policies.append(normalized)
+        if policies:
+            return policies
+    return []
+
+
+def _extract_btc5_research_snapshot(
+    *,
+    root: Path,
+    generated_at: datetime,
+) -> dict[str, Any]:
+    paths = [*BTC5_RESEARCH_PRIMARY_PATHS, *BTC5_RESEARCH_OPTIONAL_PATHS]
+    artifacts: dict[str, dict[str, Any]] = {}
+    for relative_path in paths:
+        absolute_path = root / relative_path
+        payload = _load_json(absolute_path, default={})
+        timestamp = None
+        if isinstance(payload, dict):
+            timestamp = _parse_datetime_like(
+                _first_nonempty(
+                    payload.get("generated_at"),
+                    payload.get("summary", {}).get("last_cycle_finished_at") if isinstance(payload.get("summary"), dict) else None,
+                    payload.get("latest_entry", {}).get("finished_at") if isinstance(payload.get("latest_entry"), dict) else None,
+                )
+            )
+        if timestamp is None and absolute_path.exists():
+            timestamp = _parse_datetime_like(_safe_iso_mtime(absolute_path))
+        age_hours = (
+            (generated_at - timestamp).total_seconds() / 3600.0
+            if timestamp is not None
+            else None
+        )
+        artifacts[str(relative_path)] = {
+            "path": str(relative_path),
+            "exists": absolute_path.exists(),
+            "payload": payload if isinstance(payload, dict) else {},
+            "timestamp": timestamp,
+            "age_hours": age_hours,
+            "stale": bool(age_hours is not None and age_hours > BTC5_RESEARCH_STALE_HOURS),
+            "primary": relative_path in BTC5_RESEARCH_PRIMARY_PATHS,
+        }
+    return artifacts
+
+
+def _build_btc5_research_recommendation(
+    *,
+    root: Path,
+    generated_at: datetime,
+    btc5_maker: dict[str, Any],
+) -> dict[str, Any]:
+    artifacts = _extract_btc5_research_snapshot(root=root, generated_at=generated_at)
+    autoresearch = artifacts[str(Path("reports/btc5_autoresearch/latest.json"))]["payload"]
+    loop_latest = artifacts[str(Path("reports/btc5_autoresearch_loop/latest.json"))]["payload"]
+    hypothesis_summary = artifacts[str(Path("reports/btc5_hypothesis_lab/summary.json"))]["payload"]
+    regime_summary = artifacts[str(Path("reports/btc5_regime_policy_lab/summary.json"))]["payload"]
+
+    loop_entry = loop_latest.get("latest_entry") if isinstance(loop_latest, dict) else {}
+    if not isinstance(loop_entry, dict):
+        loop_entry = {}
+
+    arr_tracking = autoresearch.get("arr_tracking") if isinstance(autoresearch, dict) else {}
+    if not isinstance(arr_tracking, dict):
+        arr_tracking = {}
+    loop_arr = loop_entry.get("arr") if isinstance(loop_entry, dict) else {}
+    if not isinstance(loop_arr, dict):
+        loop_arr = {}
+
+    active_median_arr_pct = _float_or_none(
+        _first_nonempty(arr_tracking.get("current_median_arr_pct"), loop_arr.get("active_median_arr_pct"))
+    )
+    best_median_arr_pct = _float_or_none(
+        _first_nonempty(arr_tracking.get("best_median_arr_pct"), loop_arr.get("best_median_arr_pct"))
+    )
+    median_arr_delta_pct = _float_or_none(
+        _first_nonempty(arr_tracking.get("median_arr_delta_pct"), loop_arr.get("median_arr_delta_pct"))
+    )
+    active_p05_arr_pct = _float_or_none(
+        _first_nonempty(arr_tracking.get("current_p05_arr_pct"), loop_arr.get("active_p05_arr_pct"))
+    )
+    best_p05_arr_pct = _float_or_none(
+        _first_nonempty(arr_tracking.get("best_p05_arr_pct"), loop_arr.get("best_p05_arr_pct"))
+    )
+
+    best_summary = {}
+    if isinstance(hypothesis_summary.get("best_hypothesis"), dict):
+        candidate = hypothesis_summary["best_hypothesis"].get("summary")
+        if isinstance(candidate, dict):
+            best_summary = candidate
+    loop_hypothesis = loop_entry.get("hypothesis_lab") if isinstance(loop_entry, dict) else {}
+    if not best_summary and isinstance(loop_hypothesis, dict):
+        candidate = loop_hypothesis.get("best_summary")
+        if isinstance(candidate, dict):
+            best_summary = candidate
+    regime_best_summary = regime_summary.get("best_summary") if isinstance(regime_summary, dict) else None
+    if not best_summary and isinstance(regime_best_summary, dict):
+        best_summary = regime_best_summary
+
+    validation_live_filled_rows = _int_or_none(best_summary.get("validation_live_filled_rows"))
+    generalization_ratio = _float_or_none(best_summary.get("generalization_ratio"))
+    evidence_band = _first_nonempty(
+        best_summary.get("evidence_band"),
+        regime_summary.get("evidence_band") if isinstance(regime_summary, dict) else None,
+    )
+
+    baseline = hypothesis_summary.get("baseline") if isinstance(hypothesis_summary, dict) else {}
+    baseline_live_filled_rows = _int_or_none(
+        _first_nonempty(
+            baseline.get("deduped_live_filled_rows") if isinstance(baseline, dict) else None,
+            baseline.get("rows") if isinstance(baseline, dict) else None,
+        )
+    )
+    if baseline_live_filled_rows is None:
+        baseline_live_filled_rows = _int_or_none(btc5_maker.get("live_filled_rows"))
+
+    decision = autoresearch.get("decision") if isinstance(autoresearch, dict) else {}
+    if not isinstance(decision, dict):
+        decision = {}
+    if not decision:
+        candidate = loop_entry.get("decision")
+        if isinstance(candidate, dict):
+            decision = candidate
+
+    active_profile = _first_nonempty(
+        autoresearch.get("active_profile") if isinstance(autoresearch, dict) else None,
+        loop_entry.get("active_profile") if isinstance(loop_entry, dict) else None,
+    )
+    best_profile = _first_nonempty(
+        (autoresearch.get("best_candidate") or {}).get("profile") if isinstance(autoresearch, dict) else None,
+        loop_entry.get("best_profile") if isinstance(loop_entry, dict) else None,
+    )
+
+    hypothesis_best = {}
+    if isinstance(hypothesis_summary.get("best_hypothesis"), dict):
+        hypothesis_best = hypothesis_summary["best_hypothesis"].get("hypothesis") or {}
+    if not isinstance(hypothesis_best, dict):
+        hypothesis_best = {}
+    loop_best_hypothesis = {}
+    if isinstance(loop_hypothesis, dict):
+        loop_best_hypothesis = loop_hypothesis.get("best_hypothesis") or {}
+    if not isinstance(loop_best_hypothesis, dict):
+        loop_best_hypothesis = {}
+
+    recommended_session_policy = _pick_first_policy_list(
+        regime_summary.get("recommended_session_policy") if isinstance(regime_summary, dict) else None,
+        hypothesis_summary.get("recommended_session_policy") if isinstance(hypothesis_summary, dict) else None,
+        loop_entry.get("recommended_session_policy") if isinstance(loop_entry, dict) else None,
+        _derive_session_policy_from_hypothesis(hypothesis_best),
+        _derive_session_policy_from_hypothesis(loop_best_hypothesis),
+    )
+
+    source_artifacts = [
+        item["path"]
+        for item in artifacts.values()
+        if item["exists"]
+    ]
+
+    confidence_reasons: list[str] = []
+    for relative_path in BTC5_RESEARCH_PRIMARY_PATHS:
+        info = artifacts[str(relative_path)]
+        if not info["exists"]:
+            confidence_reasons.append(f"missing_primary_research_artifact:{info['path']}")
+            continue
+        if info["stale"]:
+            age = info.get("age_hours")
+            if age is None:
+                confidence_reasons.append(f"stale_primary_research_artifact:{info['path']}:unknown_age")
+            else:
+                confidence_reasons.append(
+                    f"stale_primary_research_artifact:{info['path']}:{age:.2f}h>{BTC5_RESEARCH_STALE_HOURS:.1f}h"
+                )
+
+    required_missing = [
+        name
+        for name, value in (
+            ("validation_live_filled_rows", validation_live_filled_rows),
+            ("generalization_ratio", generalization_ratio),
+            ("best_p05_arr_pct", best_p05_arr_pct),
+            ("active_p05_arr_pct", active_p05_arr_pct),
+        )
+        if value is None
+    ]
+    if required_missing:
+        confidence_reasons.append("missing_required_fields:" + ",".join(required_missing))
+
+    confidence_label = "low"
+    if (
+        validation_live_filled_rows is not None
+        and generalization_ratio is not None
+        and best_p05_arr_pct is not None
+        and active_p05_arr_pct is not None
+    ):
+        if (
+            validation_live_filled_rows >= 12
+            and generalization_ratio >= 0.80
+            and best_p05_arr_pct >= active_p05_arr_pct
+        ):
+            confidence_label = "high"
+        elif validation_live_filled_rows >= 6 and generalization_ratio >= 0.70:
+            confidence_label = "medium"
+    confidence_reasons.append(f"confidence_rule:{confidence_label}")
+
+    forecast_confidence = {
+        "confidence_label": confidence_label,
+        "confidence_reasons": confidence_reasons,
+        "active_median_arr_pct": active_median_arr_pct,
+        "best_median_arr_pct": best_median_arr_pct,
+        "median_arr_delta_pct": median_arr_delta_pct,
+        "active_p05_arr_pct": active_p05_arr_pct,
+        "best_p05_arr_pct": best_p05_arr_pct,
+        "validation_live_filled_rows": validation_live_filled_rows,
+        "baseline_live_filled_rows": baseline_live_filled_rows,
+        "generalization_ratio": generalization_ratio,
+        "decision_action": decision.get("action"),
+        "decision_reason": decision.get("reason"),
+        "source_artifacts": source_artifacts,
+    }
+
+    local_fill_rows = _int_or_none(btc5_maker.get("live_filled_rows"))
+    edge_profile = dict((btc5_maker.get("fill_attribution") or {}))
+    if local_fill_rows is None or local_fill_rows < 6:
+        edge_profile.update(
+            {
+                "active_profile": active_profile or {},
+                "best_profile": best_profile or {},
+                "recommended_session_policy": recommended_session_policy,
+                "evidence_band": evidence_band,
+                "validation_live_filled_rows": validation_live_filled_rows,
+                "generalization_ratio": generalization_ratio,
+                "source_artifacts": source_artifacts,
+            }
+        )
+
+    return {
+        "btc5_forecast_confidence": forecast_confidence,
+        "btc5_edge_profile": edge_profile,
+    }
+
+
+def _confidence_rank(label: str | None) -> int:
+    normalized = str(label or "").strip().lower()
+    if normalized == "high":
+        return 3
+    if normalized == "medium":
+        return 2
+    return 1
+
+
+def _deploy_rank(value: str | None) -> int:
+    normalized = str(value or "").strip().lower()
+    if normalized == "promote":
+        return 3
+    if normalized == "shadow_only":
+        return 2
+    return 1
+
+
+def _extract_public_forecast_candidate(
+    *,
+    root: Path,
+    path: Path,
+    payload: dict[str, Any],
+    now: datetime,
+) -> dict[str, Any]:
+    latest_entry = payload.get("latest_entry") if isinstance(payload.get("latest_entry"), dict) else {}
+    arr_root = payload.get("arr") if isinstance(payload.get("arr"), dict) else {}
+    arr_tracking = payload.get("arr_tracking") if isinstance(payload.get("arr_tracking"), dict) else {}
+    arr_loop = latest_entry.get("arr") if isinstance(latest_entry.get("arr"), dict) else {}
+
+    active_arr = _float_or_none(
+        _first_nonempty(
+            arr_root.get("active_median_arr_pct"),
+            arr_tracking.get("current_median_arr_pct"),
+            arr_loop.get("active_median_arr_pct"),
+        )
+    )
+    best_arr = _float_or_none(
+        _first_nonempty(
+            arr_root.get("best_median_arr_pct"),
+            arr_tracking.get("best_median_arr_pct"),
+            arr_loop.get("best_median_arr_pct"),
+        )
+    )
+    arr_delta = _float_or_none(
+        _first_nonempty(
+            arr_root.get("median_arr_delta_pct"),
+            arr_tracking.get("median_arr_delta_pct"),
+            arr_loop.get("median_arr_delta_pct"),
+        )
+    )
+
+    decision_payload = payload.get("decision") if isinstance(payload.get("decision"), dict) else {}
+    if not decision_payload and isinstance(latest_entry.get("decision"), dict):
+        decision_payload = latest_entry["decision"]
+    deploy_recommendation = _first_nonempty(
+        payload.get("deploy_recommendation"),
+        latest_entry.get("deploy_recommendation") if isinstance(latest_entry, dict) else None,
+        "promote" if str(decision_payload.get("action") or "").strip().lower() == "promote" else "hold",
+    )
+    confidence_label = _first_nonempty(
+        payload.get("package_confidence_label"),
+        payload.get("forecast_confidence_label"),
+        latest_entry.get("package_confidence_label") if isinstance(latest_entry, dict) else None,
+        "low",
+    )
+    confidence_reasons = _first_nonempty(
+        payload.get("package_confidence_reasons"),
+        payload.get("forecast_confidence_reasons"),
+        latest_entry.get("package_confidence_reasons") if isinstance(latest_entry, dict) else None,
+        [],
+    )
+    if not isinstance(confidence_reasons, list):
+        confidence_reasons = []
+
+    generated_at = _parse_datetime_like(
+        _first_nonempty(
+            payload.get("generated_at"),
+            payload.get("summary", {}).get("last_cycle_finished_at") if isinstance(payload.get("summary"), dict) else None,
+            latest_entry.get("finished_at") if isinstance(latest_entry, dict) else None,
+            _safe_iso_mtime(path),
+        )
+    )
+    age_hours = (
+        (now - generated_at).total_seconds() / 3600.0
+        if generated_at is not None
+        else None
+    )
+    fresh = bool(age_hours is not None and age_hours <= BTC5_RESEARCH_STALE_HOURS)
+
+    return {
+        "path": _relative_path_text(root, path),
+        "exists": path.exists(),
+        "generated_at": generated_at,
+        "age_hours": age_hours,
+        "fresh": fresh,
+        "deploy_recommendation": str(deploy_recommendation or "hold"),
+        "confidence_label": str(confidence_label or "low"),
+        "confidence_reasons": confidence_reasons,
+        "active_arr_pct": active_arr,
+        "best_arr_pct": best_arr,
+        "arr_delta_pct": arr_delta,
+    }
+
+
+def _select_public_forecast_candidate(*, root: Path, generated_at: datetime) -> dict[str, Any]:
+    candidates: list[dict[str, Any]] = []
+    for relative_path in BTC5_PUBLIC_FORECAST_PATHS:
+        absolute_path = root / relative_path
+        payload = _load_json(absolute_path, default={})
+        if not absolute_path.exists() or not isinstance(payload, dict):
+            continue
+        candidates.append(
+            _extract_public_forecast_candidate(
+                root=root,
+                path=absolute_path,
+                payload=payload,
+                now=generated_at,
+            )
+        )
+
+    if not candidates:
+        return {
+            "selected": None,
+            "considered": [],
+            "selection_reason": "no_forecast_artifacts_available",
+        }
+
+    fresh_candidates = [item for item in candidates if item.get("fresh")]
+    pool = fresh_candidates if fresh_candidates else candidates
+    selected = max(
+        pool,
+        key=lambda item: (
+            _confidence_rank(item.get("confidence_label")),
+            _deploy_rank(item.get("deploy_recommendation")),
+            item["generated_at"].timestamp() if isinstance(item.get("generated_at"), datetime) else float("-inf"),
+        ),
+    )
+    return {
+        "selected": selected,
+        "considered": candidates,
+        "selection_reason": "fresh_ranked_selection" if fresh_candidates else "stale_fallback_selection",
+    }
+
+
+def _compute_realized_btc5_sleeve_window(
+    *,
+    root: Path,
+    btc5_maker: dict[str, Any],
+    deployed_capital_usd: float | None,
+) -> dict[str, Any]:
+    def _load_cached_rows(path: Path) -> list[dict[str, Any]]:
+        payload = _load_json(path, default=[])
+        candidates: list[Any]
+        if isinstance(payload, list):
+            candidates = payload
+        elif isinstance(payload, dict):
+            for key in ("rows", "window_trades", "trades", "data"):
+                value = payload.get(key)
+                if isinstance(value, list):
+                    candidates = value
+                    break
+            else:
+                candidates = []
+        else:
+            candidates = []
+
+        rows = [
+            dict(item)
+            for item in candidates
+            if isinstance(item, dict)
+            and str(item.get("order_status") or "").strip().lower() == "live_filled"
+        ]
+        rows.sort(
+            key=lambda row: (
+                int(_safe_float(row.get("id"), 0.0)),
+                _safe_float(row.get("window_start_ts"), 0.0),
+                (_parse_datetime_like(_first_nonempty(row.get("updated_at"), row.get("created_at")))
+                 or datetime.fromtimestamp(0, tz=timezone.utc)).timestamp(),
+            )
+        )
+        return rows
+
+    db_path = root / DEFAULT_BTC5_DB_PATH
+    rows: list[dict[str, Any]] = []
+    if db_path.exists():
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                """
+                SELECT id, pnl_usd, created_at, updated_at
+                FROM window_trades
+                WHERE order_status = 'live_filled'
+                ORDER BY id ASC
+                """
+            )
+            rows = [dict(row) for row in cursor.fetchall()]
+
+    cached_rows_path = root / DEFAULT_BTC5_WINDOW_ROWS_PATH
+    cached_rows = _load_cached_rows(cached_rows_path) if cached_rows_path.exists() else []
+    if cached_rows and (not rows or len(cached_rows) > len(rows)):
+        rows = cached_rows
+
+    if not rows:
+        return {
+            "window_pnl_usd": _float_or_none(btc5_maker.get("live_filled_pnl_usd")),
+            "window_live_fills": _int_or_none(btc5_maker.get("live_filled_rows")),
+            "window_hours": None,
+            "run_rate_pct": None,
+            "window_mode": "unavailable",
+        }
+
+    selected = rows[-12:] if len(rows) >= 12 else rows
+    timestamps: list[datetime] = []
+    for row in selected:
+        parsed = _parse_datetime_like(_first_nonempty(row.get("updated_at"), row.get("created_at")))
+        if parsed is not None:
+            timestamps.append(parsed)
+
+    elapsed_hours = None
+    if timestamps:
+        earliest = min(timestamps)
+        latest = max(timestamps)
+        elapsed_hours = max((latest - earliest).total_seconds() / 3600.0, 5.0 / 60.0)
+
+    window_pnl_usd = round(sum(_safe_float(row.get("pnl_usd"), 0.0) for row in selected), 4)
+    window_live_fills = len(selected)
+
+    run_rate_pct = None
+    if (
+        elapsed_hours is not None
+        and elapsed_hours > 0
+        and deployed_capital_usd is not None
+        and deployed_capital_usd > 0
+    ):
+        annualization = 24.0 * 365.0 / elapsed_hours
+        run_rate_pct = round((window_pnl_usd / deployed_capital_usd) * annualization * 100.0, 4)
+
+    return {
+        "window_pnl_usd": window_pnl_usd,
+        "window_live_fills": window_live_fills,
+        "window_hours": round(elapsed_hours, 4) if elapsed_hours is not None else None,
+        "run_rate_pct": run_rate_pct,
+        "window_mode": "trailing_12_live_fills" if len(rows) >= 12 else "since_first_live_fill",
+    }
+
+
+def _build_public_performance_scoreboard(
+    *,
+    root: Path,
+    generated_at: datetime,
+    capital: dict[str, Any],
+    btc5_maker: dict[str, Any],
+    polymarket_wallet: dict[str, Any],
+    accounting_reconciliation: dict[str, Any],
+) -> dict[str, Any]:
+    deployed_capital_usd = _float_or_none(capital.get("deployed_capital_usd"))
+    if deployed_capital_usd is None or deployed_capital_usd <= 0:
+        deployed_capital_usd = _float_or_none(
+            _first_nonempty(
+                capital.get("polymarket_observed_deployed_usd"),
+                capital.get("polymarket_positions_initial_value_usd"),
+            )
+        )
+    realized_window = _compute_realized_btc5_sleeve_window(
+        root=root,
+        btc5_maker=btc5_maker,
+        deployed_capital_usd=deployed_capital_usd,
+    )
+    forecast_selection = _select_public_forecast_candidate(root=root, generated_at=generated_at)
+    selected = forecast_selection.get("selected") or {}
+    drift_open = bool(accounting_reconciliation.get("drift_detected"))
+    fund_claim_status = "blocked" if drift_open else "unblocked"
+    fund_claim_reason = (
+        "fund_realized_arr_claim_blocked_until_ledger_wallet_reconciliation_closes"
+        if drift_open
+        else "fund_realized_arr_claim_unblocked"
+    )
+
+    confidence_reasons = list(selected.get("confidence_reasons") or [])
+    if not selected:
+        confidence_reasons.append("public_forecast_missing")
+    elif not selected.get("fresh"):
+        confidence_reasons.append("public_forecast_stale_over_6h")
+    velocity_window_hours = _float_or_none(selected.get("age_hours"))
+    velocity_gain_pct = _float_or_none(selected.get("arr_delta_pct"))
+    velocity_gain_pct_per_day = None
+    if (
+        velocity_window_hours is not None
+        and velocity_window_hours > 0
+        and velocity_gain_pct is not None
+    ):
+        velocity_gain_pct_per_day = round((velocity_gain_pct / velocity_window_hours) * 24.0, 4)
+    intraday_summary = dict(btc5_maker.get("intraday_live_summary") or {})
+    closed_batch = dict(polymarket_wallet.get("closed_batch_metrics") or {})
+    denominator_initial = _float_or_none(
+        _first_nonempty(
+            capital.get("polymarket_tracked_capital_usd"),
+            capital.get("tracked_capital_usd"),
+        )
+    )
+    denominator_current = _float_or_none(
+        _first_nonempty(
+            polymarket_wallet.get("total_wallet_value_usd"),
+            capital.get("polymarket_observed_total_usd"),
+        )
+    )
+    btc_closed_cashflow = _safe_float(closed_batch.get("btc_closed_cashflow_usd"), 0.0)
+    btc_closed_window_hours = _float_or_none(closed_batch.get("btc_closed_window_hours"))
+    conservative_closed_net = _safe_float(closed_batch.get("conservative_closed_net_usd"), 0.0)
+    all_book_closed_window_hours = _float_or_none(closed_batch.get("all_book_closed_window_hours"))
+
+    def _annualize(pnl_usd: float, denom_usd: float | None, window_hours: float | None) -> float | None:
+        if denom_usd is None or denom_usd <= 0 or window_hours is None or window_hours <= 0:
+            return None
+        annualization = (24.0 * 365.0) / window_hours
+        return round((pnl_usd / denom_usd) * annualization * 100.0, 4)
+
+    btc_closed_run_rate_initial = _annualize(btc_closed_cashflow, denominator_initial, btc_closed_window_hours)
+    btc_closed_run_rate_current = _annualize(btc_closed_cashflow, denominator_current, btc_closed_window_hours)
+    conservative_run_rate_initial = _annualize(conservative_closed_net, denominator_initial, all_book_closed_window_hours)
+
+    return {
+        "fund_realized_arr_claim_status": fund_claim_status,
+        "fund_realized_arr_claim_reason": fund_claim_reason,
+        "realized_btc5_sleeve_run_rate_pct": realized_window.get("run_rate_pct"),
+        "realized_btc5_sleeve_window_pnl_usd": realized_window.get("window_pnl_usd"),
+        "realized_btc5_sleeve_window_live_fills": realized_window.get("window_live_fills"),
+        "realized_btc5_sleeve_window_hours": realized_window.get("window_hours"),
+        "realized_btc5_sleeve_window_mode": realized_window.get("window_mode"),
+        "forecast_active_arr_pct": _float_or_none(selected.get("active_arr_pct")),
+        "forecast_best_arr_pct": _float_or_none(selected.get("best_arr_pct")),
+        "forecast_arr_delta_pct": _float_or_none(selected.get("arr_delta_pct")),
+        "forecast_confidence_label": str(selected.get("confidence_label") or "low"),
+        "forecast_confidence_reasons": confidence_reasons,
+        "deploy_recommendation": str(selected.get("deploy_recommendation") or "hold"),
+        "timebound_velocity_window_hours": round(velocity_window_hours, 4) if velocity_window_hours is not None else None,
+        "timebound_velocity_forecast_gain_pct": velocity_gain_pct,
+        "timebound_velocity_forecast_gain_pct_per_day": velocity_gain_pct_per_day,
+        "public_forecast_source_artifact": selected.get("path"),
+        "intraday_live_summary": intraday_summary,
+        "wallet_closed_batch": {
+            "btc_closed_cashflow_usd": round(btc_closed_cashflow, 4),
+            "btc_contracts_resolved": int(_safe_float(closed_batch.get("btc_contracts_resolved"), 0.0) or 0),
+            "btc_wins": int(_safe_float(closed_batch.get("btc_wins"), 0.0) or 0),
+            "btc_losses": int(_safe_float(closed_batch.get("btc_losses"), 0.0) or 0),
+            "btc_profit_factor": _float_or_none(closed_batch.get("btc_profit_factor")),
+            "btc_average_win_usd": _float_or_none(closed_batch.get("btc_average_win_usd")),
+            "btc_average_loss_usd": _float_or_none(closed_batch.get("btc_average_loss_usd")),
+            "btc_closed_window_hours": btc_closed_window_hours,
+            "btc_closed_run_rate_pct_initial_capital": btc_closed_run_rate_initial,
+            "btc_closed_run_rate_pct_current_portfolio": btc_closed_run_rate_current,
+            "all_book_closed_cashflow_usd": _float_or_none(closed_batch.get("all_book_closed_cashflow_usd")),
+            "open_non_btc_notional_usd": _float_or_none(closed_batch.get("open_non_btc_notional_usd")),
+            "conservative_closed_net_usd": round(conservative_closed_net, 4),
+            "conservative_all_book_run_rate_pct_initial_capital": conservative_run_rate_initial,
+            "all_book_closed_window_hours": all_book_closed_window_hours,
+            "interpretation": "short_window_sleeve_run_rate_directional_not_fund_realized_claim",
+        },
+    }
+
+
+def _load_jsonl_rows(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            rows.append(payload)
+    return rows
+
+
+def _artifact_age_hours(root: Path, relative_path: str, *, now: datetime) -> float | None:
+    path = root / relative_path
+    if not path.exists():
+        return None
+    payload = _load_json(path, default={})
+    ts = None
+    if isinstance(payload, dict):
+        ts = _parse_datetime_like(
+            _first_nonempty(
+                payload.get("generated_at"),
+                payload.get("report_generated_at"),
+                payload.get("checked_at"),
+            )
+        )
+    if ts is None:
+        ts = _parse_datetime_like(_safe_iso_mtime(path))
+    if ts is None:
+        return None
+    return max(0.0, (now - ts).total_seconds() / 3600.0)
+
+
+def _btc5_trailing_fill_window(root: Path, *, fills: int = 12) -> dict[str, Any]:
+    db_path = root / DEFAULT_BTC5_DB_PATH
+    if not db_path.exists():
+        return {"fills": 0, "pnl_usd": 0.0}
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT pnl_usd
+            FROM window_trades
+            WHERE order_status = 'live_filled'
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (max(1, int(fills)),),
+        ).fetchall()
+    pnl = round(sum(_safe_float(row["pnl_usd"], 0.0) for row in rows), 4)
+    return {"fills": len(rows), "pnl_usd": pnl}
+
+
+def _kalshi_settlement_summary(root: Path) -> dict[str, Any]:
+    settlements_path = root / "data" / "kalshi_weather_settlements.jsonl"
+    rows = _load_jsonl_rows(settlements_path)
+    matched = 0
+    total = 0
+    for row in rows:
+        total += 1
+        is_matched = _first_nonempty(
+            row.get("matched"),
+            row.get("decision_matched"),
+            row.get("match"),
+            row.get("settlement_matched"),
+        )
+        if isinstance(is_matched, bool):
+            matched += 1 if is_matched else 0
+            continue
+        status_text = str(
+            _first_nonempty(row.get("match_status"), row.get("reconciliation_status"), row.get("status")) or ""
+        ).strip().lower()
+        if status_text in {"matched", "match"}:
+            matched += 1
+    rate = (matched / total) if total > 0 else 0.0
+    return {
+        "path": "data/kalshi_weather_settlements.jsonl",
+        "exists": settlements_path.exists(),
+        "total_rows": total,
+        "matched_rows": matched,
+        "match_rate": round(rate, 4),
+    }
+
+
+def _build_capital_addition_readiness(
+    *,
+    root: Path,
+    generated_at: datetime,
+    launch: dict[str, Any],
+    accounting_reconciliation: dict[str, Any],
+) -> dict[str, Any]:
+    blocked_checks = list(launch.get("blocked_checks") or [])
+    fund_blocking_checks = []
+    if bool(accounting_reconciliation.get("drift_detected")):
+        fund_blocking_checks.append("accounting_reconciliation_drift")
+    if "polymarket_capital_truth_drift" in blocked_checks:
+        fund_blocking_checks.append("polymarket_capital_truth_drift")
+    fund_blocking_checks = _dedupe_preserve_order(fund_blocking_checks)
+    fund_blocked = bool(fund_blocking_checks)
+
+    forecast = _select_public_forecast_candidate(root=root, generated_at=generated_at).get("selected") or {}
+    forecast_is_promote_high = (
+        str(forecast.get("deploy_recommendation") or "").strip().lower() == "promote"
+        and str(forecast.get("confidence_label") or "").strip().lower() == "high"
+        and bool(forecast.get("fresh"))
+    )
+    trailing_12 = _btc5_trailing_fill_window(root, fills=12)
+    trailing_12_positive = trailing_12.get("fills", 0) >= 12 and _safe_float(trailing_12.get("pnl_usd"), 0.0) > 0.0
+
+    polymarket_status = "hold"
+    polymarket_amount = 0
+    polymarket_reasons = []
+    polymarket_blocking_checks = []
+    if forecast_is_promote_high and trailing_12_positive:
+        if fund_blocked:
+            polymarket_status = "ready_test_tranche"
+            polymarket_amount = 100
+            polymarket_reasons.append("btc5_promote_high_fresh_and_trailing12_positive_but_fund_reconciliation_blocked")
+            polymarket_blocking_checks.extend(fund_blocking_checks)
+        else:
+            polymarket_status = "ready_scale"
+            polymarket_amount = 1000
+            polymarket_reasons.append("btc5_promote_high_fresh_and_trailing12_positive")
+    else:
+        polymarket_blocking_checks.extend(
+            check
+            for check, condition in (
+                ("btc5_forecast_not_promote_high_fresh", not forecast_is_promote_high),
+                ("btc5_trailing12_not_net_positive", not trailing_12_positive),
+            )
+            if condition
+        )
+        polymarket_reasons.append("btc5_capital_addition_conditions_not_met")
+
+    strategy_age = _artifact_age_hours(root, "reports/strategy_scale_comparison.json", now=generated_at)
+    audit_age = _artifact_age_hours(root, "reports/signal_source_audit.json", now=generated_at)
+    strategy_stale = strategy_age is None or strategy_age > BTC5_RESEARCH_STALE_HOURS
+    audit_stale = audit_age is None or audit_age > BTC5_RESEARCH_STALE_HOURS
+    settlements = _kalshi_settlement_summary(root)
+    kalshi_blocking_checks = []
+    if not settlements.get("exists"):
+        kalshi_blocking_checks.append("kalshi_settlement_log_missing")
+    if _safe_float(settlements.get("match_rate"), 0.0) <= 0.0:
+        kalshi_blocking_checks.append("kalshi_settlement_match_rate_zero")
+    if strategy_stale or audit_stale:
+        kalshi_blocking_checks.append("venue_ranking_artifacts_stale")
+    kalshi_blocking_checks = _dedupe_preserve_order(kalshi_blocking_checks)
+
+    fund_status = "hold" if fund_blocked else "ready_scale"
+    fund_amount = 0 if fund_blocked else 1000
+    fund_confidence = "low" if fund_blocked else "medium"
+
+    kalshi_status = "hold" if kalshi_blocking_checks else "ready_test_tranche"
+    kalshi_amount = 0 if kalshi_status == "hold" else 100
+
+    next_1000_status = "ready_scale" if fund_status == "ready_scale" else "hold"
+    next_1000_amount = 1000 if next_1000_status == "ready_scale" else 0
+
+    return {
+        "fund": {
+            "status": fund_status,
+            "recommended_amount_usd": fund_amount,
+            "confidence_label": fund_confidence,
+            "reasons": (
+                ["fund_capital_truth_reconciled"] if not fund_blocked else ["fund_capital_truth_not_reconciled"]
+            ),
+            "blocking_checks": fund_blocking_checks,
+            "source_artifacts": ["reports/runtime_truth_latest.json", "reports/public_runtime_snapshot.json"],
+        },
+        "polymarket_btc5": {
+            "status": polymarket_status,
+            "recommended_amount_usd": polymarket_amount,
+            "confidence_label": "high" if polymarket_status != "hold" else "medium",
+            "reasons": polymarket_reasons,
+            "blocking_checks": _dedupe_preserve_order(polymarket_blocking_checks),
+            "source_artifacts": _dedupe_preserve_order(
+                [
+                    str(forecast.get("path") or "reports/btc5_autoresearch/latest.json"),
+                    "data/btc_5min_maker.db",
+                    "reports/public_runtime_snapshot.json",
+                ]
+            ),
+        },
+        "kalshi_weather": {
+            "status": kalshi_status,
+            "recommended_amount_usd": kalshi_amount,
+            "confidence_label": "low" if kalshi_status == "hold" else "medium",
+            "reasons": (
+                ["kalshi_weather_capital_blocked_until_settlement_and_fresh_ranking"]
+                if kalshi_status == "hold"
+                else ["kalshi_weather_meets_test_tranche_readiness"]
+            ),
+            "blocking_checks": kalshi_blocking_checks,
+            "source_artifacts": _dedupe_preserve_order(
+                [
+                    settlements["path"],
+                    "reports/strategy_scale_comparison.json",
+                    "reports/signal_source_audit.json",
+                ]
+            ),
+        },
+        "next_1000_usd": {
+            "status": next_1000_status,
+            "recommended_amount_usd": next_1000_amount,
+            "confidence_label": "low" if next_1000_status == "hold" else "medium",
+            "reasons": (
+                ["full_1000_add_blocked_until_fund_capital_truth_reconciles"]
+                if next_1000_status == "hold"
+                else ["fund_reconciled_and_ready_for_scale_add"]
+            ),
+            "blocking_checks": fund_blocking_checks if next_1000_status == "hold" else [],
+            "source_artifacts": ["reports/runtime_truth_latest.json", "reports/public_runtime_snapshot.json"],
+        },
+    }
+
+
 def _build_state_improvement_report(
     *,
     root: Path,
     generated_at: datetime,
     runtime: dict[str, Any],
+    capital: dict[str, Any],
     btc5_maker: dict[str, Any],
+    polymarket_wallet: dict[str, Any],
+    accounting_reconciliation: dict[str, Any],
     launch: dict[str, Any],
     latest_edge_scan: dict[str, Any],
     latest_pipeline: dict[str, Any],
@@ -3568,6 +5019,26 @@ def _build_state_improvement_report(
         "window_minutes": 60,
     }
 
+    btc5_research_recommendation = _build_btc5_research_recommendation(
+        root=root,
+        generated_at=generated_at,
+        btc5_maker=btc5_maker,
+    )
+    public_performance_scoreboard = _build_public_performance_scoreboard(
+        root=root,
+        generated_at=generated_at,
+        capital=capital,
+        btc5_maker=btc5_maker,
+        polymarket_wallet=polymarket_wallet,
+        accounting_reconciliation=accounting_reconciliation,
+    )
+    capital_addition_readiness = _build_capital_addition_readiness(
+        root=root,
+        generated_at=generated_at,
+        launch=launch,
+        accounting_reconciliation=accounting_reconciliation,
+    )
+
     report = {
         "artifact": "state_improvement_report",
         "schema_version": 1,
@@ -3585,7 +5056,22 @@ def _build_state_improvement_report(
         },
         "strategy_recommendations": {
             "btc5_guardrails": btc5_maker.get("guardrail_recommendation"),
-            "btc5_edge_profile": (btc5_maker.get("fill_attribution") or {}),
+            "btc5_edge_profile": btc5_research_recommendation.get("btc5_edge_profile") or {},
+            "btc5_forecast_confidence": btc5_research_recommendation.get("btc5_forecast_confidence") or {},
+            "public_performance_scoreboard": public_performance_scoreboard,
+            "capital_addition_readiness": capital_addition_readiness,
+        },
+        "reconciliation_summary": {
+            "drift_detected": bool(accounting_reconciliation.get("drift_detected")),
+            "unmatched_open_positions": (
+                accounting_reconciliation.get("unmatched_open_positions") or {}
+            ),
+            "unmatched_closed_positions": (
+                accounting_reconciliation.get("unmatched_closed_positions") or {}
+            ),
+            "capital_accounting_delta_usd": _float_or_none(
+                accounting_reconciliation.get("capital_accounting_delta_usd")
+            ),
         },
         "metrics": current_metrics,
     }
@@ -3769,6 +5255,9 @@ def _build_operator_digest(report: dict[str, Any], *, launch: dict[str, Any]) ->
     thresholds = report.get("active_thresholds") or {}
     budget = report.get("hourly_budget_progress") or {}
     deltas = (report.get("improvement_velocity") or {}).get("deltas") or {}
+    reconciliation = report.get("reconciliation_summary") or {}
+    open_mismatch = reconciliation.get("unmatched_open_positions") or {}
+    closed_mismatch = reconciliation.get("unmatched_closed_positions") or {}
     status_text = "blocked" if launch.get("live_launch_blocked") else "unblocked"
     return (
         "Cycle state: "
@@ -3789,7 +5278,18 @@ def _build_operator_digest(report: dict[str, Any], *, launch: dict[str, Any]) ->
         + "Improvement deltas: "
         f"edge_reachability={_format_signed_number(deltas.get('edge_reachability_delta'))}, "
         f"candidate_to_trade_conversion={_format_signed_number(deltas.get('candidate_to_trade_conversion_delta'))}, "
-        f"realized_expected_pnl_drift_usd={_format_signed_number(deltas.get('realized_expected_pnl_drift_delta_usd'))}."
+        f"realized_expected_pnl_drift_usd={_format_signed_number(deltas.get('realized_expected_pnl_drift_delta_usd'))}. "
+        + "Reconciliation: "
+        + (
+            "drift detected"
+            if reconciliation.get("drift_detected")
+            else "reconciled"
+        )
+        + (
+            f" (open delta={int(open_mismatch.get('delta_remote_minus_local') or 0):+d}, "
+            f"closed delta={int(closed_mismatch.get('delta_remote_minus_local') or 0):+d}, "
+            f"capital delta={_format_money(_safe_float(reconciliation.get('capital_accounting_delta_usd'), 0.0))})."
+        )
     )
 
 
