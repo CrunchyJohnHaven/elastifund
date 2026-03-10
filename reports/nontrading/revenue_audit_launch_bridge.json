@@ -1,6 +1,6 @@
 {
   "curated_candidates": 14,
-  "generated_at": "2026-03-10T15:15:29+00:00",
+  "generated_at": "2026-03-10T16:01:34+00:00",
   "landing_page_cta_optimizations": [
     {
       "key": "proof_first",
@@ -522,13 +522,6 @@
       "checkout_path_hint": "/v1/nontrading/offers/website-growth-audit",
       "company_name": "Sactown Junk Removal",
       "contact_channels": [
-        {
-          "is_business": true,
-          "kind": "contact_page",
-          "label": "Request Quote",
-          "source_url": "https://sactownjunkremoval.com/",
-          "value": "https://sactownjunkremoval.com/#freequote"
-        },
         {
           "is_business": true,
           "kind": "contact_page",

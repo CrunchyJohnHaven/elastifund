@@ -242,7 +242,9 @@ class _PageParser(HTMLParser):
         if self._is_same_domain(absolute):
             self.internal_links.append(absolute)
             anchor_text = text.lower()
-            if any(hint in absolute.lower() for hint in ("contact", "quote", "estimate")) or "contact" in anchor_text:
+            parsed_absolute = urlparse(absolute)
+            path_hint = f"{parsed_absolute.path} {parsed_absolute.query}".lower()
+            if any(hint in path_hint for hint in ("contact", "quote", "estimate")) or "contact" in anchor_text:
                 self.contact_channels.append(
                     PublicContactChannel(
                         kind="contact_page",
