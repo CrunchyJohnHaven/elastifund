@@ -8,6 +8,14 @@ Elastic is the shared substrate for system memory, evaluation, observability, an
 
 The system is live. It trades real money. It learns from every outcome.
 
+## Live Posture
+
+Default posture is **live and attempting**. The trading system should stay active whenever gates are green, use the latest approved candidate strategies each cycle, and recover automatically from stale-state drift by reconciling against wallet/risk artifacts before continuing.
+
+When a blocker appears, trading is not considered a success state for idleness; it should re-route to permitted lanes, run a reconciliation pass, and re-attempt unblocked execution as quickly as safe.
+
+A full stop is only intentional for explicit risk/finance/offline safety reasons.
+
 **Website:** [elastifund.io](https://elastifund.io)
 
 ---
@@ -16,19 +24,21 @@ The system is live. It trades real money. It learns from every outcome.
 
 | Metric | Value |
 |---|---|
-| Conservative public forecast ARR | **4,000%+** |
-| Raw selected BTC5 forecast ARR | **3.92M%** annualized continuation ARR |
-| Raw best-package BTC5 forecast ARR | **5.90M%** annualized continuation ARR |
-| Raw P05 BTC5 forecast ARR | **2.07M%** annualized continuation ARR |
-| BTC5 live sleeve | **123** live-filled rows, **+$108.86** live-filled P&L |
-| Live sleeve run-rate | **20.2k%** annualized on the trailing **12** live fills across **4.83 hours** |
-| Strongest live shape | **DOWN** direction still leads at **+$89.46**; **<0.49** remains the best price bucket at **+$50.90** |
+| Conservative public forecast ARR | **0.0%** |
+| Raw selected BTC5 forecast ARR | **-721,772.43%** annualized continuation ARR |
+| Raw best-package BTC5 forecast ARR | **2,284,868.72%** annualized continuation ARR |
+| Raw P05 BTC5 forecast ARR | **538,641.93%** annualized continuation ARR |
+| BTC5 live sleeve | **138** live-filled rows, **+$85.30** live-filled P&L |
+| Live sleeve run-rate | **-121,970.82%** annualized on the trailing **12** live fills across **5.33 hours** (**-$39.39** window P&L) |
+| Strongest live shape | **DOWN** direction still leads at **+$70.49**; **<0.49** remains the best price bucket at **+$42.15** |
 | Public forecast posture | **promote / high confidence** |
+| Runtime launch posture | **blocked** (service **stopped**; remote runtime validation hit **No space left on device**) |
+| JJ-N first-dollar status | **setup_only**, **launchable=false**, **time_to_first_dollar_hours=null**, **paid_revenue_usd=$0.00** |
 | Fund-level realized ARR | **blocked** until ledger/wallet reconciliation closes |
 
-> **Disclosure note:** The README now headlines a conservative **4,000%+** BTC5 forecast ARR on March 10, 2026. The freshest selected machine forecast in [`improvement_velocity.json`](improvement_velocity.json) is materially higher, but fund-level realized ARR remains withheld while wallet and ledger reconciliation stays open. Public headline claims are intentionally clamped until that closes.
+> **Disclosure note:** As of `2026-03-10T16:27:37Z`, the checked-in public BTC5 forecast label is **0.0%** in [`improvement_velocity.json`](improvement_velocity.json), while raw selected and best-package forecasts remain available as separate labeled forecast metrics. Fund-level realized ARR remains withheld while wallet and ledger reconciliation stays open.
 >
-> **Source artifacts:** [`improvement_velocity.json`](improvement_velocity.json), [`reports/btc5_autoresearch/latest.json`](reports/btc5_autoresearch/latest.json), [`reports/btc5_autoresearch_loop/latest.json`](reports/btc5_autoresearch_loop/latest.json), and [`reports/runtime_truth_latest.json`](reports/runtime_truth_latest.json).
+> **Source artifacts:** [`improvement_velocity.json`](improvement_velocity.json), [`reports/public_runtime_snapshot.json`](reports/public_runtime_snapshot.json), [`reports/nontrading_public_report.json`](reports/nontrading_public_report.json), and [`reports/runtime_truth_latest.json`](reports/runtime_truth_latest.json).
 
 ---
 
@@ -71,8 +81,8 @@ This is the autoresearch-style improvement log. Each entry represents a validate
 
 **Deployed improvements:**
 
-- **BTC 5-minute maker is now the public performance engine.** March 10, 2026 artifacts show 123 live-filled rows and +$108.86 live-filled P&L. The README now headlines a conservative 4,000%+ forecast ARR while preserving the raw selected BTC5 forecast, run-rate, and confidence labels in the public metrics surface.
-- **DOWN and sub-0.49 quotes remain the live-winning structure.** `reports/runtime_truth_latest.json` still shows DOWN as the strongest direction (+$89.46) and `<0.49` as the strongest price bucket (+$50.90).
+- **BTC 5-minute maker is now the public performance engine.** March 10, 2026 artifacts show 138 live-filled rows and +$85.30 live-filled P&L. The README now reflects the current public 0.0% forecast headline while preserving the raw selected BTC5 forecast, run-rate, and confidence labels in the public metrics surface.
+- **DOWN and sub-0.49 quotes remain the live-winning structure.** `reports/public_runtime_snapshot.json` shows DOWN as the strongest direction (+$70.49) and `<0.49` as the strongest price bucket (+$42.15).
 - **Maker-only execution enforced.** 100% post-only orders. Zero taker fees. Maker rebates on every fill. This single change (Dispatch #75) eliminated the fee drag that killed earlier strategies.
 - **Six signal sources wired into the live loop.** LLM probability estimation, smart wallet flow detection, LMSR Bayesian pricing, cross-platform arbitrage, VPIN/OFI microstructure, and semantic lead-lag. Each can be independently enabled or disabled per runtime profile.
 - **Multi-category trading live.** The system is actively trading weather, geopolitical, central bank, and crypto markets. Category gates control which signal lanes are eligible per market type.
@@ -179,7 +189,7 @@ These charts now separate three ideas cleanly:
 
 Machine-readable dataset: [improvement_velocity.json](improvement_velocity.json)
 
-The charts are generated from the March 10, 2026 public metrics contract, not hand-drawn marketing copy. The `4,000%+` headline is a conservative public cap; the raw forecast series and sleeve run-rate remain visible alongside it.
+The charts are generated from the March 10, 2026 public metrics contract, not hand-drawn marketing copy. The current headline label is `0.0%`; the raw forecast series and sleeve run-rate remain visible alongside it.
 
 ## Tech Stack
 

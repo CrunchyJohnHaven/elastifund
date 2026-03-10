@@ -1,0 +1,182 @@
+{
+  "instance": 3,
+  "role": "Claude Code / Sonnet",
+  "objective": "Queue the first credible micro-live BTC5 window without forcing a bad current-session launch",
+  "generated_at": "2026-03-10T21:20:00Z",
+  "cycle_window": "2026-03-10T21:00:00Z to 2026-03-10T21:20:00Z",
+
+  "gate_assessment": {
+    "service_running": false,
+    "service_running_note": "jj-live.service is inactive/stopped. jj-live and btc-5min-maker both stopped.",
+    "vps_storage_clear": false,
+    "vps_storage_note": "VPS root filesystem is full. Remote runtime validation hit 'No space left on device'. No service restart is safe until disk is freed.",
+    "instance1_runtime_coherent": true,
+    "instance1_runtime_coherent_note": "Runtime truth is coherent: launch_posture=blocked, service_state=stopped, allow_order_submission=false — no contradiction. Safe blocked baseline.",
+    "instance2_blockers_within_threshold": false,
+    "instance2_blockers_within_threshold_note": "Multiple structural blockers remain: trailing_12_not_positive, trailing_40_not_positive, forecast_not_promote_high, package_load_pending. Instance 2 has defaulted to tighter guardrail package (max_abs_delta=0.00005) per dispatch protocol because recent 5/12/20/40 windows are all negative.",
+    "session_window_active": false,
+    "session_window_note": "Current time is ~16:20 ET. ET 9-11 window closed for today. Next eligible window: Wednesday March 11 09:00 ET.",
+    "live_activation_permitted": false,
+    "live_activation_reason": "Service stopped + VPS storage full + trailing windows negative + package load pending. No activation conditions are met this cycle. This is a staging cycle.",
+    "shadow_activation_permitted": false,
+    "shadow_activation_reason": "Shadow requires running service. Service cannot be safely restarted until disk is freed on VPS."
+  },
+
+  "guardrail_update": {
+    "previous_package_guardrails": {
+      "max_abs_delta": 0.00015,
+      "up_max_buy_price": 0.51,
+      "down_max_buy_price": 0.51
+    },
+    "new_tighter_guardrails": {
+      "max_abs_delta": 0.00005,
+      "up_max_buy_price": 0.48,
+      "down_max_buy_price": 0.51,
+      "source": "runtime_truth_latest.json guardrail_recommendation",
+      "rationale": "Instance 2 dispatch protocol: recent 5/12/20/40 windows all negative. Default to tighter guardrail package for shadow. Delta band tightened 3x (0.00015 → 0.00005). UP ceiling lowered (0.51 → 0.48). DOWN ceiling unchanged (0.51)."
+    },
+    "package_name": "policy_current_live_profile__open_et__grid_d0.00005_up0.48_down0.51",
+    "source_profile": "policy_current_live_profile__open_et__grid_d0.00015_up0.51_down0.51",
+    "guardrail_mode": "tighter_always_on"
+  },
+
+  "package_state": {
+    "best_available_package": "policy_current_live_profile__open_et__grid_d0.00015_up0.51_down0.51",
+    "selected_package_for_shadow": "tighter_guardrail_overlay (max_abs_delta=0.00005, up_max=0.48, down_max=0.51)",
+    "package_confidence_label": "medium",
+    "promoted_package_selected": false,
+    "runtime_package_loaded": false,
+    "deploy_recommendation": "shadow_only",
+    "session_policy": [{"name": "open_et", "et_hours": [9, 10, 11], "max_abs_delta": 0.00005, "up_max_buy_price": 0.48, "down_max_buy_price": 0.51}],
+    "trailing_windows": {
+      "trailing_5_pnl_usd": -4.3814,
+      "trailing_12_pnl_usd": -8.5465,
+      "trailing_40_pnl_usd": -24.0875,
+      "trailing_120_pnl_usd": 91.4902,
+      "net_positive_120": true,
+      "net_positive_40": false,
+      "net_positive_12": false,
+      "net_positive_5": false
+    },
+    "all_time": {
+      "live_filled_rows": 138,
+      "live_filled_pnl_usd": 85.3018,
+      "avg_pnl_per_fill": 0.6181
+    }
+  },
+
+  "activation_decision": {
+    "status": "hold_repair_storage_first_then_shadow_then_wednesday_probe",
+    "current_cycle_action": "staging_only",
+    "disk_repair_required_first": {
+      "action": "Free VPS disk space before any other action",
+      "priority": "BLOCKER — no service restart is safe while VPS is storage-blocked",
+      "retry_cadence_minutes": 10,
+      "operator_commands": [
+        "ssh ubuntu@52.208.155.0 'df -h / && du -sh /home/ubuntu/polymarket-trading-bot/logs/* | sort -rh | head -20'",
+        "ssh ubuntu@52.208.155.0 'sudo journalctl --vacuum-size=200M && sudo apt-get clean'",
+        "ssh ubuntu@52.208.155.0 'find /home/ubuntu/polymarket-trading-bot -name \"*.log\" -mtime +7 -delete'"
+      ]
+    },
+    "shadow_activation": {
+      "eligible_after_disk_repair": true,
+      "config_source": "state/btc5_capital_stage.env",
+      "config": {
+        "BTC5_DEPLOY_MODE": "shadow_probe",
+        "BTC5_PAPER_TRADING": "true",
+        "BTC5_CAPITAL_STAGE": 1,
+        "BTC5_MAX_TRADE_USD": 10,
+        "BTC5_DAILY_LOSS_LIMIT_USD": 250,
+        "BTC5_MAX_ABS_DELTA": 0.00005,
+        "BTC5_UP_MAX_BUY_PRICE": 0.48,
+        "BTC5_DOWN_MAX_BUY_PRICE": 0.51
+      },
+      "deploy_command_after_disk_repair": "ssh ubuntu@52.208.155.0 'sudo systemctl start btc-5min-maker && sudo systemctl status btc-5min-maker'",
+      "guardrail_mode": "tighter_always_on — tighter than previous open_et package, safer while short windows are negative"
+    },
+    "next_live_window": {
+      "label": "micro-live probe",
+      "condition": "one clean shadow pass required (trailing_12 turns positive with tighter guardrails)",
+      "window_date": "Wednesday, March 11, 2026",
+      "window_start_et": "2026-03-11T09:00:00-05:00",
+      "window_end_et": "2026-03-11T11:59:59-05:00",
+      "window_start_utc": "2026-03-11T14:00:00Z",
+      "window_end_utc": "2026-03-11T16:59:59Z",
+      "package": "tighter_guardrail_overlay",
+      "session_policy_name": "open_et",
+      "et_hours": [9, 10, 11],
+      "max_abs_delta": 0.00005,
+      "up_max_buy_price": 0.48,
+      "down_max_buy_price": 0.51,
+      "max_probe_size_usd": 5.0,
+      "max_fills_first_window": 2,
+      "ttl_et": "2026-03-11T12:00:00-05:00",
+      "rollback_triggers": [
+        "first_fill_loss_exceeds_usd_5",
+        "two_consecutive_negative_fills",
+        "three_order_failures_in_window",
+        "trailing_5_turns_negative_after_positive_entry",
+        "service_error_or_crash"
+      ],
+      "pre_window_gate_check_et": "2026-03-11T08:00:00-05:00",
+      "pre_window_gate_check_actions": [
+        "Run scripts/run_btc5_autoresearch_cycle.py on VPS",
+        "Check trailing_12.net_positive = true",
+        "Check service_state = running",
+        "Check finance_gate allows at minimum shadow execution"
+      ]
+    },
+    "thursday_fallback": {
+      "window_start_et": "2026-03-12T09:00:00-05:00",
+      "condition": "If Wednesday gates do not clear"
+    }
+  },
+
+  "go_conditions_wednesday": [
+    {"gate": "disk_repaired_vps_not_storage_blocked", "current": false, "required": true},
+    {"gate": "service_running_shadow_pass_complete", "current": false, "required": true},
+    {"gate": "trailing_12_net_positive_with_tighter_guardrails", "current": false, "required": true},
+    {"gate": "package_class_not_suppress", "current": "suppress", "required": "promote or neutral"},
+    {"gate": "finance_gate_allows_execution", "current": "shadow_only", "required": "shadow_only minimum"}
+  ],
+
+  "lane_bounds": {
+    "sleeve": "btc-5min-maker only",
+    "package": "tighter_guardrail_overlay (one package, no A/B)",
+    "ttl": "2026-03-11T12:00:00-05:00 (3-hour window only)",
+    "rollback_policy": "immediate on first loss cluster or order failure burst",
+    "scale_up_blocked": "no size increase beyond $5 probe during first window",
+    "a6_b1": "hold_no_action — kill at March 14 deadline, no compute spent here"
+  },
+
+  "required_outputs": {
+    "candidate_delta_arr_bps": 0,
+    "candidate_delta_arr_bps_note": "No activation this cycle. Expected delta from Wednesday micro-live probe if gates clear and tighter guardrails hold: +5 to +20 bps/day (bounded $5 probe, 2 max fills). Tighter guardrails reduce both upside and downside.",
+    "expected_improvement_velocity_delta": "+1 blocker resolved per step: disk repair → service restart → shadow pass → trailing_12 positive → Wednesday probe",
+    "arr_confidence_score": 0.15,
+    "arr_confidence_score_note": "Stage readiness 0.15. Short windows negative. Tighter guardrails reduce risk but cannot improve confidence score until trailing windows recover.",
+    "block_reasons": [
+      "vps_storage_full_service_restart_unsafe",
+      "service_stopped",
+      "trailing_12_live_filled_not_positive",
+      "trailing_40_live_filled_not_positive",
+      "btc5_forecast_not_promote_high",
+      "runtime_package_load_pending",
+      "confirmation_coverage_missing",
+      "session_window_closed_until_wednesday_0900_et"
+    ],
+    "finance_gate_pass": "shadow_only",
+    "finance_gate_pass_note": "Finance gate: shadow-eligible. Live treasury requires polymarket_runtime whitelist clearance (currently destination_not_whitelisted).",
+    "one_next_cycle_action": "Free VPS disk space first (journalctl vacuum + old log cleanup). Then restart btc-5min-maker in shadow mode with tighter guardrails. Gate-check trailing_12 at Wednesday 08:00 ET before opening micro-live window."
+  },
+
+  "retry_schedule": {
+    "disk_repair": "immediate (John action — ssh to VPS and free space)",
+    "service_restart_shadow": "immediately after disk repair, +10 min retry if still blocked",
+    "shadow_fill_check": "+6h from service restart",
+    "wednesday_gate_check": "2026-03-11T08:00:00-05:00",
+    "wednesday_micro_live_probe": "2026-03-11T09:00:00-05:00 (conditional on all gates)",
+    "thursday_fallback": "2026-03-12T09:00:00-05:00",
+    "a6_b1_kill_deadline": "2026-03-14"
+  }
+}

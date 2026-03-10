@@ -35,39 +35,40 @@ This file is the single source of truth for the next website build. If the site 
 ### Current repo truth the site must surface
 
 - Broad runtime posture is still blocked.
+- Runtime service is currently stopped and launch remains blocked until storage is repaired.
 - Fund-level realized ARR remains blocked while ledger and wallet reconciliation are unresolved.
 - The dedicated BTC5 sleeve is the current public trading proof surface.
 - Current checked-in BTC5 sleeve evidence:
-  - `123` live-filled rows
-  - `$108.86` live-filled PnL
+  - `138` live-filled rows
+  - `$85.30` live-filled PnL
   - source `remote_sqlite_probe`
 - Current checked-in public ARR disclosure story from `improvement_velocity.json`:
-  - conservative public forecast ARR headline `4,000%+`
-  - raw selected forecast ARR `3,922,437.7%`
-  - raw best-package forecast ARR `5,900,647.8%`
-  - raw P05 forecast ARR `2,071,257.6%`
+  - conservative public forecast ARR headline `0.0%`
+  - raw selected forecast ARR `-721,772.4%`
+  - raw best-package forecast ARR `2,284,868.7%`
+  - raw P05 forecast ARR `538,641.9%`
   - deploy recommendation `promote`
   - confidence `high`
   - selected source `reports/btc5_autoresearch_loop/latest.json`
 - Current sleeve-only realized run-rate story from `improvement_velocity.json`:
   - trailing `12` live fills
-  - `4.83` hour window
-  - `+$2.79` sleeve-window PnL
-  - `20,196.0%` sleeve-only annualized run rate
+  - `5.33` hour window
+  - `-$39.39` sleeve-window PnL
+  - `-121,970.8%` sleeve-only annualized run rate
 - Current timebound velocity story:
-  - `9` cycles in the tracked window
-  - `18.01` hour window
-  - `+1,978,210.1%` forecast ARR gain
+  - `11` cycles in the tracked window
+  - `20.94` hour window
+  - `+3,006,641.1%` forecast ARR gain
   - `+77` validation live-filled rows
 - Current live shape still worth surfacing:
   - best direction `DOWN`
-  - best direction PnL `+$89.46`
+  - best direction PnL `+$70.49`
   - best price bucket `<0.49`
-  - best price bucket PnL `+$50.90`
+  - best price bucket PnL `+$42.15`
 - JJ-N is real but still pre-launch:
   - first wedge is the Website Growth Audit
   - live send, checkout, fulfillment reporting, and revenue claims remain blocked
-  - public-safe funnel counts are still zero until a real approval-cleared cycle exists
+  - first-dollar status is `setup_only`, `launchable=false`, `time_to_first_dollar_hours=null`, `paid_revenue_usd=0.0`
 
 ## Elastic employee route contract
 
@@ -114,7 +115,7 @@ These are the only primary sources the public site should read directly in this 
 | `reports/remote_cycle_status.json` | launch posture and next operator action | use for blocked/next-action messaging |
 | `reports/root_test_status.json` | verification headline | use checked-in summary only |
 | `improvement_velocity.json` | BTC5 scoreboard, forecast, confidence, timebound velocity | primary performance-story artifact |
-| `jjn_public_report.json` | JJ-N public-safe board | Phase 0 board and funnel zeros |
+| `reports/nontrading_public_report.json` | JJ-N public-safe board | Phase 0 board and funnel zeros |
 | `inventory/data/systems.json` | benchmarked system count | secondary proof surface |
 | `reports/arb_empirical_snapshot.json` | A-6 and B-1 gate detail | trading board support |
 
@@ -182,15 +183,15 @@ These paths may be read only if they are referenced by an allowed primary artifa
 
 | Public label | Source field | Rule |
 |---|---|---|
-| `jjn_claim_status` | `jjn_public_report.json.claim_status` | must be shown |
-| `jjn_claim_reason` | `jjn_public_report.json.claim_reason` | must be shown near the worker board hero or `/live/` |
-| `jjn_offer_name` | `jjn_public_report.json.offer.name` | use the Website Growth Audit |
-| `jjn_offer_price` | `jjn_public_report.json.offer.price_range_usd` | optional support metric |
-| `jjn_offer_delivery` | `jjn_public_report.json.offer.delivery_days` | optional support metric |
-| `jjn_approval_mode` | `jjn_public_report.json.activation.approval_mode` | must stay explicit |
-| `jjn_send_status` | `jjn_public_report.json.activation.send_status` | must stay explicit |
-| `jjn_fulfillment_status` | `jjn_public_report.json.activation.fulfillment_status` | must stay explicit |
-| `jjn_accounts_researched` through `jjn_time_to_first_dollar` | `jjn_public_report.json.funnel.*` | zeros are valid and should remain visible until real data exists |
+| `jjn_claim_status` | `reports/nontrading_public_report.json.phase.claim_status` | must be shown |
+| `jjn_claim_reason` | `reports/nontrading_public_report.json.phase.claim_reason` | must be shown near the worker board hero or `/live/` |
+| `jjn_offer_name` | `reports/nontrading_public_report.json.wedge.offer_name` | use the Website Growth Audit |
+| `jjn_offer_price` | `reports/nontrading_public_report.json.wedge.price_range_usd` | optional support metric |
+| `jjn_offer_delivery` | `reports/nontrading_public_report.json.wedge.delivery_days` | optional support metric |
+| `jjn_approval_mode` | `reports/nontrading_public_report.json.launch_summary.launch_mode` | must stay explicit |
+| `jjn_send_status` | `reports/nontrading_public_report.json.wedge.live_send_status` | must stay explicit |
+| `jjn_fulfillment_status` | `reports/nontrading_public_report.json.launch_summary.fulfillment_ready` | must stay explicit |
+| `jjn_accounts_researched` through `jjn_time_to_first_dollar` | `reports/nontrading_public_report.json.funnel.*` and `first_dollar_readiness.time_to_first_dollar_hours` | zeros/nulls are valid and should remain visible until real data exists |
 
 ## Copy rules
 
@@ -199,7 +200,7 @@ These paths may be read only if they are referenced by an allowed primary artifa
 - Lead with current proof, not generic philosophy.
 - Use the dedicated BTC5 sleeve as the public trading proof surface.
 - Keep fund-level realized ARR blocked until reconciliation is closed.
-- Lead the homepage and `/live/` hero with the conservative `4,000%+` public BTC5 forecast ARR headline from `improvement_velocity.json`.
+- Lead the homepage and `/live/` hero with the current `public_forecast_arr_label` from `improvement_velocity.json` (currently `0.0%`).
 - Keep the raw selected forecast, best-package forecast, and sleeve-only run-rate visible beneath the conservative headline.
 - Keep forecast language explicitly labeled as simulated, forecast, or sleeve-only annualized run rate.
 - Keep JJ-N framed as a real wedge in launch prep, not a fictional revenue engine.
@@ -259,7 +260,7 @@ Keep the existing family, but make it sharper.
   - JJ-N wedge panel
   - contribution path panel
 - Must state that fund-level realized ARR is blocked.
-- Must show both the conservative `4,000%+` headline and the raw selected BTC5 forecast with clear labels.
+- Must show both the current public headline (`0.0%` as of the latest artifact) and the raw selected BTC5 forecast with clear labels.
 - Must show freshness badges for snapshot, BTC5, forecast, and JJ-N.
 
 ### `/live/`
