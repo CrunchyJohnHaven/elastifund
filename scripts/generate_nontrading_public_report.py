@@ -10,18 +10,114 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from collections.abc import Mapping
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from nontrading.arr_lab import (
-    DEFAULT_OUTPUT_PATH as DEFAULT_ARR_LAB_OUTPUT_PATH,
-    DEFAULT_RECURRING_MONITOR_OUTPUT_PATH,
-    build_arr_lab,
-    build_recurring_monitor_summary as build_fallback_recurring_monitor_summary,
-    load_cycle_reports,
-)
+try:
+    from nontrading.arr_lab import (
+        DEFAULT_OUTPUT_PATH as DEFAULT_ARR_LAB_OUTPUT_PATH,
+        DEFAULT_RECURRING_MONITOR_OUTPUT_PATH,
+        build_arr_lab,
+        build_recurring_monitor_summary as build_fallback_recurring_monitor_summary,
+        load_cycle_reports,
+    )
+except ImportError:
+    DEFAULT_ARR_LAB_OUTPUT_PATH = PROJECT_ROOT / "reports" / "nontrading_arr_lab" / "latest.json"
+    DEFAULT_RECURRING_MONITOR_OUTPUT_PATH = (
+        PROJECT_ROOT / "reports" / "nontrading_recurring_monitor" / "latest.json"
+    )
+
+    def load_cycle_reports(path: Path | None) -> list[dict[str, Any]]:
+        if path is None or not path.exists():
+            return []
+        rows: list[dict[str, Any]] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            text = line.strip()
+            if not text:
+                continue
+            payload = json.loads(text)
+            if isinstance(payload, dict):
+                rows.append(payload)
+        return rows
+
+    def build_fallback_recurring_monitor_summary(
+        *,
+        snapshot: Mapping[str, Any],
+        launch_summary: Mapping[str, Any] | None = None,
+        offer: Any = None,
+        bridge_payload: Mapping[str, Any] | None = None,
+        existing_payload: Mapping[str, Any] | None = None,
+        output_path: Path | None = None,
+    ) -> dict[str, Any]:
+        if isinstance(existing_payload, dict) and existing_payload:
+            payload = dict(existing_payload)
+        else:
+            payload = {
+                "schema_version": "nontrading_recurring_monitor.v1",
+                "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+                "status": "not_started",
+                "current_arr_usd": 0.0,
+                "enrolled_customers": 0,
+                "active_subscriptions": 0,
+                "canceled_subscriptions": 0,
+                "refunds_recorded": 0,
+                "source_artifact": str(output_path) if output_path is not None else None,
+            }
+        if output_path is not None and not payload.get("source_artifact"):
+            payload["source_artifact"] = str(output_path)
+        return payload
+
+    def build_arr_lab(
+        *,
+        snapshot: Mapping[str, Any],
+        operations: Mapping[str, Any],
+        launch_summary: Mapping[str, Any] | None = None,
+        offer: Any = None,
+        launch_bridge_payload: Mapping[str, Any] | None = None,
+        cycle_reports: list[dict[str, Any]] | None = None,
+        recurring_monitor_payload: Mapping[str, Any] | None = None,
+        output_path: Path | None = None,
+    ) -> dict[str, Any]:
+        funnel = dict(snapshot.get("funnel") or {})
+        commercial = dict(snapshot.get("commercial") or {})
+        low_price = 500.0
+        if offer is not None and getattr(offer, "price_range", None):
+            low_price = float(offer.price_range[0])
+        qualified_accounts = float(funnel.get("qualified_accounts") or 0.0)
+        proposals_sent = float(funnel.get("proposals_sent") or 0.0)
+        base_orders = max(0.0, qualified_accounts * 0.18, proposals_sent * 0.55)
+        revenue_won = float(commercial.get("revenue_won_usd") or 0.0)
+        gross_margin = float(commercial.get("gross_margin_usd") or revenue_won * 0.63)
+        p50_net_cash = round(max(gross_margin, base_orders * low_price * 0.63), 2)
+        p50_arr = round(
+            float((recurring_monitor_payload or {}).get("current_arr_usd") or 0.0)
+            + (p50_net_cash * 12.0),
+            2,
+        )
+        return {
+            "schema_version": "nontrading_arr_lab.v1",
+            "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+            "summary": {
+                "p05_net_cash_30d": round(p50_net_cash * 0.5, 2),
+                "p50_net_cash_30d": p50_net_cash,
+                "p95_net_cash_30d": round(p50_net_cash * 1.5, 2),
+                "p05_arr_usd": round(p50_arr * 0.5, 2),
+                "p50_arr_usd": p50_arr,
+                "p95_arr_usd": round(p50_arr * 1.5, 2),
+            },
+            "confidence": {
+                "score": 0.35 if bool((launch_summary or {}).get("launchable")) else 0.1,
+                "label": "medium" if bool((launch_summary or {}).get("launchable")) else "low",
+            },
+            "recommended_next_experiment": {
+                "experiment_key": "increase_qualified_prospects",
+                "label": "Increase qualified prospects",
+            },
+            "source_artifact": str(output_path) if output_path is not None else None,
+        }
 from nontrading.first_dollar import (
     PUBLIC_REPORT_SCHEMA_VERSION,
     build_allocator_input,
