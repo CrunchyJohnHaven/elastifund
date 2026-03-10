@@ -1,0 +1,1394 @@
+{
+  "curated_candidates": 14,
+  "generated_at": "2026-03-10T15:15:29+00:00",
+  "landing_page_cta_optimizations": [
+    {
+      "key": "proof_first",
+      "proposed_cta": "See the exact issues we found before you buy the audit.",
+      "rationale": "10 curated prospects were selected from evidence-backed website issues, so the landing page should front-load proof instead of generic agency language.",
+      "title": "Lead With Public-Web Proof"
+    },
+    {
+      "key": "competitor_gap",
+      "proposed_cta": "Compare your site against the local competitors already outranking you.",
+      "rationale": "0 curated prospects showed competitor-gap evidence, so benchmark language should be a visible secondary CTA.",
+      "title": "Offer A Benchmark CTA"
+    },
+    {
+      "key": "quick_win",
+      "proposed_cta": "Start with three quick wins in five days, then add the recurring monitor.",
+      "rationale": "10 curated prospects already have quick-win hooks, so the fallback lane should emphasize speed and the monitor upsell.",
+      "title": "Close With A Fast Win"
+    }
+  ],
+  "launch_mode": "manual_close_only",
+  "offer_name": "Website Growth Audit",
+  "offer_slug": "website-growth-audit",
+  "overflow_count": 4,
+  "prospects": [
+    {
+      "account_id": 16,
+      "approval_request_id": null,
+      "approval_status": "not_required",
+      "checkout_path_hint": "/v1/nontrading/offers/website-growth-audit",
+      "company_name": "Fire and Ice HVAC",
+      "contact_channels": [
+        {
+          "is_business": true,
+          "kind": "contact_page",
+          "label": "Contact Us",
+          "source_url": "https://fireandicehvac.com/",
+          "value": "https://fireandicehvac.com/contact-us"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "Book Now",
+          "source_url": "https://fireandicehvac.com/",
+          "value": "+16195618100"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://fireandicehvac.com/",
+          "value": "1.619.561.8100"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://fireandicehvac.com/",
+          "value": "1.760.737.0100"
+        },
+        {
+          "is_business": true,
+          "kind": "contact_page",
+          "label": "",
+          "source_url": "https://fireandicehvac.com/contact-us",
+          "value": "https://fireandicehvac.com/contact-us#"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://fireandicehvac.com/contact-us",
+          "value": "1.858.279.9200"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://fireandicehvac.com/contact-us",
+          "value": "1.619.561.1331"
+        },
+        {
+          "is_business": true,
+          "kind": "contact_form",
+          "label": "public_form",
+          "source_url": "https://fireandicehvac.com/contact-us",
+          "value": "https://fireandicehvac.com/contact-us"
+        }
+      ],
+      "contact_id": 26,
+      "country_code": "US",
+      "estimated_value_usd": 2181.71,
+      "evidence": [
+        {
+          "detail": "Homepage meta description is missing or too short.",
+          "label": "Homepage meta description is missing or too short.",
+          "severity": "high",
+          "source_field": "missing_meta_description",
+          "source_url": "https://fireandicehvac.com/"
+        },
+        {
+          "detail": "Homepage does not state the primary service offer clearly.",
+          "label": "Homepage does not state the primary service offer clearly.",
+          "severity": "high",
+          "source_field": "unclear_primary_offer",
+          "source_url": "https://fireandicehvac.com/"
+        },
+        {
+          "detail": "Homepage payload hints at avoidable performance drag.",
+          "label": "Homepage payload hints at avoidable performance drag.",
+          "severity": "medium",
+          "source_field": "heavy_homepage_payload",
+          "source_url": "https://fireandicehvac.com/"
+        }
+      ],
+      "fit_score": 84.23,
+      "issue_highlights": [
+        "Homepage meta description is missing or too short.: Homepage meta description is missing or too short.",
+        "Homepage does not state the primary service offer clearly.: Homepage does not state the primary service offer clearly.",
+        "Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag."
+      ],
+      "landing_page_hint": "https://example.invalid/website-growth-audit",
+      "launch_mode": "manual_close_only",
+      "lead_id": null,
+      "manual_close_packet": {
+        "checkout_followup": "https://example.invalid/website-growth-audit",
+        "headline": "Fire and Ice HVAC: same-day audit teaser",
+        "issue_highlights": [
+          "Homepage meta description is missing or too short.: Homepage meta description is missing or too short.",
+          "Homepage does not state the primary service offer clearly.: Homepage does not state the primary service offer clearly.",
+          "Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag."
+        ],
+        "landing_page_cta": "Lead with proof, then offer the five-day audit plus recurring monitor.",
+        "primary_contact_path": "phone: +16195618100",
+        "public_evidence_urls": [
+          "https://fireandicehvac.com/"
+        ],
+        "quick_win": "Rewrite the homepage title and meta description around city-plus-service intent.",
+        "recommended_price_tier": {
+          "label": "premium",
+          "price_usd": 2500
+        },
+        "summary": "3 public-web issues found on https://fireandicehvac.com/."
+      },
+      "manual_close_talk_track": [
+        "Open with: Homepage meta description is missing or too short.: Homepage meta description is missing or too short.",
+        "Offer the Website Growth Audit as the premium tier at $2,500, with the 5-day delivery window and recurring monitor upsell.",
+        "Close by pointing the buyer to /v1/nontrading/offers/website-growth-audit once the offer page is live, or use phone: +16195618100 for the first human-reviewed reach-out."
+      ],
+      "message_id": null,
+      "next_step": "manual_close_packet",
+      "opportunity_id": 16,
+      "quick_win": "Rewrite the homepage title and meta description around city-plus-service intent.",
+      "recipient_email": "",
+      "recommended_price_tier": {
+        "label": "premium",
+        "price_usd": 2500
+      },
+      "selection_angle": "angle_1_growth_opportunity",
+      "teaser_body": "Fire and Ice HVAC is a strong Website Growth Audit target. We found 3 public-web issues on https://fireandicehvac.com/, starting with Homepage meta description is missing or too short.: Homepage meta description is missing or too short.. Quick win: Rewrite the homepage title and meta description around city-plus-service intent. Recommend the premium tier at $2,500. Once checkout is live, send the buyer to https://example.invalid/website-growth-audit; until then keep outreach human-reviewed and use the operator talk track below.",
+      "teaser_subject": "Fire and Ice HVAC: 3 public-web fixes before the audit pitch",
+      "website_url": "https://fireandicehvac.com/"
+    },
+    {
+      "account_id": 4,
+      "approval_request_id": null,
+      "approval_status": "not_required",
+      "checkout_path_hint": "/v1/nontrading/offers/website-growth-audit",
+      "company_name": "Carolinas Landscape",
+      "contact_channels": [
+        {
+          "is_business": true,
+          "kind": "email",
+          "label": "contact@carolinaslandscape.com",
+          "source_url": "https://carolinaslandscape.com/",
+          "value": "contact@carolinaslandscape.com"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://carolinaslandscape.com/",
+          "value": "704-323-4119"
+        }
+      ],
+      "contact_id": 4,
+      "country_code": "US",
+      "estimated_value_usd": 2043.14,
+      "evidence": [
+        {
+          "detail": "Homepage does not state the primary service offer clearly.",
+          "label": "Homepage does not state the primary service offer clearly.",
+          "severity": "high",
+          "source_field": "unclear_primary_offer",
+          "source_url": "https://carolinaslandscape.com/"
+        },
+        {
+          "detail": "Homepage payload hints at avoidable performance drag.",
+          "label": "Homepage payload hints at avoidable performance drag.",
+          "severity": "medium",
+          "source_field": "heavy_homepage_payload",
+          "source_url": "https://carolinaslandscape.com/"
+        },
+        {
+          "detail": "No business or service schema markup was found in sampled pages.",
+          "label": "No business or service schema markup was found in sampled pages.",
+          "severity": "medium",
+          "source_field": "missing_business_schema",
+          "source_url": "https://carolinaslandscape.com/"
+        }
+      ],
+      "fit_score": 82.15,
+      "issue_highlights": [
+        "Homepage does not state the primary service offer clearly.: Homepage does not state the primary service offer clearly.",
+        "Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+        "No business or service schema markup was found in sampled pages.: No business or service schema markup was found in sampled pages."
+      ],
+      "landing_page_hint": "https://example.invalid/website-growth-audit",
+      "launch_mode": "manual_close_only",
+      "lead_id": 7,
+      "manual_close_packet": {
+        "checkout_followup": "https://example.invalid/website-growth-audit",
+        "headline": "Carolinas Landscape: same-day audit teaser",
+        "issue_highlights": [
+          "Homepage does not state the primary service offer clearly.: Homepage does not state the primary service offer clearly.",
+          "Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+          "No business or service schema markup was found in sampled pages.: No business or service schema markup was found in sampled pages."
+        ],
+        "landing_page_cta": "Lead with proof, then offer the five-day audit plus recurring monitor.",
+        "primary_contact_path": "email: contact@carolinaslandscape.com",
+        "public_evidence_urls": [
+          "https://carolinaslandscape.com/"
+        ],
+        "quick_win": "Replace the hero copy with a concrete service-and-location promise above the fold.",
+        "recommended_price_tier": {
+          "label": "premium",
+          "price_usd": 2500
+        },
+        "summary": "3 public-web issues found on https://carolinaslandscape.com/."
+      },
+      "manual_close_talk_track": [
+        "Open with: Homepage does not state the primary service offer clearly.: Homepage does not state the primary service offer clearly.",
+        "Offer the Website Growth Audit as the premium tier at $2,500, with the 5-day delivery window and recurring monitor upsell.",
+        "Close by pointing the buyer to /v1/nontrading/offers/website-growth-audit once the offer page is live, or use email: contact@carolinaslandscape.com for the first human-reviewed reach-out."
+      ],
+      "message_id": 1,
+      "next_step": "manual_close_packet",
+      "opportunity_id": 4,
+      "quick_win": "Replace the hero copy with a concrete service-and-location promise above the fold.",
+      "recipient_email": "contact@carolinaslandscape.com",
+      "recommended_price_tier": {
+        "label": "premium",
+        "price_usd": 2500
+      },
+      "selection_angle": "angle_1_growth_opportunity",
+      "teaser_body": "Hi Owner,\n\nI spent a few minutes reviewing Carolinas Landscape and noticed Homepage does not state the primary service offer clearly..\n\nWe turn findings like that into a Website Growth Audit: a focused review of search visibility, conversion friction, and the quickest fixes to ship first.\n\nIf helpful, I can send the audit outline and a sample scorecard before we talk.\n\nElastifund\n123 Example Street, Dublin, Ireland\nUnsubscribe: https://example.invalid/unsubscribe?email=contact%40carolinaslandscape.com&campaign=revenue-audit-manual_close_only",
+      "teaser_subject": "I found 3 things on Carolinas Landscape that are costing you traffic",
+      "website_url": "https://carolinaslandscape.com/"
+    },
+    {
+      "account_id": 5,
+      "approval_request_id": null,
+      "approval_status": "not_required",
+      "checkout_path_hint": "/v1/nontrading/offers/website-growth-audit",
+      "company_name": "Pure Pest Company",
+      "contact_channels": [
+        {
+          "is_business": true,
+          "kind": "contact_page",
+          "label": "Contact",
+          "source_url": "https://purepestco.com/",
+          "value": "https://purepestco.com/contact/"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "Call Now",
+          "source_url": "https://purepestco.com/",
+          "value": "720-325-4500"
+        },
+        {
+          "is_business": true,
+          "kind": "contact_page",
+          "label": "Skip to content",
+          "source_url": "https://purepestco.com/contact/",
+          "value": "https://purepestco.com/contact/#content"
+        },
+        {
+          "is_business": true,
+          "kind": "contact_page",
+          "label": "Go to Top",
+          "source_url": "https://purepestco.com/contact/",
+          "value": "https://purepestco.com/contact/#"
+        },
+        {
+          "is_business": true,
+          "kind": "email",
+          "label": "",
+          "source_url": "https://purepestco.com/contact/",
+          "value": "support@purepestco.com"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://purepestco.com/contact/",
+          "value": "(999) 999-9999"
+        },
+        {
+          "is_business": true,
+          "kind": "contact_form",
+          "label": "public_form",
+          "source_url": "https://purepestco.com/contact/",
+          "value": "https://purepestco.com/contact/"
+        }
+      ],
+      "contact_id": 5,
+      "country_code": "US",
+      "estimated_value_usd": 2003.43,
+      "evidence": [
+        {
+          "detail": "Homepage payload hints at avoidable performance drag.",
+          "label": "Homepage payload hints at avoidable performance drag.",
+          "severity": "high",
+          "source_field": "heavy_homepage_payload",
+          "source_url": "https://purepestco.com/"
+        },
+        {
+          "detail": "Homepage meta description is missing or too short.",
+          "label": "Homepage meta description is missing or too short.",
+          "severity": "high",
+          "source_field": "missing_meta_description",
+          "source_url": "https://purepestco.com/"
+        },
+        {
+          "detail": "Homepage does not state the primary service offer clearly.",
+          "label": "Homepage does not state the primary service offer clearly.",
+          "severity": "high",
+          "source_field": "unclear_primary_offer",
+          "source_url": "https://purepestco.com/"
+        }
+      ],
+      "fit_score": 80.09,
+      "issue_highlights": [
+        "Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+        "Homepage meta description is missing or too short.: Homepage meta description is missing or too short.",
+        "Homepage does not state the primary service offer clearly.: Homepage does not state the primary service offer clearly."
+      ],
+      "landing_page_hint": "https://example.invalid/website-growth-audit",
+      "launch_mode": "manual_close_only",
+      "lead_id": 8,
+      "manual_close_packet": {
+        "checkout_followup": "https://example.invalid/website-growth-audit",
+        "headline": "Pure Pest Company: same-day audit teaser",
+        "issue_highlights": [
+          "Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+          "Homepage meta description is missing or too short.: Homepage meta description is missing or too short.",
+          "Homepage does not state the primary service offer clearly.: Homepage does not state the primary service offer clearly."
+        ],
+        "landing_page_cta": "Lead with proof, then offer the five-day audit plus recurring monitor.",
+        "primary_contact_path": "email: support@purepestco.com",
+        "public_evidence_urls": [
+          "https://purepestco.com/"
+        ],
+        "quick_win": "Compress the homepage hero assets and trim unused scripts on mobile.",
+        "recommended_price_tier": {
+          "label": "premium",
+          "price_usd": 2500
+        },
+        "summary": "3 public-web issues found on https://purepestco.com/."
+      },
+      "manual_close_talk_track": [
+        "Open with: Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+        "Offer the Website Growth Audit as the premium tier at $2,500, with the 5-day delivery window and recurring monitor upsell.",
+        "Close by pointing the buyer to /v1/nontrading/offers/website-growth-audit once the offer page is live, or use email: support@purepestco.com for the first human-reviewed reach-out."
+      ],
+      "message_id": 2,
+      "next_step": "manual_close_packet",
+      "opportunity_id": 5,
+      "quick_win": "Compress the homepage hero assets and trim unused scripts on mobile.",
+      "recipient_email": "support@purepestco.com",
+      "recommended_price_tier": {
+        "label": "premium",
+        "price_usd": 2500
+      },
+      "selection_angle": "angle_1_growth_opportunity",
+      "teaser_body": "Hi Owner,\n\nI spent a few minutes reviewing Pure Pest Company and noticed Homepage payload hints at avoidable performance drag..\n\nWe turn findings like that into a Website Growth Audit: a focused review of search visibility, conversion friction, and the quickest fixes to ship first.\n\nIf helpful, I can send the audit outline and a sample scorecard before we talk.\n\nElastifund\n123 Example Street, Dublin, Ireland\nUnsubscribe: https://example.invalid/unsubscribe?email=support%40purepestco.com&campaign=revenue-audit-manual_close_only",
+      "teaser_subject": "I found 3 things on Pure Pest Company that are costing you traffic",
+      "website_url": "https://purepestco.com/"
+    },
+    {
+      "account_id": 11,
+      "approval_request_id": null,
+      "approval_status": "not_required",
+      "checkout_path_hint": "/v1/nontrading/offers/website-growth-audit",
+      "company_name": "Professional Poolcare Orlando",
+      "contact_channels": [
+        {
+          "is_business": true,
+          "kind": "contact_page",
+          "label": "Contact",
+          "source_url": "https://professionalpoolcareorlando.com/",
+          "value": "https://professionalpoolcareorlando.com/contact/"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://professionalpoolcareorlando.com/",
+          "value": "407-255-7665"
+        },
+        {
+          "is_business": true,
+          "kind": "contact_page",
+          "label": "Skip to content",
+          "source_url": "https://professionalpoolcareorlando.com/contact/",
+          "value": "https://professionalpoolcareorlando.com/contact/#content"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://professionalpoolcareorlando.com/contact/",
+          "value": "(999) 999-9999"
+        },
+        {
+          "is_business": true,
+          "kind": "contact_form",
+          "label": "public_form",
+          "source_url": "https://professionalpoolcareorlando.com/contact/",
+          "value": "https://professionalpoolcareorlando.com/contact/"
+        },
+        {
+          "is_business": true,
+          "kind": "contact_form",
+          "label": "public_form",
+          "source_url": "https://professionalpoolcareorlando.com/pool-services/",
+          "value": "https://professionalpoolcareorlando.com/pool-services/"
+        }
+      ],
+      "contact_id": 22,
+      "country_code": "US",
+      "estimated_value_usd": 1720.57,
+      "evidence": [
+        {
+          "detail": "Homepage payload hints at avoidable performance drag.",
+          "label": "Homepage payload hints at avoidable performance drag.",
+          "severity": "high",
+          "source_field": "heavy_homepage_payload",
+          "source_url": "https://professionalpoolcareorlando.com/"
+        },
+        {
+          "detail": "Homepage meta description is missing or too short.",
+          "label": "Homepage meta description is missing or too short.",
+          "severity": "high",
+          "source_field": "missing_meta_description",
+          "source_url": "https://professionalpoolcareorlando.com/"
+        },
+        {
+          "detail": "Homepage does not state the primary service offer clearly.",
+          "label": "Homepage does not state the primary service offer clearly.",
+          "severity": "high",
+          "source_field": "unclear_primary_offer",
+          "source_url": "https://professionalpoolcareorlando.com/"
+        }
+      ],
+      "fit_score": 71.79,
+      "issue_highlights": [
+        "Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+        "Homepage meta description is missing or too short.: Homepage meta description is missing or too short.",
+        "Homepage does not state the primary service offer clearly.: Homepage does not state the primary service offer clearly."
+      ],
+      "landing_page_hint": "https://example.invalid/website-growth-audit",
+      "launch_mode": "manual_close_only",
+      "lead_id": null,
+      "manual_close_packet": {
+        "checkout_followup": "https://example.invalid/website-growth-audit",
+        "headline": "Professional Poolcare Orlando: same-day audit teaser",
+        "issue_highlights": [
+          "Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+          "Homepage meta description is missing or too short.: Homepage meta description is missing or too short.",
+          "Homepage does not state the primary service offer clearly.: Homepage does not state the primary service offer clearly."
+        ],
+        "landing_page_cta": "Lead with proof, then offer the five-day audit plus recurring monitor.",
+        "primary_contact_path": "phone: 407-255-7665",
+        "public_evidence_urls": [
+          "https://professionalpoolcareorlando.com/"
+        ],
+        "quick_win": "Compress the homepage hero assets and trim unused scripts on mobile.",
+        "recommended_price_tier": {
+          "label": "standard",
+          "price_usd": 1500
+        },
+        "summary": "3 public-web issues found on https://professionalpoolcareorlando.com/."
+      },
+      "manual_close_talk_track": [
+        "Open with: Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+        "Offer the Website Growth Audit as the standard tier at $1,500, with the 5-day delivery window and recurring monitor upsell.",
+        "Close by pointing the buyer to /v1/nontrading/offers/website-growth-audit once the offer page is live, or use phone: 407-255-7665 for the first human-reviewed reach-out."
+      ],
+      "message_id": null,
+      "next_step": "manual_close_packet",
+      "opportunity_id": 11,
+      "quick_win": "Compress the homepage hero assets and trim unused scripts on mobile.",
+      "recipient_email": "",
+      "recommended_price_tier": {
+        "label": "standard",
+        "price_usd": 1500
+      },
+      "selection_angle": "angle_1_growth_opportunity",
+      "teaser_body": "Professional Poolcare Orlando is a strong Website Growth Audit target. We found 3 public-web issues on https://professionalpoolcareorlando.com/, starting with Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.. Quick win: Compress the homepage hero assets and trim unused scripts on mobile. Recommend the standard tier at $1,500. Once checkout is live, send the buyer to https://example.invalid/website-growth-audit; until then keep outreach human-reviewed and use the operator talk track below.",
+      "teaser_subject": "Professional Poolcare Orlando: 3 public-web fixes before the audit pitch",
+      "website_url": "https://professionalpoolcareorlando.com/"
+    },
+    {
+      "account_id": 12,
+      "approval_request_id": null,
+      "approval_status": "not_required",
+      "checkout_path_hint": "/v1/nontrading/offers/website-growth-audit",
+      "company_name": "Sactown Junk Removal",
+      "contact_channels": [
+        {
+          "is_business": true,
+          "kind": "contact_page",
+          "label": "Request Quote",
+          "source_url": "https://sactownjunkremoval.com/",
+          "value": "https://sactownjunkremoval.com/#freequote"
+        },
+        {
+          "is_business": true,
+          "kind": "contact_page",
+          "label": "Contact",
+          "source_url": "https://sactownjunkremoval.com/",
+          "value": "https://sactownjunkremoval.com/contact-sactown-junk-removal/"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "Call or Text (916) 821-4150",
+          "source_url": "https://sactownjunkremoval.com/",
+          "value": "9168214150"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "(916) 821-4150",
+          "source_url": "https://sactownjunkremoval.com/",
+          "value": "addnumber"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://sactownjunkremoval.com/",
+          "value": "(916) 821-4150"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://sactownjunkremoval.com/",
+          "value": "17692822414"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://sactownjunkremoval.com/",
+          "value": "17179621509"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://sactownjunkremoval.com/",
+          "value": "16710705336"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://sactownjunkremoval.com/",
+          "value": "16710705533"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://sactownjunkremoval.com/",
+          "value": "16710705622"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://sactownjunkremoval.com/",
+          "value": "16825283360"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://sactownjunkremoval.com/",
+          "value": "16825283606"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://sactownjunkremoval.com/",
+          "value": "16825282089"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://sactownjunkremoval.com/",
+          "value": "16825282329"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://sactownjunkremoval.com/",
+          "value": "(916)821-4150"
+        },
+        {
+          "is_business": true,
+          "kind": "contact_page",
+          "label": "Skip to content",
+          "source_url": "https://sactownjunkremoval.com/contact-sactown-junk-removal/",
+          "value": "https://sactownjunkremoval.com/contact-sactown-junk-removal/#content"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://sactownjunkremoval.com/contact-sactown-junk-removal/",
+          "value": "916 821-4150"
+        }
+      ],
+      "contact_id": 23,
+      "country_code": "US",
+      "estimated_value_usd": 1560.0,
+      "evidence": [
+        {
+          "detail": "Homepage payload hints at avoidable performance drag.",
+          "label": "Homepage payload hints at avoidable performance drag.",
+          "severity": "high",
+          "source_field": "heavy_homepage_payload",
+          "source_url": "https://sactownjunkremoval.com/"
+        },
+        {
+          "detail": "Homepage does not state the primary service offer clearly.",
+          "label": "Homepage does not state the primary service offer clearly.",
+          "severity": "high",
+          "source_field": "unclear_primary_offer",
+          "source_url": "https://sactownjunkremoval.com/"
+        },
+        {
+          "detail": "No business or service schema markup was found in sampled pages.",
+          "label": "No business or service schema markup was found in sampled pages.",
+          "severity": "medium",
+          "source_field": "missing_business_schema",
+          "source_url": "https://sactownjunkremoval.com/"
+        }
+      ],
+      "fit_score": 67.99,
+      "issue_highlights": [
+        "Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+        "Homepage does not state the primary service offer clearly.: Homepage does not state the primary service offer clearly.",
+        "No business or service schema markup was found in sampled pages.: No business or service schema markup was found in sampled pages."
+      ],
+      "landing_page_hint": "https://example.invalid/website-growth-audit",
+      "launch_mode": "manual_close_only",
+      "lead_id": null,
+      "manual_close_packet": {
+        "checkout_followup": "https://example.invalid/website-growth-audit",
+        "headline": "Sactown Junk Removal: same-day audit teaser",
+        "issue_highlights": [
+          "Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+          "Homepage does not state the primary service offer clearly.: Homepage does not state the primary service offer clearly.",
+          "No business or service schema markup was found in sampled pages.: No business or service schema markup was found in sampled pages."
+        ],
+        "landing_page_cta": "Lead with proof, then offer the five-day audit plus recurring monitor.",
+        "primary_contact_path": "phone: 9168214150",
+        "public_evidence_urls": [
+          "https://sactownjunkremoval.com/"
+        ],
+        "quick_win": "Compress the homepage hero assets and trim unused scripts on mobile.",
+        "recommended_price_tier": {
+          "label": "standard",
+          "price_usd": 1500
+        },
+        "summary": "3 public-web issues found on https://sactownjunkremoval.com/."
+      },
+      "manual_close_talk_track": [
+        "Open with: Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+        "Offer the Website Growth Audit as the standard tier at $1,500, with the 5-day delivery window and recurring monitor upsell.",
+        "Close by pointing the buyer to /v1/nontrading/offers/website-growth-audit once the offer page is live, or use phone: 9168214150 for the first human-reviewed reach-out."
+      ],
+      "message_id": null,
+      "next_step": "manual_close_packet",
+      "opportunity_id": 12,
+      "quick_win": "Compress the homepage hero assets and trim unused scripts on mobile.",
+      "recipient_email": "",
+      "recommended_price_tier": {
+        "label": "standard",
+        "price_usd": 1500
+      },
+      "selection_angle": "angle_1_growth_opportunity",
+      "teaser_body": "Sactown Junk Removal is a strong Website Growth Audit target. We found 3 public-web issues on https://sactownjunkremoval.com/, starting with Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.. Quick win: Compress the homepage hero assets and trim unused scripts on mobile. Recommend the standard tier at $1,500. Once checkout is live, send the buyer to https://example.invalid/website-growth-audit; until then keep outreach human-reviewed and use the operator talk track below.",
+      "teaser_subject": "Sactown Junk Removal: 3 public-web fixes before the audit pitch",
+      "website_url": "https://sactownjunkremoval.com/"
+    },
+    {
+      "account_id": 15,
+      "approval_request_id": null,
+      "approval_status": "not_required",
+      "checkout_path_hint": "/v1/nontrading/offers/website-growth-audit",
+      "company_name": "PoolReady",
+      "contact_channels": [
+        {
+          "is_business": true,
+          "kind": "contact_page",
+          "label": "Get Started \u2192",
+          "source_url": "https://poolready.com/",
+          "value": "https://poolready.com/contact"
+        },
+        {
+          "is_business": true,
+          "kind": "contact_form",
+          "label": "public_form",
+          "source_url": "https://poolready.com/",
+          "value": "https://poolready.com/"
+        },
+        {
+          "is_business": true,
+          "kind": "contact_form",
+          "label": "public_form",
+          "source_url": "https://poolready.com/contact",
+          "value": "https://poolready.com/contact"
+        }
+      ],
+      "contact_id": 25,
+      "country_code": "US",
+      "estimated_value_usd": 1277.14,
+      "evidence": [
+        {
+          "detail": "Homepage payload hints at avoidable performance drag.",
+          "label": "Homepage payload hints at avoidable performance drag.",
+          "severity": "high",
+          "source_field": "heavy_homepage_payload",
+          "source_url": "https://poolready.com/"
+        },
+        {
+          "detail": "Homepage does not state the primary service offer clearly.",
+          "label": "Homepage does not state the primary service offer clearly.",
+          "severity": "high",
+          "source_field": "unclear_primary_offer",
+          "source_url": "https://poolready.com/"
+        }
+      ],
+      "fit_score": 61.39,
+      "issue_highlights": [
+        "Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+        "Homepage does not state the primary service offer clearly.: Homepage does not state the primary service offer clearly."
+      ],
+      "landing_page_hint": "https://example.invalid/website-growth-audit",
+      "launch_mode": "manual_close_only",
+      "lead_id": null,
+      "manual_close_packet": {
+        "checkout_followup": "https://example.invalid/website-growth-audit",
+        "headline": "PoolReady: same-day audit teaser",
+        "issue_highlights": [
+          "Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+          "Homepage does not state the primary service offer clearly.: Homepage does not state the primary service offer clearly."
+        ],
+        "landing_page_cta": "Lead with proof, then offer the five-day audit plus recurring monitor.",
+        "primary_contact_path": "contact_form: https://poolready.com/",
+        "public_evidence_urls": [
+          "https://poolready.com/"
+        ],
+        "quick_win": "Compress the homepage hero assets and trim unused scripts on mobile.",
+        "recommended_price_tier": {
+          "label": "standard",
+          "price_usd": 1500
+        },
+        "summary": "2 public-web issues found on https://poolready.com/."
+      },
+      "manual_close_talk_track": [
+        "Open with: Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+        "Offer the Website Growth Audit as the standard tier at $1,500, with the 5-day delivery window and recurring monitor upsell.",
+        "Close by pointing the buyer to /v1/nontrading/offers/website-growth-audit once the offer page is live, or use contact_form: https://poolready.com/ for the first human-reviewed reach-out."
+      ],
+      "message_id": null,
+      "next_step": "manual_close_packet",
+      "opportunity_id": 15,
+      "quick_win": "Compress the homepage hero assets and trim unused scripts on mobile.",
+      "recipient_email": "",
+      "recommended_price_tier": {
+        "label": "standard",
+        "price_usd": 1500
+      },
+      "selection_angle": "angle_1_growth_opportunity",
+      "teaser_body": "PoolReady is a strong Website Growth Audit target. We found 2 public-web issues on https://poolready.com/, starting with Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.. Quick win: Compress the homepage hero assets and trim unused scripts on mobile. Recommend the standard tier at $1,500. Once checkout is live, send the buyer to https://example.invalid/website-growth-audit; until then keep outreach human-reviewed and use the operator talk track below.",
+      "teaser_subject": "PoolReady: 3 public-web fixes before the audit pitch",
+      "website_url": "https://poolready.com/"
+    },
+    {
+      "account_id": 13,
+      "approval_request_id": null,
+      "approval_status": "not_required",
+      "checkout_path_hint": "/v1/nontrading/offers/website-growth-audit",
+      "company_name": "Sac Junk",
+      "contact_channels": [
+        {
+          "is_business": true,
+          "kind": "contact_page",
+          "label": "Contact",
+          "source_url": "https://www.sacjunk.com/",
+          "value": "https://www.sacjunk.com/contact"
+        },
+        {
+          "is_business": true,
+          "kind": "email",
+          "label": "",
+          "source_url": "https://www.sacjunk.com/",
+          "value": "sales@sacJunk.com"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.sacjunk.com/",
+          "value": "(916) 716-2108"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.sacjunk.com/",
+          "value": "+19167162108"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.sacjunk.com/",
+          "value": "9167162108"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.sacjunk.com/",
+          "value": "5824101226"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.sacjunk.com/",
+          "value": "121.2618993"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.sacjunk.com/",
+          "value": "9279528356"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.sacjunk.com/",
+          "value": "16569722949"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.sacjunk.com/",
+          "value": "16765035252"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.sacjunk.com/",
+          "value": "916-716-2108"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.sacjunk.com/",
+          "value": "8348832879"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.sacjunk.com/",
+          "value": "3294310153"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.sacjunk.com/",
+          "value": "0203438900"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.sacjunk.com/",
+          "value": "6846677067"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.sacjunk.com/",
+          "value": "8483467583"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.sacjunk.com/",
+          "value": "2277422786"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.sacjunk.com/contact",
+          "value": "4771714157"
+        }
+      ],
+      "contact_id": 13,
+      "country_code": "US",
+      "estimated_value_usd": 1277.14,
+      "evidence": [
+        {
+          "detail": "Homepage payload hints at avoidable performance drag.",
+          "label": "Homepage payload hints at avoidable performance drag.",
+          "severity": "high",
+          "source_field": "heavy_homepage_payload",
+          "source_url": "https://www.sacjunk.com/"
+        },
+        {
+          "detail": "Homepage does not state the primary service offer clearly.",
+          "label": "Homepage does not state the primary service offer clearly.",
+          "severity": "high",
+          "source_field": "unclear_primary_offer",
+          "source_url": "https://www.sacjunk.com/"
+        }
+      ],
+      "fit_score": 61.39,
+      "issue_highlights": [
+        "Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+        "Homepage does not state the primary service offer clearly.: Homepage does not state the primary service offer clearly."
+      ],
+      "landing_page_hint": "https://example.invalid/website-growth-audit",
+      "launch_mode": "manual_close_only",
+      "lead_id": 10,
+      "manual_close_packet": {
+        "checkout_followup": "https://example.invalid/website-growth-audit",
+        "headline": "Sac Junk: same-day audit teaser",
+        "issue_highlights": [
+          "Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+          "Homepage does not state the primary service offer clearly.: Homepage does not state the primary service offer clearly."
+        ],
+        "landing_page_cta": "Lead with proof, then offer the five-day audit plus recurring monitor.",
+        "primary_contact_path": "email: sales@sacJunk.com",
+        "public_evidence_urls": [
+          "https://www.sacjunk.com/"
+        ],
+        "quick_win": "Compress the homepage hero assets and trim unused scripts on mobile.",
+        "recommended_price_tier": {
+          "label": "standard",
+          "price_usd": 1500
+        },
+        "summary": "2 public-web issues found on https://www.sacjunk.com/."
+      },
+      "manual_close_talk_track": [
+        "Open with: Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+        "Offer the Website Growth Audit as the standard tier at $1,500, with the 5-day delivery window and recurring monitor upsell.",
+        "Close by pointing the buyer to /v1/nontrading/offers/website-growth-audit once the offer page is live, or use email: sales@sacJunk.com for the first human-reviewed reach-out."
+      ],
+      "message_id": 3,
+      "next_step": "manual_close_packet",
+      "opportunity_id": 13,
+      "quick_win": "Compress the homepage hero assets and trim unused scripts on mobile.",
+      "recipient_email": "sales@sacJunk.com",
+      "recommended_price_tier": {
+        "label": "standard",
+        "price_usd": 1500
+      },
+      "selection_angle": "angle_1_growth_opportunity",
+      "teaser_body": "Hi Owner,\n\nI spent a few minutes reviewing Sac Junk and noticed Homepage payload hints at avoidable performance drag..\n\nWe turn findings like that into a Website Growth Audit: a focused review of search visibility, conversion friction, and the quickest fixes to ship first.\n\nIf helpful, I can send the audit outline and a sample scorecard before we talk.\n\nElastifund\n123 Example Street, Dublin, Ireland\nUnsubscribe: https://example.invalid/unsubscribe?email=sales%40sacJunk.com&campaign=revenue-audit-manual_close_only",
+      "teaser_subject": "I found 3 things on Sac Junk that are costing you traffic",
+      "website_url": "https://www.sacjunk.com/"
+    },
+    {
+      "account_id": 10,
+      "approval_request_id": null,
+      "approval_status": "not_required",
+      "checkout_path_hint": "/v1/nontrading/offers/website-growth-audit",
+      "company_name": "Raleigh Concrete",
+      "contact_channels": [
+        {
+          "is_business": true,
+          "kind": "contact_page",
+          "label": "Contact",
+          "source_url": "https://www.raleigh-concrete.com/",
+          "value": "https://www.raleigh-concrete.com/contact/"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "(877) 705-2281",
+          "source_url": "https://www.raleigh-concrete.com/",
+          "value": "8777052281"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.raleigh-concrete.com/",
+          "value": "(877) 705-2281"
+        },
+        {
+          "is_business": true,
+          "kind": "contact_page",
+          "label": "Skip to content",
+          "source_url": "https://www.raleigh-concrete.com/contact/",
+          "value": "https://www.raleigh-concrete.com/contact/#content"
+        },
+        {
+          "is_business": true,
+          "kind": "contact_page",
+          "label": "Services",
+          "source_url": "https://www.raleigh-concrete.com/contact/",
+          "value": "https://www.raleigh-concrete.com/contact/#"
+        },
+        {
+          "is_business": true,
+          "kind": "contact_form",
+          "label": "public_form",
+          "source_url": "https://www.raleigh-concrete.com/contact/",
+          "value": "https://www.raleigh-concrete.com/contact/"
+        }
+      ],
+      "contact_id": 21,
+      "country_code": "US",
+      "estimated_value_usd": 1277.14,
+      "evidence": [
+        {
+          "detail": "Homepage payload hints at avoidable performance drag.",
+          "label": "Homepage payload hints at avoidable performance drag.",
+          "severity": "high",
+          "source_field": "heavy_homepage_payload",
+          "source_url": "https://www.raleigh-concrete.com/"
+        },
+        {
+          "detail": "Homepage does not state the primary service offer clearly.",
+          "label": "Homepage does not state the primary service offer clearly.",
+          "severity": "high",
+          "source_field": "unclear_primary_offer",
+          "source_url": "https://www.raleigh-concrete.com/"
+        }
+      ],
+      "fit_score": 61.39,
+      "issue_highlights": [
+        "Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+        "Homepage does not state the primary service offer clearly.: Homepage does not state the primary service offer clearly."
+      ],
+      "landing_page_hint": "https://example.invalid/website-growth-audit",
+      "launch_mode": "manual_close_only",
+      "lead_id": null,
+      "manual_close_packet": {
+        "checkout_followup": "https://example.invalid/website-growth-audit",
+        "headline": "Raleigh Concrete: same-day audit teaser",
+        "issue_highlights": [
+          "Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+          "Homepage does not state the primary service offer clearly.: Homepage does not state the primary service offer clearly."
+        ],
+        "landing_page_cta": "Lead with proof, then offer the five-day audit plus recurring monitor.",
+        "primary_contact_path": "phone: 8777052281",
+        "public_evidence_urls": [
+          "https://www.raleigh-concrete.com/"
+        ],
+        "quick_win": "Compress the homepage hero assets and trim unused scripts on mobile.",
+        "recommended_price_tier": {
+          "label": "standard",
+          "price_usd": 1500
+        },
+        "summary": "2 public-web issues found on https://www.raleigh-concrete.com/."
+      },
+      "manual_close_talk_track": [
+        "Open with: Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+        "Offer the Website Growth Audit as the standard tier at $1,500, with the 5-day delivery window and recurring monitor upsell.",
+        "Close by pointing the buyer to /v1/nontrading/offers/website-growth-audit once the offer page is live, or use phone: 8777052281 for the first human-reviewed reach-out."
+      ],
+      "message_id": null,
+      "next_step": "manual_close_packet",
+      "opportunity_id": 10,
+      "quick_win": "Compress the homepage hero assets and trim unused scripts on mobile.",
+      "recipient_email": "",
+      "recommended_price_tier": {
+        "label": "standard",
+        "price_usd": 1500
+      },
+      "selection_angle": "angle_1_growth_opportunity",
+      "teaser_body": "Raleigh Concrete is a strong Website Growth Audit target. We found 2 public-web issues on https://www.raleigh-concrete.com/, starting with Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.. Quick win: Compress the homepage hero assets and trim unused scripts on mobile. Recommend the standard tier at $1,500. Once checkout is live, send the buyer to https://example.invalid/website-growth-audit; until then keep outreach human-reviewed and use the operator talk track below.",
+      "teaser_subject": "Raleigh Concrete: 3 public-web fixes before the audit pitch",
+      "website_url": "https://www.raleigh-concrete.com/"
+    },
+    {
+      "account_id": 7,
+      "approval_request_id": null,
+      "approval_status": "not_required",
+      "checkout_path_hint": "/v1/nontrading/offers/website-growth-audit",
+      "company_name": "Nashville Fence & Deck",
+      "contact_channels": [
+        {
+          "is_business": true,
+          "kind": "contact_page",
+          "label": "Contact",
+          "source_url": "https://www.nashvillefenceanddeck.com/",
+          "value": "https://www.nashvillefenceanddeck.com/contact-us"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "Call Now",
+          "source_url": "https://www.nashvillefenceanddeck.com/",
+          "value": "6154238837"
+        },
+        {
+          "is_business": true,
+          "kind": "email",
+          "label": "",
+          "source_url": "https://www.nashvillefenceanddeck.com/",
+          "value": "ashley@nashvillefenceanddeck.com"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.nashvillefenceanddeck.com/",
+          "value": "3141925352"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.nashvillefenceanddeck.com/",
+          "value": "17277263700"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.nashvillefenceanddeck.com/",
+          "value": "8148975349"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.nashvillefenceanddeck.com/",
+          "value": "615-423-8837"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.nashvillefenceanddeck.com/contact-us",
+          "value": "(615) 423-8837"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://www.nashvillefenceanddeck.com/contact-us",
+          "value": "14552261089"
+        }
+      ],
+      "contact_id": 7,
+      "country_code": "US",
+      "estimated_value_usd": 1277.14,
+      "evidence": [
+        {
+          "detail": "Homepage payload hints at avoidable performance drag.",
+          "label": "Homepage payload hints at avoidable performance drag.",
+          "severity": "high",
+          "source_field": "heavy_homepage_payload",
+          "source_url": "https://www.nashvillefenceanddeck.com/"
+        },
+        {
+          "detail": "Homepage does not state the primary service offer clearly.",
+          "label": "Homepage does not state the primary service offer clearly.",
+          "severity": "high",
+          "source_field": "unclear_primary_offer",
+          "source_url": "https://www.nashvillefenceanddeck.com/"
+        }
+      ],
+      "fit_score": 61.39,
+      "issue_highlights": [
+        "Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+        "Homepage does not state the primary service offer clearly.: Homepage does not state the primary service offer clearly."
+      ],
+      "landing_page_hint": "https://example.invalid/website-growth-audit",
+      "launch_mode": "manual_close_only",
+      "lead_id": 9,
+      "manual_close_packet": {
+        "checkout_followup": "https://example.invalid/website-growth-audit",
+        "headline": "Nashville Fence & Deck: same-day audit teaser",
+        "issue_highlights": [
+          "Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+          "Homepage does not state the primary service offer clearly.: Homepage does not state the primary service offer clearly."
+        ],
+        "landing_page_cta": "Lead with proof, then offer the five-day audit plus recurring monitor.",
+        "primary_contact_path": "email: ashley@nashvillefenceanddeck.com",
+        "public_evidence_urls": [
+          "https://www.nashvillefenceanddeck.com/"
+        ],
+        "quick_win": "Compress the homepage hero assets and trim unused scripts on mobile.",
+        "recommended_price_tier": {
+          "label": "standard",
+          "price_usd": 1500
+        },
+        "summary": "2 public-web issues found on https://www.nashvillefenceanddeck.com/."
+      },
+      "manual_close_talk_track": [
+        "Open with: Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+        "Offer the Website Growth Audit as the standard tier at $1,500, with the 5-day delivery window and recurring monitor upsell.",
+        "Close by pointing the buyer to /v1/nontrading/offers/website-growth-audit once the offer page is live, or use email: ashley@nashvillefenceanddeck.com for the first human-reviewed reach-out."
+      ],
+      "message_id": 4,
+      "next_step": "manual_close_packet",
+      "opportunity_id": 7,
+      "quick_win": "Compress the homepage hero assets and trim unused scripts on mobile.",
+      "recipient_email": "ashley@nashvillefenceanddeck.com",
+      "recommended_price_tier": {
+        "label": "standard",
+        "price_usd": 1500
+      },
+      "selection_angle": "angle_1_growth_opportunity",
+      "teaser_body": "Hi Owner,\n\nI spent a few minutes reviewing Nashville Fence & Deck and noticed Homepage payload hints at avoidable performance drag..\n\nWe turn findings like that into a Website Growth Audit: a focused review of search visibility, conversion friction, and the quickest fixes to ship first.\n\nIf helpful, I can send the audit outline and a sample scorecard before we talk.\n\nElastifund\n123 Example Street, Dublin, Ireland\nUnsubscribe: https://example.invalid/unsubscribe?email=ashley%40nashvillefenceanddeck.com&campaign=revenue-audit-manual_close_only",
+      "teaser_subject": "I found 3 things on Nashville Fence & Deck that are costing you traffic",
+      "website_url": "https://www.nashvillefenceanddeck.com/"
+    },
+    {
+      "account_id": 6,
+      "approval_request_id": null,
+      "approval_status": "not_required",
+      "checkout_path_hint": "/v1/nontrading/offers/website-growth-audit",
+      "company_name": "Denver Pest Control Co",
+      "contact_channels": [
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://denverpestco.com/",
+          "value": "(303)%20535-0198"
+        },
+        {
+          "is_business": true,
+          "kind": "contact_page",
+          "label": "contact us",
+          "source_url": "https://denverpestco.com/",
+          "value": "https://denverpestco.com/rodent-control"
+        },
+        {
+          "is_business": true,
+          "kind": "contact_page",
+          "label": "Contact us",
+          "source_url": "https://denverpestco.com/",
+          "value": "https://denverpestco.com/wildlife-control"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "(303) 535-0198",
+          "source_url": "https://denverpestco.com/",
+          "value": "303-535-0198"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "(303) 535-0198",
+          "source_url": "https://denverpestco.com/",
+          "value": "//(303)%20535-0198"
+        },
+        {
+          "is_business": true,
+          "kind": "phone",
+          "label": "",
+          "source_url": "https://denverpestco.com/",
+          "value": "(303) 535-0198"
+        }
+      ],
+      "contact_id": 18,
+      "country_code": "US",
+      "estimated_value_usd": 1277.14,
+      "evidence": [
+        {
+          "detail": "Homepage payload hints at avoidable performance drag.",
+          "label": "Homepage payload hints at avoidable performance drag.",
+          "severity": "high",
+          "source_field": "heavy_homepage_payload",
+          "source_url": "https://denverpestco.com/"
+        },
+        {
+          "detail": "Homepage does not state the primary service offer clearly.",
+          "label": "Homepage does not state the primary service offer clearly.",
+          "severity": "high",
+          "source_field": "unclear_primary_offer",
+          "source_url": "https://denverpestco.com/"
+        }
+      ],
+      "fit_score": 61.39,
+      "issue_highlights": [
+        "Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+        "Homepage does not state the primary service offer clearly.: Homepage does not state the primary service offer clearly."
+      ],
+      "landing_page_hint": "https://example.invalid/website-growth-audit",
+      "launch_mode": "manual_close_only",
+      "lead_id": null,
+      "manual_close_packet": {
+        "checkout_followup": "https://example.invalid/website-growth-audit",
+        "headline": "Denver Pest Control Co: same-day audit teaser",
+        "issue_highlights": [
+          "Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+          "Homepage does not state the primary service offer clearly.: Homepage does not state the primary service offer clearly."
+        ],
+        "landing_page_cta": "Lead with proof, then offer the five-day audit plus recurring monitor.",
+        "primary_contact_path": "phone: (303)%20535-0198",
+        "public_evidence_urls": [
+          "https://denverpestco.com/"
+        ],
+        "quick_win": "Compress the homepage hero assets and trim unused scripts on mobile.",
+        "recommended_price_tier": {
+          "label": "standard",
+          "price_usd": 1500
+        },
+        "summary": "2 public-web issues found on https://denverpestco.com/."
+      },
+      "manual_close_talk_track": [
+        "Open with: Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.",
+        "Offer the Website Growth Audit as the standard tier at $1,500, with the 5-day delivery window and recurring monitor upsell.",
+        "Close by pointing the buyer to /v1/nontrading/offers/website-growth-audit once the offer page is live, or use phone: (303)%20535-0198 for the first human-reviewed reach-out."
+      ],
+      "message_id": null,
+      "next_step": "manual_close_packet",
+      "opportunity_id": 6,
+      "quick_win": "Compress the homepage hero assets and trim unused scripts on mobile.",
+      "recipient_email": "",
+      "recommended_price_tier": {
+        "label": "standard",
+        "price_usd": 1500
+      },
+      "selection_angle": "angle_1_growth_opportunity",
+      "teaser_body": "Denver Pest Control Co is a strong Website Growth Audit target. We found 2 public-web issues on https://denverpestco.com/, starting with Homepage payload hints at avoidable performance drag.: Homepage payload hints at avoidable performance drag.. Quick win: Compress the homepage hero assets and trim unused scripts on mobile. Recommend the standard tier at $1,500. Once checkout is live, send the buyer to https://example.invalid/website-growth-audit; until then keep outreach human-reviewed and use the operator talk track below.",
+      "teaser_subject": "Denver Pest Control Co: 3 public-web fixes before the audit pitch",
+      "website_url": "https://denverpestco.com/"
+    }
+  ],
+  "schema_version": "revenue_audit_acquisition_bridge.v2",
+  "selected_prospects": 10,
+  "sender_verification": {
+    "live_send_eligible": false,
+    "provider": "dry_run",
+    "reason": "provider_dry_run",
+    "sender_domain": "example.invalid",
+    "sender_domain_verified": false,
+    "sender_email": "partnerships@example.invalid"
+  },
+  "skipped_missing_contact": 0,
+  "skipped_missing_evidence": 0,
+  "skipped_non_us": 0,
+  "skipped_uncurated": 3,
+  "source_artifact": "reports/nontrading/revenue_audit_launch_batch_seed.json"
+}

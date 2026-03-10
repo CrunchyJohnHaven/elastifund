@@ -927,7 +927,7 @@ class RevenueAuditAcquisitionBridge:
         quick_win_packets = sum(
             1
             for context in contexts
-            if any(item.source_field == "quick_win" for item in context.evidence)
+            if _nonempty_text(context.quick_win)
         )
         total_packets = len(contexts)
         return (
