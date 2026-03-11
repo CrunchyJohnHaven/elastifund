@@ -1,0 +1,5 @@
+*.json
+!historical_markets_532.json
+!claude_cache.json
+!README.md
+!.gitignore
