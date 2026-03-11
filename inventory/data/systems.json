@@ -29,6 +29,33 @@
       "notes": "Prediction-market-native internal reference system. Excluded from external rankings until methodology is stable."
     },
     {
+      "id": "openclaw",
+      "name": "OpenClaw",
+      "category": "adjacent_agent_platform",
+      "tier": 1,
+      "cohort": "comparison_only",
+      "license": "MIT",
+      "license_risk": "low",
+      "languages": [
+        "TypeScript",
+        "Node.js"
+      ],
+      "asset_classes": [
+        "agent_runtime"
+      ],
+      "deployment_model": "self_hosted",
+      "maintenance_status": "active",
+      "benchmark_status": "comparison_only",
+      "preferred_evaluation_mode": "internal_simulation",
+      "evaluation_label": "internal_simulation",
+      "website": "https://github.com/openclaw/openclaw",
+      "community": {
+        "stars": null,
+        "forks": null
+      },
+      "notes": "Sibling AWS clean-room benchmark only. Uses the shared evidence plane for cycle-time and outcome comparisons while remaining excluded from allocator decisions and live state access."
+    },
+    {
       "id": "freqtrade",
       "name": "Freqtrade",
       "category": "open_source_execution",

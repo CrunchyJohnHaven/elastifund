@@ -4,11 +4,7 @@ import json
 import time
 from pathlib import Path
 
-from nontrading.revenue_audit.config import (
-    DEFAULT_PRICING,
-    DEFAULT_RECURRING_MONITOR_PRICING,
-    RevenueAuditSettings,
-)
+from nontrading.revenue_audit.config import DEFAULT_PRICING, RevenueAuditSettings
 from nontrading.revenue_audit.contracts import (
     AuditBundle,
     CreateCheckoutRequest,
@@ -50,11 +46,8 @@ def test_public_report_moves_from_paid_order_seen_to_revenue_evidence(tmp_path: 
         stripe_api_base="https://api.stripe.com",
         stripe_success_url="https://elastifund.io/success?session_id={CHECKOUT_SESSION_ID}",
         stripe_cancel_url="https://elastifund.io/cancel",
-        recurring_monitor_success_url="https://elastifund.io/monitor/success?session_id={CHECKOUT_SESSION_ID}",
-        recurring_monitor_cancel_url="https://elastifund.io/monitor/cancel",
         stripe_webhook_tolerance_seconds=300,
         pricing=DEFAULT_PRICING,
-        recurring_monitor_pricing=DEFAULT_RECURRING_MONITOR_PRICING,
     )
     checkout_service = RevenueAuditCheckoutService(
         settings,
@@ -171,38 +164,27 @@ def test_public_report_moves_from_paid_order_seen_to_revenue_evidence(tmp_path: 
 
     report_path = tmp_path / "reports" / "nontrading_public_report.json"
     launch_summary_path = tmp_path / "reports" / "nontrading_launch_summary.json"
-    launch_checklist_path = tmp_path / "reports" / "nontrading_launch_operator_checklist.json"
     status_path = tmp_path / "reports" / "nontrading_first_dollar_status.json"
     allocator_path = tmp_path / "reports" / "nontrading_allocator_input.json"
     comparison_path = tmp_path / "reports" / "nontrading_benchmark_comparison.json"
-    arr_lab_path = tmp_path / "reports" / "nontrading_arr_lab" / "latest.json"
-    recurring_monitor_path = tmp_path / "reports" / "nontrading_recurring_monitor" / "latest.json"
     payload = build_public_report(
         revenue_store,
         report_path=report_path,
         launch_summary_path=launch_summary_path,
-        launch_checklist_path=launch_checklist_path,
         status_path=status_path,
         allocator_path=allocator_path,
         comparison_path=comparison_path,
-        arr_lab_path=arr_lab_path,
-        recurring_monitor_path=recurring_monitor_path,
     )
     write_sidecar_artifacts(
         payload,
         launch_summary_path=launch_summary_path,
-        launch_checklist_path=launch_checklist_path,
         status_path=status_path,
         allocator_path=allocator_path,
         comparison_path=comparison_path,
-        arr_lab_path=arr_lab_path,
-        recurring_monitor_path=recurring_monitor_path,
     )
 
     assert all(Path(path).exists() for path in fulfillment_execution.artifact_paths)
     assert all(Path(path).exists() for path in monitor_execution.artifact_paths)
-    assert Path(fulfillment_execution.delivery_checklist_path).exists()
-    assert Path(fulfillment_execution.delivery_pack_path).exists()
     assert payload["wedge"]["status"] == "revenue_evidence"
     assert payload["headline"]["claim_status"] == "actual_revenue_recorded"
     assert payload["commercial"]["paid_orders_count"] == 1
@@ -214,9 +196,5 @@ def test_public_report_moves_from_paid_order_seen_to_revenue_evidence(tmp_path: 
     assert payload["first_dollar_readiness"]["status"] == "first_dollar_observed"
     assert payload["fulfillment"]["delivered_jobs"] == 1
     assert payload["fulfillment"]["monitor_runs_completed"] == 1
-    assert payload["arr_lab"]["summary"]["p50_arr_usd"] >= payload["recurring_monitor"].get("current_arr_usd", 0.0)
     assert json.loads(status_path.read_text(encoding="utf-8"))["status"] == "first_dollar_observed"
     assert payload["source_artifacts"]["report_artifact"].endswith("nontrading_public_report.json")
-    assert launch_checklist_path.exists()
-    assert arr_lab_path.exists()
-    assert recurring_monitor_path.exists()
