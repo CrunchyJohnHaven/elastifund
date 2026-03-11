@@ -3,6 +3,7 @@
 from nontrading.campaigns.sequences import (
     WEBSITE_GROWTH_AUDIT_SEQUENCE,
     OutreachSequence,
+    SequencePlan,
     SequenceRunner,
     SequenceState,
 )
@@ -12,6 +13,7 @@ __all__ = [
     "TemplateSelector",
     "TemplateSelection",
     "OutreachSequence",
+    "SequencePlan",
     "SequenceRunner",
     "SequenceState",
     "WEBSITE_GROWTH_AUDIT_SEQUENCE",

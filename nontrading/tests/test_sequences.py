@@ -137,3 +137,36 @@ def test_dry_run_sender_processes_full_three_message_sequence(tmp_path: Path) ->
     assert len(stored_messages) == 3
     assert len({delivery.planned_step.angle for delivery in deliveries}) == 3
     assert all(message.status == "dry_run" for message in stored_messages)
+
+
+def test_sequence_runner_plans_next_step_without_sending(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path)
+    store = RevenueStore(settings.db_path)
+    selector = TemplateSelector(settings)
+    sender = DryRunSender(settings, store)
+    runner = SequenceRunner(store, sender, settings, selector=selector)
+    lead = make_sequence_lead()
+    campaign = store.create_campaign(
+        Campaign(
+            name="website-growth-audit-planning",
+            subject_template="unused",
+            body_template="unused",
+            daily_send_quota=10,
+            allowed_countries=settings.allowed_countries,
+            metadata={"offer_slug": WEBSITE_GROWTH_AUDIT.slug},
+        )
+    )
+
+    plan = runner.plan_due_step(
+        lead,
+        WEBSITE_GROWTH_AUDIT,
+        campaign,
+        days_since_start=0,
+        state=SequenceState(),
+    )
+
+    assert plan is not None
+    assert plan.planned_step.step_number == 1
+    assert plan.selection.rendered_email.subject
+    assert plan.selection.rendered_email.body
+    assert plan.next_state.sent_angles == (plan.planned_step.angle,)

@@ -72,6 +72,39 @@ class ProposalEngine:
         event = self.telemetry.proposal_sent(sent)
         return ProposalResult(proposal_id=sent.id, telemetry_event_id=event.id)
 
+    def stage_proposal(self, proposal: Proposal) -> Proposal:
+        if self.store is None:
+            raise RuntimeError("stage_proposal requires store")
+        return self.store.create_proposal(
+            Proposal(
+                account_id=proposal.account_id,
+                opportunity_id=proposal.opportunity_id,
+                contact_id=proposal.contact_id,
+                title=proposal.title,
+                status=proposal.status or "draft",
+                amount=proposal.amount,
+                currency=proposal.currency,
+                summary=proposal.summary,
+                metadata=proposal.metadata,
+            )
+        )
+
+    def ensure_staged_proposal(
+        self,
+        proposal: Proposal,
+        *,
+        metadata_match: dict[str, Any] | None = None,
+    ) -> Proposal:
+        if self.store is None:
+            raise RuntimeError("ensure_staged_proposal requires store")
+        existing = self.store.list_proposals(opportunity_id=proposal.opportunity_id)
+        for candidate in existing:
+            if metadata_match and all(candidate.metadata.get(key) == value for key, value in metadata_match.items()):
+                return candidate
+        if existing:
+            return existing[0]
+        return self.stage_proposal(proposal)
+
     def create_proposal_for_interaction(self, interaction: ProcessedInteraction) -> Proposal | None:
         if self.store is None or self.telemetry is None:
             raise RuntimeError("create_proposal_for_interaction requires store and telemetry")
