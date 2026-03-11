@@ -1,31 +1,112 @@
 # Elastifund
 
-**A self-improving agentic operating system for real economic work.**
+**An open-source, self-improving operating system for agents that do real economic work.**
 
-Elastifund is an autonomous trading system where AI agents research, estimate probabilities, size positions, and execute trades on prediction markets — with no human in the loop on individual decisions. The human (John) designs the architecture, safety constraints, and risk parameters. The agent operates within them.
+| Metadata | Value |
+|---|---|
+| Canonical file | `README.md` |
+| Role | Public overview and **Start Here** path |
+| Operator packet | `COMMAND_NODE.md` |
+| Operator policy | `PROJECT_INSTRUCTIONS.md` |
+| Last updated | 2026-03-11 |
 
-The system is live. It trades real money. It learns from every outcome.
+Elastifund is building a governed system where agents do work, record what happened, learn from outcomes, and improve through shared memory, evaluation, observability, and workflow control.
+
+Trading is the first proof lane because feedback is fast.
+Non-trading is the broader platform opportunity because the same self-improvement substrate can improve revenue, research, support, and workflow execution across many kinds of economic work.
+
+Elastic is the shared substrate for system memory, evaluation, observability, workflow automation, and public publishing across the trading workers, JJ-N, and the finance control plane.
 
 **Website:** [elastifund.io](https://elastifund.io)
 
 ---
 
-## Live Performance (March 9, 2026)
+## Root Cross-Reference (Canonical)
 
-| Metric | Value |
-|---|---|
-| Portfolio value | **$333.18** (Polymarket) + $100 (Kalshi) = **$433** total |
-| Available capital | $286.86 |
-| Trading status | **Live — placing and resolving real trades** |
-| Active categories | Weather, geopolitical, central bank/economic, crypto |
-| BTC 5-min maker sleeve | 56 live fills, **+$91.79** cumulative P&L, avg +$1.64/fill |
-| Past-day P&L | +$1.91 |
-| Strategy catalog | 131 tracked (7 deployed, 6 building, 97 in research pipeline) |
-| Test suite | 1,397 passing across all surfaces |
-| Commits | 88 |
-| Research dispatches | 95 published |
+| Need | Canonical file | Notes |
+|---|---|---|
+| **Start Here** (new contributor) | [docs/FORK_AND_RUN.md](docs/FORK_AND_RUN.md) | shortest paper-mode path |
+| **Operator Packet** (existing operator / deep research) | [COMMAND_NODE.md](COMMAND_NODE.md) | single root handoff packet |
+| Active operating policy | [PROJECT_INSTRUCTIONS.md](PROJECT_INSTRUCTIONS.md) | execution and policy contract |
+| Machine-first workflow rules | [AGENTS.md](AGENTS.md) | commands, guardrails, path ownership |
+| Contribution and PR requirements | [CONTRIBUTING.md](CONTRIBUTING.md) | setup, tests, DCO |
 
-> **Data trust policy:** Portfolio and P&L figures come from the live Polymarket wallet, verified via web UI on March 9, 2026. Local reporting artifacts (`reports/runtime_truth_latest.json`) have historically drifted from wallet truth. When in doubt, wallet wins.
+### Start Here Path
+
+`README.md` -> `docs/FORK_AND_RUN.md`
+
+### Operator Packet Path
+
+`COMMAND_NODE.md` (packet) + `PROJECT_INSTRUCTIONS.md` (policy)
+
+## Posture Terms (Canonical)
+
+- **Launch posture**: policy gate for whether live submission is permitted (`clear` or `blocked`).
+- **Live posture**: observed runtime mode/profile (`live`, `shadow`, or paper equivalents).
+- When they disagree, treat launch posture as the allow/deny gate and resolve the mismatch before promoting.
+
+---
+
+## What To Believe Right Now (March 11, 2026)
+
+- **Live proof:** the BTC5 sleeve is the active trading proof lane. Broader fund-level claims stay blocked until reconciliation and attribution are consistent.
+- **Historical validation:** `71.2%` is the strongest labeled calibrated validation result on `532` resolved markets. It is historical validation, not a live-performance headline.
+- **Non-trading wedge:** JJ-N's first offer is the Website Growth Audit. It is built in code, explicitly gated, and not yet presented as launched revenue.
+- **Contribution posture:** public routes read sanitized checked-in artifacts and the default contribution path is paper mode. No live exchange credentials are required to inspect or improve the system.
+- **Verification:** the latest checked-in root verification summary is `1641 passed, 5 warnings in 37.10s; 25 passed, 1 warning in 4.56s`.
+
+We are deliberately not leading this README with annualized forecast math, bankroll disclosure, or blended performance claims. Those numbers create more confusion than trust in the current public pass.
+
+---
+
+## Why Elastic Should Care
+
+The important claim is not "Elastic can monitor a bot."
+The important claim is that self-improving agents need durable memory, evaluation, observability, and workflow control in one substrate.
+That is the category Elastifund is trying to make legible in public.
+
+In this repo, Elastic is the shared substrate for:
+
+- **System memory.** Trading workers, JJ-N, and the finance control plane write artifacts, traces, telemetry, and operator context into a searchable evidence layer instead of leaving state trapped in local logs.
+- **Evaluation.** Signal quality, blocked claims, kill rules, confidence labels, and promotion decisions stay tied to labeled artifacts instead of drifting into blended dashboards or vague summaries.
+- **Observability.** Elastic APM, dashboards, and ML/anomaly jobs make it possible to inspect latency, execution quality, workflow health, and abnormal regimes without changing runtime behavior.
+- **Publishing.** The public site, operator docs, and GitHub narrative can all point back to the same evidence surfaces, keeping public claims narrower than raw internal state when they need to be.
+
+### Shared Evidence Layer
+
+```text
+Trading workers ---\
+JJ-N workers ------+--> Elastic-backed evidence layer --> evaluation + observability --> README, /live/, /elastic/, docs
+Finance control ---/
+```
+
+Shared layer contents: artifacts, traces, telemetry. Shared outputs: scorecards, kill rules, blocked claims, dashboards.
+
+That is why the trading sleeve, JJ-N launch-prep work, and the repo's public surfaces can stay separate without becoming contradictory. They share one evidence substrate.
+
+### Why An Elastic Employee Should Care
+
+This repo is a public proof surface for Search AI, system memory, observability, evaluation, and workflow control working together in one agentic system. It stays paper-mode safe in public by separating live proof from blocked claims and by reading only sanitized checked-in artifacts from the browser side.
+
+Start with [/elastic/](https://elastifund.io/elastic/) for the employee-facing route, [docs/ELASTIC_INTEGRATION.md](docs/ELASTIC_INTEGRATION.md) for the operator-facing integration details, and [docs/FORK_AND_RUN.md](docs/FORK_AND_RUN.md) for the shortest repo run path.
+
+## Why Trading First And Non-Trading Next
+
+Trading is the first proof lane because it offers fast feedback and hard outcomes.
+It is not the whole product.
+
+The larger opportunity for Elastic is the non-trading lane: a shared operating system for agents that improve customer-facing and revenue-facing workflows through better retrieval, better memory, better evaluation, and better workflow control.
+
+That is why JJ-N matters.
+It is not decorative roadmap copy.
+It is the bridge from "interesting trading lab" to "company-relevant self-improving agent platform."
+
+## What We Are Not Claiming Yet
+
+- Estimated ARR is the only public revenue metric, and it is labeled as an estimate.
+- We are not publishing bankroll size, wallet value, or free collateral as a pitch surface.
+- We are not presenting fund-level realized returns as clean while reconciliation and attribution remain open.
+- We are not presenting JJ-N as fully launched revenue.
 
 ---
 
@@ -37,19 +118,24 @@ This is the autoresearch-style improvement log. Each entry represents a validate
 
 **Deployed improvements:**
 
-- **BTC 5-minute maker validated as primary edge.** 56 live fills at +$91.79 cumulative. DOWN direction dominant (41 fills, +$72.40). Average profit per fill: +$1.64. This is the only strategy with statistically meaningful live evidence.
+- **The reconciliation pass clarified market outcome attribution and exposure posture** from mixed realized and unresolved signals.
+- **BTC5 public status is currently in a cautious posture.** The deploy recommendation is now **shadow_only** (not promote) while blocked-claim alignment remains in force.
+- **Directional edge is still strongest in the DOWN lane, with price-bucket behavior currently the main structural discriminator.**
+- **Wallet and local ledger counts are back in sync.** The latest reconciliation surface shows **50** closed positions and **9** open positions on both the local ledger and the remote wallet, removing one major source of status drift.
+- **The live market-universe context is fresher.** The March 11 pull shows **7,017** active markets across **500** events, with **111** crypto markets in the broad universe and **26** active crypto markets resolving within **24 hours** on the active surface.
 - **Maker-only execution enforced.** 100% post-only orders. Zero taker fees. Maker rebates on every fill. This single change (Dispatch #75) eliminated the fee drag that killed earlier strategies.
 - **Six signal sources wired into the live loop.** LLM probability estimation, smart wallet flow detection, LMSR Bayesian pricing, cross-platform arbitrage, VPIN/OFI microstructure, and semantic lead-lag. Each can be independently enabled or disabled per runtime profile.
-- **Multi-category trading live.** The system is actively trading weather, geopolitical, central bank, and crypto markets. Category gates control which signal lanes are eligible per market type.
 - **Automated kill rules operational.** Semantic decay, toxicity survival, cost stress polynomial, and calibration enforcement — all running in production. Strategies that fail these die automatically.
 - **WebSocket CLOB feed integrated.** Real-time order book data flowing into VPIN and OFI calculations for microstructure-aware execution.
 - **Calibration locked.** Static Platt A=0.5914, B=-0.3977 validated on 532 markets (Brier 0.2134). Beats all rolling windows tested. No drift detected.
 
 **Known issues being worked:**
 
-- Local accounting ledger drifts from wallet truth (local says 4 open positions; wallet shows 28+). Reconciliation pipeline in progress.
-- `FAST_TRADE_EDGE_ANALYSIS.md` pipeline says "REJECT ALL" while the wallet is actively trading. The scan is stale relative to actual execution behavior.
-- A-6 (Guaranteed Dollar) and B-1 (Templated Dependency) structural alpha lanes have zero evidence after weeks. Kill decision on March 14.
+- Launch-contract drift still blocks live promotion: `agent_run_mode=live`, `execution_mode=shadow`, `allow_order_submission=false`, `launch_posture=blocked`.
+- Capital accounting is still not coherent even though position counts are reconciled; the latest Polymarket accounting delta remains non-zero versus tracked capital.
+- `scripts/run_pm_fast_market_registry.py` reached Gamma successfully on March 11 but still wrote **0 discovered eligible markets**, while direct Gamma pulls show active crypto threshold, range, and candle markets. The registry logic is stale relative to the live API.
+- `FAST_TRADE_EDGE_ANALYSIS.md` still says "REJECT ALL" while fresh wallet/export and BTC5 probe data show nontrivial live activity. The scan is stale relative to actual execution behavior.
+- A-6 (Guaranteed Basis) and B-1 (Templated Dependency) structural alpha lanes have zero evidence after weeks. Kill decision on March 14.
 
 ### Cycle 1 — Foundation & First Trades
 
@@ -66,10 +152,11 @@ This is the autoresearch-style improvement log. Each entry represents a validate
 
 ## Architecture
 
-The system runs two families of workers sharing a common data, evaluation, and improvement layer:
+The system runs two worker families plus one finance control plane sharing an Elastic-backed evidence layer for memory, evaluation, observability, and publishing:
 
 - **Trading workers** — research, simulate, rank, and execute market strategies under policy (Polymarket, Kalshi)
 - **Non-trading workers (JJ-N)** — create economic value through business development, research, services, and customer acquisition
+- **Finance control plane** — rank personal cash, subscriptions, tool spend, trading capital, and experiment budgets as one allocation problem
 
 The live trading loop:
 
@@ -86,36 +173,36 @@ Around this sits the research flywheel: `research -> implement -> test -> record
 
 ---
 
-## Choose Your Path
+## Route Matrix
 
 | I want to... | Start here |
 |---|---|
+| See the employee-facing Elastic route | [/elastic/](https://elastifund.io/elastic/) |
 | Boot the repo with the least friction | [docs/FORK_AND_RUN.md](docs/FORK_AND_RUN.md) |
 | Hand one root packet to Deep Research | [COMMAND_NODE.md](COMMAND_NODE.md) |
 | Understand the Elastic observability layer | [docs/ELASTIC_INTEGRATION.md](docs/ELASTIC_INTEGRATION.md) |
 | Run the observability demo on Replit | [docs/REPLIT_BUILD_GUIDE.md](docs/REPLIT_BUILD_GUIDE.md) |
 | Use Codex and Claude Code in parallel | [AGENTS.md](AGENTS.md) + [docs/PARALLEL_AGENT_WORKFLOW.md](docs/PARALLEL_AGENT_WORKFLOW.md) |
+| Load active session context before planning | current task context packet (CLI/runtime-handoff equivalent) |
 | Understand the monorepo layout before editing | [docs/REPO_MAP.md](docs/REPO_MAP.md) |
 | Explore the non-trading revenue lane | [nontrading/README.md](nontrading/README.md) + [docs/NON_TRADING_STATUS.md](docs/NON_TRADING_STATUS.md) |
 | Work only on the trading bot subproject | [polymarket-bot/README.md](polymarket-bot/README.md) |
 | Inspect the HTTP/control-plane surface | [docs/api/README.md](docs/api/README.md) |
 | Contribute code safely | [CONTRIBUTING.md](CONTRIBUTING.md) |
 
-## Fastest Local Boot
+## Fastest Paper-Mode Boot
 
 ```bash
 git clone https://github.com/CrunchyJohnHaven/elastifund.git
 cd elastifund
-python3 scripts/doctor.py
-python3 scripts/quickstart.py
+make doctor
+make quickstart
 ```
 
 That path prepares `.env`, writes the runtime manifest, and starts the local coordination stack if Docker is installed.
+It is the recommended employee-safe path and does not require live trading credentials.
 
 ```bash
-# Prepare without Docker
-python3 scripts/quickstart.py --prepare-only
-
 # Full developer verification
 python3 -m venv .venv
 source .venv/bin/activate
@@ -124,19 +211,26 @@ make verify
 make smoke-nontrading
 ```
 
+For docs/static/index-only changes, use the lightweight loop:
+
+```bash
+make bootstrap-lite
+make verify-static
+make test-select
+```
+
+`bootstrap-lite` intentionally skips runtime/research dependencies. For runtime-only dependencies without test/dev extras, use `make bootstrap-runtime`.
+
 ## Verified On March 9, 2026
 
-All commands pass in this repo state: `scripts/doctor.py`, `scripts/quickstart.py --prepare-only`, `make test`, `make test-polymarket`, `make test-nontrading`, `make smoke-nontrading`.
+All commands pass in this repo state: `make doctor`, `make quickstart`, `make test`, `make test-polymarket`, `make test-nontrading`, `make smoke-nontrading`.
 
-## Velocity Charts
-
-These charts track the BTC5 maker sleeve improvement trajectory. The system continuously evaluates parameter configurations and promotes the best-performing package.
-
-![Improvement velocity](improvement_velocity.svg)
-
-![ARR estimate](arr_estimate.svg)
+## Public Snapshot Contract
 
 Machine-readable dataset: [improvement_velocity.json](improvement_velocity.json)
+
+Use the checked-in contract for verification status, strategy counts, cycle counts, and worker readiness.
+Do not treat the raw forecast fields inside it as interchangeable with realized live performance or fund-level public claims.
 
 ## Tech Stack
 
@@ -179,7 +273,7 @@ The non-trading revenue worker (JJ-N) is the first-class front door of the proje
 
 JJ-N v1 is a revenue-operations worker with five engines: Account Intelligence, Outreach, Interaction, Proposal, and Learning. All five write into the same Elastic-backed memory.
 
-What is already real: a compliance-first revenue-agent harness, a runnable five-engine `RevenuePipeline`, the first service offer (Website Growth Audit, $500-$2500), a digital-product niche discovery pipeline, a Phase 0 CRM, paper-mode approval and compliance gates, Elastic-ready telemetry, niche ranking, and passing targeted tests with deterministic smoke coverage.
+What is already real: a compliance-first revenue-agent harness, a runnable five-engine `RevenuePipeline`, the first service offer (Website Growth Audit, estimated ARR only in public materials), a digital-product niche discovery pipeline, a Phase 0 CRM, paper-mode approval and compliance gates, Elastic-ready telemetry, niche ranking, and passing targeted tests with deterministic smoke coverage.
 
 What is not built yet: the fully launched production path for the Website Growth Audit plus recurring monitor, a production KPI dashboard, and checkout/billing/fulfillment reporting.
 
@@ -194,7 +288,7 @@ For the current implementation state, use [docs/NON_TRADING_STATUS.md](docs/NON_
 | `strategies/` + `signals/` | strategy-specific logic and shared signal helpers |
 | `src/`, `backtest/`, `simulator/` | edge-discovery and validation pipeline |
 | `hub/`, `data_layer/`, `orchestration/` | APIs, persistence, flywheel/control-plane plumbing |
-| `nontrading/` | non-trading revenue automation, Phase 0 CRM/approval/telemetry foundations, and digital-product discovery |
+| `nontrading/` | non-trading revenue automation, Phase 0 CRM/approval/telemetry foundations, digital-product discovery, and the finance control plane |
 | `polymarket-bot/` | self-contained trading bot subproject with dashboard and tests |
 | `inventory/` | benchmark lane for comparing external systems cleanly |
 | `docs/` + `research/` | durable docs, ADRs, prompts, dispatches, and findings |
