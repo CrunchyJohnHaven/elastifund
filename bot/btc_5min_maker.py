@@ -67,6 +67,24 @@ LIVE_FILLED_STATUSES = {
     "live_partial_fill_cancelled",
     "live_partial_fill_open",
 }
+LIVE_STAGE_IDS = {1, 2, 3}
+ACTIONABLE_ORDER_STATUSES = {
+    "live_filled",
+    "live_partial_fill_cancelled",
+    "live_partial_fill_open",
+    "live_cancelled_unfilled",
+    "live_order_failed",
+}
+VALIDATED_STRONG_PRICE_BUCKETS = frozenset({"<0.49", "0.49"})
+OBSERVED_BTC5_LOSS_CLUSTERS = frozenset(
+    {
+        ("open_et", "DOWN", "0.49_to_0.51", "le_0.00005"),
+        ("open_et", "UP", "0.49_to_0.51", "le_0.00005"),
+        ("open_et", "UP", "lt_0.49", "le_0.00005"),
+        ("open_et", "UP", "lt_0.49", "0.00005_to_0.00010"),
+        ("midday_et", "DOWN", "0.49_to_0.51", "0.00005_to_0.00010"),
+    }
+)
 BTC5_ATTRIBUTION_REASON_KEYS = (
     "book_failure_attribution",
     "placement_failure_attribution",
@@ -91,6 +109,26 @@ def _optional_env_float(name: str) -> float | None:
     if parsed is None or parsed <= 0:
         return None
     return float(parsed)
+
+
+def _env_stage(name: str, default: int = 1) -> int:
+    raw = os.environ.get(name)
+    if raw in (None, ""):
+        return int(default)
+    try:
+        stage = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return int(default)
+    if stage not in {1, 2, 3}:
+        return int(default)
+    return stage
+
+
+def _env_optional_stage(name: str) -> int | None:
+    raw = os.environ.get(name)
+    if raw in (None, ""):
+        return None
+    return _env_stage(name, 1)
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -191,6 +229,64 @@ def _btc5_price_bucket(order_price: Any) -> str:
     if rounded < 0.51:
         return "0.50"
     return "0.51+"
+
+
+def _btc5_cluster_price_bucket(order_price: Any) -> str:
+    price = _safe_float(order_price, None)
+    if price is None:
+        return "unknown"
+    if price < 0.49:
+        return "lt_0.49"
+    if price <= 0.51:
+        return "0.49_to_0.51"
+    return "gt_0.51"
+
+
+def _btc5_delta_bucket(delta: Any) -> str:
+    abs_delta = abs(_safe_float(delta, 0.0) or 0.0)
+    if abs_delta <= 0.00005:
+        return "le_0.00005"
+    if abs_delta <= 0.00010:
+        return "0.00005_to_0.00010"
+    if abs_delta <= 0.00015:
+        return "0.00010_to_0.00015"
+    return "gt_0.00015"
+
+
+def _btc5_session_bucket(window_start_ts: int) -> str:
+    dt_et = _window_dt_et(window_start_ts)
+    if dt_et is None:
+        return "unknown"
+    if dt_et.hour in {9, 10, 11}:
+        return "open_et"
+    if dt_et.hour in {12, 13}:
+        return "midday_et"
+    return f"hour_et_{dt_et.hour:02d}"
+
+
+def _serialize_json_list(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    if isinstance(value, tuple):
+        value = list(value)
+    if isinstance(value, list):
+        return json.dumps(value, separators=(",", ":"))
+    return None
+
+
+def _unique_tags(*parts: str | None) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        text = str(part or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        ordered.append(text)
+    return ordered
 
 
 def _rollup_trade_group(group_rows: list[dict[str, Any]], *, label: str) -> dict[str, Any]:
@@ -391,6 +487,11 @@ def _round_down_to_tick(price: float, tick_size: float) -> float:
 def _round_up(value: float, decimals: int = 2) -> float:
     scale = 10 ** max(0, int(decimals))
     return math.ceil(max(0.0, float(value)) * scale - 1e-12) / scale
+
+
+def _round_down(value: float, decimals: int = 2) -> float:
+    scale = 10 ** max(0, int(decimals))
+    return math.floor(max(0.0, float(value)) * scale + 1e-12) / scale
 
 
 def clob_min_order_size(price: float, *, min_shares: float = CLOB_HARD_MIN_SHARES) -> float:
@@ -656,6 +757,17 @@ class MakerConfig:
     bankroll_usd: float = float(os.environ.get("BTC5_BANKROLL_USD", "250"))
     risk_fraction: float = float(os.environ.get("BTC5_RISK_FRACTION", "0.02"))
     max_trade_usd: float = float(os.environ.get("BTC5_MAX_TRADE_USD", "5.00"))
+    capital_stage: int | None = _env_stage("BTC5_CAPITAL_STAGE", 1)
+    stage1_max_trade_usd: float = float(os.environ.get("BTC5_STAGE1_MAX_TRADE_USD", "10"))
+    stage2_max_trade_usd: float = float(os.environ.get("BTC5_STAGE2_MAX_TRADE_USD", "20"))
+    stage3_max_trade_usd: float = float(os.environ.get("BTC5_STAGE3_MAX_TRADE_USD", "50"))
+    stage1_daily_loss_limit_usd: float | None = _optional_env_float("BTC5_STAGE1_DAILY_LOSS_LIMIT_USD")
+    stage2_daily_loss_limit_usd: float | None = _optional_env_float("BTC5_STAGE2_DAILY_LOSS_LIMIT_USD")
+    stage3_daily_loss_limit_usd: float | None = _optional_env_float("BTC5_STAGE3_DAILY_LOSS_LIMIT_USD")
+    shadow_100_max_trade_usd: float = float(os.environ.get("BTC5_SHADOW_100_MAX_TRADE_USD", "100"))
+    shadow_200_max_trade_usd: float = float(os.environ.get("BTC5_SHADOW_200_MAX_TRADE_USD", "200"))
+    stage_probe_freshness_max_hours: float = float(os.environ.get("BTC5_STAGE_PROBE_FRESHNESS_MAX_HOURS", "6"))
+    stage_order_failed_rate_limit: float = float(os.environ.get("BTC5_STAGE_ORDER_FAILED_RATE_LIMIT", "0.25"))
     min_trade_usd: float = float(os.environ.get("BTC5_MIN_TRADE_USD", "5.00"))
     min_delta: float = float(os.environ.get("BTC5_MIN_DELTA", "0.0003"))
     max_abs_delta: float | None = _optional_env_float("BTC5_MAX_ABS_DELTA")
@@ -730,6 +842,34 @@ class MakerConfig:
             path_value=self.session_policy_path,
             legacy_json=self.session_overrides_json,
         )
+        if self.stage1_daily_loss_limit_usd is None:
+            self.stage1_daily_loss_limit_usd = float(self.daily_loss_limit_usd)
+        if self.stage2_daily_loss_limit_usd is None:
+            self.stage2_daily_loss_limit_usd = float(self.daily_loss_limit_usd)
+        if self.stage3_daily_loss_limit_usd is None:
+            self.stage3_daily_loss_limit_usd = float(self.daily_loss_limit_usd)
+
+    @property
+    def effective_max_trade_usd(self) -> float:
+        if self.capital_stage is None:
+            return max(0.0, float(self.max_trade_usd))
+        if self.capital_stage == 2:
+            return max(0.0, float(self.stage2_max_trade_usd))
+        if self.capital_stage == 3:
+            return max(0.0, float(self.stage3_max_trade_usd))
+        if self.capital_stage == 1:
+            return max(0.0, float(self.stage1_max_trade_usd))
+        return max(0.0, float(self.max_trade_usd))
+
+    @property
+    def effective_daily_loss_limit_usd(self) -> float:
+        if self.capital_stage is None:
+            return max(0.0, float(self.daily_loss_limit_usd))
+        if self.capital_stage == 2:
+            return max(0.0, float(self.stage2_daily_loss_limit_usd))
+        if self.capital_stage == 3:
+            return max(0.0, float(self.stage3_daily_loss_limit_usd))
+        return max(0.0, float(self.stage1_daily_loss_limit_usd))
 
 
 @dataclass(frozen=True)
@@ -812,6 +952,11 @@ class TradeDB:
                     order_status TEXT NOT NULL,
                     filled INTEGER,
                     reason TEXT,
+                    edge_tier TEXT,
+                    sizing_reason_tags TEXT,
+                    loss_cluster_suppressed INTEGER,
+                    session_policy_name TEXT,
+                    effective_stage INTEGER,
                     resolved_side TEXT,
                     won INTEGER,
                     pnl_usd REAL,
@@ -822,6 +967,19 @@ class TradeDB:
                     ON window_trades(decision_ts);
                 """
             )
+            existing = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(window_trades)").fetchall()
+            }
+            for column_name, column_type in (
+                ("edge_tier", "TEXT"),
+                ("sizing_reason_tags", "TEXT"),
+                ("loss_cluster_suppressed", "INTEGER"),
+                ("session_policy_name", "TEXT"),
+                ("effective_stage", "INTEGER"),
+            ):
+                if column_name not in existing:
+                    conn.execute(f"ALTER TABLE window_trades ADD COLUMN {column_name} {column_type}")
 
     def window_exists(self, window_start_ts: int) -> bool:
         with self._connect() as conn:
@@ -852,6 +1010,15 @@ class TradeDB:
             "order_status": row.get("order_status", "unknown"),
             "filled": row.get("filled"),
             "reason": row.get("reason"),
+            "edge_tier": row.get("edge_tier"),
+            "sizing_reason_tags": _serialize_json_list(row.get("sizing_reason_tags")),
+            "loss_cluster_suppressed": (
+                None
+                if row.get("loss_cluster_suppressed") is None
+                else int(bool(row.get("loss_cluster_suppressed")))
+            ),
+            "session_policy_name": row.get("session_policy_name"),
+            "effective_stage": row.get("effective_stage"),
             "resolved_side": row.get("resolved_side"),
             "won": row.get("won"),
             "pnl_usd": row.get("pnl_usd"),
@@ -865,12 +1032,16 @@ class TradeDB:
                     window_start_ts, window_end_ts, slug, decision_ts, direction,
                     open_price, current_price, delta, token_id, best_bid, best_ask,
                     order_price, trade_size_usd, shares, order_id, order_status,
-                    filled, reason, resolved_side, won, pnl_usd, created_at, updated_at
+                    filled, reason, edge_tier, sizing_reason_tags, loss_cluster_suppressed,
+                    session_policy_name, effective_stage, resolved_side, won, pnl_usd,
+                    created_at, updated_at
                 ) VALUES (
                     :window_start_ts, :window_end_ts, :slug, :decision_ts, :direction,
                     :open_price, :current_price, :delta, :token_id, :best_bid, :best_ask,
                     :order_price, :trade_size_usd, :shares, :order_id, :order_status,
-                    :filled, :reason, :resolved_side, :won, :pnl_usd, :created_at, :updated_at
+                    :filled, :reason, :edge_tier, :sizing_reason_tags, :loss_cluster_suppressed,
+                    :session_policy_name, :effective_stage, :resolved_side, :won, :pnl_usd,
+                    :created_at, :updated_at
                 )
                 ON CONFLICT(window_start_ts) DO UPDATE SET
                     decision_ts=excluded.decision_ts,
@@ -888,6 +1059,11 @@ class TradeDB:
                     order_status=excluded.order_status,
                     filled=excluded.filled,
                     reason=excluded.reason,
+                    edge_tier=excluded.edge_tier,
+                    sizing_reason_tags=excluded.sizing_reason_tags,
+                    loss_cluster_suppressed=excluded.loss_cluster_suppressed,
+                    session_policy_name=excluded.session_policy_name,
+                    effective_stage=excluded.effective_stage,
                     resolved_side=excluded.resolved_side,
                     won=excluded.won,
                     pnl_usd=excluded.pnl_usd,
@@ -944,6 +1120,50 @@ class TradeDB:
                 (capped_limit,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def trailing_live_filled_pnl(self, *, limit: int) -> dict[str, Any]:
+        rows = self.recent_live_filled(limit=limit)
+        return {
+            "fills": len(rows),
+            "pnl_usd": round(sum(_safe_float(row.get("pnl_usd"), 0.0) for row in rows), 4),
+        }
+
+    def latest_decision_ts(self) -> int | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT MAX(decision_ts) AS latest_decision_ts FROM window_trades").fetchone()
+        latest = int(row["latest_decision_ts"]) if row and row["latest_decision_ts"] is not None else None
+        return latest if latest and latest > 0 else None
+
+    def recent_execution_drag(self, *, limit: int = 120) -> dict[str, Any]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT order_status
+                FROM window_trades
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (max(1, int(limit)),),
+            ).fetchall()
+        statuses = [str(row["order_status"] or "").strip().lower() for row in rows]
+        total = len(statuses)
+        actionable = [status for status in statuses if status in ACTIONABLE_ORDER_STATUSES]
+        skip_price = sum(1 for status in statuses if status == "skip_price_outside_guardrails")
+        order_failed = sum(1 for status in statuses if status == "live_order_failed")
+        cancelled_unfilled = sum(1 for status in statuses if status == "live_cancelled_unfilled")
+        return {
+            "lookback_windows": total,
+            "actionable_windows": len(actionable),
+            "live_filled": sum(1 for status in statuses if status == "live_filled"),
+            "live_partial_fill_cancelled": sum(
+                1 for status in statuses if status == "live_partial_fill_cancelled"
+            ),
+            "live_partial_fill_open": sum(1 for status in statuses if status == "live_partial_fill_open"),
+            "skip_price_outside_guardrails": skip_price,
+            "live_order_failed": order_failed,
+            "live_cancelled_unfilled": cancelled_unfilled,
+            "order_failed_rate": round(order_failed / len(actionable), 6) if actionable else None,
+        }
 
     def intraday_live_summary(self, *, now_ts: float | None = None) -> dict[str, Any]:
         day_start = _day_start_utc_ts(now_ts)
@@ -1036,6 +1256,19 @@ class TradeDB:
             "best_price_bucket_today": best_price_bucket_today,
         }
 
+    def today_notional_usd(self, *, now_ts: float | None = None) -> float:
+        day_start = _day_start_utc_ts(now_ts)
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COALESCE(SUM(trade_size_usd), 0.0) AS notional
+                FROM window_trades
+                WHERE decision_ts >= ?
+                """,
+                (day_start,),
+            ).fetchone()
+        return round(float(row["notional"] if row else 0.0), 4)
+
     def status_summary(self) -> dict[str, Any]:
         with self._connect() as conn:
             totals = conn.execute(
@@ -1064,6 +1297,7 @@ class TradeDB:
             "win_rate": (wins / settled_fills) if settled_fills else 0.0,
             "total_pnl_usd": float(totals["total_pnl"] or 0.0),
             "today_pnl_usd": self.today_realized_pnl(),
+            "today_notional_usd": self.today_notional_usd(),
             "intraday_live_summary": self.intraday_live_summary(),
         }
 
@@ -1410,12 +1644,418 @@ class BTC5MinMakerBot:
             return min(normal_cap, float(probe_cap))
         return normal_cap
 
-    def _probe_mode(self, *, today_pnl: float) -> dict[str, Any] | None:
+    def _loss_cluster_match(
+        self,
+        *,
+        window_start_ts: int,
+        direction: str,
+        order_price: float,
+        delta: float,
+    ) -> dict[str, str] | None:
+        session_bucket = _btc5_session_bucket(window_start_ts)
+        cluster_price_bucket = _btc5_cluster_price_bucket(order_price)
+        delta_bucket = _btc5_delta_bucket(delta)
+        cluster_key = (
+            session_bucket,
+            str(direction or "").strip().upper(),
+            cluster_price_bucket,
+            delta_bucket,
+        )
+        if cluster_key not in OBSERVED_BTC5_LOSS_CLUSTERS:
+            return None
+        return {
+            "session_name": session_bucket,
+            "direction": str(direction or "").strip().upper(),
+            "price_bucket": cluster_price_bucket,
+            "delta_bucket": delta_bucket,
+        }
+
+    @staticmethod
+    def _session_override_has_balanced_caps(session_override: SessionGuardrailOverride | None) -> bool:
+        if session_override is None:
+            return False
+        up_cap = _safe_float(session_override.up_max_buy_price, None)
+        down_cap = _safe_float(session_override.down_max_buy_price, None)
+        if up_cap is None or down_cap is None:
+            return False
+        return abs(up_cap - down_cap) <= 1e-9
+
+    def _classify_edge_tier(
+        self,
+        *,
+        window_start_ts: int,
+        direction: str,
+        delta: float,
+        order_price: float,
+        session_override: SessionGuardrailOverride | None,
+        session_policy_name: str | None,
+        effective_stage: int,
+        recommended_live_stage: int,
+        recent_regime: dict[str, Any] | None,
+        probe_mode: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        dt_et = _window_dt_et(window_start_ts)
+        et_hour = dt_et.hour if dt_et is not None else None
+        session_bucket = _btc5_session_bucket(window_start_ts)
+        order_price_bucket = _btc5_price_bucket(order_price)
+        delta_bucket = _btc5_delta_bucket(delta)
+        balanced_session_caps = self._session_override_has_balanced_caps(session_override)
+        tags = _unique_tags(
+            f"session_bucket={session_bucket}",
+            f"session_policy_name={session_policy_name or 'none'}",
+            f"et_hour={et_hour if et_hour is not None else 'unknown'}",
+            f"direction={str(direction or '').strip().upper()}",
+            f"order_price_bucket={order_price_bucket}",
+            f"delta_bucket={delta_bucket}",
+            f"effective_stage={max(1, int(effective_stage or 1))}",
+            f"recommended_live_stage={max(1, int(recommended_live_stage or effective_stage or 1))}",
+            f"session_caps_balanced={'true' if balanced_session_caps else 'false'}",
+            "probe_mode=on" if probe_mode else None,
+        )
+
+        suppressed_direction = str((recent_regime or {}).get("suppressed_direction") or "").strip().upper()
+        if suppressed_direction and str(direction or "").strip().upper() == suppressed_direction:
+            return {
+                "edge_tier": "suppressed",
+                "loss_cluster_suppressed": True,
+                "order_price_bucket": order_price_bucket,
+                "delta_bucket": delta_bucket,
+                "session_bucket": session_bucket,
+                "sizing_reason_tags": _unique_tags(
+                    *tags,
+                    "recent_regime_one_sided_guardrail",
+                    f"suppressed_direction={suppressed_direction}",
+                    "edge_tier=suppressed",
+                ),
+            }
+
+        loss_cluster = self._loss_cluster_match(
+            window_start_ts=window_start_ts,
+            direction=direction,
+            order_price=order_price,
+            delta=delta,
+        )
+        if loss_cluster is not None:
+            return {
+                "edge_tier": "suppressed",
+                "loss_cluster_suppressed": True,
+                "order_price_bucket": order_price_bucket,
+                "delta_bucket": delta_bucket,
+                "session_bucket": session_bucket,
+                "sizing_reason_tags": _unique_tags(
+                    *tags,
+                    "observed_loss_cluster_guardrail",
+                    f"loss_cluster_session={loss_cluster['session_name']}",
+                    f"loss_cluster_price_bucket={loss_cluster['price_bucket']}",
+                    f"loss_cluster_delta_bucket={loss_cluster['delta_bucket']}",
+                    "edge_tier=suppressed",
+                ),
+            }
+
+        if probe_mode:
+            return {
+                "edge_tier": "exploratory",
+                "loss_cluster_suppressed": False,
+                "order_price_bucket": order_price_bucket,
+                "delta_bucket": delta_bucket,
+                "session_bucket": session_bucket,
+                "sizing_reason_tags": _unique_tags(
+                    *tags,
+                    "probe_feedback_guardrail",
+                    "edge_tier=exploratory",
+                ),
+            }
+
+        if (
+            session_policy_name == "hour_et_09"
+            and str(direction or "").strip().upper() == "DOWN"
+            and order_price_bucket in VALIDATED_STRONG_PRICE_BUCKETS
+        ):
+            return {
+                "edge_tier": "strong_validated",
+                "loss_cluster_suppressed": False,
+                "order_price_bucket": order_price_bucket,
+                "delta_bucket": delta_bucket,
+                "session_bucket": session_bucket,
+                "sizing_reason_tags": _unique_tags(
+                    *tags,
+                    "validated_session_hour_et_09",
+                    "validated_direction_down",
+                    "validated_price_bucket_strength",
+                    "edge_tier=strong_validated",
+                ),
+            }
+
+        if (
+            session_policy_name == "hour_et_11"
+            and balanced_session_caps
+            and order_price_bucket in VALIDATED_STRONG_PRICE_BUCKETS
+        ):
+            return {
+                "edge_tier": "strong_validated",
+                "loss_cluster_suppressed": False,
+                "order_price_bucket": order_price_bucket,
+                "delta_bucket": delta_bucket,
+                "session_bucket": session_bucket,
+                "sizing_reason_tags": _unique_tags(
+                    *tags,
+                    "validated_session_hour_et_11",
+                    "validated_balanced_session_caps",
+                    "validated_price_bucket_strength",
+                    "edge_tier=strong_validated",
+                ),
+            }
+
+        if session_policy_name == "hour_et_11" and str(direction or "").strip().upper() == "DOWN":
+            return {
+                "edge_tier": "exploratory",
+                "loss_cluster_suppressed": False,
+                "order_price_bucket": order_price_bucket,
+                "delta_bucket": delta_bucket,
+                "session_bucket": session_bucket,
+                "sizing_reason_tags": _unique_tags(
+                    *tags,
+                    (
+                        "hour_11_down_bias_probe_only_guardrail"
+                        if not balanced_session_caps
+                        else "hour_11_down_bias_exploratory_guardrail"
+                    ),
+                    "edge_tier=exploratory",
+                ),
+            }
+
+        return {
+            "edge_tier": "standard",
+            "loss_cluster_suppressed": False,
+            "order_price_bucket": order_price_bucket,
+            "delta_bucket": delta_bucket,
+            "session_bucket": session_bucket,
+            "sizing_reason_tags": _unique_tags(
+                *tags,
+                "edge_tier=standard",
+            ),
+        }
+
+    def _trade_size_for_edge_tier(
+        self,
+        *,
+        edge_tier: str,
+        effective_max_trade_usd: float,
+    ) -> dict[str, Any]:
+        stage_cap_usd = round(max(0.0, float(effective_max_trade_usd)), 2)
+        standard_size_usd = calc_trade_size_usd(
+            self.cfg.bankroll_usd,
+            self.cfg.risk_fraction,
+            stage_cap_usd,
+        )
+        if edge_tier == "strong_validated":
+            return {
+                "target_size_usd": stage_cap_usd,
+                "size_cap_usd": stage_cap_usd,
+                "sizing_reason_tags": _unique_tags(
+                    "sizing_mode=full_stage_cap",
+                    f"stage_cap_usd={stage_cap_usd:.2f}",
+                    f"standard_size_usd={standard_size_usd:.2f}",
+                ),
+            }
+        if edge_tier == "exploratory":
+            exploratory_cap_usd = round(stage_cap_usd * 0.5, 2)
+            exploratory_size_usd = calc_trade_size_usd(
+                self.cfg.bankroll_usd,
+                self.cfg.risk_fraction * 0.5,
+                exploratory_cap_usd,
+            )
+            return {
+                "target_size_usd": exploratory_size_usd,
+                "size_cap_usd": exploratory_cap_usd,
+                "sizing_reason_tags": _unique_tags(
+                    "sizing_mode=exploratory_half_cap",
+                    f"stage_cap_usd={stage_cap_usd:.2f}",
+                    f"exploratory_cap_usd={exploratory_cap_usd:.2f}",
+                    f"standard_size_usd={standard_size_usd:.2f}",
+                ),
+            }
+        if edge_tier == "standard":
+            return {
+                "target_size_usd": standard_size_usd,
+                "size_cap_usd": stage_cap_usd,
+                "sizing_reason_tags": _unique_tags(
+                    "sizing_mode=standard_risk_fraction",
+                    f"stage_cap_usd={stage_cap_usd:.2f}",
+                    f"standard_size_usd={standard_size_usd:.2f}",
+                ),
+            }
+        return {
+            "target_size_usd": 0.0,
+            "size_cap_usd": 0.0,
+            "sizing_reason_tags": ["sizing_mode=suppressed"],
+        }
+
+    def _configured_live_stage(self) -> int:
+        stage = self.cfg.capital_stage
+        if stage in LIVE_STAGE_IDS:
+            return int(stage)
+        return 1
+
+    def _max_trade_for_stage(self, stage: int) -> float:
+        if stage >= 3:
+            return float(self.cfg.stage3_max_trade_usd)
+        if stage == 2:
+            return float(self.cfg.stage2_max_trade_usd)
+        return float(self.cfg.stage1_max_trade_usd)
+
+    def _daily_loss_limit_for_stage(self, stage: int) -> float:
+        if stage >= 3:
+            return max(0.0, float(self.cfg.stage3_daily_loss_limit_usd))
+        if stage == 2:
+            return max(0.0, float(self.cfg.stage2_daily_loss_limit_usd))
+        return max(0.0, float(self.cfg.stage1_daily_loss_limit_usd))
+
+    def _advantage_tier(self, highest_ready_stage: int) -> str:
+        if highest_ready_stage >= 3:
+            return "stage_3_live_ready"
+        if highest_ready_stage >= 2:
+            return "stage_2_live_ready"
+        return "stage_1_live_only"
+
+    def _shadow_research_tiers(self, *, order_price: float | None = None) -> dict[str, dict[str, Any]]:
+        min_shares = max(CLOB_HARD_MIN_SHARES, float(os.environ.get("JJ_POLY_MIN_ORDER_SHARES", "5.0")))
+        tiers: dict[str, dict[str, Any]] = {}
+        for tier_name, max_trade_usd in (
+            ("shadow_100", float(self.cfg.shadow_100_max_trade_usd)),
+            ("shadow_200", float(self.cfg.shadow_200_max_trade_usd)),
+        ):
+            size_usd = calc_trade_size_usd(self.cfg.bankroll_usd, self.cfg.risk_fraction, max_trade_usd)
+            shares = None
+            required_shares = None
+            would_skip_for_min_shares = False
+            if order_price is not None and order_price > 0:
+                shares = _round_up(size_usd / order_price, 2)
+                required_shares = clob_min_order_size(order_price, min_shares=min_shares)
+                if shares < required_shares:
+                    bumped_usd = round(required_shares * order_price, 2)
+                    would_skip_for_min_shares = bumped_usd > max_trade_usd * 2
+                    shares = required_shares
+                    size_usd = bumped_usd
+            tiers[tier_name] = {
+                "advantage_tier": tier_name,
+                "shadow_only": True,
+                "max_trade_usd": round(max_trade_usd, 4),
+                "size_usd": round(size_usd, 4),
+                "shares": round(float(shares), 4) if shares is not None else None,
+                "required_shares": round(float(required_shares), 4) if required_shares is not None else None,
+                "would_skip_for_min_shares": would_skip_for_min_shares,
+                "activation": "research_only",
+                "stage_gate_reason": "shadow_only_requires_separate_promotion",
+            }
+        return tiers
+
+    def _capital_stage_controls(self, *, today_pnl: float) -> dict[str, Any]:
+        _ = today_pnl
+        desired_stage = self._configured_live_stage()
+        trailing_12 = self.db.trailing_live_filled_pnl(limit=12)
+        trailing_40 = self.db.trailing_live_filled_pnl(limit=40)
+        trailing_120 = self.db.trailing_live_filled_pnl(limit=120)
+        drag = self.db.recent_execution_drag(limit=40)
+        latest_decision_ts = self.db.latest_decision_ts()
+        probe_freshness_hours = (
+            round(max(0.0, time.time() - float(latest_decision_ts)) / 3600.0, 4)
+            if latest_decision_ts is not None
+            else None
+        )
+        probe_fresh_for_stage_upgrade = bool(
+            probe_freshness_hours is not None
+            and probe_freshness_hours <= max(0.0, float(self.cfg.stage_probe_freshness_max_hours))
+        )
+        order_failed_rate = _safe_float(drag.get("order_failed_rate"), None)
+
+        stage2_gates = (
+            probe_fresh_for_stage_upgrade
+            and trailing_12.get("fills", 0) >= 12
+            and _safe_float(trailing_12.get("pnl_usd"), 0.0) > 0.0
+            and trailing_40.get("fills", 0) >= 40
+            and _safe_float(trailing_40.get("pnl_usd"), 0.0) > 0.0
+            and order_failed_rate is not None
+            and order_failed_rate < float(self.cfg.stage_order_failed_rate_limit)
+        )
+        stage3_gates = (
+            stage2_gates
+            and trailing_120.get("fills", 0) >= 120
+            and _safe_float(trailing_120.get("pnl_usd"), 0.0) > 0.0
+        )
+        highest_ready_stage = 1
+        if stage2_gates:
+            highest_ready_stage = 2
+        if stage3_gates:
+            highest_ready_stage = 3
+
+        stage_blockers: list[str] = []
+        if latest_decision_ts is None:
+            stage_blockers.append("stage_upgrade_probe_missing")
+        elif not probe_fresh_for_stage_upgrade:
+            stage_blockers.append("stage_upgrade_probe_stale")
+        if trailing_12.get("fills", 0) < 12:
+            stage_blockers.append("insufficient_trailing_12_live_fills")
+        elif _safe_float(trailing_12.get("pnl_usd"), 0.0) <= 0.0:
+            stage_blockers.append("trailing_12_live_filled_not_positive")
+        if trailing_40.get("fills", 0) < 40:
+            stage_blockers.append("insufficient_trailing_40_live_fills")
+        elif _safe_float(trailing_40.get("pnl_usd"), 0.0) <= 0.0:
+            stage_blockers.append("trailing_40_live_filled_not_positive")
+        if order_failed_rate is None:
+            stage_blockers.append("order_failed_rate_unavailable")
+        elif order_failed_rate >= float(self.cfg.stage_order_failed_rate_limit):
+            stage_blockers.append("order_failed_rate_above_stage_limit")
+        if trailing_120.get("fills", 0) < 120:
+            stage_blockers.append("insufficient_trailing_120_live_fills")
+        elif _safe_float(trailing_120.get("pnl_usd"), 0.0) <= 0.0:
+            stage_blockers.append("trailing_120_live_filled_not_positive")
+
+        effective_stage = min(desired_stage, highest_ready_stage)
+        stage_blocker_text = ",".join(stage_blockers)
+        if effective_stage < desired_stage:
+            gate_reason = (
+                f"requested_stage_{desired_stage}_capped_to_stage_{effective_stage}; blockers={stage_blocker_text}"
+            )
+        elif highest_ready_stage > effective_stage:
+            gate_reason = (
+                f"stage_{highest_ready_stage}_ready_but_configured_stage_{effective_stage}_applied"
+            )
+        elif effective_stage == 3:
+            gate_reason = "stage_3_live_guardrails_pass"
+        elif effective_stage == 2:
+            gate_reason = "stage_2_live_guardrails_pass; stage_3 waits for 120 positive live-filled rows"
+        else:
+            gate_reason = (
+                "stage_1_live_only; stage_2 waits for fresh probe telemetry, positive trailing fills, "
+                f"and order_failed_rate<{self.cfg.stage_order_failed_rate_limit:.2f}"
+            )
+
+        return {
+            "desired_stage": desired_stage,
+            "recommended_live_stage": highest_ready_stage,
+            "effective_stage": effective_stage,
+            "effective_max_trade_usd": round(max(0.0, self._max_trade_for_stage(effective_stage)), 4),
+            "effective_daily_loss_limit_usd": round(self._daily_loss_limit_for_stage(effective_stage), 4),
+            "advantage_tier": self._advantage_tier(highest_ready_stage),
+            "stage_gate_reason": gate_reason,
+            "stage_blockers": list(dict.fromkeys(stage_blockers)),
+            "probe_latest_decision_ts": latest_decision_ts,
+            "probe_freshness_hours": probe_freshness_hours,
+            "probe_fresh_for_stage_upgrade": probe_fresh_for_stage_upgrade,
+            "execution_drag_counts": drag,
+            "trailing_12": trailing_12,
+            "trailing_40": trailing_40,
+            "trailing_120": trailing_120,
+            "shadow_research_tiers": self._shadow_research_tiers(),
+        }
+
+    def _probe_mode(self, *, today_pnl: float, effective_daily_loss_limit_usd: float) -> dict[str, Any] | None:
         reasons: list[str] = []
-        hard_daily_loss_hit = today_pnl <= -abs(self.cfg.daily_loss_limit_usd)
+        hard_daily_loss_hit = today_pnl <= -abs(effective_daily_loss_limit_usd)
         if hard_daily_loss_hit and self.cfg.enable_probe_after_daily_loss:
             reasons.append(
-                f"probe_daily_loss today_pnl={today_pnl:.4f} limit={self.cfg.daily_loss_limit_usd:.2f}"
+                f"probe_daily_loss today_pnl={today_pnl:.4f} limit={effective_daily_loss_limit_usd:.2f}"
             )
 
         recent_rows = self.db.recent_live_filled(limit=self.cfg.probe_recent_fills)
@@ -1474,6 +2114,7 @@ class BTC5MinMakerBot:
         min_price: float,
         requested_shares: float,
         prior_price: float,
+        size_cap_usd: float,
     ) -> dict[str, Any] | None:
         if not self.cfg.retry_post_only_cross:
             return None
@@ -1529,7 +2170,7 @@ class BTC5MinMakerBot:
         if retry_shares < retry_required_shares:
             retry_shares = retry_required_shares
         retry_notional_usd = round(retry_shares * retry_price, 2)
-        if retry_notional_usd > (self.cfg.max_trade_usd * 2):
+        if retry_notional_usd > max(0.0, float(size_cap_usd)) + 1e-9:
             return {
                 "placement": PlacementResult(
                     order_id=None,
@@ -1544,7 +2185,8 @@ class BTC5MinMakerBot:
                 "reason": (
                     "post_only_retry_size_too_large "
                     f"direction={direction} retry_price={retry_price:.2f} "
-                    f"retry_shares={retry_shares:.2f} retry_notional_usd={retry_notional_usd:.2f}"
+                    f"retry_shares={retry_shares:.2f} retry_notional_usd={retry_notional_usd:.2f} "
+                    f"tier_cap_usd={float(size_cap_usd):.2f}"
                 ),
             }
 
@@ -1695,16 +2337,69 @@ class BTC5MinMakerBot:
     async def _process_window(self, *, window_start_ts: int, http: MarketHttpClient) -> dict[str, Any]:
         window_end_ts = window_start_ts + WINDOW_SECONDS
         slug = market_slug_for_window(window_start_ts)
+        session_bucket = _btc5_session_bucket(window_start_ts)
+        capital_stage = 1
+        effective_max_trade_usd = float(self._max_trade_for_stage(capital_stage))
+        effective_daily_loss_limit_usd = float(self._daily_loss_limit_for_stage(capital_stage))
+        recommended_live_stage = capital_stage
+        advantage_tier = "stage_1_live_only"
+        stage_gate_reason = "stage_gates_pending_live_evaluation"
+        stage_blockers: list[str] = []
+        probe_freshness_hours: float | None = None
+        probe_fresh_for_stage_upgrade = False
+        execution_drag_counts = self.db.recent_execution_drag(limit=40)
+        capital_utilization_ratio = 0.0
+        shadow_research_tiers = self._shadow_research_tiers()
         session_override = active_session_guardrail_override(self.cfg, window_start_ts=window_start_ts)
         session_policy_name = session_override.session_name if session_override is not None else None
         session_reason = session_guardrail_reason(session_override, window_start_ts=window_start_ts)
         recent_regime: dict[str, Any] | None = None
+        edge_tier = "suppressed"
+        sizing_reason_tags: list[str] = _unique_tags(
+            f"session_bucket={session_bucket}",
+            f"session_policy_name={session_policy_name or 'none'}",
+            f"effective_stage={capital_stage}",
+            f"recommended_live_stage={recommended_live_stage}",
+        )
+        loss_cluster_suppressed = False
 
         def _result(payload: dict[str, Any]) -> dict[str, Any]:
+            if "capital_stage" not in payload:
+                payload["capital_stage"] = capital_stage
+            if "effective_stage" not in payload:
+                payload["effective_stage"] = capital_stage
+            if "effective_max_trade_usd" not in payload:
+                payload["effective_max_trade_usd"] = round(effective_max_trade_usd, 4)
+            if "effective_daily_loss_limit_usd" not in payload:
+                payload["effective_daily_loss_limit_usd"] = round(effective_daily_loss_limit_usd, 4)
+            if "recommended_live_stage" not in payload:
+                payload["recommended_live_stage"] = recommended_live_stage
+            if "advantage_tier" not in payload:
+                payload["advantage_tier"] = advantage_tier
+            if "stage_gate_reason" not in payload:
+                payload["stage_gate_reason"] = stage_gate_reason
+            if "stage_blockers" not in payload:
+                payload["stage_blockers"] = list(stage_blockers)
+            if "probe_freshness_hours" not in payload:
+                payload["probe_freshness_hours"] = probe_freshness_hours
+            if "probe_fresh_for_stage_upgrade" not in payload:
+                payload["probe_fresh_for_stage_upgrade"] = probe_fresh_for_stage_upgrade
+            if "execution_drag_counts" not in payload:
+                payload["execution_drag_counts"] = dict(execution_drag_counts)
+            if "capital_utilization_ratio" not in payload:
+                payload["capital_utilization_ratio"] = round(max(0.0, float(capital_utilization_ratio)), 6)
+            if "shadow_research_tiers" not in payload:
+                payload["shadow_research_tiers"] = dict(shadow_research_tiers)
             if "session_override_triggered" not in payload:
                 payload["session_override_triggered"] = session_override is not None
             if "session_policy_name" not in payload:
                 payload["session_policy_name"] = session_policy_name
+            if "edge_tier" not in payload:
+                payload["edge_tier"] = edge_tier
+            if "sizing_reason_tags" not in payload:
+                payload["sizing_reason_tags"] = list(sizing_reason_tags)
+            if "loss_cluster_suppressed" not in payload:
+                payload["loss_cluster_suppressed"] = loss_cluster_suppressed
             if "directional_mode" not in payload:
                 payload["directional_mode"] = (
                     str((recent_regime or {}).get("directional_mode") or "two_sided")
@@ -1721,6 +2416,20 @@ class BTC5MinMakerBot:
                 payload["order_outcome_attribution"] = None
             return payload
 
+        def _persist(row: dict[str, Any]) -> None:
+            payload = dict(row)
+            if "edge_tier" not in payload:
+                payload["edge_tier"] = edge_tier
+            if "sizing_reason_tags" not in payload:
+                payload["sizing_reason_tags"] = list(sizing_reason_tags)
+            if "loss_cluster_suppressed" not in payload:
+                payload["loss_cluster_suppressed"] = loss_cluster_suppressed
+            if "session_policy_name" not in payload:
+                payload["session_policy_name"] = session_policy_name
+            if "effective_stage" not in payload:
+                payload["effective_stage"] = capital_stage
+            self.db.upsert_window(payload)
+
         if self.db.window_exists(window_start_ts):
             return _result({"window_start_ts": window_start_ts, "status": "skip_already_processed"})
 
@@ -1728,8 +2437,33 @@ class BTC5MinMakerBot:
         await self._resolve_unsettled(http, through_window_start=window_start_ts - WINDOW_SECONDS)
 
         today_pnl = self.db.today_realized_pnl()
-        probe_mode = self._probe_mode(today_pnl=today_pnl)
-        hard_daily_loss_hit = today_pnl <= -abs(self.cfg.daily_loss_limit_usd)
+        stage_controls = self._capital_stage_controls(today_pnl=today_pnl)
+        capital_stage = int(stage_controls.get("effective_stage") or 1)
+        recommended_live_stage = int(stage_controls.get("recommended_live_stage") or capital_stage)
+        effective_max_trade_usd = float(stage_controls.get("effective_max_trade_usd") or self.cfg.max_trade_usd)
+        effective_daily_loss_limit_usd = float(
+            stage_controls.get("effective_daily_loss_limit_usd") or self.cfg.daily_loss_limit_usd
+        )
+        advantage_tier = str(stage_controls.get("advantage_tier") or advantage_tier)
+        stage_gate_reason = str(stage_controls.get("stage_gate_reason") or stage_gate_reason)
+        stage_blockers = list(stage_controls.get("stage_blockers") or stage_blockers)
+        probe_freshness_hours = _safe_float(stage_controls.get("probe_freshness_hours"), None)
+        probe_fresh_for_stage_upgrade = bool(stage_controls.get("probe_fresh_for_stage_upgrade"))
+        execution_drag_counts = dict(stage_controls.get("execution_drag_counts") or execution_drag_counts)
+        shadow_research_tiers = dict(stage_controls.get("shadow_research_tiers") or shadow_research_tiers)
+        probe_mode = self._probe_mode(
+            today_pnl=today_pnl,
+            effective_daily_loss_limit_usd=effective_daily_loss_limit_usd,
+        )
+        sizing_reason_tags = _unique_tags(
+            f"session_bucket={session_bucket}",
+            f"session_policy_name={session_policy_name or 'none'}",
+            f"effective_stage={capital_stage}",
+            f"recommended_live_stage={recommended_live_stage}",
+            "probe_mode=on" if probe_mode else "probe_mode=off",
+            "probe_fresh_for_stage_upgrade=true" if probe_fresh_for_stage_upgrade else "probe_fresh_for_stage_upgrade=false",
+        )
+        hard_daily_loss_hit = today_pnl <= -abs(effective_daily_loss_limit_usd)
         if hard_daily_loss_hit and probe_mode is None:
             row = {
                 "window_start_ts": window_start_ts,
@@ -1738,10 +2472,10 @@ class BTC5MinMakerBot:
                 "order_status": "skip_daily_loss_limit",
                 "reason": _join_reasons(
                     session_reason,
-                    f"today_pnl={today_pnl:.4f} limit={self.cfg.daily_loss_limit_usd:.2f}",
+                    f"today_pnl={today_pnl:.4f} limit={effective_daily_loss_limit_usd:.2f}",
                 ),
             }
-            self.db.upsert_window(row)
+            _persist(row)
             return _result({"window_start_ts": window_start_ts, "status": row["order_status"], "today_pnl": today_pnl})
         effective_min_delta = float(probe_mode["min_delta"]) if probe_mode else float(self.cfg.min_delta)
         if session_override and session_override.min_delta is not None:
@@ -1774,7 +2508,7 @@ class BTC5MinMakerBot:
                 "order_status": "skip_missing_price",
                 "reason": session_reason,
             }
-            self.db.upsert_window(row)
+            _persist(row)
             return _result({"window_start_ts": window_start_ts, "status": row["order_status"]})
 
         direction, delta = direction_from_prices(open_price, current_price, effective_min_delta)
@@ -1793,12 +2527,13 @@ class BTC5MinMakerBot:
                     f"abs(delta)={abs(delta):.6f} < {effective_min_delta:.6f}",
                 ),
             }
-            self.db.upsert_window(row)
+            _persist(row)
             return _result({
                 "window_start_ts": window_start_ts,
                 "status": row["order_status"],
                 "delta": delta,
                 "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
+                "stage_gate_reason": stage_gate_reason,
             })
 
         if effective_max_abs_delta is not None and abs(delta) > effective_max_abs_delta:
@@ -1817,12 +2552,13 @@ class BTC5MinMakerBot:
                     f"abs(delta)={abs(delta):.6f} > {effective_max_abs_delta:.6f}",
                 ),
             }
-            self.db.upsert_window(row)
+            _persist(row)
             return _result({
                 "window_start_ts": window_start_ts,
                 "status": row["order_status"],
                 "delta": delta,
                 "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
+                "stage_gate_reason": stage_gate_reason,
             })
 
         recent_regime = self._recent_direction_regime()
@@ -1842,7 +2578,7 @@ class BTC5MinMakerBot:
                 "order_status": "skip_market_not_found",
                 "reason": session_reason,
             }
-            self.db.upsert_window(row)
+            _persist(row)
             return _result({"window_start_ts": window_start_ts, "status": row["order_status"]})
 
         token_id = choose_token_id_for_direction(market, direction)
@@ -1858,7 +2594,7 @@ class BTC5MinMakerBot:
                 "order_status": "skip_token_not_found",
                 "reason": session_reason,
             }
-            self.db.upsert_window(row)
+            _persist(row)
             return _result({"window_start_ts": window_start_ts, "status": row["order_status"]})
 
         regime_reason = None
@@ -1867,6 +2603,16 @@ class BTC5MinMakerBot:
             weaker = recent_regime.get("weaker_direction") or "n/a"
             regime_reason = f"recent_regime favored={favored} weaker={weaker} directional_mode={directional_mode}"
         if suppressed_direction and direction == suppressed_direction:
+            edge_tier = "suppressed"
+            loss_cluster_suppressed = True
+            sizing_reason_tags = _unique_tags(
+                *sizing_reason_tags,
+                f"direction={direction}",
+                f"delta_bucket={_btc5_delta_bucket(delta)}",
+                "recent_regime_one_sided_guardrail",
+                f"suppressed_direction={suppressed_direction}",
+                "edge_tier=suppressed",
+            )
             row = {
                 "window_start_ts": window_start_ts,
                 "window_end_ts": window_end_ts,
@@ -1884,7 +2630,7 @@ class BTC5MinMakerBot:
                     _reason_tag("suppressed_direction", suppressed_direction),
                 ),
             }
-            self.db.upsert_window(row)
+            _persist(row)
             return _result(
                 {
                     "window_start_ts": window_start_ts,
@@ -1915,7 +2661,7 @@ class BTC5MinMakerBot:
                     _reason_tag("book_failure_attribution", "no_book"),
                 ),
             }
-            self.db.upsert_window(row)
+            _persist(row)
             return _result(
                 {
                     "window_start_ts": window_start_ts,
@@ -1949,7 +2695,7 @@ class BTC5MinMakerBot:
                     book_detail,
                 ),
             }
-            self.db.upsert_window(row)
+            _persist(row)
             return _result(
                 {
                     "window_start_ts": window_start_ts,
@@ -2006,16 +2752,80 @@ class BTC5MinMakerBot:
                 "order_status": "skip_price_outside_guardrails",
                 "reason": _join_reasons(probe_reason, session_reason, regime_reason),
             }
-            self.db.upsert_window(row)
+            _persist(row)
             return _result({
                 "window_start_ts": window_start_ts,
                 "status": row["order_status"],
                 "quote_ticks": quote_ticks,
                 "regime_triggered": bool(recent_regime and recent_regime.get("triggered")),
                 "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
+                "stage_gate_reason": stage_gate_reason,
             })
 
-        size_usd = calc_trade_size_usd(self.cfg.bankroll_usd, self.cfg.risk_fraction, self.cfg.max_trade_usd)
+        shadow_research_tiers = self._shadow_research_tiers(order_price=order_price)
+        edge_profile = self._classify_edge_tier(
+            window_start_ts=window_start_ts,
+            direction=direction,
+            delta=delta,
+            order_price=order_price,
+            session_override=session_override,
+            session_policy_name=session_policy_name,
+            effective_stage=capital_stage,
+            recommended_live_stage=recommended_live_stage,
+            recent_regime=recent_regime,
+            probe_mode=probe_mode,
+        )
+        edge_tier = str(edge_profile.get("edge_tier") or "standard")
+        loss_cluster_suppressed = bool(edge_profile.get("loss_cluster_suppressed"))
+        sizing_reason_tags = list(edge_profile.get("sizing_reason_tags") or sizing_reason_tags)
+        size_plan = self._trade_size_for_edge_tier(
+            edge_tier=edge_tier,
+            effective_max_trade_usd=effective_max_trade_usd,
+        )
+        size_usd = float(size_plan.get("target_size_usd") or 0.0)
+        size_cap_usd = float(size_plan.get("size_cap_usd") or 0.0)
+        sizing_reason_tags = _unique_tags(
+            *sizing_reason_tags,
+            *(size_plan.get("sizing_reason_tags") or []),
+        )
+
+        if edge_tier == "suppressed":
+            row = {
+                "window_start_ts": window_start_ts,
+                "window_end_ts": window_end_ts,
+                "slug": slug,
+                "direction": direction,
+                "open_price": open_price,
+                "current_price": current_price,
+                "delta": delta,
+                "token_id": token_id,
+                "best_bid": best_bid,
+                "best_ask": best_ask,
+                "order_price": order_price,
+                "trade_size_usd": 0.0,
+                "shares": 0.0,
+                "order_status": "skip_loss_cluster_suppressed",
+                "reason": _join_reasons(
+                    probe_reason,
+                    session_reason,
+                    regime_reason,
+                    "observed_loss_cluster_suppressed",
+                ),
+            }
+            _persist(row)
+            return _result(
+                {
+                    "window_start_ts": window_start_ts,
+                    "status": row["order_status"],
+                    "direction": direction,
+                    "delta": delta,
+                    "price": order_price,
+                    "size_usd": 0.0,
+                    "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
+                    "quote_ticks": quote_ticks,
+                }
+            )
+
         if size_usd < self.cfg.min_trade_usd:
             row = {
                 "window_start_ts": window_start_ts,
@@ -2031,24 +2841,25 @@ class BTC5MinMakerBot:
                 "order_price": order_price,
                 "trade_size_usd": size_usd,
                 "order_status": "skip_size_too_small",
-                "reason": session_reason,
+                "reason": _join_reasons(session_reason, _reason_tag("edge_tier", edge_tier)),
             }
-            self.db.upsert_window(row)
+            _persist(row)
             return _result({"window_start_ts": window_start_ts, "status": row["order_status"]})
 
-        shares = _round_up(size_usd / max(order_price, 1e-6), 2)
+        shares = _round_down(size_usd / max(order_price, 1e-6), 2)
         _btc5_min_shares = max(CLOB_HARD_MIN_SHARES, float(os.environ.get("JJ_POLY_MIN_ORDER_SHARES", "5.0")))
         required_shares = clob_min_order_size(order_price, min_shares=_btc5_min_shares)
         if shares < required_shares:
             bumped_usd = round(required_shares * order_price, 2)
-            if bumped_usd > self.cfg.max_trade_usd * 2:
+            if bumped_usd > size_cap_usd + 1e-9:
                 logger.info(
-                    "SKIP: %.2f shares / $%.2f below live min %.2f shares / $%.2f, bump $%.2f > 2x max",
+                    "SKIP: %.2f shares / $%.2f below live min %.2f shares / $%.2f, bump $%.2f > tier cap $%.2f",
                     shares,
                     shares * order_price,
                     required_shares,
                     CLOB_HARD_MIN_NOTIONAL_USD,
                     bumped_usd,
+                    size_cap_usd,
                 )
                 row = {
                     "window_start_ts": window_start_ts,
@@ -2064,16 +2875,33 @@ class BTC5MinMakerBot:
                     "order_price": order_price,
                     "trade_size_usd": size_usd,
                     "order_status": "skip_below_min_shares",
-                    "reason": session_reason,
+                    "reason": _join_reasons(
+                        session_reason,
+                        _reason_tag("edge_tier", edge_tier),
+                        f"tier_cap_usd={size_cap_usd:.2f}",
+                    ),
                 }
-                self.db.upsert_window(row)
+                _persist(row)
                 return _result({"window_start_ts": window_start_ts, "status": row["order_status"]})
             shares = required_shares
             size_usd = bumped_usd
+            sizing_reason_tags = _unique_tags(
+                *sizing_reason_tags,
+                "min_share_bump_applied",
+                f"required_shares={required_shares:.2f}",
+            )
+        capital_utilization_ratio = (
+            (size_usd / effective_max_trade_usd) if effective_max_trade_usd > 0 else 0.0
+        )
         order_id = None
         filled: int | None = None
         order_status = "order_error"
-        reason: str | None = _join_reasons(probe_reason, session_reason, regime_reason)
+        reason: str | None = _join_reasons(
+            probe_reason,
+            session_reason,
+            regime_reason,
+            _reason_tag("edge_tier", edge_tier),
+        )
         executed_shares = shares
         placement_failure_attribution: str | None = None
         order_outcome_attribution: str | None = None
@@ -2113,6 +2941,7 @@ class BTC5MinMakerBot:
                     min_price=self.cfg.min_buy_price,
                     requested_shares=shares,
                     prior_price=order_price,
+                    size_cap_usd=size_cap_usd,
                 )
                 if retry_payload is not None:
                     retry_note = retry_payload.get("reason")
@@ -2126,8 +2955,18 @@ class BTC5MinMakerBot:
                         best_ask = retry_ask
                     if retry_price is not None:
                         order_price = float(retry_price)
+                        size_usd = round(shares * order_price, 2)
+                        capital_utilization_ratio = (
+                            (size_usd / effective_max_trade_usd) if effective_max_trade_usd > 0 else 0.0
+                        )
+                        shadow_research_tiers = self._shadow_research_tiers(order_price=order_price)
                     if retry_shares is not None:
                         shares = float(retry_shares)
+                        size_usd = round(shares * order_price, 2)
+                        capital_utilization_ratio = (
+                            (size_usd / effective_max_trade_usd) if effective_max_trade_usd > 0 else 0.0
+                        )
+                        shadow_research_tiers = self._shadow_research_tiers(order_price=order_price)
                     retry_placement = retry_payload.get("placement")
                     if isinstance(retry_placement, PlacementResult):
                         placement = retry_placement
@@ -2198,7 +3037,7 @@ class BTC5MinMakerBot:
             "order_status": order_status,
             "reason": reason,
         }
-        self.db.upsert_window(row)
+        _persist(row)
         return _result({
             "window_start_ts": window_start_ts,
             "status": order_status,
@@ -2214,6 +3053,8 @@ class BTC5MinMakerBot:
             "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
             "placement_failure_attribution": placement_failure_attribution,
             "order_outcome_attribution": order_outcome_attribution,
+            "stage_gate_reason": stage_gate_reason,
+            "capital_utilization_ratio": round(max(0.0, float(capital_utilization_ratio)), 6),
         })
 
     async def run_windows(self, *, count: int, continuous: bool) -> None:
@@ -2270,11 +3111,35 @@ class BTC5MinMakerBot:
 
     def print_status(self) -> None:
         status = self.db.status_summary()
+        stage_controls = self._capital_stage_controls(today_pnl=float(status.get("today_pnl_usd") or 0.0))
+        today_notional = float(status.get("today_notional_usd") or 0.0)
+        bankroll = max(float(self.cfg.bankroll_usd), 1e-9)
+        utilization = max(0.0, today_notional / bankroll)
         print(
             json.dumps(
                 {
                     "paper_trading": self.cfg.paper_trading,
                     "db_path": str(self.cfg.db_path),
+                    "capital_stage": int(stage_controls.get("effective_stage") or self._configured_live_stage()),
+                    "recommended_live_stage": int(
+                        stage_controls.get("recommended_live_stage") or self._configured_live_stage()
+                    ),
+                    "effective_max_trade_usd": round(
+                        float(stage_controls.get("effective_max_trade_usd") or self.cfg.effective_max_trade_usd),
+                        4,
+                    ),
+                    "effective_daily_loss_limit_usd": round(
+                        float(stage_controls.get("effective_daily_loss_limit_usd") or self.cfg.effective_daily_loss_limit_usd),
+                        4,
+                    ),
+                    "advantage_tier": str(stage_controls.get("advantage_tier") or "stage_1_live_only"),
+                    "stage_gate_reason": str(stage_controls.get("stage_gate_reason") or "stage_gates_pending_live_evaluation"),
+                    "stage_blockers": list(stage_controls.get("stage_blockers") or []),
+                    "probe_freshness_hours": _safe_float(stage_controls.get("probe_freshness_hours"), None),
+                    "probe_fresh_for_stage_upgrade": bool(stage_controls.get("probe_fresh_for_stage_upgrade")),
+                    "execution_drag_counts": dict(stage_controls.get("execution_drag_counts") or {}),
+                    "capital_utilization_ratio": round(utilization, 6),
+                    "shadow_research_tiers": dict(stage_controls.get("shadow_research_tiers") or {}),
                     **status,
                 },
                 indent=2,

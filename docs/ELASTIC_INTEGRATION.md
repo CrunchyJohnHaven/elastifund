@@ -1,67 +1,121 @@
 # Elastic Stack Integration
 
-This is the operator guide for the Elastic layer in Elastifund. The trading bot already has enough moving parts that plain text logs and ad hoc `grep` stop being useful very quickly. The Elastic stack gives the bot a searchable event history, latency traces, dashboard surfaces, and anomaly detection that can feed back into trading decisions.
+This is the master guide for the Elastic layer in Elastifund.
+It is both an operator guide and a public-messaging reference for the parts of the system that depend on Search AI, system memory, observability, evaluation, and workflow automation.
 
-## Why Elastic Stack For An Autonomous Trading Bot
+Elastic is not positioned here as a dashboard add-on.
+It is the shared substrate that helps trading workers, JJ-N, and the publishing loop stay searchable, observable, and evidence-backed.
 
-The core problem is simple: Python logging to files is a black hole. When an agent runs 24/7, evaluates multiple signal sources, sizes with Kelly fractions, routes maker-only orders, and can reject its own ideas with kill rules, you need real-time observability, not post-hoc archaeology.
+## Public-Safe Summary
 
-What Elastic solves for this repo:
+These statements are safe to reuse in `README.md`, `/elastic/`, and related public docs:
 
-- Live signal quality monitoring. We can see which of the six primary signal sources are producing useful decisions and which are degrading in real time.
-- Order execution latency tracking. APM shows where time is actually spent on the path from market scan to order placement and fill detection.
-- Anomaly detection on order flow. Elastic ML gives us a second line of defense for toxic flow, VPIN spikes, OFI divergence, and liquidity shocks that static thresholds can miss.
-- Kill-rule observability. Kibana makes it obvious how close the bot is to daily loss, semantic decay, toxicity, cost-stress, and calibration boundaries.
-- Post-mortem capability. When a trade goes wrong, we can reconstruct the exact signal state, order book, risk context, and latency profile that existed at decision time.
+- Elastic is the shared substrate for system memory, evaluation, observability, workflow automation, and publishing in Elastifund.
+- Trading workers and JJ-N remain separate proof lanes, but both write into the same evidence layer.
+- Public routes read sanitized checked-in artifacts and checked-in docs; they do not use direct browser access to private Elastic data in this pass.
+- The default contribution posture is paper mode, explicit proof labels, and governed approvals.
+
+## Why Elastic Fits Agentic AI In This Repo
+
+The core problem in Elastifund is not just model selection.
+The harder problem is keeping agent behavior grounded in durable context, measured outcomes, and operator-visible evidence.
+
+Elastic fits that problem in five ways:
+
+| Capability | Why it matters here |
+|---|---|
+| Search AI and context engineering | Agents need retrieval over prompts, reports, notes, outcomes, and telemetry instead of relying on short-lived local context. |
+| System memory | Trading and non-trading workers need a shared history of artifacts, traces, decisions, and outcomes that can be searched later. |
+| Agent observability | Operators need logs, metrics, traces, costs, and prompt-response visibility to understand where a worker is helping or degrading. |
+| Evaluation | Promotion, pause, and blocked-claim decisions need evidence tied to outcomes, not blended dashboard sentiment. |
+| Workflow automation | Recurring tasks, approvals, retries, and publishing loops need deterministic state and traceability. |
+
+This framing aligns with Elastic's current public product language around the Search AI Platform, Agent Builder, LLM and agentic AI observability, and Workflow tools.
+
+## What Elastic Does In Elastifund Today
+
+The current repo story is deliberately concrete:
+
+- Searchable artifacts: runtime snapshots, reports, prompts, notes, and public docs are treated as evidence surfaces that can be indexed, searched, and exported.
+- Telemetry and traces: the bot emits JSON logs, latency events, and APM-compatible traces so operators can reconstruct the signal-to-order path.
+- Operator dashboards: Kibana is the operator surface for signal quality, kill rules, order-book health, and runtime review.
+- ML and anomaly hooks: Elastic ML is the planned and partially wired surface for abnormal VPIN, OFI, spread, signal-confidence drift, and kill-rule frequency.
+- Publishing loop: the website, README, and route docs read sanitized checked-in artifacts so the public story stays tied to operator evidence without exposing private browser access.
+
+This means Elastic is visible in two planes at once:
+
+1. the operator plane, where raw telemetry, traces, and dashboards live
+2. the public plane, where sanitized checked-in artifacts and docs summarize what is safe to publish
 
 ## Architecture Overview
 
 ```text
-Market data APIs / WebSockets
+Market data, research inputs, CRM inputs, and runtime events
         |
         v
-bot/ws_trade_stream.py + bot/lead_lag_engine.py + LLM / debate pipeline
+Trading workers + JJ-N + finance control plane
         |
         v
-bot/jj_live.py
-  |        |         |
-  |        |         +--> kill_rules.py
-  |        +------------> execution path / fill detection
-  v
-bot/elastic_client.py
-  |--> elastifund-signals
-  |--> elastifund-trades
-  |--> elastifund-kills
-  |--> elastifund-orderbook
-  `--> latency / trace-linked events
+Elastic-backed evidence layer
+  |--> searchable artifacts and notes
+  |--> logs, metrics, traces, and costs
+  |--> dashboards and anomaly jobs
+  `--> evaluation and workflow state
         |
         v
-Elasticsearch <--- Filebeat <--- /var/log/elastifund/bot.json.log
+Checked-in reports and public-safe artifacts
         |
-        +--> Kibana dashboards
-        +--> APM Server traces
-        `--> ML anomaly jobs
-                 |
-                 v
-        bot/anomaly_consumer.py
-                 |
-                 v
-     caution multiplier / order pause / operator review
+        +--> README.md
+        +--> /live/
+        +--> /elastic/
+        `--> numbered docs and public route copy
 ```
 
-## What Each Component Does
+The key boundary is simple:
+public routes read exports and checked-in artifacts, not the private operator plane directly.
+
+## What The Shared Evidence Layer Enables
+
+### Trading Workers
+
+Trading workers generate signal state, latency, order-book context, fill outcomes, guardrail events, and promotion evidence.
+Elastic gives those events a searchable trail instead of leaving them trapped in local logs.
+
+### JJ-N
+
+JJ-N generates prospect notes, sequence state, approval checkpoints, proposal artifacts, and outcome labels.
+Those artifacts belong in the same memory and observability substrate even though their proof board is separate from trading.
+
+### Publishing And Evaluation
+
+The repo's public surfaces need freshness labels, blocked-claim language, source artifacts, and reviewable proof.
+Elastic helps keep the underlying evidence searchable while checked-in artifacts provide the public-safe export layer.
+
+## Public Messaging Guardrails
+
+These rules keep `README.md`, `/elastic/`, and related docs aligned:
+
+- Do not imply Elastic has endorsed or adopted this repo unless that is explicitly public and sourced.
+- Do not imply the browser is reading private Elasticsearch or Kibana data directly.
+- Do not use fake screenshots. Use real checked-in exports or clearly label diagrams as conceptual.
+- Keep trading performance claims tied to checked-in artifacts such as `improvement_velocity.json` and runtime reports.
+- Keep trading, forecasts, and JJ-N readiness as separate proof surfaces.
+- Keep the tone calm, technical, and paper-mode safe.
+
+## Core Components
 
 | Component | Role In Elastifund |
 |---|---|
-| Elasticsearch | Primary observability store for signals, trades, kill events, order book snapshots, latency events, and ML results. |
+| Elasticsearch | Search, storage, and evidence layer for signals, trades, notes, artifacts, logs, traces, and ML results. |
 | Kibana | Operator surface for dashboards, Discover queries, saved searches, and anomaly review. |
-| Filebeat | Ships ECS-style JSON logs from `/var/log/elastifund/` into Elasticsearch without coupling bot liveness to log delivery. |
-| APM Server | Accepts traces and spans from the Python bot so latency bottlenecks are visible by function, API call, and transaction type. |
-| Elastic ML jobs | Detect abnormal VPIN, OFI, spread, signal confidence drift, and kill-rule frequency so risk posture can tighten automatically. |
+| Filebeat | Ships ECS-style JSON logs from `/var/log/elastifund/` into Elasticsearch without coupling bot liveness to delivery. |
+| APM Server | Accepts traces and spans from Python services so latency and failure points are visible by function, API call, and workflow step. |
+| Elastic ML jobs | Detect abnormal VPIN, OFI, spread, signal confidence drift, and kill-rule frequency so the system can tighten posture earlier. |
 
 ## Setup Guide
 
-The integration is intentionally boring to start up. The goal is a local, single-node observability stack that can run on one VPS or a strong laptop without changing trading behavior.
+The integration is intentionally simple to start up.
+The goal is a local, single-node observability stack that can run on one VPS or a strong laptop without changing worker behavior.
 
 1. Install Docker Engine or Docker Desktop and confirm both `docker` and `docker compose` work.
 2. Review the Elastic infra files:
@@ -78,7 +132,7 @@ bash infra/setup.sh
 4. Wait for the health loop in `infra/setup.sh` to report that Elasticsearch is healthy.
 5. Open Kibana at `http://127.0.0.1:5601`.
 6. Pull the generated `elastic` password from the Docker logs, then store it outside the repo or in `.env`.
-7. Set the bot-side environment variables when you want telemetry enabled:
+7. Set the worker-side environment variables when you want telemetry enabled:
 
 ```bash
 ES_ENABLED=true
@@ -90,65 +144,72 @@ APM_SERVER_URL=http://127.0.0.1:8200
 APM_SERVICE_NAME=elastifund-bot
 ```
 
-8. Start the bot in paper or live mode as usual. The integration is designed so the trading loop behaves the same way if Elasticsearch is unavailable.
-9. Import dashboards with `bot/elastic_dashboards.py` or Kibana Saved Objects once those assets exist under `infra/kibana_dashboards/`.
+8. Start the bot or worker in paper or live mode as usual. The integration is designed so runtime behavior is unchanged if Elasticsearch is unavailable.
+9. Import dashboards with `bot/elastic_dashboards.py` or Kibana Saved Objects once assets exist under `infra/kibana_dashboards/`.
 10. Verify data flow in Kibana Discover by checking the four core indices:
    - `elastifund-trades`
    - `elastifund-signals`
    - `elastifund-kills`
    - `elastifund-orderbook`
 
-## Dashboard Guide
+## Operator Views
+
+These are the main operator surfaces the Elastic layer is meant to support:
 
 ### Trading Overview
 
-[Screenshot placeholder: Kibana dashboard showing trades per hour, win rate, cumulative P&L, and average fill latency.]
-
-Use this when you want the operator answer to one question: is the bot trading cleanly? It should make execution pace, realized hit rate, fill speed, and P&L drift obvious without opening raw documents.
+Use this to answer one question quickly: is the trading path behaving cleanly?
+It should surface execution pace, realized hit rate, fill speed, and PnL drift without forcing the operator into raw documents first.
 
 ### Signal Quality
 
-[Screenshot placeholder: Kibana dashboard showing signal accuracy by source, calibration curve, and signal-to-trade conversion rate.]
-
-This is the truth surface for the six core signal sources plus the anomaly feedback lane. It should answer which source is confident, which source is actually right, and which source is being filtered out before capital is committed.
+This is the truth surface for the core signal sources plus the anomaly lane.
+It should answer which sources are confident, which sources are accurate, and which sources are being filtered out before capital is committed.
 
 ### Kill Rule Monitor
 
-[Screenshot placeholder: Kibana dashboard showing kill-rule triggers over time, top firing rules, and current threshold headroom.]
-
-This is the safety dashboard. It is where you look to understand whether the bot is close to a forced pause, drifting into degraded behavior, or repeatedly tripping a specific protection rail.
+This is the safety surface.
+Use it to understand whether the bot is approaching a forced pause, drifting into degraded behavior, or repeatedly tripping one protection rail.
 
 ### Orderbook Health
 
-[Screenshot placeholder: Kibana dashboard showing spread over time, depth heatmap, VPIN series, and OFI divergence.]
-
-This is the market microstructure surface. It is especially useful on fast markets where maker-only execution quality depends on spread regime, queue health, and toxic-flow conditions.
+This is the market microstructure surface.
+It is most useful on fast markets where maker-only execution depends on spread regime, queue health, and toxic-flow conditions.
 
 ### APM Overview
 
-[Screenshot placeholder: Kibana APM view showing transaction throughput, latency distribution, and error rate across the signal-to-order path.]
+Use this to identify bottlenecks in the critical path.
+If latency expands, this is where you determine whether the time was lost in LLM calls, exchange APIs, database writes, or internal orchestration.
 
-Use this to identify bottlenecks in the critical path. If order latency suddenly expands, this is where you determine whether the time was lost in LLM calls, exchange APIs, database writes, or internal orchestration.
+### ML And Anomaly Review
 
-### ML Anomaly Monitor
+This is the review surface for the anomaly consumer.
+It should make clear when the system is reducing size, pausing markets, or flagging signal confidence drift because the distribution changed.
 
-[Screenshot placeholder: Kibana dashboard showing anomaly score timeline, per-market heatmap, and correlation with P&L.]
+## Employee Contribution Path
 
-This is the operator view for source `#7`, the anomaly consumer. It should make clear when the system is reducing size, pausing markets, or flagging signal confidence drift because the distribution changed.
+For an Elastic employee or contributor, the recommended path is:
 
-## Performance Impact
+1. Read `/elastic/` for the high-level narrative.
+2. Read `/live/` to inspect sanitized checked-in artifacts.
+3. Use `README.md` or `docs/FORK_AND_RUN.md` for the repo run path.
+4. Start in paper mode and inspect the evidence surfaces before proposing behavioral changes.
 
-The integration is built to be safe first:
+This keeps the project understandable without requiring private cluster access.
+
+## Performance Impact And Failure Behavior
+
+The integration is built to fail soft:
 
 - Elasticsearch writes are asynchronous bulk writes with bounded flush intervals, not synchronous per-event blocking calls.
-- Every call into Elasticsearch or APM is wrapped in `try/except`. If the stack is down, the bot logs a warning and keeps trading.
-- `ES_ENABLED` defaults to false, so the code path is a no-op unless explicitly enabled.
-- Filebeat decouples log shipping from bot execution. The bot only writes local JSON logs; Filebeat handles forwarding.
-- Elastic is for observability and operator feedback, not for replacing the existing safety rails or the repo's source-of-truth docs.
+- Calls into Elasticsearch or APM should be wrapped so a stack outage becomes an observability incident, not a worker crash.
+- `ES_ENABLED` defaults to false, so the path is a no-op unless explicitly enabled.
+- Filebeat decouples log shipping from worker execution.
+- Elastic supports observability and evaluation; it does not replace the existing safety rails or the repo's checked-in source-of-truth docs.
 
 ## Known Limitations
 
-- Elastic ML jobs need a warm-up period and enough history to become useful. Do not expect high-quality anomaly scores on day one.
-- A single-node Elasticsearch deployment is correct for development and a small VPS, not for high-availability production claims.
-- The first dashboards are operator dashboards, not investor dashboards. They are for debugging, validation, and public honesty.
-- If the log path or credentials are wrong, the bot should continue to run, but the dashboards will be stale. Treat stale observability as an operator incident, not a trading feature.
+- Elastic ML jobs need warm-up time and enough history to become useful.
+- A single-node Elasticsearch deployment is appropriate for development and small-scale operator use, not for high-availability claims.
+- Public routes are not live Elastic browsers in this pass. They are sanitized checked-in views over exported evidence.
+- If log paths, credentials, or exporters are wrong, workers should continue to run, but dashboards and public exports will go stale. Treat stale observability as an operator incident.

@@ -1,0 +1,532 @@
+{
+  "arr_estimate": {
+    "combined_current_pct": null,
+    "combined_current_usd": 0.0,
+    "combined_next_target_pct": 1750653.3495,
+    "combined_next_target_usd": 0.0,
+    "methodology": "combined_current_pct remains fund-level realized ARR for backward compatibility. Use headline/scoreboard for the BTC5 sleeve run-rate and selected forecast.",
+    "non_trading_current_pct": 0.0,
+    "non_trading_current_usd": 0.0,
+    "non_trading_status": "Not part of this public BTC5 metrics surface.",
+    "public_headline_methodology": "Conservative public disclosure cap. When the selected BTC5 annualized forecast exceeds 4,000%, README and chart headline claims clamp to 4,000%+ until longer live duration and fund-level reconciliation support a wider claim.",
+    "trading_backtest_reference_methodology": "Selected BTC5 forecast continuation ARR from the freshest public forecast artifact.",
+    "trading_backtest_reference_pct": 1750653.3495,
+    "trading_next_target_confidence": "high",
+    "trading_next_target_pct": 1750653.3495,
+    "trading_next_target_usd": 0.0,
+    "trading_public_headline_label": "4,000%+",
+    "trading_public_headline_pct": 4000.0,
+    "trading_realized_pct": null,
+    "trading_realized_usd": 0.0
+  },
+  "chart_series": {
+    "forecast_arr_trend": [
+      {
+        "active_forecast_arr_pct": 4100879.381,
+        "best_forecast_arr_pct": 4524545.3061,
+        "live_filled_rows": 45,
+        "source_artifact": "reports/btc5_autoresearch_loop/history.jsonl",
+        "timestamp": "2026-03-09T18:44:10.604794+00:00"
+      },
+      {
+        "active_forecast_arr_pct": 4289378.5228,
+        "best_forecast_arr_pct": 4486313.9411,
+        "live_filled_rows": 48,
+        "source_artifact": "reports/btc5_autoresearch_loop/history.jsonl",
+        "timestamp": "2026-03-09T19:05:56.414929+00:00"
+      },
+      {
+        "active_forecast_arr_pct": 4658936.8619,
+        "best_forecast_arr_pct": 4759977.5373,
+        "live_filled_rows": 50,
+        "source_artifact": "reports/btc5_autoresearch_loop/history.jsonl",
+        "timestamp": "2026-03-09T19:15:09.503166+00:00"
+      },
+      {
+        "active_forecast_arr_pct": 4867744.3645,
+        "best_forecast_arr_pct": 6155107.0126,
+        "live_filled_rows": 52,
+        "source_artifact": "reports/btc5_autoresearch_loop/history.jsonl",
+        "timestamp": "2026-03-09T20:19:01.428370+00:00"
+      },
+      {
+        "active_forecast_arr_pct": 4870666.0238,
+        "best_forecast_arr_pct": 6417309.0486,
+        "live_filled_rows": 56,
+        "source_artifact": "reports/btc5_autoresearch_loop/history.jsonl",
+        "timestamp": "2026-03-09T20:44:44.451603+00:00"
+      },
+      {
+        "active_forecast_arr_pct": 3922437.7239,
+        "best_forecast_arr_pct": 5900647.813,
+        "live_filled_rows": 122,
+        "source_artifact": "reports/btc5_autoresearch_loop/history.jsonl",
+        "timestamp": "2026-03-10T12:44:55.402965+00:00"
+      },
+      {
+        "active_forecast_arr_pct": 0.0,
+        "best_forecast_arr_pct": 9625734.3372,
+        "live_filled_rows": 131,
+        "source_artifact": "reports/btc5_autoresearch_loop/history.jsonl",
+        "timestamp": "2026-03-10T15:29:08.975048+00:00"
+      },
+      {
+        "active_forecast_arr_pct": -721772.4257,
+        "best_forecast_arr_pct": 2284868.7164,
+        "live_filled_rows": 132,
+        "source_artifact": "reports/btc5_autoresearch_loop/history.jsonl",
+        "timestamp": "2026-03-10T15:40:22.225882+00:00"
+      },
+      {
+        "active_forecast_arr_pct": -312655.6717,
+        "best_forecast_arr_pct": 1726721.8799,
+        "live_filled_rows": 138,
+        "source_artifact": "reports/btc5_autoresearch_loop/history.jsonl",
+        "timestamp": "2026-03-10T16:29:22.606038+00:00"
+      },
+      {
+        "active_forecast_arr_pct": 1750653.3495,
+        "best_forecast_arr_pct": 1750653.3495,
+        "live_filled_rows": 138,
+        "source_artifact": "reports/btc5_autoresearch/latest.json",
+        "timestamp": "2026-03-11T02:20:59.940275+00:00"
+      }
+    ]
+  },
+  "confidence": {
+    "fund_realized_arr_blocked": false,
+    "label": "high",
+    "reasons": [
+      "validation_live_filled_rows=132",
+      "generalization_ratio=1.0233",
+      "public_forecast_stale_over_6h"
+    ],
+    "sample_size_annotation": "12 live fills in the realized sleeve window; 132 validation live-filled rows in the selected forecast; 393 observed BTC5 windows in the selected forecast artifact"
+  },
+  "contribution_flywheel": {
+    "commits_total_after_instance": 113,
+    "dispatch_markdown_files": 98,
+    "dispatch_work_orders": 15,
+    "project_age_days": 0
+  },
+  "generated_at": "2026-03-11T10:17:15.523911+00:00",
+  "headline": {
+    "active_forecast_arr_pct": 1750653.3495,
+    "best_package_forecast_arr_pct": 1750653.3495,
+    "btc5_live_filled_pnl_usd_total": 6.5097,
+    "btc5_live_filled_rows_total": 185,
+    "deploy_recommendation": "promote",
+    "forecast_confidence_label": "high",
+    "fund_realized_arr_claim_reason": "fund_realized_arr_claim_unblocked",
+    "fund_realized_arr_claim_status": "unblocked",
+    "generated_at": "2026-03-11T10:17:15.523911+00:00",
+    "p05_forecast_arr_pct": 122581.2509,
+    "public_forecast_arr_cap_applied": true,
+    "public_forecast_arr_label": "4,000%+",
+    "public_forecast_arr_pct": 4000.0,
+    "public_forecast_source_artifact": "reports/btc5_autoresearch/latest.json",
+    "realized_btc5_sleeve_run_rate_pct": -1536.6875,
+    "summary": "BTC5 live sleeve has 185 live-filled rows and $6.51 live-filled PnL (today $0.00, flat). Conservative public forecast ARR is 4,000%+ (raw selected forecast 1.75M%). Fund-level realized ARR is unblocked. Selected public forecast is promote / high confidence from reports/btc5_autoresearch/latest.json.",
+    "title": "Based on latest BTC5 live trading data"
+  },
+  "performance_split": {
+    "closed_cashflow_usd": 0.0,
+    "forecast_arr_pct": 1750653.3495,
+    "open_notional_usd": 0.0,
+    "stage_readiness": "hold"
+  },
+  "public_arr_disclosure": {
+    "headline_cap_applied": true,
+    "headline_cap_pct": 4000.0,
+    "headline_forecast_arr_label": "4,000%+",
+    "headline_forecast_arr_pct": 4000.0,
+    "headline_methodology": "Conservative public disclosure cap. When the selected BTC5 annualized forecast exceeds 4,000%, README and chart headline claims clamp to 4,000%+ until longer live duration and fund-level reconciliation support a wider claim.",
+    "raw_active_forecast_arr_pct": 1750653.3495,
+    "raw_best_package_forecast_arr_pct": 1750653.3495,
+    "raw_p05_forecast_arr_pct": 122581.2509
+  },
+  "registry_health": {
+    "broken_reason": null,
+    "cascade_execution_enabled": false,
+    "eligible_assets": [
+      "btc",
+      "eth",
+      "sol",
+      "xrp"
+    ],
+    "eligible_count": 596,
+    "gamma_ok": true,
+    "generated_at": "2026-03-11T10:15:50.708899+00:00",
+    "quote_coverage_ratio": 0.9547,
+    "staleness_breach_count": 337,
+    "status": "healthy",
+    "total_discovered": 739
+  },
+  "runtime_summary": {
+    "closed_trades": 50,
+    "cycles_completed": 295,
+    "launch_posture": "clear",
+    "service_status": "running",
+    "total_trades": 185,
+    "total_trades_observations": {
+      "public.runtime.total_trades": 185,
+      "runtime_observation.btc5_maker.live_filled_rows": 185,
+      "runtime_observation.runtime.btc5_live_filled_rows": 185,
+      "runtime_observation.runtime.closed_plus_open": 57,
+      "runtime_observation.runtime.total_trades": 0,
+      "runtime_observation.runtime.trade_db_total_trades": 2,
+      "runtime_observation.wallet.open_plus_closed": 57,
+      "runtime_truth.runtime.closed_plus_open": 57,
+      "runtime_truth.runtime.total_trades": 185,
+      "runtime_truth.runtime.trade_db_total_trades": 2,
+      "runtime_truth.total_trades": 185,
+      "scoreboard.btc5_live_filled_rows_total": 185
+    },
+    "total_trades_source": "max_observed:public.runtime.total_trades,runtime_observation.btc5_maker.live_filled_rows,runtime_observation.runtime.btc5_live_filled_rows,runtime_truth.runtime.total_trades,runtime_truth.total_trades,scoreboard.btc5_live_filled_rows_total",
+    "verification_summary": "1641 passed, 5 warnings in 37.10s; 25 passed, 1 warning in 4.56s"
+  },
+  "schema_version": "3.0.0",
+  "scoreboard": {
+    "active_forecast_arr_pct": 1750653.3495,
+    "active_package": "current_live_profile",
+    "baseline_live_filled_rows": 140,
+    "baseline_window_rows": 393,
+    "best_package": "policy_current_live_profile__open_et__grid_d0.00015_up0.51_down0.51",
+    "best_package_forecast_arr_pct": 1750653.3495,
+    "btc5_live_filled_pnl_usd_total": 6.5097,
+    "btc5_live_filled_rows_total": 185,
+    "capital_stage_readiness": "hold",
+    "closed_cashflow_delta_1d": null,
+    "control_plane_consistency": {
+      "capital_consistency": {
+        "artifacts": {
+          "runtime_capital_readiness": {
+            "fund_status": "hold",
+            "next_1000_status": "hold",
+            "polymarket_btc5_status": "hold"
+          },
+          "selected_forecast": {
+            "deploy_recommendation": "shadow_only",
+            "forecast_confidence_label": "high",
+            "source_artifact": "reports/btc5_autoresearch/latest.json"
+          },
+          "signal_source_audit": {
+            "age_hours": 6.7064,
+            "best_component_source": null,
+            "best_confirmation_source": "wallet_flow",
+            "best_source_combo": null,
+            "btc_fast_window_confirmation_ready": true,
+            "confirmation_contradiction_penalty": 0.5,
+            "confirmation_coverage_label": "weak",
+            "confirmation_coverage_score": 0.2,
+            "confirmation_coverage_status": "ready",
+            "confirmation_evidence_score": 0.0,
+            "confirmation_executed_window_coverage": 0.014492753623188406,
+            "confirmation_false_confirmation_cost_usd": 4.99705,
+            "confirmation_false_suppression_cost_usd": 0.0,
+            "confirmation_freshness_label": "fresh",
+            "confirmation_lift": 0.003474999999999895,
+            "confirmation_lift_avg_pnl_usd": 0.003474999999999895,
+            "confirmation_lift_win_rate": 0.0,
+            "confirmation_next_required_artifact": null,
+            "confirmation_resolved_window_coverage": 0.011461318051575931,
+            "confirmation_source_gap_vs_probe_hours": {
+              "lmsr": 2.0997,
+              "wallet_flow": 0.0
+            },
+            "confirmation_sources_ready": [
+              "wallet_flow"
+            ],
+            "confirmation_stale_sources": [],
+            "confirmation_strength_label": "weak",
+            "confirmation_strength_score": 0.0,
+            "confirmation_support_status": "ready",
+            "contradiction_penalty_score": 0.5,
+            "exists": true,
+            "freshness": "stale",
+            "generated_at": "2026-03-11T03:34:52.588129+00:00",
+            "lmsr_archive_confirmation_ready": false,
+            "path": "reports/signal_source_audit.json",
+            "stage_upgrade_blocking_checks": [
+              "wallet_flow_vs_llm_not_ready"
+            ],
+            "stage_upgrade_support_status": "limited",
+            "supports_capital_allocation": true,
+            "wallet_flow_archive_confirmation_ready": true,
+            "wallet_flow_confirmation_ready": false
+          },
+          "strategy_scale_comparison": {
+            "age_hours": 0.0282,
+            "exists": true,
+            "freshness": "fresh",
+            "generated_at": "2026-03-11T10:15:34.046559+00:00",
+            "next_1000_recommended_amount_usd": 0.0,
+            "next_1000_status": "hold",
+            "path": "reports/strategy_scale_comparison.json",
+            "polymarket_btc5_status": "hold",
+            "probe_freshness_hours": 0.0998,
+            "ready_for_stage_1": true,
+            "ready_for_stage_2": false,
+            "ready_for_stage_3": false,
+            "source_artifacts": [
+              "/Users/johnbradley/Desktop/Elastifund/reports/runtime_truth_latest.json",
+              "/Users/johnbradley/Desktop/Elastifund/reports/btc5_autoresearch/latest.json",
+              "/Users/johnbradley/Desktop/Elastifund/reports/parallel/instance05_weather_lane.json"
+            ],
+            "stage_blocking_checks": [
+              "trailing_40_live_filled_not_positive"
+            ],
+            "stage_gate_reason": "Stage 1 is eligible now. Keep stage 2 and stage 3 blocked until trailing 40 and trailing 120 fill windows remain positive.",
+            "stage_readiness": {
+              "blocking_checks": [
+                "trailing_40_live_filled_not_positive"
+              ],
+              "btc_open_markets_intentional": 2,
+              "btc_open_markets_stale": 0,
+              "btc_open_markets_total": 2,
+              "fresh_probe_summary": true,
+              "fresh_wallet_export": true,
+              "order_failed_rate_recent_40": 0.025,
+              "probe_freshness_hours": 0.0998,
+              "ready_for_stage_1": true,
+              "ready_for_stage_2": false,
+              "ready_for_stage_3": false,
+              "reasons": [
+                "Intentional BTC opens are still live and are tracked as non-blocking for stage reconciliation.",
+                "Wallet reconciliation is ready for stage gates.",
+                "Trailing 12 live-filled BTC5 trades remain net positive.",
+                "Stage 1 guardrails pass: fresh probe telemetry, positive trailing 12 fills, and recent order-failed rate below 25%."
+              ],
+              "recommended_stage": 1,
+              "stage_gate_reason": "Stage 1 is eligible now. Keep stage 2 and stage 3 blocked until trailing 40 and trailing 120 fill windows remain positive.",
+              "trailing_120_live_filled_pnl_usd": 91.2818,
+              "trailing_12_live_filled_pnl_usd": 1.453,
+              "trailing_40_live_filled_pnl_usd": -24.0875,
+              "wallet_export_freshness_hours": 0.2197,
+              "wallet_reconciliation_fresh": true,
+              "wallet_reconciliation_ready": true,
+              "wallet_reconciliation_source": "reports/wallet_reconciliation/latest.json",
+              "wallet_reconciliation_status": "ready_for_launch_gate"
+            },
+            "stage_reasons": [
+              "Intentional BTC opens are still live and are tracked as non-blocking for stage reconciliation.",
+              "Wallet reconciliation is ready for stage gates.",
+              "Trailing 12 live-filled BTC5 trades remain net positive.",
+              "Stage 1 guardrails pass: fresh probe telemetry, positive trailing 12 fills, and recent order-failed rate below 25%."
+            ],
+            "stage_recommended": 1,
+            "wallet_export_freshness_hours": 0.2197
+          }
+        },
+        "reasons": [],
+        "status": "consistent"
+      },
+      "profile_consistency": {
+        "local_selector": "maker_velocity_live",
+        "observed_remote_runtime_profile": "maker_velocity_live",
+        "reasons": [],
+        "remote_selector": "maker_velocity_live",
+        "selected_profile": "maker_velocity_live",
+        "status": "consistent"
+      },
+      "service_consistency": {
+        "expected_primary_service": "btc-5min-maker.service",
+        "observed_service_name": "btc-5min-maker.service",
+        "observed_service_status": "running",
+        "reasons": [],
+        "status": "consistent"
+      },
+      "truth_source_consistency": {
+        "btc5_probe_age_hours": 0.0375,
+        "btc5_probe_freshness": "fresh",
+        "reasons": [],
+        "reporting_precedence": "btc5_runtime_db",
+        "reporting_precedence_reason": "wallet_export_stale",
+        "status": "consistent",
+        "wallet_export_age_hours": 11.0842,
+        "wallet_export_freshness": "stale"
+      }
+    },
+    "deploy_recommendation": "promote",
+    "forecast_arr_delta_pct": 2381775.5317,
+    "forecast_arr_pct": 1750653.3495,
+    "forecast_confidence_label": "high",
+    "forecast_confidence_reasons": [
+      "validation_live_filled_rows=132",
+      "generalization_ratio=1.0233",
+      "public_forecast_stale_over_6h"
+    ],
+    "fund_realized_arr_claim_reason": "fund_realized_arr_claim_unblocked",
+    "fund_realized_arr_claim_status": "unblocked",
+    "fund_realized_arr_pct": null,
+    "intraday_live_summary": {
+      "best_direction_today": null,
+      "best_price_bucket_today": null,
+      "cancelled_unfilled_count": 0,
+      "filled_pnl_usd_today": 0.0,
+      "filled_rows_today": 0,
+      "order_failed_count": 0,
+      "recent_12_pnl_usd": 0.0,
+      "recent_20_pnl_usd": 0.0,
+      "recent_5_pnl_usd": 0.0,
+      "skip_price_count": 0,
+      "win_rate_today": null
+    },
+    "metric_name": "BTC5 public performance scoreboard",
+    "next_1000_usd_recommended_amount": 0.0,
+    "next_1000_usd_status": "hold",
+    "open_non_btc_notional_usd": 0.0,
+    "open_notional_delta_1d": null,
+    "p05_forecast_arr_pct": 122581.2509,
+    "portfolio_equity_delta_1d": null,
+    "public_best_package_arr_pct": 4000.0,
+    "public_forecast_arr_cap_applied": true,
+    "public_forecast_arr_cap_pct": 4000.0,
+    "public_forecast_arr_label": "4,000%+",
+    "public_forecast_arr_methodology": "Conservative public disclosure cap. When the selected BTC5 annualized forecast exceeds 4,000%, README and chart headline claims clamp to 4,000%+ until longer live duration and fund-level reconciliation support a wider claim.",
+    "public_forecast_arr_pct": 4000.0,
+    "public_forecast_source_artifact": "reports/btc5_autoresearch/latest.json",
+    "public_p05_forecast_arr_pct": 4000.0,
+    "realized_btc5_sleeve_run_rate_pct": -1536.6875,
+    "realized_btc5_sleeve_window_hours": 13.8333,
+    "realized_btc5_sleeve_window_label": "trailing_12_live_fills",
+    "realized_btc5_sleeve_window_live_fills": 12,
+    "realized_btc5_sleeve_window_pnl_usd": -2.5441,
+    "realized_closed_btc_cashflow_usd": 0.0,
+    "registry_health": {
+      "broken_reason": null,
+      "cascade_execution_enabled": false,
+      "eligible_assets": [
+        "btc",
+        "eth",
+        "sol",
+        "xrp"
+      ],
+      "eligible_count": 596,
+      "gamma_ok": true,
+      "generated_at": "2026-03-11T10:15:50.708899+00:00",
+      "quote_coverage_ratio": 0.9547,
+      "staleness_breach_count": 337,
+      "status": "healthy",
+      "total_discovered": 739
+    },
+    "sample_size_annotation": "12 live fills in the realized sleeve window; 132 validation live-filled rows in the selected forecast; 393 observed BTC5 windows in the selected forecast artifact",
+    "validation_live_filled_rows": 132,
+    "wallet_reconciliation_summary": {
+      "btc5_probe_age_hours": 0.0375,
+      "btc5_probe_checked_at": "2026-03-11T10:15:00.322149+00:00",
+      "btc5_probe_freshness_label": "fresh",
+      "btc5_probe_live_filled_pnl_usd": 6.5097,
+      "btc5_probe_live_filled_rows": 185,
+      "btc5_probe_source_class": "remote_sqlite_probe",
+      "btc_closed_markets": 0,
+      "btc_closed_net_cashflow_usd": 0.0,
+      "btc_open_markets": 2,
+      "btc_open_markets_intentional": 2,
+      "btc_open_markets_stale": 0,
+      "non_btc_open_buy_notional_usd": 0.0,
+      "remote_closed_market_count": 50,
+      "remote_open_market_count": 7,
+      "reporting_precedence": "wallet_reconciliation",
+      "reporting_precedence_reason": "api_csv_cross_reference",
+      "source_age_hours": 0.2514,
+      "source_artifact": "/Users/johnbradley/Downloads/Polymarket-History-2026-03-11 (1).csv",
+      "source_class": "wallet_reconciliation_api_csv",
+      "wallet_export_fresh": false,
+      "wallet_export_freshness_label": "fresh"
+    }
+  },
+  "source_artifacts": [
+    {
+      "generated_at": "2026-03-11T10:17:15.523911+00:00",
+      "path": "reports/public_runtime_snapshot.json",
+      "source_class": "runtime_public_snapshot"
+    },
+    {
+      "generated_at": "2026-03-11T10:17:15.523911+00:00",
+      "path": "reports/runtime_truth_latest.json",
+      "source_class": "runtime_truth"
+    },
+    {
+      "generated_at": "2026-03-11T10:17:03.286308+00:00",
+      "path": "reports/remote_cycle_status.json",
+      "source_class": "remote_cycle_status"
+    },
+    {
+      "generated_at": "2026-03-11T04:33:36.855291+00:00",
+      "path": "reports/root_test_status.json",
+      "source_class": "root_test_status"
+    },
+    {
+      "generated_at": null,
+      "path": "reports/btc5_autoresearch_loop/history.jsonl",
+      "source_class": "forecast_loop_history"
+    },
+    {
+      "generated_at": null,
+      "path": "reports/tmp_remote_btc5_window_rows.json",
+      "source_class": "btc5_window_rows"
+    },
+    {
+      "confidence_label": "high",
+      "generated_at": "2026-03-11T02:20:59.940275+00:00",
+      "path": "reports/btc5_autoresearch/latest.json",
+      "source_class": "forecast_latest"
+    },
+    {
+      "confidence_label": "low",
+      "generated_at": "2026-03-11T02:20:59.940275+00:00",
+      "path": "reports/btc5_autoresearch_current_probe/latest.json",
+      "source_class": "forecast_current_probe"
+    },
+    {
+      "confidence_label": "high",
+      "generated_at": "2026-03-10T16:31:25.106768+00:00",
+      "path": "reports/btc5_autoresearch/latest.json",
+      "source_class": "forecast_loop_latest"
+    }
+  ],
+  "sources": {
+    "btc5_window_rows": "reports/tmp_remote_btc5_window_rows.json",
+    "market_registry": "reports/market_registry/latest.json",
+    "remote_cycle_status": "reports/remote_cycle_status.json",
+    "root_test_status": "reports/root_test_status.json",
+    "runtime_public_snapshot": "reports/public_runtime_snapshot.json",
+    "runtime_truth": "reports/runtime_truth_latest.json",
+    "selected_public_forecast": "reports/btc5_autoresearch/latest.json"
+  },
+  "timebound_velocity": {
+    "confidence_label": "high",
+    "cycles_in_window": 14,
+    "forecast_arr_gain_pct": 2381775.5317,
+    "forecast_arr_gain_pct_per_day": 1808159.2786,
+    "metric_name": "BTC5 public forecast velocity",
+    "source_artifact": "reports/btc5_autoresearch/latest.json",
+    "source_class": "forecast_loop_history",
+    "validation_fill_growth": 93,
+    "validation_fill_growth_per_day": 70.6023,
+    "window_ended_at": "2026-03-11T02:20:59.940275+00:00",
+    "window_hours": 31.6137,
+    "window_started_at": "2026-03-09T18:44:10.604794+00:00"
+  },
+  "trading_agent": {
+    "btc5_live_filled_pnl_usd": 6.5097,
+    "btc5_live_filled_rows": 185,
+    "closed_trades": 50,
+    "cycles_completed": 295,
+    "deployed_capital_usd": 104.8402,
+    "launch_posture": "clear",
+    "service_status": "running",
+    "total_trades": 185,
+    "total_trades_source": "max_observed:public.runtime.total_trades,runtime_observation.btc5_maker.live_filled_rows,runtime_observation.runtime.btc5_live_filled_rows,runtime_truth.runtime.total_trades,runtime_truth.total_trades,scoreboard.btc5_live_filled_rows_total",
+    "tracked_capital_usd": 350.0,
+    "wallet_count": 216,
+    "wallet_flow_ready": true
+  },
+  "velocity_metrics": {
+    "commits_total_after_instance": 113,
+    "dispatch_markdown_files": 98,
+    "dispatch_work_orders": 15,
+    "project_age_days": 0
+  }
+}

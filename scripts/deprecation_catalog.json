@@ -1,0 +1,61 @@
+{
+  "title": "Deprecation Candidates (Preparation)",
+  "generated_from": "scripts/deprecation_catalog.json",
+  "reference_scope_paths": [
+    "docs",
+    "tests",
+    "deploy",
+    "scripts",
+    "Makefile",
+    "README.md",
+    "AGENTS.md",
+    "PROJECT_INSTRUCTIONS.md"
+  ],
+  "external_scope_paths": [
+    "docs",
+    "tests",
+    "deploy",
+    "Makefile",
+    "README.md",
+    "AGENTS.md",
+    "PROJECT_INSTRUCTIONS.md"
+  ],
+  "candidates": [
+    {
+      "path": "scripts/deploy.sh",
+      "why_not_removed": "Active in docs, tests, and scripts; compatibility deploy lane still used"
+    },
+    {
+      "path": "scripts/deploy_ws.sh",
+      "why_not_removed": "Referenced by ops docs and script surfaces"
+    },
+    {
+      "path": "scripts/btc5_status.sh",
+      "why_not_removed": "Referenced by BTC5 rollout/deploy flows"
+    },
+    {
+      "path": "scripts/install_bridge_cron.sh",
+      "why_not_removed": "Active operational helper"
+    },
+    {
+      "path": "scripts/install_jj_health_cron.sh",
+      "why_not_removed": "Canonical install path for health-monitor cron"
+    },
+    {
+      "path": "scripts/vps_setup.sh",
+      "why_not_removed": "Manual bootstrap helper still discoverable"
+    }
+  ],
+  "completed": [
+    {
+      "path": "scripts/install_flywheel_cron.sh",
+      "action": "Deleted",
+      "proof": "Had zero external references before deletion."
+    }
+  ],
+  "exit_criteria": [
+    "Migrate references in docs/tests/deploy units to the canonical replacement command.",
+    "Run the reference-proof command and confirm count is 0 for the candidate.",
+    "Delete wrapper and update scripts catalogs plus regenerated indexes."
+  ]
+}

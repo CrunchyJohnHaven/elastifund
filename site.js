@@ -528,7 +528,18 @@ function setCommonValues(data) {
     jjn_time_to_first_dollar: data.jjnTimeToFirstDollar,
     jjn_reply_rate: data.jjnReplyRate,
     jjn_blockers_short: data.jjnBlockersShort,
-    snapshot_source: data.snapshotSource
+    snapshot_source: data.snapshotSource,
+    elastic_shared_substrate_summary: data.elasticSharedSubstrateSummary,
+    elastic_worker_family_coverage: data.elasticWorkerFamilyCoverage,
+    elastic_artifact_backed_proof: data.elasticArtifactBackedProof,
+    elastic_operator_surface_summary: data.elasticOperatorSurfaceSummary,
+    elastic_publish_loop_summary: data.elasticPublishLoopSummary,
+    elastic_public_scope_guardrail: data.elasticPublicScopeGuardrail,
+    elastic_employee_path_live: data.elasticEmployeePathLive,
+    elastic_employee_path_repo: data.elasticEmployeePathRepo,
+    elastic_employee_path_develop: data.elasticEmployeePathDevelop,
+    elastic_employee_path_contribute: data.elasticEmployeePathContribute,
+    elastic_employee_path_summary: data.elasticEmployeePathSummary
   };
 
   Object.entries(values).forEach(([key, value]) => {
@@ -539,6 +550,135 @@ function setCommonValues(data) {
   setFreshnessBadge('btc5', data.btc5Freshness);
   setFreshnessBadge('forecast', data.forecastFreshness);
   setFreshnessBadge('jjn', data.jjnFreshness);
+}
+
+function createNode(tagName, className, text) {
+  const element = document.createElement(tagName);
+  if (className) {
+    element.className = className;
+  }
+  if (text !== undefined) {
+    element.textContent = text;
+  }
+  return element;
+}
+
+function findSectionByKicker(kickerText) {
+  return Array.from(document.querySelectorAll('.page-section')).find(section => {
+    const kicker = section.querySelector('.section-kicker');
+    return kicker && kicker.textContent.trim() === kickerText;
+  }) || null;
+}
+
+function findCardByKicker(kickerText) {
+  return Array.from(document.querySelectorAll('.card, .proof-card, .path-card, .surface-card')).find(card => {
+    const kicker = card.querySelector('.card-kicker, .panel-kicker, .path-kicker');
+    return kicker && kicker.textContent.trim() === kickerText;
+  }) || null;
+}
+
+function applyElasticEnhancements(data) {
+  if (document.body?.dataset?.page !== 'elastic') {
+    return;
+  }
+
+  const proofPanel = document.querySelector('.route-hero .proof-card');
+  const proofCopy = proofPanel?.querySelector('.card-copy');
+  if (proofPanel) {
+    proofPanel.classList.add('elastic-proof-panel');
+  }
+  if (proofCopy) {
+    proofCopy.textContent = data.elasticArtifactBackedProof;
+  }
+
+  const architectureSection = findSectionByKicker('Elastic in the middle');
+  const architectureCard = architectureSection?.querySelector('.card');
+  const architectureDiagram = architectureCard?.querySelector('.diagram');
+
+  if (architectureSection) {
+    architectureSection.classList.add('elastic-architecture-section');
+  }
+  if (architectureCard) {
+    architectureCard.classList.add('elastic-architecture-card');
+    if (!architectureCard.querySelector('.elastic-architecture-banner')) {
+      const banner = createNode('div', 'elastic-architecture-banner');
+      const intro = createNode('div', 'elastic-architecture-intro');
+      const introKicker = createNode('div', 'panel-kicker', 'Shared substrate');
+      const introSummary = createNode('p', 'elastic-architecture-summary', data.elasticSharedSubstrateSummary);
+      intro.append(introKicker, introSummary);
+      banner.appendChild(intro);
+
+      [
+        ['Worker coverage', data.elasticWorkerFamilyCoverage],
+        ['Artifact proof', data.elasticArtifactBackedProof],
+        ['Public scope', data.elasticPublicScopeGuardrail]
+      ].forEach(([label, value]) => {
+        const pill = createNode('div', 'elastic-architecture-pill');
+        const pillLabel = createNode('div', 'elastic-architecture-pill-label', label);
+        const pillValue = createNode('div', 'elastic-architecture-pill-value', value);
+        pill.append(pillLabel, pillValue);
+        banner.appendChild(pill);
+      });
+
+      architectureCard.insertBefore(banner, architectureCard.firstChild);
+    }
+  }
+  if (architectureDiagram) {
+    architectureDiagram.classList.add('elastic-architecture-diagram');
+    Array.from(architectureDiagram.children).forEach((step, index) => {
+      step.classList.add('elastic-architecture-step');
+      if (index === 1) {
+        step.classList.add('is-core');
+      }
+    });
+  }
+
+  const publishingCard = findCardByKicker('Public publishing loop');
+  const publishingCopy = publishingCard?.querySelector('.card-copy');
+  if (publishingCard) {
+    publishingCard.classList.add('elastic-publishing-card');
+  }
+  if (publishingCopy) {
+    publishingCopy.textContent = data.elasticPublishLoopSummary;
+  }
+
+  const evidenceSection = findSectionByKicker('What Elastic is doing in this system today');
+  const evidenceGrid = evidenceSection?.querySelector('.surface-grid');
+  const evidenceCopy = evidenceSection?.querySelector('.section-copy');
+  if (evidenceSection) {
+    evidenceSection.classList.add('elastic-evidence-section');
+  }
+  if (evidenceCopy) {
+    evidenceCopy.textContent = data.elasticOperatorSurfaceSummary;
+  }
+  if (evidenceGrid) {
+    evidenceGrid.classList.add('elastic-evidence-grid');
+    Array.from(evidenceGrid.children).forEach((card, index) => {
+      card.classList.add('elastic-evidence-card');
+      if (index === 0) {
+        card.classList.add('is-featured');
+      }
+    });
+  }
+
+  const nextStepsSection = findSectionByKicker('What an Elastic employee can do next');
+  const sectionHeader = nextStepsSection?.querySelector('.section-header');
+  const pathGrid = nextStepsSection?.querySelector('.path-grid');
+  if (pathGrid) {
+    pathGrid.classList.add('elastic-path-grid');
+  }
+  if (sectionHeader && pathGrid && !nextStepsSection.querySelector('.elastic-cta-strip')) {
+    const strip = createNode('div', 'elastic-cta-strip');
+    [
+      data.elasticEmployeePathLive,
+      data.elasticEmployeePathRepo,
+      data.elasticEmployeePathDevelop,
+      data.elasticEmployeePathContribute
+    ].forEach(label => {
+      strip.appendChild(createNode('span', 'elastic-cta-pill', label));
+    });
+    sectionHeader.insertAdjacentElement('afterend', strip);
+  }
 }
 
 function setStatusPill(data) {
@@ -697,6 +837,21 @@ async function loadSiteData() {
   const forecastDeltaPct = normalizeNumber(pick(scoreboard, ['forecast_arr_delta_pct'], 0), 0);
   const velocityGainPct = normalizeNumber(pick(timeboundVelocity, ['forecast_arr_gain_pct'], forecastDeltaPct), forecastDeltaPct);
   const velocityPerDayPct = normalizeNumber(pick(timeboundVelocity, ['forecast_arr_gain_pct_per_day'], 0), 0);
+  const dispatchWorkOrders = normalizeNumber(pick(contributionFlywheel, ['dispatch_work_orders'], DEFAULTS.dispatchWorkOrders), DEFAULTS.dispatchWorkOrders);
+  const researchFiles = normalizeNumber(pick(contributionFlywheel, ['dispatch_markdown_files'], DEFAULTS.researchFiles), DEFAULTS.researchFiles);
+  const commitCount = normalizeNumber(pick(contributionFlywheel, ['commits_total_after_instance'], DEFAULTS.commitCount), DEFAULTS.commitCount);
+  const jjnOfferName = pick(jjnOffer, ['name'], 'Website Growth Audit');
+  const totalSignalLanes = DEFAULTS.primarySignalLanes + DEFAULTS.anomalySignalLanes;
+  const elasticSharedSubstrateSummary = `Trading workers, JJ-N (${jjnOfferName}), evaluation, and public publishing all write into one Elastic-backed evidence layer.`;
+  const elasticWorkerFamilyCoverage = `${formatNumber(totalSignalLanes, 0)} signal lanes + JJ-N (${jjnOfferName}) + checked-in publishing loop`;
+  const elasticArtifactBackedProof = `${formatNumber(strategyCatalog.total, 0)} tracked strategies, ${formatNumber(dispatchWorkOrders, 0)} active work-orders, ${formatNumber(btc5LiveFilledRows, 0)} BTC5 live-filled rows, and JJ-N reports keep the story anchored to sanitized checked-in artifacts.`;
+  const elasticOperatorSurfaceSummary = 'Searchable artifacts, telemetry, traces, anomaly signals, and operator dashboards stay legible through public-safe outputs rather than browser-side Elastic access.';
+  const elasticPublishLoopSummary = 'The site, README, docs, and leaderboards stay strongest when they read checked-in contracts instead of direct Elastic browser sessions.';
+  const elasticPublicScopeGuardrail = 'Sanitized checked-in artifacts only';
+  const elasticEmployeePathLive = 'Inspect /live/';
+  const elasticEmployeePathRepo = 'Read repo evidence';
+  const elasticEmployeePathDevelop = 'Boot paper mode';
+  const elasticEmployeePathContribute = 'Patch one lane';
   const walletClosedPositions = normalizeNumber(
     pick(runtime, ['polymarket_closed_positions'], pick(wallet, ['closed_positions_count'], 0)),
     0
@@ -746,12 +901,12 @@ async function loadSiteData() {
     avgDispatchesPerDay: normalizeNumber(pick(velocityMetrics, ['avg_dispatches_per_day'], 4.3), 4.3),
     velocitySpanDays: normalizeNumber(pick(velocityMetrics, ['project_age_days'], pick(velocity, ['velocity_summary.timeline_span_days'], 22)), 22),
     strategyCatalog,
-    dispatchWorkOrders: normalizeNumber(pick(contributionFlywheel, ['dispatch_work_orders'], DEFAULTS.dispatchWorkOrders), DEFAULTS.dispatchWorkOrders),
-    researchFiles: normalizeNumber(pick(contributionFlywheel, ['dispatch_markdown_files'], DEFAULTS.researchFiles), DEFAULTS.researchFiles),
+    dispatchWorkOrders,
+    researchFiles,
     benchmarkedSystems,
     primarySignalLanes: DEFAULTS.primarySignalLanes,
     anomalySignalLanes: DEFAULTS.anomalySignalLanes,
-    commitCount: normalizeNumber(pick(contributionFlywheel, ['commits_total_after_instance'], DEFAULTS.commitCount), DEFAULTS.commitCount),
+    commitCount,
     calibratedWinRate: DEFAULTS.calibratedWinRate,
     legacyWinRate: DEFAULTS.legacyWinRate,
     noOnlyWinRate: DEFAULTS.noOnlyWinRate,
@@ -811,7 +966,7 @@ async function loadSiteData() {
     jjnCurrentPhaseLabel: titleCase(pick(jjnActivation, ['current_phase'], 'instrumentation_and_approval')),
     jjnClaimStatusLabel: humanizeClaimStatus(pick(jjn, ['claim_status'], 'prelaunch')),
     jjnClaimReason: pick(jjn, ['claim_reason'], 'The worker surface is still launch prep.'),
-    jjnOfferName: pick(jjnOffer, ['name'], 'Website Growth Audit'),
+    jjnOfferName,
     jjnOfferPrice: pick(jjnOffer, ['price_range_usd'], '$500-$2,500'),
     jjnOfferDeliveryDays: normalizeNumber(pick(jjnOffer, ['delivery_days'], 5), 5),
     jjnOfferStatusLabel: titleCase(pick(jjnOffer, ['status'], 'implemented_in_code_not_launched')),
@@ -841,6 +996,22 @@ async function loadSiteData() {
       : formatPercent(pick(jjn, ['conversion.reply_rate_pct'], 0)),
     jjnBlockersShort: summarizeList(pick(jjn, ['blockers'], []), 2),
     snapshotSource: pick(snapshot, ['snapshot_source'], 'reports/runtime_truth_latest.json'),
+    elasticSharedSubstrateSummary,
+    elasticWorkerFamilyCoverage,
+    elasticArtifactBackedProof,
+    elasticOperatorSurfaceSummary,
+    elasticPublishLoopSummary,
+    elasticPublicScopeGuardrail,
+    elasticEmployeePathLive,
+    elasticEmployeePathRepo,
+    elasticEmployeePathDevelop,
+    elasticEmployeePathContribute,
+    elasticEmployeePathSummary: [
+      elasticEmployeePathLive,
+      elasticEmployeePathRepo,
+      elasticEmployeePathDevelop,
+      elasticEmployeePathContribute
+    ].join(' / '),
     snapshotFreshness: buildFreshness(generatedAt),
     btc5Freshness: buildFreshness(pick(maker, ['checked_at'], pick(maker, ['latest_live_filled_at'], generatedAt))),
     forecastFreshness: buildFreshness(pick(forecastArtifact, ['generated_at'], pick(timeboundVelocity, ['window_ended_at'], generatedAt))),
@@ -853,6 +1024,7 @@ async function initSite() {
   const data = await loadSiteData();
   setCommonValues(data);
   setStatusPill(data);
+  applyElasticEnhancements(data);
 }
 
 document.addEventListener('DOMContentLoaded', () => {

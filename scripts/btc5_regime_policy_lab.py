@@ -30,10 +30,12 @@ from scripts.btc5_monte_carlo import (  # noqa: E402
     DEFAULT_MAX_ABS_DELTA,
     GuardrailProfile,
     _annualize_arr_pct,
+    _estimate_fill_retention_ratio,
     _load_runtime_truth,
     _live_profile_from_runtime_truth,
     _percentile,
     _round_metrics,
+    _run_monte_carlo_from_entries,
     _safe_float,
     _safe_int,
     assemble_observed_rows,
@@ -52,6 +54,15 @@ SESSION_FILTERS: tuple[tuple[str, tuple[int, ...]], ...] = (
     ("midday_et", (12, 13)),
     ("late_et", (14, 15, 16)),
 )
+FRONTIER_SIZE_TARGETS = (10.0, 20.0, 50.0, 100.0, 200.0)
+PROMOTION_FILL_RETENTION_FLOOR = 0.85
+PROMOTION_REALISM_FLOOR = 0.85
+CANDIDATE_CLASS_PRIORITY = {
+    "promote": 3,
+    "hold_current": 2,
+    "probe_only": 1,
+    "suppress_cluster": 0,
+}
 
 
 @dataclass(frozen=True)
@@ -184,7 +195,7 @@ def build_override_profiles() -> list[GuardrailProfile]:
     seen: set[tuple[float | None, float | None, float | None]] = set()
     for max_abs_delta in (0.00002, 0.00005, 0.00010, 0.00015):
         for down_cap in (0.48, 0.49, 0.50, 0.51):
-            for up_cap in (0.47, 0.48, 0.49, 0.50, 0.51):
+            for up_cap in (0.0, 0.47, 0.48, 0.49, 0.50, 0.51):
                 profile = GuardrailProfile(
                     name=f"grid_d{max_abs_delta:.5f}_up{up_cap:.2f}_down{down_cap:.2f}",
                     max_abs_delta=max_abs_delta,
@@ -365,13 +376,20 @@ def run_policy_monte_carlo(
     )
 
 
-def summarize_policy_arr(*, historical: dict[str, Any], monte_carlo: dict[str, Any]) -> dict[str, Any]:
+def summarize_policy_arr(
+    *,
+    historical: dict[str, Any],
+    monte_carlo: dict[str, Any],
+    avg_trade_size_usd_override: float | None = None,
+) -> dict[str, Any]:
     replay_window_rows = max(0, _safe_int(historical.get("replay_window_rows")))
     replay_live_filled_rows = max(0, _safe_int(historical.get("replay_live_filled_rows")))
     trade_notional_usd = max(0.0, _safe_float(historical.get("trade_notional_usd"), 0.0))
-    avg_trade_size_usd = (
-        trade_notional_usd / float(replay_live_filled_rows) if replay_live_filled_rows > 0 else 0.0
-    )
+    avg_trade_size_usd = max(0.0, _safe_float(avg_trade_size_usd_override, 0.0))
+    if avg_trade_size_usd <= 0.0:
+        avg_trade_size_usd = (
+            trade_notional_usd / float(replay_live_filled_rows) if replay_live_filled_rows > 0 else 0.0
+        )
     historical_avg_deployed_capital_usd = (
         trade_notional_usd / float(replay_window_rows) if replay_window_rows > 0 else 0.0
     )
@@ -466,16 +484,53 @@ def _score_candidates(evaluated: list[dict[str, Any]]) -> tuple[list[dict[str, A
         fill_ratio = _safe_int(candidate["historical"].get("replay_live_filled_rows"), 0) / float(current_fill_rows)
         profit_probability = _safe_float(candidate["monte_carlo"].get("profit_probability"), 0.0)
         median_arr_pct = _safe_float(candidate["continuation"].get("median_arr_pct"), 0.0)
+        policy = candidate.get("policy") if isinstance(candidate.get("policy"), dict) else {}
+        overrides = policy.get("overrides") if isinstance(policy.get("overrides"), list) else []
+        frontier_focus_tags: set[str] = set()
+        frontier_bias_weight = 1.0
+        for override in overrides:
+            if not isinstance(override, dict):
+                continue
+            hours = {
+                int(hour)
+                for hour in (override.get("et_hours") or [])
+                if isinstance(hour, int) or (isinstance(hour, str) and hour.isdigit())
+            }
+            profile = override.get("profile") if isinstance(override.get("profile"), dict) else {}
+            up_cap = profile.get("up_max_buy_price")
+            down_cap = profile.get("down_max_buy_price")
+            max_abs_delta = profile.get("max_abs_delta")
+            if hours:
+                frontier_focus_tags.add("session_conditioned")
+            if up_cap is not None and _safe_float(up_cap, 1.0) <= 0.01:
+                frontier_focus_tags.add("session_conditioned_one_sided")
+                frontier_bias_weight *= 1.2
+            if max_abs_delta is not None and _safe_float(max_abs_delta, 1.0) <= 0.00010:
+                frontier_focus_tags.add("session_tight_delta")
+                frontier_bias_weight *= 1.1
+            if max_abs_delta is not None and _safe_float(max_abs_delta, 1.0) <= 0.00005:
+                frontier_focus_tags.add("high_conviction_tight_delta")
+                frontier_bias_weight *= 1.1
+            if (
+                down_cap is not None
+                and _safe_float(down_cap, 1.0) <= 0.49
+                and any(hour in {9, 10, 11} for hour in hours)
+            ):
+                frontier_focus_tags.add("session_tight_down_bias")
+                frontier_bias_weight *= 1.1
         candidate["scoring"] = _round_metrics(
             {
                 "metric_name": "live_policy_score",
                 "replay_pnl_ratio_vs_current": replay_pnl_ratio,
                 "fill_ratio_vs_current": fill_ratio,
                 "profit_probability": profit_probability,
+                "frontier_bias_weight": frontier_bias_weight,
+                "frontier_focus_tags": sorted(frontier_focus_tags),
                 "live_policy_score": median_arr_pct
                 * max(0.25, min(1.0, replay_pnl_ratio))
                 * max(0.25, min(1.0, fill_ratio))
-                * max(0.5, profit_probability),
+                * max(0.5, profit_probability)
+                * frontier_bias_weight,
             }
         )
 
@@ -801,11 +856,45 @@ def _candidate_runtime_package(candidate: dict[str, Any]) -> dict[str, Any]:
         "generalization_ratio": generalization_ratio,
         "validation_median_arr_pct": _safe_float(continuation.get("median_arr_pct"), 0.0),
         "validation_p05_arr_pct": _safe_float(continuation.get("p05_arr_pct"), 0.0),
+        "validation_replay_pnl_usd": _safe_float(historical.get("replay_live_filled_pnl_usd"), 0.0),
+    }
+
+
+def _profile_runtime_package(profile: GuardrailProfile) -> dict[str, Any]:
+    return {
+        "name": profile.name,
+        "session_name": "any",
+        "session_names": [],
+        "session_count": 0,
+        "session_policy": [],
+        "et_hours": [],
+        "max_abs_delta": profile.max_abs_delta,
+        "up_max_buy_price": profile.up_max_buy_price,
+        "down_max_buy_price": profile.down_max_buy_price,
+        "ranking_score": 0.0,
+        "evidence_band": "exploratory",
+        "validation_live_filled_rows": 0,
+        "generalization_ratio": 0.0,
+        "validation_median_arr_pct": 0.0,
+        "validation_p05_arr_pct": 0.0,
+        "validation_replay_pnl_usd": 0.0,
     }
 
 
 def _follow_up_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return _follow_up_candidates_with_tradeoffs(candidates, active_candidate=None)
+
+
+def _evidence_weight(evidence_band: str) -> float:
+    if evidence_band == "validated":
+        return 1.0
+    if evidence_band == "candidate":
+        return 0.8
+    return 0.6
+
+
+def _normalized_generalization(value: Any) -> float:
+    return min(1.0, max(0.0, _safe_float(value, 0.0)))
 
 
 def _regime_followup_families(item: dict[str, Any]) -> list[str]:
@@ -816,7 +905,7 @@ def _regime_followup_families(item: dict[str, Any]) -> list[str]:
     et_hours = tuple(int(hour) for hour in (item.get("et_hours") or []) if isinstance(hour, int))
     session_count = _safe_int(item.get("session_count"), 0)
 
-    if up_cap is None:
+    if up_cap is None or _safe_float(up_cap, 1.0) <= 0.01:
         families.append("down_only")
     if up_cap is None or _safe_float(up_cap, 1.0) <= 0.47:
         families.append("up_disabled_or_nearly_disabled")
@@ -839,12 +928,213 @@ def _regime_followup_families(item: dict[str, Any]) -> list[str]:
     return families
 
 
+def _frontier_focus_tags(item: dict[str, Any]) -> list[str]:
+    tags = set(str(tag) for tag in (item.get("follow_up_families") or []))
+    session_count = _safe_int(item.get("session_count"), 0)
+    max_abs_delta = item.get("max_abs_delta")
+    up_cap = item.get("up_max_buy_price")
+
+    if session_count > 0:
+        tags.add("session_conditioned")
+    if session_count > 0 and up_cap is not None and _safe_float(up_cap, 1.0) <= 0.01:
+        tags.add("session_conditioned_one_sided")
+    if max_abs_delta is not None:
+        delta = _safe_float(max_abs_delta, 0.0)
+        if delta <= 0.00005:
+            tags.add("high_conviction_tight_delta")
+        elif delta <= 0.00010 and session_count > 0:
+            tags.add("session_tight_delta")
+    return sorted(tags)
+
+
+def _frontier_bias_score(item: dict[str, Any]) -> float:
+    tags = set(str(tag) for tag in (item.get("frontier_focus_tags") or _frontier_focus_tags(item)))
+    score = 0.0
+    if "session_conditioned_one_sided" in tags:
+        score += 2.5
+    if "high_conviction_tight_delta" in tags:
+        score += 2.0
+    elif "session_tight_delta" in tags:
+        score += 1.25
+    if "session_tight_down_bias" in tags:
+        score += 1.5
+    score += min(1.0, _safe_float(item.get("execution_realism_score"), 0.0))
+    score += min(1.0, _safe_int(item.get("validation_live_filled_rows"), 0) / 16.0)
+    score += 0.5 * _evidence_weight(str(item.get("evidence_band") or "exploratory"))
+    return round(score, 4)
+
+
+def _high_conviction_score(item: dict[str, Any]) -> float:
+    score = _frontier_bias_score(item)
+    if _safe_float(item.get("validation_p05_arr_pct"), 0.0) > 0.0:
+        score += 1.0
+    score += 0.75 * _normalized_generalization(item.get("generalization_ratio"))
+    return round(score, 4)
+
+
+def _execution_realism_score(*, fill_retention: float, generalization_ratio: float, evidence_band: str) -> float:
+    evidence_weight = _evidence_weight(evidence_band)
+    return min(
+        1.0,
+        max(
+            0.0,
+            (0.5 * min(1.0, fill_retention))
+            + (0.3 * min(1.0, generalization_ratio))
+            + (0.2 * evidence_weight),
+        ),
+    )
+
+
+def _candidate_status_fields(candidate_class: str) -> tuple[str, str]:
+    if candidate_class == "promote":
+        return "promotion_ready", "clear_for_promotion"
+    if candidate_class == "hold_current":
+        return "validated_hold", "insufficient_clear_upgrade_vs_active"
+    if candidate_class == "suppress_cluster":
+        return "suppress_cluster", "shadow_block_until_revalidated"
+    return "probe_only", "requires_revalidation_or_fill_retention_recovery"
+
+
+def _candidate_classification(
+    *,
+    evidence_band: str,
+    fill_retention: float,
+    execution_realism_score: float,
+    arr_delta_vs_active_pct: float,
+    p05_delta_vs_active_pct: float,
+    replay_pnl_delta_vs_active_usd: float | None = None,
+) -> tuple[str, list[str]]:
+    reason_tags: list[str] = []
+    if evidence_band != "validated":
+        reason_tags.append(f"evidence_{evidence_band}")
+    if fill_retention < PROMOTION_FILL_RETENTION_FLOOR:
+        reason_tags.append("fill_retention_below_0.85")
+    if execution_realism_score < PROMOTION_REALISM_FLOOR:
+        reason_tags.append("execution_realism_below_0.85")
+    if arr_delta_vs_active_pct <= 0.0:
+        reason_tags.append("median_not_above_active")
+    if p05_delta_vs_active_pct <= 0.0:
+        reason_tags.append("p05_not_above_active")
+    if replay_pnl_delta_vs_active_usd is not None and replay_pnl_delta_vs_active_usd <= 0.0:
+        reason_tags.append("replay_pnl_not_above_active")
+
+    if (
+        evidence_band == "validated"
+        and fill_retention >= PROMOTION_FILL_RETENTION_FLOOR
+        and execution_realism_score >= PROMOTION_REALISM_FLOOR
+        and arr_delta_vs_active_pct > 0.0
+        and p05_delta_vs_active_pct > 0.0
+        and (replay_pnl_delta_vs_active_usd is None or replay_pnl_delta_vs_active_usd > 0.0)
+    ):
+        return "promote", ["validated_clear_upgrade"]
+    if (
+        evidence_band != "validated"
+        or fill_retention < PROMOTION_FILL_RETENTION_FLOOR
+        or execution_realism_score < PROMOTION_REALISM_FLOOR
+    ):
+        return "probe_only", reason_tags or ["requires_revalidation"]
+    return "hold_current", reason_tags or ["validated_but_not_clear_upgrade"]
+
+
+def _apply_candidate_classification(item: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(item)
+    candidate_class, reason_tags = _candidate_classification(
+        evidence_band=str(payload.get("evidence_band") or "exploratory"),
+        fill_retention=_safe_float(payload.get("fill_retention_vs_active"), 0.0),
+        execution_realism_score=_safe_float(payload.get("execution_realism_score"), 0.0),
+        arr_delta_vs_active_pct=_safe_float(payload.get("arr_improvement_vs_active_pct"), 0.0),
+        p05_delta_vs_active_pct=_safe_float(payload.get("p05_arr_improvement_vs_active_pct"), 0.0),
+        replay_pnl_delta_vs_active_usd=(
+            _safe_float(payload.get("replay_pnl_improvement_vs_active_usd"), 0.0)
+            if payload.get("replay_pnl_improvement_vs_active_usd") is not None
+            else None
+        ),
+    )
+    families = {str(tag) for tag in (payload.get("follow_up_families") or []) if str(tag)}
+    if candidate_class == "probe_only":
+        families.add("probe_only_exploratory")
+    payload["follow_up_families"] = sorted(families)
+    research_status, promotion_gate = _candidate_status_fields(candidate_class)
+    payload["candidate_class"] = candidate_class
+    payload["candidate_class_reason_tags"] = reason_tags
+    payload["research_status"] = research_status
+    payload["promotion_gate"] = promotion_gate
+    return payload
+
+
+def _candidate_class_priority(item: dict[str, Any]) -> int:
+    return CANDIDATE_CLASS_PRIORITY.get(str(item.get("candidate_class") or ""), -1)
+
+
+def _best_candidate_by_class(candidates: list[dict[str, Any]], candidate_class: str) -> dict[str, Any] | None:
+    eligible = [item for item in candidates if str(item.get("candidate_class") or "") == candidate_class]
+    if not eligible:
+        return None
+    if candidate_class == "promote":
+        return dict(eligible[0])
+    eligible.sort(
+        key=lambda item: (
+            _candidate_class_priority(item),
+            _safe_float(item.get("ranking_score"), 0.0),
+            _safe_float(item.get("execution_realism_score"), 0.0),
+            _safe_float(item.get("validation_p05_arr_pct"), 0.0),
+            -_safe_float(item.get("total_loss_usd"), 0.0),
+            str(item.get("name") or item.get("filter_name") or ""),
+        ),
+        reverse=True,
+    )
+    return dict(eligible[0])
+
+
+def _class_breakdown(candidates: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {label: 0 for label in CANDIDATE_CLASS_PRIORITY}
+    for candidate in candidates:
+        label = str(candidate.get("candidate_class") or "")
+        if label in counts:
+            counts[label] += 1
+    return counts
+
+
+def _hold_current_candidate(active_candidate: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(active_candidate)
+    evidence_band = str(payload.get("evidence_band") or "exploratory")
+    generalization_ratio = _safe_float(payload.get("generalization_ratio"), 0.0)
+    execution_realism_score = _execution_realism_score(
+        fill_retention=1.0,
+        generalization_ratio=generalization_ratio,
+        evidence_band=evidence_band,
+    )
+    payload.update(
+        {
+            "arr_improvement_vs_active_pct": 0.0,
+            "p05_arr_improvement_vs_active_pct": 0.0,
+            "fill_retention_vs_active": 1.0,
+            "execution_realism_score": round(execution_realism_score, 4),
+            "execution_realism_label": (
+                "high" if execution_realism_score >= 0.8 else ("medium" if execution_realism_score >= 0.6 else "low")
+            ),
+            "follow_up_families": [],
+            "frontier_focus_tags": [],
+            "frontier_bias_score": 0.0,
+            "high_conviction_score": round(0.75 * _normalized_generalization(generalization_ratio), 4),
+            "candidate_class": "hold_current",
+            "candidate_class_reason_tags": ["active_profile_baseline"],
+            "research_status": "validated_hold",
+            "promotion_gate": "active_profile_baseline",
+        }
+    )
+    return payload
+
+
 def _follow_up_candidates_with_tradeoffs(
     candidates: list[dict[str, Any]],
     *,
     active_candidate: dict[str, Any] | None,
+    limit: int | None = 5,
 ) -> list[dict[str, Any]]:
     active_arr = _safe_float((active_candidate or {}).get("validation_median_arr_pct"), 0.0)
+    active_replay_pnl = _safe_float((active_candidate or {}).get("validation_replay_pnl_usd"), 0.0)
+    active_p05 = _safe_float((active_candidate or {}).get("validation_p05_arr_pct"), 0.0)
     active_fills = max(1, _safe_int((active_candidate or {}).get("validation_live_filled_rows"), 0))
     packages: list[dict[str, Any]] = []
     for candidate in candidates:
@@ -853,18 +1143,21 @@ def _follow_up_candidates_with_tradeoffs(
         fill_retention = validation_fills / float(active_fills)
         generalization_ratio = _safe_float(package.get("generalization_ratio"), 0.0)
         evidence_band = str(package.get("evidence_band") or "exploratory")
-        evidence_weight = 1.0 if evidence_band == "validated" else (0.8 if evidence_band == "candidate" else 0.6)
-        execution_realism_score = min(
-            1.0,
-            max(
-                0.0,
-                (0.5 * min(1.0, fill_retention))
-                + (0.3 * min(1.0, generalization_ratio))
-                + (0.2 * evidence_weight),
-            ),
+        execution_realism_score = _execution_realism_score(
+            fill_retention=fill_retention,
+            generalization_ratio=generalization_ratio,
+            evidence_band=evidence_band,
         )
         package["arr_improvement_vs_active_pct"] = round(
             _safe_float(package.get("validation_median_arr_pct"), 0.0) - active_arr,
+            4,
+        )
+        package["replay_pnl_improvement_vs_active_usd"] = round(
+            _safe_float(package.get("validation_replay_pnl_usd"), 0.0) - active_replay_pnl,
+            4,
+        )
+        package["p05_arr_improvement_vs_active_pct"] = round(
+            _safe_float(package.get("validation_p05_arr_pct"), 0.0) - active_p05,
             4,
         )
         package["fill_retention_vs_active"] = round(fill_retention, 4)
@@ -873,14 +1166,21 @@ def _follow_up_candidates_with_tradeoffs(
             "high" if execution_realism_score >= 0.8 else ("medium" if execution_realism_score >= 0.6 else "low")
         )
         package["follow_up_families"] = _regime_followup_families(package)
-        packages.append(package)
+        package["frontier_focus_tags"] = _frontier_focus_tags(package)
+        package["frontier_bias_score"] = _frontier_bias_score(package)
+        package["high_conviction_score"] = _high_conviction_score(package)
+        packages.append(_apply_candidate_classification(package))
     packages.sort(
         key=lambda item: (
+            -_candidate_class_priority(item),
             -_safe_float(item.get("ranking_score"), 0.0),
+            -_safe_float(item.get("execution_realism_score"), 0.0),
             str(item.get("name") or ""),
         )
     )
-    return packages[:5]
+    if limit is None:
+        return packages
+    return packages[: max(0, int(limit))]
 
 
 def _best_live_followups(follow_ups: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -889,6 +1189,7 @@ def _best_live_followups(follow_ups: list[dict[str, Any]]) -> list[dict[str, Any
         candidates = list(follow_ups)
     candidates.sort(
         key=lambda item: (
+            -_candidate_class_priority(item),
             -_safe_float(item.get("execution_realism_score"), 0.0),
             -_safe_float(item.get("ranking_score"), 0.0),
             str(item.get("name") or ""),
@@ -906,12 +1207,27 @@ def _best_one_sided_followups(follow_ups: list[dict[str, Any]]) -> list[dict[str
     ]
     candidates.sort(
         key=lambda item: (
+            -_candidate_class_priority(item),
             -_safe_float(item.get("execution_realism_score"), 0.0),
             -_safe_float(item.get("ranking_score"), 0.0),
             str(item.get("name") or ""),
         )
     )
     return candidates[:5]
+
+
+def _high_conviction_followups(follow_ups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ranked = list(follow_ups)
+    ranked.sort(
+        key=lambda item: (
+            -_candidate_class_priority(item),
+            -_safe_float(item.get("high_conviction_score"), 0.0),
+            -_safe_float(item.get("execution_realism_score"), 0.0),
+            -_safe_float(item.get("ranking_score"), 0.0),
+            str(item.get("name") or ""),
+        )
+    )
+    return ranked[:5]
 
 
 def _capacity_stress_candidates(
@@ -1048,6 +1364,11 @@ def _capacity_stress_candidates(
                     4,
                 ),
                 "evidence_band": _evidence_band(fills),
+                "follow_up_families": ["capacity_stress"],
+                "candidate_class": "probe_only",
+                "candidate_class_reason_tags": ["requires_capacity_revalidation"],
+                "research_status": "probe_only",
+                "promotion_gate": "requires_capacity_revalidation",
             }
         )
     candidates.sort(
@@ -1154,9 +1475,281 @@ def _loss_cluster_suppression_candidates(
             "loss_rows": _safe_int(cluster.get("loss_rows"), 0),
             "total_loss_usd": round(_safe_float(cluster.get("total_loss_usd"), 0.0), 4),
             "suggested_action": "suppress_cluster_until_revalidated",
+            "follow_up_families": ["loss_cluster_suppression"],
+            "candidate_class": "suppress_cluster",
+            "candidate_class_reason_tags": ["loss_cluster_detected"],
+            "research_status": "suppress_cluster",
+            "promotion_gate": "shadow_block_until_revalidated",
         }
         for cluster in ranked[:5]
     ]
+
+
+def _loss_cluster_filters(clusters: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    filters: list[dict[str, Any]] = []
+    for cluster in clusters[:5]:
+        direction = str(cluster.get("direction") or "UNKNOWN").upper()
+        session_name = str(cluster.get("session_name") or "unknown")
+        price_bucket = str(cluster.get("price_bucket") or "unknown")
+        delta_bucket = str(cluster.get("delta_bucket") or "unknown")
+        loss_rows = _safe_int(cluster.get("loss_rows"), 0)
+        total_loss_usd = round(_safe_float(cluster.get("total_loss_usd"), 0.0), 4)
+        filters.append(
+            {
+                "filter_name": "_".join(
+                    (
+                        direction.lower(),
+                        session_name,
+                        price_bucket,
+                        delta_bucket,
+                    )
+                ),
+                "direction": direction,
+                "session_name": session_name,
+                "price_bucket": price_bucket,
+                "delta_bucket": delta_bucket,
+                "loss_rows": loss_rows,
+                "total_loss_usd": total_loss_usd,
+                "severity": "high" if loss_rows >= 2 or total_loss_usd <= -10.0 else "medium",
+                "filter_action": "shadow_block_until_revalidated",
+                "revalidation_gate": "requires_fresh_positive_cluster_and_capacity_agreement",
+                "research_status": "research_only",
+            }
+        )
+    return filters
+
+
+def _is_live_filled_row(row: dict[str, Any]) -> bool:
+    status = str(row.get("order_status") or "").strip().lower()
+    return status == "live_filled" or (status.startswith("live_") and _safe_float(row.get("trade_size_usd"), 0.0) > 0.0)
+
+
+def _policy_candidate_from_followup_payload(
+    item: dict[str, Any],
+    *,
+    current_live_profile: GuardrailProfile,
+) -> PolicyCandidate:
+    session_policy = item.get("session_policy") if isinstance(item.get("session_policy"), list) else []
+    if not session_policy:
+        return PolicyCandidate(
+            name=str(item.get("name") or "candidate_policy"),
+            default_profile=GuardrailProfile(
+                name=str(item.get("name") or current_live_profile.name),
+                max_abs_delta=(
+                    _safe_float(item.get("max_abs_delta"), 0.0)
+                    if item.get("max_abs_delta") is not None
+                    else current_live_profile.max_abs_delta
+                ),
+                up_max_buy_price=(
+                    _safe_float(item.get("up_max_buy_price"), 0.0)
+                    if item.get("up_max_buy_price") is not None
+                    else current_live_profile.up_max_buy_price
+                ),
+                down_max_buy_price=(
+                    _safe_float(item.get("down_max_buy_price"), 0.0)
+                    if item.get("down_max_buy_price") is not None
+                    else current_live_profile.down_max_buy_price
+                ),
+                note="reconstructed from follow-up payload",
+            ),
+        )
+
+    overrides: list[PolicyOverride] = []
+    for index, session in enumerate(session_policy, start=1):
+        if not isinstance(session, dict):
+            continue
+        overrides.append(
+            PolicyOverride(
+                session_name=str(session.get("name") or f"session_{index}"),
+                et_hours=tuple(
+                    int(hour)
+                    for hour in (session.get("et_hours") or [])
+                    if isinstance(hour, int) or (isinstance(hour, str) and hour.isdigit())
+                ),
+                profile=GuardrailProfile(
+                    name=f"{item.get('name', 'candidate_policy')}_override_{index}",
+                    max_abs_delta=(
+                        _safe_float(session.get("max_abs_delta"), 0.0)
+                        if session.get("max_abs_delta") is not None
+                        else current_live_profile.max_abs_delta
+                    ),
+                    up_max_buy_price=(
+                        _safe_float(session.get("up_max_buy_price"), 0.0)
+                        if session.get("up_max_buy_price") is not None
+                        else current_live_profile.up_max_buy_price
+                    ),
+                    down_max_buy_price=(
+                        _safe_float(session.get("down_max_buy_price"), 0.0)
+                        if session.get("down_max_buy_price") is not None
+                        else current_live_profile.down_max_buy_price
+                    ),
+                    note="reconstructed from follow-up payload",
+                ),
+            )
+        )
+    return PolicyCandidate(
+        name=str(item.get("name") or "candidate_policy"),
+        default_profile=current_live_profile,
+        overrides=order_policy_overrides(overrides),
+    )
+
+
+def _size_stress_assessment(
+    rows: list[dict[str, Any]],
+    item: dict[str, Any],
+    *,
+    current_live_profile: GuardrailProfile,
+    paths: int,
+    block_size: int,
+    loss_limit_usd: float,
+    seed: int,
+) -> dict[str, Any]:
+    policy = _policy_candidate_from_followup_payload(item, current_live_profile=current_live_profile)
+    history = summarize_policy_history(rows, policy)
+    horizon_trades = max(len(rows), 12)
+    matched_fills = [row for row in rows if row_matches_policy(row, policy) and _is_live_filled_row(row)]
+    live_fills = max(1, _safe_int(history.get("replay_live_filled_rows"), 0))
+    reference_trade_size_usd = _safe_float(history.get("trade_notional_usd"), 0.0) / float(live_fills)
+    if reference_trade_size_usd <= 0.0:
+        reference_trade_size_usd = max(
+            5.0,
+            sum(max(0.0, _safe_float(row.get("trade_size_usd"), 0.0)) for row in matched_fills)
+            / float(len(matched_fills))
+            if matched_fills
+            else 5.0,
+        )
+    sweeps: list[dict[str, Any]] = []
+    size_paths = max(40, min(180, int(paths)))
+    for trade_size_usd in FRONTIER_SIZE_TARGETS:
+        fill_retention_ratio = _estimate_fill_retention_ratio(
+            matched_fills,
+            target_trade_size_usd=trade_size_usd,
+            fallback_trade_size_usd=reference_trade_size_usd,
+        )
+        entries = [
+            {
+                "pnl_usd": (
+                    _safe_float(row.get("realized_pnl_usd"), 0.0)
+                    * ((trade_size_usd / reference_trade_size_usd) if reference_trade_size_usd > 0 else 1.0)
+                )
+                if row_matches_policy(row, policy)
+                else 0.0,
+                "activation_probability": fill_retention_ratio if row_matches_policy(row, policy) else 0.0,
+                "execution_cost_usd": 0.0,
+            }
+            for row in rows
+        ]
+        stress_monte_carlo = _run_monte_carlo_from_entries(
+            entries,
+            paths=size_paths,
+            horizon_trades=horizon_trades,
+            block_size=max(1, int(block_size)),
+            loss_limit_usd=float(loss_limit_usd),
+            seed_material=f"{seed}:{policy.name}:{trade_size_usd:.2f}",
+        )
+        stress_continuation = summarize_policy_arr(
+            historical=history,
+            monte_carlo=stress_monte_carlo,
+            avg_trade_size_usd_override=trade_size_usd,
+        )
+        sweeps.append(
+            _round_metrics(
+                {
+                    "trade_size_usd": trade_size_usd,
+                    "expected_fill_retention_ratio": fill_retention_ratio,
+                    "expected_profit_probability": _safe_float(stress_monte_carlo.get("profit_probability"), 0.0),
+                    "expected_loss_limit_hit_probability": _safe_float(
+                        stress_monte_carlo.get("loss_limit_hit_probability"),
+                        0.0,
+                    ),
+                    "expected_median_arr_pct": _safe_float(stress_continuation.get("median_arr_pct"), 0.0),
+                    "expected_p05_arr_pct": _safe_float(stress_continuation.get("p05_arr_pct"), 0.0),
+                }
+            )
+        )
+    shadow_trade_sizes = [
+        float(sweep["trade_size_usd"])
+        for sweep in sweeps
+        if _safe_float(sweep.get("expected_p05_arr_pct"), 0.0) > 0.0
+        and _safe_float(sweep.get("expected_profit_probability"), 0.0) >= 0.5
+    ]
+    max_shadow_trade_size = max(shadow_trade_sizes) if shadow_trade_sizes else 0.0
+    size_readiness_score = round(
+        (max_shadow_trade_size / 50.0)
+        + (1.0 if max_shadow_trade_size >= 50.0 else 0.0)
+        + (0.5 if max_shadow_trade_size >= 100.0 else 0.0)
+        + min(1.0, _safe_float(item.get("execution_realism_score"), 0.0))
+        + 0.5 * _evidence_weight(str(item.get("evidence_band") or "exploratory")),
+        4,
+    )
+    if max_shadow_trade_size >= 100.0:
+        readiness_status = "shadow_100_plus_candidate"
+    elif max_shadow_trade_size >= 50.0:
+        readiness_status = "shadow_50_plus_candidate"
+    elif max_shadow_trade_size >= 20.0:
+        readiness_status = "shadow_stage_path_only"
+    elif max_shadow_trade_size >= 10.0:
+        readiness_status = "shadow_stage_1_only"
+    else:
+        readiness_status = "needs_more_size_evidence"
+    return {
+        "size_sweep_reference_trade_size_usd": round(reference_trade_size_usd, 4),
+        "shadow_trade_sizes_usd": shadow_trade_sizes,
+        "max_shadow_trade_size_usd": max_shadow_trade_size,
+        "size_stress_sweeps": sweeps,
+        "size_readiness_score": size_readiness_score,
+        "size_readiness_status": readiness_status,
+        "follow_up_families": sorted(
+            {
+                str(tag)
+                for tag in ((item.get("follow_up_families") or []) + ["capacity_stress"])
+                if str(tag)
+            }
+        ),
+        "candidate_class": "probe_only",
+        "candidate_class_reason_tags": ["requires_capacity_revalidation"],
+        "research_status": "probe_only",
+        "promotion_gate": "requires_capacity_revalidation",
+    }
+
+
+def _size_ready_followups(
+    rows: list[dict[str, Any]],
+    follow_ups: list[dict[str, Any]],
+    *,
+    current_live_profile: GuardrailProfile,
+    paths: int,
+    block_size: int,
+    loss_limit_usd: float,
+    seed: int,
+) -> list[dict[str, Any]]:
+    assessed: list[dict[str, Any]] = []
+    for index, item in enumerate(follow_ups):
+        payload = dict(item)
+        payload.update(
+            _size_stress_assessment(
+                rows,
+                item,
+                current_live_profile=current_live_profile,
+                paths=paths,
+                block_size=block_size,
+                loss_limit_usd=loss_limit_usd,
+                seed=seed + index + 1,
+            )
+        )
+        assessed.append(payload)
+    candidates = [item for item in assessed if item.get("shadow_trade_sizes_usd")] or assessed
+    candidates.sort(
+        key=lambda item: (
+            -_candidate_class_priority(item),
+            -_safe_float(item.get("max_shadow_trade_size_usd"), 0.0),
+            -_safe_float(item.get("size_readiness_score"), 0.0),
+            -_safe_float(item.get("high_conviction_score"), 0.0),
+            -_safe_float(item.get("ranking_score"), 0.0),
+            str(item.get("name") or ""),
+        )
+    )
+    return candidates[:5]
 
 
 def _evaluate_policies(
@@ -1261,7 +1854,50 @@ def build_summary(
         )
         evaluated, current_policy = _score_candidates(evaluated)
 
-    best_policy = evaluated[0] if evaluated else None
+    ranked_best_policy = evaluated[0] if evaluated else None
+    active_profile_summary = (
+        _candidate_runtime_package(current_policy)
+        if current_policy is not None
+        else _profile_runtime_package(current_live_profile)
+    )
+    hold_current_candidate = _hold_current_candidate(active_profile_summary)
+    all_follow_ups = _follow_up_candidates_with_tradeoffs(
+        evaluated,
+        active_candidate=active_profile_summary,
+        limit=None,
+    )
+    follow_up_by_name = {str(item.get("name") or ""): item for item in all_follow_ups}
+    for candidate in evaluated:
+        policy_name = str(((candidate.get("policy") or {}).get("name")) or "")
+        meta = follow_up_by_name.get(policy_name)
+        if not meta:
+            continue
+        candidate["candidate_class"] = meta.get("candidate_class")
+        candidate["candidate_class_reason_tags"] = meta.get("candidate_class_reason_tags")
+        candidate["follow_up_families"] = meta.get("follow_up_families")
+
+    ranked_best_candidate_summary = (
+        _candidate_runtime_package(ranked_best_policy)
+        if ranked_best_policy is not None
+        else _profile_runtime_package(current_live_profile)
+    )
+    ranked_best_candidate_summary = follow_up_by_name.get(
+        ranked_best_candidate_summary.get("name", ""),
+        ranked_best_candidate_summary,
+    )
+    best_promote_ready_candidate = _best_candidate_by_class(all_follow_ups, "promote")
+    best_probe_only_candidate = _best_candidate_by_class(all_follow_ups, "probe_only")
+    best_policy = current_policy
+    if best_promote_ready_candidate is not None:
+        best_policy = next(
+            (
+                candidate
+                for candidate in evaluated
+                if str(((candidate.get("policy") or {}).get("name")) or "") == str(best_promote_ready_candidate.get("name") or "")
+            ),
+            current_policy or ranked_best_policy,
+        )
+
     best_vs_current = None
     if best_policy is not None and current_policy is not None:
         best_vs_current = _round_metrics(
@@ -1286,9 +1922,13 @@ def build_summary(
                 - _safe_int(current_policy["historical"].get("replay_live_filled_rows"), 0),
             }
         )
-    active_profile_summary = _candidate_runtime_package(current_policy or {})
-    best_candidate_summary = _candidate_runtime_package(best_policy or {})
-    follow_ups = _follow_up_candidates_with_tradeoffs(evaluated, active_candidate=active_profile_summary)
+    best_candidate_summary = dict(best_promote_ready_candidate or hold_current_candidate)
+    follow_ups = all_follow_ups[:5]
+    loss_clusters = _loss_cluster_suppression_candidates(
+        enriched_rows,
+        best_policy,
+    )
+    candidate_class_breakdown = _class_breakdown(all_follow_ups + loss_clusters + [hold_current_candidate])
     last_improvement_at = _last_improvement_for_policy(enriched_rows, best_policy)
     hours_since_last_improvement = (
         round((_now_utc() - last_improvement_at).total_seconds() / 3600.0, 4)
@@ -1327,7 +1967,7 @@ def build_summary(
         "runtime_recommended_profile": asdict(runtime_recommended_profile),
         "candidates": evaluated,
         "active_profile": {
-            "name": active_profile_summary.get("name", current_live_profile.name),
+            "name": current_live_profile.name,
             "session_name": "any",
             "et_hours": [],
             "max_abs_delta": current_live_profile.max_abs_delta,
@@ -1335,6 +1975,12 @@ def build_summary(
             "down_max_buy_price": current_live_profile.down_max_buy_price,
         },
         "best_candidate": best_candidate_summary,
+        "best_ranked_candidate": ranked_best_candidate_summary,
+        "best_promote_ready_candidate": best_promote_ready_candidate,
+        "best_probe_only_candidate": best_probe_only_candidate,
+        "hold_current_candidate": hold_current_candidate,
+        "deployment_recommendation": "promote" if best_promote_ready_candidate is not None else "hold_current",
+        "candidate_class_breakdown": candidate_class_breakdown,
         "arr_delta_vs_active_pct": _safe_float((best_vs_current or {}).get("median_arr_pct_delta"), 0.0),
         "p05_arr_delta_vs_active_pct": _safe_float((best_vs_current or {}).get("p05_arr_pct_delta"), 0.0),
         "validation_live_filled_rows": _safe_int(best_candidate_summary.get("validation_live_filled_rows"), 0),
@@ -1348,14 +1994,23 @@ def build_summary(
         "hours_since_last_improvement": hours_since_last_improvement,
         "current_policy": current_policy,
         "best_policy": best_policy,
+        "best_ranked_policy": ranked_best_policy,
         "recommended_session_policy": _recommended_session_policy(best_policy),
         "follow_up_candidates": follow_ups,
         "best_live_followups": _best_live_followups(follow_ups),
         "best_one_sided_followups": _best_one_sided_followups(follow_ups),
-        "loss_cluster_suppression_candidates": _loss_cluster_suppression_candidates(
+        "high_conviction_followups": _high_conviction_followups(follow_ups),
+        "size_ready_followups": _size_ready_followups(
             enriched_rows,
-            best_policy,
+            follow_ups,
+            current_live_profile=current_live_profile,
+            paths=max(1, int(paths)),
+            block_size=max(1, int(block_size)),
+            loss_limit_usd=max(0.0, float(loss_limit_usd)),
+            seed=int(seed),
         ),
+        "loss_cluster_suppression_candidates": loss_clusters,
+        "loss_cluster_filters": _loss_cluster_filters(loss_clusters),
         "capacity_stress_candidates": _capacity_stress_candidates(
             rows=enriched_rows,
             best_policy_record=best_policy,
@@ -1373,6 +2028,9 @@ def _render_markdown(summary: dict[str, Any]) -> str:
     best_policy = best.get("policy") or {}
     recommended_policy = summary.get("recommended_session_policy") or []
     comparison = summary.get("best_vs_current") or {}
+    high_conviction = summary.get("high_conviction_followups") or []
+    size_ready = summary.get("size_ready_followups") or []
+    loss_filters = summary.get("loss_cluster_filters") or []
     lines = [
         "# BTC5 Regime Policy Lab",
         "",
@@ -1413,11 +2071,41 @@ def _render_markdown(summary: dict[str, Any]) -> str:
         json.dumps(recommended_policy, indent=2),
         "```",
         "",
-        "## Top Policies",
-        "",
-        "| Rank | Policy | Live Score | Median ARR | P05 ARR | Replay PnL | Replay Fills | P95 Drawdown |",
-        "|---|---|---:|---:|---:|---:|---:|---:|",
     ]
+    if high_conviction:
+        lines.extend(["## High Conviction Follow-Ups", ""])
+        for item in high_conviction[:3]:
+            lines.append(
+                f"- `{item.get('name')}` "
+                + f"(score `{_safe_float(item.get('high_conviction_score'), 0.0):.2f}`, "
+                + f"tags `{', '.join(item.get('frontier_focus_tags') or [])}`)"
+            )
+        lines.append("")
+    if size_ready:
+        lines.extend(["## Size-Ready Follow-Ups", ""])
+        for item in size_ready[:3]:
+            lines.append(
+                f"- `{item.get('name')}` "
+                + f"(status `{item.get('size_readiness_status')}`, "
+                + f"shadow max `${_safe_float(item.get('max_shadow_trade_size_usd'), 0.0):.0f}`)"
+            )
+        lines.append("")
+    if loss_filters:
+        lines.extend(["## Loss Cluster Filters", ""])
+        for item in loss_filters[:3]:
+            lines.append(
+                f"- `{item.get('filter_name')}` "
+                + f"({item.get('severity')} severity, loss `{_safe_float(item.get('total_loss_usd'), 0.0):.4f}` USD)"
+            )
+        lines.append("")
+    lines.extend(
+        [
+            "## Top Policies",
+            "",
+            "| Rank | Policy | Live Score | Median ARR | P05 ARR | Replay PnL | Replay Fills | P95 Drawdown |",
+            "|---|---|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
     for index, candidate in enumerate(summary.get("candidates") or [], start=1):
         policy = candidate.get("policy") or {}
         scoring = candidate.get("scoring") or {}

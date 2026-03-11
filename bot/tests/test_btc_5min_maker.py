@@ -102,6 +102,48 @@ def test_effective_max_buy_price_prefers_directional_caps() -> None:
     assert effective_max_buy_price(cfg, "OTHER") == pytest.approx(0.95)
 
 
+def test_capital_stage_defaults_keep_base_max_trade(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("BTC5_CAPITAL_STAGE", raising=False)
+    monkeypatch.delenv("BTC5_STAGE2_MAX_TRADE_USD", raising=False)
+    monkeypatch.delenv("BTC5_STAGE3_MAX_TRADE_USD", raising=False)
+    cfg = MakerConfig(max_trade_usd=7.5, daily_loss_limit_usd=123.0, capital_stage=None)
+    assert cfg.capital_stage is None
+    assert cfg.effective_max_trade_usd == pytest.approx(7.5)
+    assert cfg.effective_daily_loss_limit_usd == pytest.approx(123.0)
+
+
+def test_capital_stage_overrides_max_trade() -> None:
+    cfg_stage1 = MakerConfig(
+        max_trade_usd=5.0,
+        capital_stage=1,
+        stage1_max_trade_usd=10.0,
+        stage2_max_trade_usd=20.0,
+        stage3_max_trade_usd=50.0,
+    )
+    assert cfg_stage1.capital_stage == 1
+    assert cfg_stage1.effective_max_trade_usd == pytest.approx(10.0)
+
+    cfg_stage2 = MakerConfig(
+        max_trade_usd=10.0,
+        capital_stage=2,
+        stage1_max_trade_usd=10.0,
+        stage2_max_trade_usd=20.0,
+        stage3_max_trade_usd=50.0,
+    )
+    assert cfg_stage2.capital_stage == 2
+    assert cfg_stage2.effective_max_trade_usd == pytest.approx(20.0)
+
+    cfg_stage3 = MakerConfig(
+        max_trade_usd=10.0,
+        capital_stage=3,
+        stage1_max_trade_usd=10.0,
+        stage2_max_trade_usd=20.0,
+        stage3_max_trade_usd=50.0,
+    )
+    assert cfg_stage3.capital_stage == 3
+    assert cfg_stage3.effective_max_trade_usd == pytest.approx(50.0)
+
+
 def test_parse_session_guardrail_overrides_normalizes_valid_rows() -> None:
     overrides = parse_session_guardrail_overrides(
         '[{"name":"hour_et_09","et_hours":[9],"max_abs_delta":0.0001,"up_max_buy_price":0.48,"down_max_buy_price":0.49,"min_delta":0.0004,"maker_improve_ticks":0},{"name":"","et_hours":[12]}]'
@@ -481,6 +523,122 @@ def _seed_strong_recent_regime(bot: BTC5MinMakerBot, *, window_start_ts: int) ->
         )
 
 
+def _seed_stage_history(
+    bot: BTC5MinMakerBot,
+    *,
+    window_start_ts: int,
+    live_filled_rows: int,
+    live_filled_pnl_usd: float,
+    order_failed_rows: int = 0,
+) -> None:
+    start = window_start_ts - ((live_filled_rows + order_failed_rows + 2) * 300)
+    for idx in range(live_filled_rows):
+        ws = start + (idx * 300)
+        bot.db.upsert_window(
+            {
+                "window_start_ts": ws,
+                "window_end_ts": ws + 300,
+                "slug": market_slug_for_window(ws),
+                "decision_ts": ws + 290,
+                "direction": "DOWN" if idx % 2 == 0 else "UP",
+                "open_price": 100.0,
+                "current_price": 100.05,
+                "delta": 0.0005,
+                "token_id": "tok",
+                "best_bid": 0.49,
+                "best_ask": 0.50,
+                "order_price": 0.49,
+                "trade_size_usd": 5.0,
+                "shares": 10.2,
+                "order_id": f"stage-fill-{idx}",
+                "order_status": "live_filled",
+                "filled": 1,
+                "reason": "seed_stage",
+                "resolved_side": "DOWN",
+                "won": 1,
+                "pnl_usd": live_filled_pnl_usd,
+            }
+        )
+    for idx in range(order_failed_rows):
+        ws = start + ((live_filled_rows + idx) * 300)
+        bot.db.upsert_window(
+            {
+                "window_start_ts": ws,
+                "window_end_ts": ws + 300,
+                "slug": market_slug_for_window(ws),
+                "decision_ts": ws + 290,
+                "direction": "UP",
+                "open_price": 100.0,
+                "current_price": 100.05,
+                "delta": 0.0005,
+                "token_id": "tok",
+                "best_bid": 0.49,
+                "best_ask": 0.50,
+                "order_price": 0.49,
+                "trade_size_usd": 0.0,
+                "shares": 0.0,
+                "order_id": f"stage-fail-{idx}",
+                "order_status": "live_order_failed",
+                "filled": 0,
+                "reason": "seed_stage_fail",
+                "resolved_side": "UP",
+                "won": 0,
+                "pnl_usd": 0.0,
+            }
+        )
+
+
+def test_capital_stage_controls_gate_forward_and_shadow_research(tmp_path: Path) -> None:
+    cfg = MakerConfig(
+        db_path=tmp_path / "btc5.db",
+        capital_stage=3,
+        max_trade_usd=10.0,
+        bankroll_usd=20_000.0,
+        risk_fraction=0.02,
+        stage1_max_trade_usd=10.0,
+        stage2_max_trade_usd=20.0,
+        stage3_max_trade_usd=50.0,
+        daily_loss_limit_usd=250.0,
+    )
+    bot = BTC5MinMakerBot(cfg)
+    ws = current_window_start(time.time()) - (2 * 300)
+    _seed_stage_history(bot, window_start_ts=ws, live_filled_rows=120, live_filled_pnl_usd=1.0, order_failed_rows=9)
+
+    controls = bot._capital_stage_controls(today_pnl=20.0)
+    assert controls["effective_stage"] == 3
+    assert controls["recommended_live_stage"] == 3
+    assert controls["advantage_tier"] == "stage_3_live_ready"
+    assert controls["effective_max_trade_usd"] == pytest.approx(50.0)
+    assert controls["execution_drag_counts"]["order_failed_rate"] < 0.25
+    assert controls["probe_fresh_for_stage_upgrade"] is True
+    assert controls["shadow_research_tiers"]["shadow_100"]["shadow_only"] is True
+    assert controls["shadow_research_tiers"]["shadow_100"]["size_usd"] == pytest.approx(100.0)
+    assert controls["shadow_research_tiers"]["shadow_200"]["size_usd"] == pytest.approx(200.0)
+
+
+def test_capital_stage_controls_block_stage_upgrade_when_probe_is_stale(tmp_path: Path) -> None:
+    cfg = MakerConfig(
+        db_path=tmp_path / "btc5.db",
+        capital_stage=3,
+        stage1_max_trade_usd=10.0,
+        stage2_max_trade_usd=20.0,
+        stage3_max_trade_usd=50.0,
+        stage_probe_freshness_max_hours=6.0,
+    )
+    bot = BTC5MinMakerBot(cfg)
+    stale_ws = current_window_start(time.time() - (8 * 3600))
+    _seed_stage_history(bot, window_start_ts=stale_ws, live_filled_rows=120, live_filled_pnl_usd=1.0, order_failed_rows=0)
+
+    controls = bot._capital_stage_controls(today_pnl=20.0)
+
+    assert controls["effective_stage"] == 1
+    assert controls["recommended_live_stage"] == 1
+    assert controls["advantage_tier"] == "stage_1_live_only"
+    assert controls["probe_fresh_for_stage_upgrade"] is False
+    assert "stage_upgrade_probe_stale" in controls["stage_blockers"]
+    assert "capped_to_stage_1" in controls["stage_gate_reason"]
+
+
 @pytest.mark.asyncio
 async def test_process_window_records_partial_live_fill(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     cfg = MakerConfig(
@@ -554,6 +712,434 @@ async def test_process_window_records_partial_live_fill(monkeypatch: pytest.Monk
     assert row["trade_size_usd"] == pytest.approx(1.104, rel=1e-3)
     assert row["filled"] == 1
     assert row["order_status"] == "live_partial_fill_cancelled"
+
+
+@pytest.mark.asyncio
+async def test_process_window_emits_capital_stage_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=True,
+        db_path=tmp_path / "btc5.db",
+        bankroll_usd=10_000.0,
+        risk_fraction=0.02,
+        max_trade_usd=10.0,
+        capital_stage=3,
+        stage1_max_trade_usd=10.0,
+        stage2_max_trade_usd=20.0,
+        stage3_max_trade_usd=50.0,
+        daily_loss_limit_usd=250.0,
+        min_trade_usd=0.25,
+        min_delta=0.0003,
+        max_buy_price=0.95,
+        min_buy_price=0.90,
+        tick_size=0.01,
+        paper_fill_probability=1.0,
+    )
+    bot = BTC5MinMakerBot(cfg)
+
+    async def fake_resolve(http, through_window_start: int) -> None:
+        return None
+
+    async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
+        return 100.0, 100.05
+
+    monkeypatch.setattr(bot, "_resolve_unsettled", fake_resolve)
+    monkeypatch.setattr(bot, "_get_open_and_current_price", fake_prices)
+
+    window_start_ts = current_window_start(time.time()) - (2 * 300)
+    _seed_stage_history(
+        bot,
+        window_start_ts=window_start_ts,
+        live_filled_rows=120,
+        live_filled_pnl_usd=1.0,
+        order_failed_rows=9,
+    )
+    result = await bot._process_window(window_start_ts=window_start_ts, http=_DummyHTTP())
+
+    assert "capital_stage" in result
+    assert "recommended_live_stage" in result
+    assert "effective_max_trade_usd" in result
+    assert "effective_daily_loss_limit_usd" in result
+    assert "advantage_tier" in result
+    assert "stage_gate_reason" in result
+    assert "stage_blockers" in result
+    assert "probe_freshness_hours" in result
+    assert "probe_fresh_for_stage_upgrade" in result
+    assert "execution_drag_counts" in result
+    assert "shadow_research_tiers" in result
+    assert "capital_utilization_ratio" in result
+    assert result["capital_stage"] == 3
+    assert result["recommended_live_stage"] == 3
+    assert result["effective_max_trade_usd"] == pytest.approx(50.0)
+    assert result["effective_daily_loss_limit_usd"] == pytest.approx(250.0)
+    assert result["advantage_tier"] == "stage_3_live_ready"
+    assert result["probe_fresh_for_stage_upgrade"] is True
+    assert result["shadow_research_tiers"]["shadow_100"]["size_usd"] == pytest.approx(100.0)
+    assert result["shadow_research_tiers"]["shadow_200"]["size_usd"] == pytest.approx(200.0)
+    assert result["capital_utilization_ratio"] > 0.0
+
+
+@pytest.mark.asyncio
+async def test_process_window_strong_validated_session_uses_full_stage_cap(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=True,
+        db_path=tmp_path / "btc5.db",
+        bankroll_usd=250.0,
+        risk_fraction=0.02,
+        max_trade_usd=5.0,
+        stage1_max_trade_usd=10.0,
+        min_trade_usd=0.25,
+        min_delta=0.0,
+        max_buy_price=0.95,
+        min_buy_price=0.45,
+        tick_size=0.01,
+        paper_fill_probability=1.0,
+        session_policy_json='[{"name":"hour_et_09","et_hours":[9],"up_max_buy_price":0.49,"down_max_buy_price":0.48}]',
+    )
+    bot = BTC5MinMakerBot(cfg)
+
+    async def fake_resolve(http, through_window_start: int) -> None:
+        return None
+
+    async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
+        return 100.0, 99.95
+
+    class StrongDownHTTP(_DummyHTTP):
+        async def fetch_book(self, token_id: str) -> dict:
+            assert token_id == "tok-down"
+            return {
+                "bids": [{"price": 0.47, "size": 50}],
+                "asks": [{"price": 0.48, "size": 50}],
+            }
+
+    monkeypatch.setattr(bot, "_resolve_unsettled", fake_resolve)
+    monkeypatch.setattr(bot, "_get_open_and_current_price", fake_prices)
+
+    window_start_ts = _ts(2026, 3, 9, 9, 35)
+    result = await bot._process_window(window_start_ts=window_start_ts, http=StrongDownHTTP())
+
+    assert result["status"] == "paper_filled"
+    assert result["edge_tier"] == "strong_validated"
+    assert result["session_policy_name"] == "hour_et_09"
+    assert result["effective_stage"] == 1
+    assert result["effective_max_trade_usd"] == pytest.approx(10.0)
+    assert result["size_usd"] == pytest.approx(9.9969, rel=1e-4)
+    assert "sizing_mode=full_stage_cap" in result["sizing_reason_tags"]
+
+    with bot.db._connect() as conn:
+        row = conn.execute(
+            """
+            SELECT edge_tier, sizing_reason_tags, session_policy_name, effective_stage, trade_size_usd
+            FROM window_trades
+            WHERE window_start_ts = ?
+            """,
+            (window_start_ts,),
+        ).fetchone()
+    assert row["edge_tier"] == "strong_validated"
+    assert row["session_policy_name"] == "hour_et_09"
+    assert row["effective_stage"] == 1
+    assert row["trade_size_usd"] == pytest.approx(9.9969, rel=1e-4)
+    assert "validated_session_hour_et_09" in json.loads(row["sizing_reason_tags"])
+
+
+@pytest.mark.asyncio
+async def test_process_window_exploratory_hour_11_candidate_is_not_full_size(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=True,
+        db_path=tmp_path / "btc5.db",
+        bankroll_usd=1_000.0,
+        risk_fraction=0.02,
+        max_trade_usd=5.0,
+        stage1_max_trade_usd=20.0,
+        min_trade_usd=0.25,
+        min_delta=0.0,
+        max_buy_price=0.95,
+        min_buy_price=0.45,
+        tick_size=0.01,
+        paper_fill_probability=1.0,
+        session_policy_json='[{"name":"hour_et_11","et_hours":[11],"up_max_buy_price":0.51,"down_max_buy_price":0.51}]',
+    )
+    bot = BTC5MinMakerBot(cfg)
+
+    async def fake_resolve(http, through_window_start: int) -> None:
+        return None
+
+    async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
+        return 100.0, 99.95
+
+    class ExploratoryDownHTTP(_DummyHTTP):
+        async def fetch_book(self, token_id: str) -> dict:
+            assert token_id == "tok-down"
+            return {
+                "bids": [{"price": 0.49, "size": 50}],
+                "asks": [{"price": 0.51, "size": 50}],
+            }
+
+    monkeypatch.setattr(bot, "_resolve_unsettled", fake_resolve)
+    monkeypatch.setattr(bot, "_get_open_and_current_price", fake_prices)
+
+    window_start_ts = _ts(2026, 3, 9, 11, 35)
+    result = await bot._process_window(window_start_ts=window_start_ts, http=ExploratoryDownHTTP())
+
+    assert result["status"] == "paper_filled"
+    assert result["edge_tier"] == "exploratory"
+    assert result["effective_max_trade_usd"] == pytest.approx(20.0)
+    assert result["size_usd"] == pytest.approx(10.0)
+    assert result["size_usd"] < result["effective_max_trade_usd"]
+    assert "sizing_mode=exploratory_half_cap" in result["sizing_reason_tags"]
+
+
+@pytest.mark.asyncio
+async def test_process_window_balanced_hour_11_candidate_can_use_strong_validated_tier(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=True,
+        db_path=tmp_path / "btc5.db",
+        bankroll_usd=5_000.0,
+        risk_fraction=0.02,
+        max_trade_usd=5.0,
+        stage1_max_trade_usd=20.0,
+        min_trade_usd=0.25,
+        min_delta=0.0,
+        max_buy_price=0.95,
+        min_buy_price=0.45,
+        tick_size=0.01,
+        paper_fill_probability=1.0,
+        session_policy_json='[{"name":"hour_et_11","et_hours":[11],"up_max_buy_price":0.51,"down_max_buy_price":0.51}]',
+    )
+    bot = BTC5MinMakerBot(cfg)
+
+    async def fake_resolve(http, through_window_start: int) -> None:
+        return None
+
+    async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
+        return 100.0, 99.95
+
+    class BalancedHour11HTTP(_DummyHTTP):
+        async def fetch_book(self, token_id: str) -> dict:
+            assert token_id == "tok-down"
+            return {
+                "bids": [{"price": 0.47, "size": 50}],
+                "asks": [{"price": 0.48, "size": 50}],
+            }
+
+    monkeypatch.setattr(bot, "_resolve_unsettled", fake_resolve)
+    monkeypatch.setattr(bot, "_get_open_and_current_price", fake_prices)
+
+    window_start_ts = _ts(2026, 3, 9, 11, 35)
+    result = await bot._process_window(window_start_ts=window_start_ts, http=BalancedHour11HTTP())
+
+    assert result["status"] == "paper_filled"
+    assert result["edge_tier"] == "strong_validated"
+    assert result["size_usd"] > 19.95
+    assert result["size_usd"] <= result["effective_max_trade_usd"]
+    assert "validated_session_hour_et_11" in result["sizing_reason_tags"]
+    assert "validated_balanced_session_caps" in result["sizing_reason_tags"]
+    assert "sizing_mode=full_stage_cap" in result["sizing_reason_tags"]
+
+
+@pytest.mark.asyncio
+async def test_process_window_asymmetric_hour_11_candidate_stays_probe_only_tier(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=True,
+        db_path=tmp_path / "btc5.db",
+        bankroll_usd=1_000.0,
+        risk_fraction=0.02,
+        max_trade_usd=5.0,
+        stage1_max_trade_usd=20.0,
+        min_trade_usd=0.25,
+        min_delta=0.0,
+        max_buy_price=0.95,
+        min_buy_price=0.45,
+        tick_size=0.01,
+        paper_fill_probability=1.0,
+        session_policy_json='[{"name":"hour_et_11","et_hours":[11],"up_max_buy_price":0.49,"down_max_buy_price":0.51}]',
+    )
+    bot = BTC5MinMakerBot(cfg)
+
+    async def fake_resolve(http, through_window_start: int) -> None:
+        return None
+
+    async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
+        return 100.0, 99.95
+
+    class AsymmetricHour11HTTP(_DummyHTTP):
+        async def fetch_book(self, token_id: str) -> dict:
+            assert token_id == "tok-down"
+            return {
+                "bids": [{"price": 0.47, "size": 50}],
+                "asks": [{"price": 0.48, "size": 50}],
+            }
+
+    monkeypatch.setattr(bot, "_resolve_unsettled", fake_resolve)
+    monkeypatch.setattr(bot, "_get_open_and_current_price", fake_prices)
+
+    window_start_ts = _ts(2026, 3, 9, 11, 35)
+    result = await bot._process_window(window_start_ts=window_start_ts, http=AsymmetricHour11HTTP())
+
+    assert result["status"] == "paper_filled"
+    assert result["edge_tier"] == "exploratory"
+    assert result["size_usd"] > 9.95
+    assert result["size_usd"] < result["effective_max_trade_usd"]
+    assert "hour_11_down_bias_probe_only_guardrail" in result["sizing_reason_tags"]
+    assert "session_caps_balanced=false" in result["sizing_reason_tags"]
+    assert "sizing_mode=exploratory_half_cap" in result["sizing_reason_tags"]
+
+
+@pytest.mark.asyncio
+async def test_process_window_suppresses_observed_open_et_loss_cluster(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=True,
+        db_path=tmp_path / "btc5.db",
+        bankroll_usd=250.0,
+        risk_fraction=0.02,
+        max_trade_usd=5.0,
+        min_trade_usd=0.25,
+        min_delta=0.00001,
+        max_buy_price=0.95,
+        min_buy_price=0.45,
+        tick_size=0.01,
+        paper_fill_probability=1.0,
+    )
+    bot = BTC5MinMakerBot(cfg)
+
+    async def fake_resolve(http, through_window_start: int) -> None:
+        return None
+
+    async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
+        return 100.0, 99.996
+
+    class ClusterDownHTTP(_DummyHTTP):
+        async def fetch_book(self, token_id: str) -> dict:
+            assert token_id == "tok-down"
+            return {
+                "bids": [{"price": 0.49, "size": 50}],
+                "asks": [{"price": 0.51, "size": 50}],
+            }
+
+    monkeypatch.setattr(bot, "_resolve_unsettled", fake_resolve)
+    monkeypatch.setattr(bot, "_get_open_and_current_price", fake_prices)
+
+    window_start_ts = _ts(2026, 3, 9, 10, 35)
+    result = await bot._process_window(window_start_ts=window_start_ts, http=ClusterDownHTTP())
+
+    assert result["status"] == "skip_loss_cluster_suppressed"
+    assert result["edge_tier"] == "suppressed"
+    assert result["loss_cluster_suppressed"] is True
+    assert result["size_usd"] == 0.0
+
+    with bot.db._connect() as conn:
+        row = conn.execute(
+            """
+            SELECT edge_tier, loss_cluster_suppressed, sizing_reason_tags, order_status
+            FROM window_trades
+            WHERE window_start_ts = ?
+            """,
+            (window_start_ts,),
+        ).fetchone()
+    assert row["edge_tier"] == "suppressed"
+    assert row["loss_cluster_suppressed"] == 1
+    assert row["order_status"] == "skip_loss_cluster_suppressed"
+    assert "observed_loss_cluster_guardrail" in json.loads(row["sizing_reason_tags"])
+
+
+@pytest.mark.asyncio
+async def test_process_window_stale_stage_readiness_keeps_full_size_at_effective_stage_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=True,
+        db_path=tmp_path / "btc5.db",
+        bankroll_usd=5_000.0,
+        risk_fraction=0.02,
+        max_trade_usd=5.0,
+        capital_stage=3,
+        stage1_max_trade_usd=10.0,
+        stage2_max_trade_usd=20.0,
+        stage3_max_trade_usd=50.0,
+        stage_probe_freshness_max_hours=6.0,
+        min_trade_usd=0.25,
+        min_delta=0.0,
+        max_buy_price=0.95,
+        min_buy_price=0.45,
+        tick_size=0.01,
+        paper_fill_probability=1.0,
+        session_policy_json='[{"name":"hour_et_09","et_hours":[9],"up_max_buy_price":0.49,"down_max_buy_price":0.48}]',
+    )
+    bot = BTC5MinMakerBot(cfg)
+
+    async def fake_resolve(http, through_window_start: int) -> None:
+        return None
+
+    async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
+        return 100.0, 99.95
+
+    class StrongDownHTTP(_DummyHTTP):
+        async def fetch_book(self, token_id: str) -> dict:
+            assert token_id == "tok-down"
+            return {
+                "bids": [{"price": 0.47, "size": 50}],
+                "asks": [{"price": 0.48, "size": 50}],
+            }
+
+    monkeypatch.setattr(bot, "_resolve_unsettled", fake_resolve)
+    monkeypatch.setattr(bot, "_get_open_and_current_price", fake_prices)
+
+    stale_ws = _ts(2026, 3, 9, 0, 0)
+    _seed_stage_history(bot, window_start_ts=stale_ws, live_filled_rows=120, live_filled_pnl_usd=1.0, order_failed_rows=0)
+
+    window_start_ts = _ts(2026, 3, 9, 9, 35)
+    result = await bot._process_window(window_start_ts=window_start_ts, http=StrongDownHTTP())
+
+    assert result["status"] == "paper_filled"
+    assert result["edge_tier"] == "strong_validated"
+    assert result["effective_stage"] == 1
+    assert result["recommended_live_stage"] == 1
+    assert result["effective_max_trade_usd"] == pytest.approx(10.0)
+    assert result["size_usd"] == pytest.approx(9.9969, rel=1e-4)
+    assert result["size_usd"] < cfg.stage3_max_trade_usd
+
+
+def test_print_status_emits_stage_and_shadow_metadata(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    cfg = MakerConfig(
+        db_path=tmp_path / "btc5.db",
+        capital_stage=3,
+        bankroll_usd=20_000.0,
+        risk_fraction=0.02,
+        stage1_max_trade_usd=10.0,
+        stage2_max_trade_usd=20.0,
+        stage3_max_trade_usd=50.0,
+    )
+    bot = BTC5MinMakerBot(cfg)
+    ws = current_window_start(time.time()) - (2 * 300)
+    _seed_stage_history(bot, window_start_ts=ws, live_filled_rows=120, live_filled_pnl_usd=1.0, order_failed_rows=9)
+
+    bot.print_status()
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["capital_stage"] == 3
+    assert payload["recommended_live_stage"] == 3
+    assert payload["advantage_tier"] == "stage_3_live_ready"
+    assert payload["probe_fresh_for_stage_upgrade"] is True
+    assert payload["shadow_research_tiers"]["shadow_100"]["shadow_only"] is True
+    assert payload["shadow_research_tiers"]["shadow_200"]["max_trade_usd"] == pytest.approx(200.0)
 
 
 @pytest.mark.asyncio
@@ -1095,7 +1681,7 @@ async def test_process_window_applies_session_guardrail_override(
         min_buy_price=0.45,
         tick_size=0.01,
         cancel_seconds_before_close=2,
-        session_policy_json='[{"name":"hour_et_09","et_hours":[9],"max_abs_delta":0.0001,"up_max_buy_price":0.48,"down_max_buy_price":0.49}]',
+        session_policy_json='[{"name":"hour_et_09","et_hours":[9],"max_abs_delta":0.0002,"up_max_buy_price":0.48,"down_max_buy_price":0.49}]',
     )
     bot = BTC5MinMakerBot(cfg)
 
@@ -1103,7 +1689,7 @@ async def test_process_window_applies_session_guardrail_override(
         return None
 
     async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
-        return 100.0, 100.009
+        return 100.0, 100.011
 
     class SessionBookHTTP(_DummyHTTP):
         async def fetch_book(self, token_id: str) -> dict:

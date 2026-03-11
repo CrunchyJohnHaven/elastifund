@@ -107,11 +107,13 @@ class CheckoutPrice:
 class CreateCheckoutRequest:
     price_key: str
     customer_email: str
+    offer_slug: str = "website-growth-audit"
     customer_name: str = ""
     business_name: str = ""
     website_url: str = ""
     success_url: str = ""
     cancel_url: str = ""
+    source_order_id: str = ""
     prospect_profile: ProspectProfile | None = None
     audit_bundle: AuditBundle | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -119,11 +121,13 @@ class CreateCheckoutRequest:
     def __post_init__(self) -> None:
         object.__setattr__(self, "price_key", str(self.price_key).strip().lower())
         object.__setattr__(self, "customer_email", normalize_email(self.customer_email))
+        object.__setattr__(self, "offer_slug", str(self.offer_slug or "website-growth-audit").strip().lower())
         object.__setattr__(self, "customer_name", str(self.customer_name).strip())
         object.__setattr__(self, "business_name", str(self.business_name).strip())
         object.__setattr__(self, "website_url", str(self.website_url).strip())
         object.__setattr__(self, "success_url", str(self.success_url).strip())
         object.__setattr__(self, "cancel_url", str(self.cancel_url).strip())
+        object.__setattr__(self, "source_order_id", str(self.source_order_id).strip())
         object.__setattr__(self, "metadata", dict(self.metadata))
 
 
@@ -258,6 +262,7 @@ class MonitorRun:
     status: str = "queued"
     baseline_bundle_id: str = ""
     current_bundle_id: str = ""
+    recurring_monitor_enrollment_id: str = ""
     delta_summary: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=utc_now)
@@ -269,7 +274,66 @@ class MonitorRun:
         object.__setattr__(self, "status", str(self.status).strip().lower())
         object.__setattr__(self, "baseline_bundle_id", str(self.baseline_bundle_id).strip())
         object.__setattr__(self, "current_bundle_id", str(self.current_bundle_id).strip())
+        object.__setattr__(
+            self,
+            "recurring_monitor_enrollment_id",
+            str(self.recurring_monitor_enrollment_id).strip(),
+        )
         object.__setattr__(self, "delta_summary", str(self.delta_summary).strip())
+        object.__setattr__(self, "metadata", dict(self.metadata))
+
+
+@dataclass(frozen=True)
+class RecurringMonitorEnrollment:
+    enrollment_id: str
+    audit_order_id: str
+    offer_slug: str = "website-growth-audit-recurring-monitor"
+    parent_offer_slug: str = "website-growth-audit"
+    monitor_order_id: str | None = None
+    price_key: str = ""
+    status: str = "staged"
+    cadence_days: int = 30
+    monthly_amount_usd: float = 0.0
+    currency: str = "USD"
+    provider: str = "stripe"
+    provider_subscription_id: str = ""
+    checkout_session_id: str = ""
+    source_payment_event_id: str = ""
+    latest_monitor_run_id: str = ""
+    monitor_runs_completed: int = 0
+    next_run_at: str | None = None
+    enrolled_at: str | None = None
+    canceled_at: str | None = None
+    churned_at: str | None = None
+    refunded_at: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=utc_now)
+    updated_at: str = field(default_factory=utc_now)
+
+    def __post_init__(self) -> None:
+        status = str(self.status or "staged").strip().lower()
+        if status not in {"staged", "checkout_pending", "active", "paused", "canceled", "churned", "refunded"}:
+            raise ValueError(f"Unsupported recurring monitor status: {self.status}")
+        cadence_days = int(self.cadence_days)
+        if cadence_days <= 0:
+            raise ValueError("cadence_days must be positive")
+        object.__setattr__(self, "enrollment_id", str(self.enrollment_id).strip())
+        object.__setattr__(self, "audit_order_id", str(self.audit_order_id).strip())
+        object.__setattr__(self, "offer_slug", str(self.offer_slug).strip().lower())
+        object.__setattr__(self, "parent_offer_slug", str(self.parent_offer_slug).strip().lower())
+        monitor_order_id = str(self.monitor_order_id).strip() if self.monitor_order_id is not None else ""
+        object.__setattr__(self, "monitor_order_id", monitor_order_id or None)
+        object.__setattr__(self, "price_key", str(self.price_key).strip().lower())
+        object.__setattr__(self, "status", status)
+        object.__setattr__(self, "cadence_days", cadence_days)
+        object.__setattr__(self, "monthly_amount_usd", round(max(0.0, float(self.monthly_amount_usd)), 2))
+        object.__setattr__(self, "currency", normalize_currency(self.currency))
+        object.__setattr__(self, "provider", str(self.provider or "stripe").strip().lower())
+        object.__setattr__(self, "provider_subscription_id", str(self.provider_subscription_id).strip())
+        object.__setattr__(self, "checkout_session_id", str(self.checkout_session_id).strip())
+        object.__setattr__(self, "source_payment_event_id", str(self.source_payment_event_id).strip())
+        object.__setattr__(self, "latest_monitor_run_id", str(self.latest_monitor_run_id).strip())
+        object.__setattr__(self, "monitor_runs_completed", max(0, int(self.monitor_runs_completed)))
         object.__setattr__(self, "metadata", dict(self.metadata))
 
 

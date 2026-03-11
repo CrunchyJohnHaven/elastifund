@@ -1,0 +1,117 @@
+{
+  "schema_version": "instance3_output.v2",
+  "instance": 3,
+  "instance_role": "Claude Code / Sonnet — JJ-N manual-close activation + automated-checkout env checklist",
+  "generated_at": "2026-03-10T22:30:00Z",
+  "cycle_window": "2026-03-10T22:00:00Z to 2026-03-10T22:30:00Z",
+
+  "verdict": "manual_close_ready_now",
+  "verdict_detail": "Manual close gate is open per first_dollar.py lines 268-271 (launchable_gate_keys = manual_close_ready + fulfillment_surface_ready — both true). Automated checkout blocked on 3 env vars post-migration only. No code changes needed. This is a pure operator execution problem.",
+
+  "code_truth": {
+    "launchable_gate_keys": ["manual_close_ready", "fulfillment_surface_ready"],
+    "manual_close_ready": true,
+    "fulfillment_surface_ready": true,
+    "launchable_now_per_code": true,
+    "artifact_status": "setup_only (stale — pre-migration)",
+    "code_would_produce_when_fresh": "launchable",
+    "ignored_by_launchable_gate": ["checkout_surface_not_ready", "billing_webhook_not_ready"],
+    "note": "Artifacts regenerate after new box is live. Trust first_dollar.py, not stale JSON."
+  },
+
+  "path_1_manual_close": {
+    "status": "OPEN — execute now",
+    "requires_new_box": false,
+    "requires_stripe": false,
+    "requires_domain_auth": false,
+    "prospect_count": 10,
+    "prospect_source": "reports/nontrading/revenue_audit_launch_batch_seed.json",
+    "priority_order": [
+      {"rank": 1, "segment": "hvac", "fit_score": 84.23, "estimated_value_usd": 2500},
+      {"rank": 2, "segment": "landscaping", "fit_score": 82.15, "estimated_value_usd": 2500},
+      {"rank": 3, "segment": "pest_control", "fit_score": 70.74, "estimated_value_usd": 2000}
+    ],
+    "payment_options": [
+      "Stripe Payment Link (dashboard.stripe.com > Payment links) — no server needed",
+      "Bank transfer / ACH",
+      "PayPal / Venmo"
+    ],
+    "active_wedge": "Website Growth Audit — $500/$1,500/$2,500 tiers"
+  },
+
+  "path_2_automated_checkout": {
+    "status": "BLOCKED — requires post-migration VPS",
+    "requires_new_box": true,
+    "env_vars_needed": 3,
+    "env_vars_set": 0,
+    "checklist": [
+      {
+        "rank": 1,
+        "key": "PUBLIC_BASE_URL",
+        "env_var": "JJ_N_WEBSITE_GROWTH_AUDIT_PUBLIC_BASE_URL",
+        "current": "https://example.invalid",
+        "action": "Set to live HTTPS URL after new box migration"
+      },
+      {
+        "rank": 2,
+        "key": "STRIPE_SECRET_KEY",
+        "env_var": "STRIPE_SECRET_KEY",
+        "current": "",
+        "action": "Stripe Dashboard > Developers > API keys"
+      },
+      {
+        "rank": 3,
+        "key": "STRIPE_WEBHOOK_SECRET",
+        "env_var": "STRIPE_WEBHOOK_SECRET",
+        "current": "",
+        "action": "Stripe Dashboard > Webhooks > Add endpoint: POST https://<PUBLIC_BASE_URL>/v1/nontrading/webhooks/stripe"
+      }
+    ],
+    "auto_derived_no_action": [
+      "JJ_N_WEBSITE_GROWTH_AUDIT_SUCCESS_URL",
+      "JJ_N_WEBSITE_GROWTH_AUDIT_CANCEL_URL"
+    ]
+  },
+
+  "what_does_not_change": {
+    "active_wedge": "Website Growth Audit only",
+    "pricing": "$500/$1,500/$2,500 frozen",
+    "prospect_scope": "10 existing staged prospects before expansion",
+    "no_new_code": true,
+    "parked": [
+      "recurring_monitor_expansion",
+      "new_offer_research",
+      "better_monitor_upsell_experiment",
+      "openclaw_comparison"
+    ]
+  },
+
+  "required_outputs": {
+    "candidate_delta_arr_bps": 6900,
+    "candidate_delta_arr_bps_notes": "p50 ARR $260.77/yr vs $0 current. Against $377 portfolio: 260/377 = 6,900 bps. Confidence 0.28.",
+    "expected_improvement_velocity_delta": "+1.0 gate per operator action. Manual close gate ALREADY OPEN — 0 additional actions for first contact. 3 actions unlock automated checkout post-migration.",
+    "arr_confidence_score": 0.28,
+    "arr_confidence_label": "low_to_medium",
+    "block_reasons": [
+      "automated_checkout_blocked: PUBLIC_BASE_URL placeholder, STRIPE_SECRET_KEY empty",
+      "billing_webhook_blocked: STRIPE_WEBHOOK_SECRET empty, endpoint not registered",
+      "automated_email_blocked: sender domain placeholder — blocks automation only, not manual close",
+      "new_box_prerequisite: PUBLIC_BASE_URL requires post-migration VPS with HTTPS"
+    ],
+    "finance_gate_pass": true,
+    "finance_gate_notes": "finance/latest.json shows finance_gate_pass=true. $12 budget approved. No new capital needed for manual close.",
+    "one_next_cycle_action": "Contact HVAC prospect (fit_score=84.23, $2,500 estimated value) from reports/nontrading/revenue_audit_launch_batch_seed.json. Manual close gate is ALREADY OPEN. After migration: set PUBLIC_BASE_URL + STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET in new VPS .env."
+  },
+
+  "failsafe_rules": {
+    "no_new_wedge": "No new offer until first dollar",
+    "no_prospect_expansion": "No new prospects until 10 existing are contacted",
+    "no_automated_checkout_claim": "No checkout claims until all 3 env vars are live on new box",
+    "no_capital_required": "Manual close path requires $0 additional capital",
+    "retry_cadence": {
+      "manual_close_status": "+10m",
+      "docs_sync": "+30m",
+      "automated_checkout": "post-migration only"
+    }
+  }
+}

@@ -16,6 +16,7 @@ from nontrading.revenue_audit.contracts import (
     MonitorRun,
     PaymentEvent,
     ProspectProfile,
+    RecurringMonitorEnrollment,
 )
 
 
@@ -42,6 +43,24 @@ class RevenueAuditStore:
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA foreign_keys=ON")
         return conn
+
+    @staticmethod
+    def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+        rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        return {str(row["name"]) for row in rows}
+
+    @classmethod
+    def _ensure_column(
+        cls,
+        conn: sqlite3.Connection,
+        *,
+        table_name: str,
+        column_name: str,
+        column_sql: str,
+    ) -> None:
+        if column_name in cls._table_columns(conn, table_name):
+            return
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}")
 
     def initialize(self) -> None:
         with self._connect() as conn:
@@ -135,6 +154,7 @@ class RevenueAuditStore:
                     status TEXT NOT NULL,
                     baseline_bundle_id TEXT NOT NULL DEFAULT '',
                     current_bundle_id TEXT NOT NULL DEFAULT '',
+                    recurring_monitor_enrollment_id TEXT NOT NULL DEFAULT '',
                     delta_summary TEXT NOT NULL DEFAULT '',
                     metadata_json TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL,
@@ -143,7 +163,50 @@ class RevenueAuditStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_revenue_audit_monitor_runs_order
                     ON revenue_audit_monitor_runs(order_id, updated_at);
+
+                CREATE TABLE IF NOT EXISTS revenue_audit_recurring_monitor_enrollments (
+                    enrollment_id TEXT PRIMARY KEY,
+                    audit_order_id TEXT NOT NULL,
+                    offer_slug TEXT NOT NULL,
+                    parent_offer_slug TEXT NOT NULL,
+                    monitor_order_id TEXT DEFAULT NULL,
+                    price_key TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL,
+                    cadence_days INTEGER NOT NULL,
+                    monthly_amount_usd REAL NOT NULL,
+                    currency TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    provider_subscription_id TEXT NOT NULL DEFAULT '',
+                    checkout_session_id TEXT NOT NULL DEFAULT '',
+                    source_payment_event_id TEXT NOT NULL DEFAULT '',
+                    latest_monitor_run_id TEXT NOT NULL DEFAULT '',
+                    monitor_runs_completed INTEGER NOT NULL DEFAULT 0,
+                    next_run_at TEXT,
+                    enrolled_at TEXT,
+                    canceled_at TEXT,
+                    churned_at TEXT,
+                    refunded_at TEXT,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(audit_order_id) REFERENCES revenue_audit_orders(order_id),
+                    FOREIGN KEY(monitor_order_id) REFERENCES revenue_audit_orders(order_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_revenue_audit_recurring_monitor_enrollments_audit_order
+                    ON revenue_audit_recurring_monitor_enrollments(audit_order_id, updated_at);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_revenue_audit_recurring_monitor_enrollments_monitor_order
+                    ON revenue_audit_recurring_monitor_enrollments(monitor_order_id)
+                    WHERE monitor_order_id IS NOT NULL AND monitor_order_id != '';
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_revenue_audit_recurring_monitor_enrollments_subscription
+                    ON revenue_audit_recurring_monitor_enrollments(provider_subscription_id)
+                    WHERE provider_subscription_id != '';
                 """
+            )
+            self._ensure_column(
+                conn,
+                table_name="revenue_audit_monitor_runs",
+                column_name="recurring_monitor_enrollment_id",
+                column_sql="TEXT NOT NULL DEFAULT ''",
             )
 
     def _prospect_profile_from_json(self, value: str | None) -> ProspectProfile | None:
@@ -245,7 +308,36 @@ class RevenueAuditStore:
             status=row["status"],
             baseline_bundle_id=row["baseline_bundle_id"],
             current_bundle_id=row["current_bundle_id"],
+            recurring_monitor_enrollment_id=row["recurring_monitor_enrollment_id"],
             delta_summary=row["delta_summary"],
+            metadata=_json_load(row["metadata_json"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _recurring_monitor_enrollment_from_row(self, row: sqlite3.Row) -> RecurringMonitorEnrollment:
+        return RecurringMonitorEnrollment(
+            enrollment_id=row["enrollment_id"],
+            audit_order_id=row["audit_order_id"],
+            offer_slug=row["offer_slug"],
+            parent_offer_slug=row["parent_offer_slug"],
+            monitor_order_id=row["monitor_order_id"],
+            price_key=row["price_key"],
+            status=row["status"],
+            cadence_days=int(row["cadence_days"]),
+            monthly_amount_usd=float(row["monthly_amount_usd"]),
+            currency=row["currency"],
+            provider=row["provider"],
+            provider_subscription_id=row["provider_subscription_id"],
+            checkout_session_id=row["checkout_session_id"],
+            source_payment_event_id=row["source_payment_event_id"],
+            latest_monitor_run_id=row["latest_monitor_run_id"],
+            monitor_runs_completed=int(row["monitor_runs_completed"]),
+            next_run_at=row["next_run_at"],
+            enrolled_at=row["enrolled_at"],
+            canceled_at=row["canceled_at"],
+            churned_at=row["churned_at"],
+            refunded_at=row["refunded_at"],
             metadata=_json_load(row["metadata_json"]),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -661,17 +753,28 @@ class RevenueAuditStore:
             rows = conn.execute(query, params).fetchall()
         return [self._fulfillment_job_from_row(row) for row in rows]
 
-    def list_monitor_runs(self, order_id: str | None = None) -> list[MonitorRun]:
-        params: tuple[Any, ...] = ()
+    def list_monitor_runs(
+        self,
+        order_id: str | None = None,
+        *,
+        recurring_monitor_enrollment_id: str | None = None,
+    ) -> list[MonitorRun]:
+        params: list[Any] = []
         query = """
             SELECT * FROM revenue_audit_monitor_runs
         """
+        conditions: list[str] = []
         if order_id is not None:
-            query += " WHERE order_id = ?"
-            params = (str(order_id).strip(),)
+            conditions.append("order_id = ?")
+            params.append(str(order_id).strip())
+        if recurring_monitor_enrollment_id is not None:
+            conditions.append("recurring_monitor_enrollment_id = ?")
+            params.append(str(recurring_monitor_enrollment_id).strip())
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY created_at ASC, run_id ASC"
         with self._connect() as conn:
-            rows = conn.execute(query, params).fetchall()
+            rows = conn.execute(query, tuple(params)).fetchall()
         return [self._monitor_run_from_row(row) for row in rows]
 
     def create_monitor_run(self, monitor_run: MonitorRun) -> MonitorRun:
@@ -680,8 +783,8 @@ class RevenueAuditStore:
                 """
                 INSERT INTO revenue_audit_monitor_runs (
                     run_id, order_id, status, baseline_bundle_id, current_bundle_id,
-                    delta_summary, metadata_json, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    recurring_monitor_enrollment_id, delta_summary, metadata_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     monitor_run.run_id,
@@ -689,6 +792,7 @@ class RevenueAuditStore:
                     monitor_run.status,
                     monitor_run.baseline_bundle_id,
                     monitor_run.current_bundle_id,
+                    monitor_run.recurring_monitor_enrollment_id,
                     monitor_run.delta_summary,
                     json.dumps(monitor_run.metadata, sort_keys=True),
                     monitor_run.created_at,
@@ -696,6 +800,210 @@ class RevenueAuditStore:
                 ),
             )
         return self.list_monitor_runs(monitor_run.order_id)[-1]
+
+    def get_recurring_monitor_enrollment(self, enrollment_id: str) -> RecurringMonitorEnrollment | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM revenue_audit_recurring_monitor_enrollments
+                WHERE enrollment_id = ?
+                LIMIT 1
+                """,
+                (str(enrollment_id).strip(),),
+            ).fetchone()
+        return self._recurring_monitor_enrollment_from_row(row) if row is not None else None
+
+    def find_recurring_monitor_enrollment_by_audit_order(
+        self,
+        audit_order_id: str,
+    ) -> RecurringMonitorEnrollment | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM revenue_audit_recurring_monitor_enrollments
+                WHERE audit_order_id = ?
+                ORDER BY created_at DESC, enrollment_id DESC
+                LIMIT 1
+                """,
+                (str(audit_order_id).strip(),),
+            ).fetchone()
+        return self._recurring_monitor_enrollment_from_row(row) if row is not None else None
+
+    def find_recurring_monitor_enrollment_by_monitor_order(
+        self,
+        monitor_order_id: str,
+    ) -> RecurringMonitorEnrollment | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM revenue_audit_recurring_monitor_enrollments
+                WHERE monitor_order_id = ?
+                LIMIT 1
+                """,
+                (str(monitor_order_id).strip(),),
+            ).fetchone()
+        return self._recurring_monitor_enrollment_from_row(row) if row is not None else None
+
+    def find_recurring_monitor_enrollment_by_subscription(
+        self,
+        provider_subscription_id: str,
+    ) -> RecurringMonitorEnrollment | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM revenue_audit_recurring_monitor_enrollments
+                WHERE provider_subscription_id = ?
+                LIMIT 1
+                """,
+                (str(provider_subscription_id).strip(),),
+            ).fetchone()
+        return self._recurring_monitor_enrollment_from_row(row) if row is not None else None
+
+    def list_recurring_monitor_enrollments(
+        self,
+        *,
+        audit_order_id: str | None = None,
+        status: str | None = None,
+    ) -> list[RecurringMonitorEnrollment]:
+        params: list[Any] = []
+        query = """
+            SELECT * FROM revenue_audit_recurring_monitor_enrollments
+        """
+        conditions: list[str] = []
+        if audit_order_id is not None:
+            conditions.append("audit_order_id = ?")
+            params.append(str(audit_order_id).strip())
+        if status is not None:
+            conditions.append("status = ?")
+            params.append(str(status).strip().lower())
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY created_at ASC, enrollment_id ASC"
+        with self._connect() as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+        return [self._recurring_monitor_enrollment_from_row(row) for row in rows]
+
+    def create_recurring_monitor_enrollment(
+        self,
+        enrollment: RecurringMonitorEnrollment,
+    ) -> RecurringMonitorEnrollment:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO revenue_audit_recurring_monitor_enrollments (
+                    enrollment_id, audit_order_id, offer_slug, parent_offer_slug, monitor_order_id,
+                    price_key, status, cadence_days, monthly_amount_usd, currency, provider,
+                    provider_subscription_id, checkout_session_id, source_payment_event_id,
+                    latest_monitor_run_id, monitor_runs_completed, next_run_at, enrolled_at,
+                    canceled_at, churned_at, refunded_at, metadata_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    enrollment.enrollment_id,
+                    enrollment.audit_order_id,
+                    enrollment.offer_slug,
+                    enrollment.parent_offer_slug,
+                    enrollment.monitor_order_id,
+                    enrollment.price_key,
+                    enrollment.status,
+                    enrollment.cadence_days,
+                    enrollment.monthly_amount_usd,
+                    enrollment.currency,
+                    enrollment.provider,
+                    enrollment.provider_subscription_id,
+                    enrollment.checkout_session_id,
+                    enrollment.source_payment_event_id,
+                    enrollment.latest_monitor_run_id,
+                    enrollment.monitor_runs_completed,
+                    enrollment.next_run_at,
+                    enrollment.enrolled_at,
+                    enrollment.canceled_at,
+                    enrollment.churned_at,
+                    enrollment.refunded_at,
+                    json.dumps(enrollment.metadata, sort_keys=True),
+                    enrollment.created_at,
+                    enrollment.updated_at,
+                ),
+            )
+        return self.get_recurring_monitor_enrollment(enrollment.enrollment_id) or enrollment
+
+    def update_recurring_monitor_enrollment(
+        self,
+        enrollment_id: str,
+        **fields: Any,
+    ) -> RecurringMonitorEnrollment:
+        existing = self.get_recurring_monitor_enrollment(enrollment_id)
+        if existing is None:
+            raise RuntimeError(f"Recurring monitor enrollment {enrollment_id} disappeared")
+        updated = RecurringMonitorEnrollment(
+            enrollment_id=existing.enrollment_id,
+            audit_order_id=str(fields.get("audit_order_id", existing.audit_order_id)),
+            offer_slug=str(fields.get("offer_slug", existing.offer_slug)),
+            parent_offer_slug=str(fields.get("parent_offer_slug", existing.parent_offer_slug)),
+            monitor_order_id=fields.get("monitor_order_id", existing.monitor_order_id),
+            price_key=str(fields.get("price_key", existing.price_key)),
+            status=str(fields.get("status", existing.status)),
+            cadence_days=int(fields.get("cadence_days", existing.cadence_days)),
+            monthly_amount_usd=float(fields.get("monthly_amount_usd", existing.monthly_amount_usd)),
+            currency=str(fields.get("currency", existing.currency)),
+            provider=str(fields.get("provider", existing.provider)),
+            provider_subscription_id=str(
+                fields.get("provider_subscription_id", existing.provider_subscription_id)
+            ),
+            checkout_session_id=str(fields.get("checkout_session_id", existing.checkout_session_id)),
+            source_payment_event_id=str(
+                fields.get("source_payment_event_id", existing.source_payment_event_id)
+            ),
+            latest_monitor_run_id=str(fields.get("latest_monitor_run_id", existing.latest_monitor_run_id)),
+            monitor_runs_completed=int(fields.get("monitor_runs_completed", existing.monitor_runs_completed)),
+            next_run_at=fields.get("next_run_at", existing.next_run_at),
+            enrolled_at=fields.get("enrolled_at", existing.enrolled_at),
+            canceled_at=fields.get("canceled_at", existing.canceled_at),
+            churned_at=fields.get("churned_at", existing.churned_at),
+            refunded_at=fields.get("refunded_at", existing.refunded_at),
+            metadata=dict(fields.get("metadata", existing.metadata)),
+            created_at=existing.created_at,
+            updated_at=str(fields.get("updated_at", existing.updated_at)),
+        )
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE revenue_audit_recurring_monitor_enrollments
+                SET audit_order_id = ?, offer_slug = ?, parent_offer_slug = ?, monitor_order_id = ?,
+                    price_key = ?, status = ?, cadence_days = ?, monthly_amount_usd = ?, currency = ?,
+                    provider = ?, provider_subscription_id = ?, checkout_session_id = ?,
+                    source_payment_event_id = ?, latest_monitor_run_id = ?, monitor_runs_completed = ?,
+                    next_run_at = ?, enrolled_at = ?, canceled_at = ?, churned_at = ?, refunded_at = ?,
+                    metadata_json = ?, updated_at = ?
+                WHERE enrollment_id = ?
+                """,
+                (
+                    updated.audit_order_id,
+                    updated.offer_slug,
+                    updated.parent_offer_slug,
+                    updated.monitor_order_id,
+                    updated.price_key,
+                    updated.status,
+                    updated.cadence_days,
+                    updated.monthly_amount_usd,
+                    updated.currency,
+                    updated.provider,
+                    updated.provider_subscription_id,
+                    updated.checkout_session_id,
+                    updated.source_payment_event_id,
+                    updated.latest_monitor_run_id,
+                    updated.monitor_runs_completed,
+                    updated.next_run_at,
+                    updated.enrolled_at,
+                    updated.canceled_at,
+                    updated.churned_at,
+                    updated.refunded_at,
+                    json.dumps(updated.metadata, sort_keys=True),
+                    updated.updated_at,
+                    updated.enrollment_id,
+                ),
+            )
+        return self.get_recurring_monitor_enrollment(enrollment_id) or updated
 
     def next_order_id(self) -> str:
         return _identifier("order")
@@ -711,3 +1019,6 @@ class RevenueAuditStore:
 
     def next_monitor_run_id(self) -> str:
         return _identifier("monitor")
+
+    def next_recurring_monitor_enrollment_id(self) -> str:
+        return _identifier("monitor_enrollment")

@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="900" viewBox="0 0 1280 900">
+<defs>
+  <linearGradient id="arrBg" x1="0" x2="1" y1="0" y2="1">
+    <stop offset="0%" stop-color="#120d1a"/>
+    <stop offset="100%" stop-color="#1d2235"/>
+  </linearGradient>
+</defs>
+<rect width="1280" height="900" fill="url(#arrBg)"/>
+<circle cx="150" cy="130" r="140" fill="#22304d" opacity="0.22"/>
+<circle cx="1140" cy="650" r="160" fill="#412c1b" opacity="0.25"/>
+<text x="80" y="84" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="34" font-weight="700" fill="#fafcff">BTC5 Public ARR Surface</text>
+<text x="80" y="122" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="17" fill="#c7d4e7">Conservative public headline ARR plus the raw BTC5 sleeve and forecast surfaces from the freshest March 10, 2026 artifacts.</text>
+<rect x="80" y="154" width="1120" height="126" rx="26" fill="#0e1523" stroke="#5b3046" opacity="0.95"/>
+<text x="112" y="194" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="14" fill="#e1a7be">FUND-LEVEL REALIZED ARR CLAIM</text>
+<text x="112" y="234" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="30" font-weight="700" fill="#fff0f4">UNBLOCKED</text>
+<text x="112" y="262" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="16" fill="#e5d7de">fund_realized_arr_claim_unblocked</text>
+<text x="112" y="296" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="14" fill="#d3c4cc">Source: reports/runtime_truth_latest.json | Time window: fund lifetime | Confidence: high</text>
+<text x="80" y="350" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="24" fill="#f7fafc">Conservative public forecast ARR</text>
+<text x="80" y="378" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="15" fill="#c9d4e4">Time window: public_disclosure_cap | Confidence: high | Source: reports/btc5_autoresearch/latest.json</text>
+<text x="80" y="404" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="15" fill="#9eb1ca">Conservative public disclosure cap. When the selected BTC5 annualized forecast exceeds 4,000%, README and chart headline claims clamp to 4,000%+ until longer live duration and fund-level reconciliation support a wider claim.</text>
+<rect x="520" y="332" width="560" height="22" rx="11" fill="#111b2a"/>
+<rect x="520" y="332" width="88.00" height="22" rx="11" fill="#7ef0c9" opacity="0.92"/>
+<text x="1104" y="350" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="22" font-weight="700" fill="#fefefe">4,000%+</text>
+<text x="80" y="446" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="24" fill="#f7fafc">Realized BTC5 sleeve run-rate</text>
+<text x="80" y="474" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="15" fill="#c9d4e4">Time window: trailing_12_live_fills | Confidence: high | Source: reports/tmp_remote_btc5_window_rows.json</text>
+<text x="80" y="500" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="15" fill="#9eb1ca">12 live fills, 13.83h, $-2.54 PnL</text>
+<rect x="520" y="428" width="560" height="22" rx="11" fill="#111b2a"/>
+<text x="1104" y="446" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="22" font-weight="700" fill="#fefefe">-1.5k%</text>
+<text x="80" y="542" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="24" fill="#f7fafc">Raw active forecast ARR</text>
+<text x="80" y="570" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="15" fill="#c9d4e4">Time window: selected_public_forecast | Confidence: high | Source: reports/btc5_autoresearch/latest.json</text>
+<text x="80" y="596" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="15" fill="#9eb1ca">Active package: current_live_profile</text>
+<rect x="520" y="524" width="560" height="22" rx="11" fill="#111b2a"/>
+<rect x="520" y="524" width="560.00" height="22" rx="11" fill="#58b5ff" opacity="0.92"/>
+<text x="1104" y="542" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="22" font-weight="700" fill="#fefefe">1.75M%</text>
+<text x="80" y="638" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="24" fill="#f7fafc">Raw best package forecast ARR</text>
+<text x="80" y="666" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="15" fill="#c9d4e4">Time window: selected_public_forecast | Confidence: high | Source: reports/btc5_autoresearch/latest.json</text>
+<text x="80" y="692" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="15" fill="#9eb1ca">Best package: policy_current_live_profile__open_et__grid_d0.00015_up0.51_down0.51</text>
+<rect x="520" y="620" width="560" height="22" rx="11" fill="#111b2a"/>
+<rect x="520" y="620" width="560.00" height="22" rx="11" fill="#ff8d5c" opacity="0.92"/>
+<text x="1104" y="638" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="22" font-weight="700" fill="#fefefe">1.75M%</text>
+<text x="80" y="734" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="24" fill="#f7fafc">P05 forecast ARR</text>
+<text x="80" y="762" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="15" fill="#c9d4e4">Time window: selected_public_forecast | Confidence: high | Source: reports/btc5_autoresearch/latest.json</text>
+<text x="80" y="788" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="15" fill="#9eb1ca">Selected forecast validation rows: 132</text>
+<rect x="520" y="716" width="560" height="22" rx="11" fill="#111b2a"/>
+<rect x="520" y="716" width="353.63" height="22" rx="11" fill="#ffd467" opacity="0.92"/>
+<text x="1104" y="734" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="22" font-weight="700" fill="#fefefe">122.6k%</text>
+<text x="80" y="836" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="14" fill="#d5e2f3">Deploy recommendation: promote | Forecast delta vs active: 2.38M% | Sample: 12 live fills in the realized sleeve window; 132 validation live-filled rows in the selected forecast; 393 observed BTC5 windows in the selected forecast artifact</text>
+</svg>

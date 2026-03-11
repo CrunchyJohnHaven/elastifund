@@ -18,6 +18,7 @@ DEFAULT_DB_PATH = Path("data/btc_5min_maker.db")
 DEFAULT_BASE_ENV = Path("config/btc5_strategy.env")
 DEFAULT_OVERRIDE_ENV = Path("state/btc5_autoresearch.env")
 DEFAULT_CYCLE_REPORT_DIR = Path("reports/btc5_autoresearch")
+DEFAULT_CURRENT_PROBE_LATEST = Path("reports/btc5_autoresearch_current_probe/latest.json")
 DEFAULT_LOOP_REPORT_DIR = Path("reports/btc5_autoresearch_loop")
 DEFAULT_HYPOTHESIS_REPORT_DIR = Path("reports/btc5_hypothesis_lab")
 DEFAULT_REGIME_POLICY_REPORT_DIR = Path("reports/btc5_regime_policy_lab")
@@ -47,6 +48,8 @@ def _build_cycle_command(args: argparse.Namespace) -> list[str]:
         str(args.override_env),
         "--report-dir",
         str(args.cycle_report_dir),
+        "--current-probe-latest",
+        str(args.current_probe_latest),
         "--paths",
         str(args.paths),
         "--block-size",
@@ -104,6 +107,24 @@ def _load_json(path: Path) -> dict[str, Any] | None:
         return json.loads(path.read_text())
     except json.JSONDecodeError:
         return None
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        if value is None:
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _run_hook(command: str) -> dict[str, Any]:
@@ -305,6 +326,9 @@ def _build_entry(
     best_raw_package = (cycle_payload or {}).get("best_raw_research_package") or {}
     execution_drag_summary = (cycle_payload or {}).get("execution_drag_summary") or {}
     one_sided_bias_recommendation = (cycle_payload or {}).get("one_sided_bias_recommendation") or {}
+    size_aware_deployment = (cycle_payload or {}).get("size_aware_deployment") or {}
+    current_probe = (cycle_payload or {}).get("current_probe") or {}
+    probe_feedback = (cycle_payload or {}).get("probe_feedback") or {}
     return {
         "started_at": started_at.isoformat(),
         "finished_at": finished_at.isoformat(),
@@ -328,6 +352,12 @@ def _build_entry(
         },
         "active_runtime_package": (cycle_payload or {}).get("active_runtime_package") or {},
         "best_runtime_package": (cycle_payload or {}).get("best_runtime_package") or {},
+        "selected_active_runtime_package": (cycle_payload or {}).get("selected_active_runtime_package") or {},
+        "selected_best_runtime_package": (cycle_payload or {}).get("selected_best_runtime_package") or {},
+        "selected_deploy_recommendation": (cycle_payload or {}).get("selected_deploy_recommendation") or (cycle_payload or {}).get("deploy_recommendation") or "hold",
+        "selected_package_confidence_label": (cycle_payload or {}).get("selected_package_confidence_label") or (cycle_payload or {}).get("package_confidence_label") or "low",
+        "selected_package_confidence_reasons": list((cycle_payload or {}).get("selected_package_confidence_reasons") or (cycle_payload or {}).get("package_confidence_reasons") or []),
+        "promoted_package_selected": bool((cycle_payload or {}).get("promoted_package_selected")),
         "deploy_recommendation": (cycle_payload or {}).get("deploy_recommendation") or "hold",
         "package_confidence_label": (cycle_payload or {}).get("package_confidence_label") or "low",
         "package_confidence_reasons": package_confidence_reasons,
@@ -341,8 +371,14 @@ def _build_entry(
         "best_raw_research_package": best_raw_package,
         "execution_drag_summary": execution_drag_summary,
         "one_sided_bias_recommendation": one_sided_bias_recommendation,
+        "size_aware_deployment": size_aware_deployment,
+        "current_probe": current_probe,
+        "probe_feedback": probe_feedback,
+        "probe_freshness_hours": current_probe.get("probe_freshness_hours"),
+        "current_probe_path": (cycle_payload or {}).get("current_probe_path"),
         "runtime_load_status": (cycle_payload or {}).get("runtime_load_status") or {},
         "capital_scale_recommendation": (cycle_payload or {}).get("capital_scale_recommendation") or {},
+        "capital_stage_recommendation": (cycle_payload or {}).get("capital_stage_recommendation") or {},
         "recommended_session_policy": (cycle_payload or {}).get("recommended_session_policy") or [],
         "artifacts": (cycle_payload or {}).get("artifacts") or {},
         "hook": hook_result,
@@ -428,6 +464,64 @@ def _build_velocity_summary(entries: list[dict[str, Any]], *, now: datetime) -> 
     }
 
 
+def _cadence_decision(
+    *,
+    entry: dict[str, Any],
+    previous_entry: dict[str, Any] | None,
+    base_interval_seconds: int,
+) -> dict[str, Any]:
+    base_interval = max(60, int(base_interval_seconds))
+    current_probe = entry.get("current_probe") if isinstance(entry.get("current_probe"), dict) else {}
+    previous_probe = (
+        previous_entry.get("current_probe")
+        if isinstance((previous_entry or {}).get("current_probe"), dict)
+        else {}
+    )
+    live_fill_delta = _safe_int(
+        current_probe.get("live_filled_rows_delta"),
+        _safe_int(current_probe.get("live_filled_row_count"), 0)
+        - _safe_int(previous_probe.get("live_filled_row_count"), 0),
+    )
+    validation_delta = _safe_int(
+        current_probe.get("validation_live_filled_rows_delta"),
+        _safe_int(entry.get("validation_live_filled_rows"), 0)
+        - _safe_int((previous_entry or {}).get("validation_live_filled_rows"), 0),
+    )
+    probe_freshness_hours = _safe_float(current_probe.get("probe_freshness_hours"), 9999.0)
+    has_new_evidence = live_fill_delta > 0 or validation_delta > 0
+    if has_new_evidence:
+        multiplier = 0.4 if live_fill_delta > 0 and validation_delta > 0 else 0.5
+        recommended = max(60, int(round(base_interval * multiplier)))
+        mode = "accelerated"
+        reason = "new_fills_or_validation_rows_arrived"
+    elif probe_freshness_hours > 6.0:
+        recommended = min(1800, int(round(base_interval * 2.0)))
+        mode = "slowed"
+        reason = "probe_stale_and_no_new_evidence"
+    else:
+        recommended = min(1200, int(round(base_interval * 1.5)))
+        mode = "slowed"
+        reason = "no_new_evidence"
+    return {
+        "mode": mode,
+        "reason": reason,
+        "base_interval_seconds": int(base_interval),
+        "recommended_interval_seconds": int(recommended),
+        "live_filled_rows_delta": int(live_fill_delta),
+        "validation_live_filled_rows_delta": int(validation_delta),
+        "probe_freshness_hours": round(probe_freshness_hours, 4) if probe_freshness_hours < 9999.0 else None,
+    }
+
+
+def _resolved_max_cycles(args: argparse.Namespace) -> int:
+    explicit_max_cycles = _safe_int(getattr(args, "max_cycles", 0), 0)
+    if explicit_max_cycles > 0:
+        return explicit_max_cycles
+    if bool(getattr(args, "once", False)):
+        return 1
+    return 0
+
+
 def _write_loop_reports(loop_report_dir: Path, entry: dict[str, Any]) -> dict[str, Any]:
     loop_report_dir.mkdir(parents=True, exist_ok=True)
     latest_path = loop_report_dir / "latest.json"
@@ -450,6 +544,36 @@ def _write_loop_reports(loop_report_dir: Path, entry: dict[str, Any]) -> dict[st
     history_entries = _parse_history_entries(history_path)
     history_entries.append(entry)
     payload["velocity_summary"] = _build_velocity_summary(history_entries, now=_now_utc())
+    payload["decision"] = entry.get("decision") or {}
+    payload["decision_action"] = (entry.get("decision") or {}).get("action") or "hold"
+    payload["decision_reason"] = (entry.get("decision") or {}).get("reason") or "cycle_failed"
+    payload["arr"] = entry.get("arr") or {}
+    payload["deploy_recommendation"] = entry.get("deploy_recommendation") or "hold"
+    payload["selected_deploy_recommendation"] = entry.get("selected_deploy_recommendation") or payload["deploy_recommendation"]
+    payload["package_confidence_label"] = entry.get("package_confidence_label") or "low"
+    payload["selected_package_confidence_label"] = entry.get("selected_package_confidence_label") or payload["package_confidence_label"]
+    payload["package_confidence_reasons"] = list(entry.get("package_confidence_reasons") or [])
+    payload["selected_package_confidence_reasons"] = list(entry.get("selected_package_confidence_reasons") or payload["package_confidence_reasons"])
+    payload["public_forecast_selection"] = entry.get("public_forecast_selection") or {}
+    payload["public_forecast_source_artifact"] = entry.get("public_forecast_source_artifact")
+    payload["active_runtime_package"] = entry.get("active_runtime_package") or {}
+    payload["best_runtime_package"] = entry.get("best_runtime_package") or {}
+    payload["selected_active_runtime_package"] = entry.get("selected_active_runtime_package") or {}
+    payload["selected_best_runtime_package"] = entry.get("selected_best_runtime_package") or {}
+    payload["promoted_package_selected"] = bool(entry.get("promoted_package_selected"))
+    payload["best_live_package"] = entry.get("best_live_package") or {}
+    payload["best_raw_research_package"] = entry.get("best_raw_research_package") or {}
+    payload["execution_drag_summary"] = entry.get("execution_drag_summary") or {}
+    payload["one_sided_bias_recommendation"] = entry.get("one_sided_bias_recommendation") or {}
+    payload["size_aware_deployment"] = entry.get("size_aware_deployment") or {}
+    payload["current_probe"] = entry.get("current_probe") or {}
+    payload["probe_feedback"] = entry.get("probe_feedback") or {}
+    payload["probe_freshness_hours"] = entry.get("probe_freshness_hours")
+    payload["current_probe_path"] = entry.get("current_probe_path")
+    payload["cadence"] = entry.get("cadence") or {}
+    payload["runtime_load_status"] = entry.get("runtime_load_status") or {}
+    payload["capital_scale_recommendation"] = entry.get("capital_scale_recommendation") or {}
+    payload["capital_stage_recommendation"] = entry.get("capital_stage_recommendation") or {}
     latest_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     with history_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry, sort_keys=True) + "\n")
@@ -476,6 +600,9 @@ def _write_loop_reports(loop_report_dir: Path, entry: dict[str, Any]) -> dict[st
                 f"- Last missing evidence: `{'; '.join(entry.get('package_missing_evidence') or ['none'])}`",
                 f"- Last public forecast source: `{entry.get('public_forecast_source_artifact', 'none')}`",
                 f"- Last public forecast selection reason: `{((entry.get('public_forecast_selection') or {}).get('selection_reason') or 'none')}`",
+                f"- Last probe freshness hours: `{entry.get('probe_freshness_hours')}`",
+                f"- Last validation row delta: `{(((entry.get('current_probe') or {}).get('validation_live_filled_rows_delta')) or 0)}`",
+                f"- Last live-fill delta: `{(((entry.get('current_probe') or {}).get('live_filled_rows_delta')) or 0)}`",
                 f"- Last best package profile: `{((entry.get('best_runtime_package') or {}).get('profile') or {}).get('name', 'none')}`",
                 f"- Last active package profile: `{((entry.get('active_runtime_package') or {}).get('profile') or {}).get('name', 'none')}`",
                 f"- Last best package session-policy records: `{len(((entry.get('best_runtime_package') or {}).get('session_policy') or []))}`",
@@ -495,6 +622,13 @@ def _write_loop_reports(loop_report_dir: Path, entry: dict[str, Any]) -> dict[st
                 f"- Last capital status: `{((entry.get('capital_scale_recommendation') or {}).get('status') or 'hold')}`",
                 f"- Last capital tranche (USD): `{((entry.get('capital_scale_recommendation') or {}).get('recommended_tranche_usd') or 0)}`",
                 f"- Last capital reason: `{((entry.get('capital_scale_recommendation') or {}).get('reason') or 'none')}`",
+                f"- Last capital stage: `{((entry.get('capital_stage_recommendation') or {}).get('recommended_stage') or 1)}`",
+                f"- Last capital max trade (USD): `{((entry.get('capital_stage_recommendation') or {}).get('recommended_max_trade_usd') or 10)}`",
+                f"- Last stage guardrails passed: `{((entry.get('capital_stage_recommendation') or {}).get('promotion_guardrails_passed') or False)}`",
+                f"- Last stage reason: `{((entry.get('capital_stage_recommendation') or {}).get('stage_reason') or 'none')}`",
+                f"- Next cadence mode: `{((entry.get('cadence') or {}).get('mode') or 'none')}`",
+                f"- Next cadence seconds: `{((entry.get('cadence') or {}).get('recommended_interval_seconds') or 0)}`",
+                f"- Next cadence reason: `{((entry.get('cadence') or {}).get('reason') or 'none')}`",
                 "",
                 "## Timebound Velocity",
                 "",
@@ -518,12 +652,13 @@ def _write_loop_reports(loop_report_dir: Path, entry: dict[str, Any]) -> dict[st
     return payload
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db-path", type=Path, default=DEFAULT_DB_PATH)
     parser.add_argument("--strategy-env", type=Path, default=DEFAULT_BASE_ENV)
     parser.add_argument("--override-env", type=Path, default=DEFAULT_OVERRIDE_ENV)
     parser.add_argument("--cycle-report-dir", type=Path, default=DEFAULT_CYCLE_REPORT_DIR)
+    parser.add_argument("--current-probe-latest", type=Path, default=DEFAULT_CURRENT_PROBE_LATEST)
     parser.add_argument("--loop-report-dir", type=Path, default=DEFAULT_LOOP_REPORT_DIR)
     parser.add_argument("--hypothesis-report-dir", type=Path, default=DEFAULT_HYPOTHESIS_REPORT_DIR)
     parser.add_argument("--regime-policy-report-dir", type=Path, default=DEFAULT_REGIME_POLICY_REPORT_DIR)
@@ -555,6 +690,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--restart-on-promote", action="store_true")
     parser.add_argument("--interval-seconds", type=int, default=300)
     parser.add_argument("--max-cycles", type=int, default=0)
+    parser.add_argument("--once", action="store_true")
     parser.add_argument("--on-promote-command", default="")
     parser.add_argument("--arr-tsv-out", type=Path, default=DEFAULT_ARR_TSV)
     parser.add_argument("--arr-svg-out", type=Path, default=DEFAULT_ARR_SVG)
@@ -576,13 +712,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-hypothesis-lab", action="store_true")
     parser.add_argument("--skip-regime-policy-lab", action="store_true")
     parser.add_argument("--skip-hypothesis-frontier-render", action="store_true")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def main() -> int:
     args = parse_args()
+    max_cycles = _resolved_max_cycles(args)
     cycle_count = 0
     while True:
+        history_entries = _parse_history_entries(args.loop_report_dir / "history.jsonl")
+        previous_entry = history_entries[-1] if history_entries else None
         started_at = _now_utc()
         cycle_command = _build_cycle_command(args)
         cycle_result = subprocess.run(
@@ -610,6 +749,11 @@ def main() -> int:
             finished_at=finished_at,
             hook_result=hook_result,
         )
+        entry["cadence"] = _cadence_decision(
+            entry=entry,
+            previous_entry=previous_entry,
+            base_interval_seconds=int(args.interval_seconds),
+        )
         if not args.skip_hypothesis_lab:
             entry["hypothesis_lab"] = _run_hypothesis_lab(args)
         if not args.skip_regime_policy_lab:
@@ -621,9 +765,13 @@ def main() -> int:
             loop_payload["hypothesis_frontier_render"] = _render_hypothesis_frontier(args)
         print(json.dumps(loop_payload, indent=2, sort_keys=True))
         cycle_count += 1
-        if args.max_cycles and cycle_count >= args.max_cycles:
+        if max_cycles and cycle_count >= max_cycles:
             return 0
-        sleep_seconds = max(0.0, float(args.interval_seconds) - (finished_at - started_at).total_seconds())
+        recommended_interval_seconds = _safe_float(
+            ((entry.get("cadence") or {}).get("recommended_interval_seconds")),
+            float(args.interval_seconds),
+        )
+        sleep_seconds = max(0.0, recommended_interval_seconds - (finished_at - started_at).total_seconds())
         time.sleep(sleep_seconds)
 
 

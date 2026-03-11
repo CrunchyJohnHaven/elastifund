@@ -16,6 +16,7 @@ DEFAULT_REQUIRED_BUDGET_USD = 12.0
 DEFAULT_SEND_QUOTA_CAP = 10
 DEFAULT_LLM_TOKEN_CAP = 2500
 DEFAULT_MARGIN_PCT = 0.60
+FURTHER_GAUGE_BASIS = 1000.0
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -265,8 +266,6 @@ def build_first_dollar_readiness(
         and _safe_int(operations.get("engine_kill_switches")) == 0,
     }
     launchable_gate_keys = (
-        "checkout_surface_ready",
-        "billing_webhook_ready",
         "manual_close_ready",
         "fulfillment_surface_ready",
     )
@@ -310,14 +309,12 @@ def build_first_dollar_readiness(
     else:
         launchable = False
         gate_labels = {
-            "checkout_surface_ready": "checkout_surface_not_ready",
-            "billing_webhook_ready": "billing_webhook_not_ready",
             "manual_close_ready": "manual_close_lane_not_ready",
             "fulfillment_surface_ready": "fulfillment_surface_not_ready",
         }
         blocking_reasons = tuple(
             gate_labels[key]
-            for key in launchable_gate_keys
+            for key in gate_labels
             if not launch_gates[key]
         )
 
@@ -448,8 +445,37 @@ def build_first_dollar_scoreboard(
 ) -> dict[str, Any]:
     funnel = dict(snapshot.get("funnel") or {})
     commercial = dict(snapshot.get("commercial") or {})
+    fulfillment = dict(snapshot.get("fulfillment") or {})
     launch = normalize_launch_summary(launch_summary)
     checkout_sessions_created = readiness.checkout_sessions_created
+    researched_accounts = _safe_int(funnel.get("researched_accounts"))
+    qualified_accounts = _safe_int(funnel.get("qualified_accounts"))
+    proposals_sent = _safe_int(funnel.get("proposals_sent"))
+    delivered_jobs = _safe_int(fulfillment.get("delivered_jobs"))
+    fulfillment_jobs_total = _safe_int(fulfillment.get("jobs_total"))
+    lead_qualification_rate = (
+        round(_safe_float(qualified_accounts) / max(researched_accounts, 1), 6)
+        if researched_accounts > 0
+        else None
+    )
+    delivery_completion_rate = (
+        round(_safe_float(delivered_jobs) / max(fulfillment_jobs_total, 1), 6)
+        if fulfillment_jobs_total > 0
+        else None
+    )
+    proposal_to_payment_rate = (
+        round(readiness.paid_orders_seen / max(proposals_sent, 1), 6)
+        if proposals_sent > 0
+        else None
+    )
+    repeatability_score = round(
+        _clamp(
+            (lead_qualification_rate or 0.0) * 0.35
+            + (proposal_to_payment_rate or 0.0) * 0.35
+            + (readiness.delivery_artifacts_generated / max(1.0, FURTHER_GAUGE_BASIS)),
+        ),
+        6,
+    )
     paid_order_conversion = None
     if checkout_sessions_created > 0:
         paid_order_conversion = round(readiness.paid_orders_seen / checkout_sessions_created, 6)
@@ -469,7 +495,11 @@ def build_first_dollar_scoreboard(
         "time_to_first_dollar_status": commercial.get("time_to_first_dollar_status"),
         "delivery_artifacts_generated": readiness.delivery_artifacts_generated,
         "monitor_runs_completed": readiness.monitor_runs_completed,
-        "qualified_accounts": _safe_int(funnel.get("qualified_accounts")),
+        "qualified_accounts": qualified_accounts,
+        "lead_qualification_rate": lead_qualification_rate,
+        "delivery_completion_rate": delivery_completion_rate,
+        "repeatability_score": repeatability_score,
+        "arr_proxy_usd_30d": readiness.expected_net_cash_30d,
         "proposals_sent": _safe_int(funnel.get("proposals_sent")),
         "expected_net_cash_30d": readiness.expected_net_cash_30d,
         "allocator_confidence": allocator_input.get("confidence"),

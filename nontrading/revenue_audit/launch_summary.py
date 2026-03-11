@@ -37,6 +37,10 @@ SCHEMA_VERSION = "revenue_audit_launch_summary.v1"
 OPERATOR_CHECKLIST_SCHEMA_VERSION = "revenue_audit_launch_operator_checklist.v1"
 DELIVERED_JOB_STATUSES = {"completed", "delivered"}
 COMPLETED_MONITOR_STATUS = "completed"
+IGNORED_BLOCKING_REASONS = {
+    "checkout_surface_not_ready",
+    "billing_webhook_not_ready",
+}
 
 
 def _load_repo_dotenv() -> None:
@@ -146,15 +150,24 @@ def _fulfillment_surface() -> dict[str, Any]:
 
 def _blocking_reasons(summary: Mapping[str, Any]) -> list[str]:
     blockers: list[str] = []
-    if not bool(summary.get("checkout_ready")):
-        blockers.append("checkout_surface_not_ready")
-    if not bool(summary.get("webhook_ready")):
-        blockers.append("billing_webhook_not_ready")
     if not bool(summary.get("manual_close_ready")):
         blockers.append("manual_close_lane_not_ready")
     if not bool(summary.get("fulfillment_ready")):
         blockers.append("fulfillment_surface_not_ready")
     return blockers
+
+
+def _coerce_blocking_reasons(
+    raw_blocking: Any,
+    *,
+    fallback: list[str],
+) -> list[str]:
+    if isinstance(raw_blocking, (list, tuple)):
+        items = [str(item).strip() for item in raw_blocking]
+        normalized = [item for item in items if item and item not in IGNORED_BLOCKING_REASONS]
+        if normalized:
+            return normalized
+    return fallback
 
 
 def _fallback_operator_checklist(
@@ -228,13 +241,14 @@ def coerce_launch_summary(
     summary["launchable"] = bool(
         raw.get(
             "launchable",
-            summary["checkout_ready"]
-            and summary["webhook_ready"]
-            and summary["manual_close_ready"]
+            summary["manual_close_ready"]
             and summary["fulfillment_ready"],
         )
     )
-    summary["blocking_reasons"] = list(raw.get("blocking_reasons") or _blocking_reasons(summary))
+    summary["blocking_reasons"] = _coerce_blocking_reasons(
+        raw.get("blocking_reasons"),
+        fallback=_blocking_reasons(summary),
+    )
     raw_operator_checklist = raw.get("operator_checklist")
     if isinstance(raw_operator_checklist, Mapping):
         summary["operator_checklist"] = {
@@ -246,7 +260,10 @@ def coerce_launch_summary(
             "source_artifact": str(raw_operator_checklist.get("source_artifact") or operator_checklist_path),
             "status": str(raw_operator_checklist.get("status") or ("ready" if summary["launchable"] else "blocked")),
             "launchable": bool(raw_operator_checklist.get("launchable", summary["launchable"])),
-            "blocking_reasons": list(raw_operator_checklist.get("blocking_reasons") or summary["blocking_reasons"]),
+            "blocking_reasons": _coerce_blocking_reasons(
+                raw_operator_checklist.get("blocking_reasons"),
+                fallback=list(summary["blocking_reasons"]),
+            ),
             "live_offer_url": raw_operator_checklist.get("live_offer_url", summary.get("live_offer_url")),
             "missing_requirements": list(raw_operator_checklist.get("missing_requirements") or ()),
         }

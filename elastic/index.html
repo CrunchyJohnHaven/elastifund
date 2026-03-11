@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Elastifund / Elastic | A public reference architecture for agentic work</title>
-  <meta name="description" content="Elastifund frames Elastic as the system memory, evaluation layer, and public reference architecture that makes agentic work legible.">
+  <title>Elastifund / Elastic | Why Elastic matters for agentic AI</title>
+  <meta name="description" content="An employee-facing Elastic route showing how Elastifund uses Elastic as system memory, evaluation, workflow control, and public publishing for agentic AI.">
   <link rel="stylesheet" href="/site.css">
   <script src="/site.js" defer></script>
 </head>
@@ -16,7 +16,7 @@
           <span class="brand-mark"></span>
           <span class="brand-text">
             <span class="brand-name">Elastifund</span>
-            <span class="brand-subtitle">Elastic-backed public reference architecture</span>
+            <span class="brand-subtitle">Elastic-backed proof surface for agentic AI</span>
           </span>
         </a>
         <nav class="header-nav" aria-label="Primary">
@@ -38,46 +38,61 @@
       <section class="route-hero">
         <div class="container route-hero-grid">
           <div>
-            <span class="eyebrow">Why Elastic</span>
+            <span class="eyebrow">Elastic employee route</span>
             <h1>Open-source agents need a system memory. Elastic is the Search AI platform that makes them reliable.</h1>
             <p class="route-copy">
-              Elastifund is not pitching Elastic as a dashboard add-on. It is a public reference architecture for agentic work: one shared substrate for memory, evaluation, observability, publishing, and governed workflow across both trading and non-trading workers.
+              If you work on Search AI, Agent Builder, workflows, or Observability, this is the fast answer: Elastifund uses Elastic as the shared substrate for system memory, evaluation, workflow control, and public publishing across both trading and JJ-N worker families.
             </p>
             <p class="route-note">
-              That is the partner surface. The trading board provides one proof lane, JJ-N provides the next revenue wedge, and the live route shows how checked-in artifacts can stay legible enough for contributors, operators, and executives at the same time.
+              This route is paper-mode safe by design. It reads sanitized checked-in artifacts and repo-backed docs only, so the story stays public, technical, and free of implied browser-side Elastic access.
             </p>
-            <div class="cta-row">
-              <a class="button button-primary" href="/live/">Open the live board</a>
-              <a class="button button-secondary" href="https://github.com/CrunchyJohnHaven/elastifund" target="_blank" rel="noopener">Explore the repo</a>
+            <div class="badge-row">
+              <span class="tag neutral freshness-badge" data-freshness-badge="snapshot">snapshot freshness</span>
+              <span class="tag neutral freshness-badge" data-freshness-badge="btc5">btc5 freshness</span>
+              <span class="tag neutral freshness-badge" data-freshness-badge="forecast">forecast freshness</span>
+              <span class="tag neutral freshness-badge" data-freshness-badge="jjn">jj-n freshness</span>
             </div>
+            <div class="cta-row">
+              <a class="button button-primary" href="/live/">Read the checked-in live board</a>
+              <a class="button button-secondary" href="https://github.com/CrunchyJohnHaven/elastifund" target="_blank" rel="noopener">Explore the repo</a>
+              <a class="button button-secondary" href="https://github.com/CrunchyJohnHaven/elastifund/blob/main/docs/ELASTIC_INTEGRATION.md" target="_blank" rel="noopener">Read the Elastic guide</a>
+            </div>
+            <a class="inline-link" href="/develop/">Start in paper mode</a>
           </div>
 
-          <aside class="status-panel">
-            <div class="status-panel-header">
+          <aside class="proof-card">
+            <div class="proof-card-header">
               <div>
-                <div class="panel-kicker">Public proof today</div>
-                <h3>Searchable evidence over narrative drift</h3>
+                <div class="panel-kicker">What is public today</div>
+                <h3>Elastic is the substrate, not a decorative observability layer.</h3>
               </div>
-              <span class="tag neutral">Reference architecture</span>
+              <span class="tag neutral">Checked-in proof only</span>
             </div>
-            <dl class="info-list">
-              <div class="info-row">
-                <dt>Runtime split</dt>
-                <dd data-fill="runtime_split_summary"></dd>
+            <p class="card-copy">
+              Trading is one proof lane, not the whole story. The same substrate also supports JJ-N, evaluation, publishing, and contribution paths that stay honest about what is blocked versus what is live.
+            </p>
+            <div class="proof-stat-grid">
+              <div class="proof-stat">
+                <div class="proof-stat-label">Runtime split</div>
+                <div class="proof-stat-value proof-stat-value-small" data-fill="runtime_split_summary"></div>
+                <div class="proof-stat-note">The public site keeps worker families and claim surfaces separated.</div>
               </div>
-              <div class="info-row">
-                <dt>Trading proof</dt>
-                <dd><span data-fill="btc5_live_rows"></span> rows / <span data-fill="btc5_live_pnl"></span></dd>
+              <div class="proof-stat">
+                <div class="proof-stat-label">Trading proof lane</div>
+                <div class="proof-stat-value" data-fill="btc5_live_pnl"></div>
+                <div class="proof-stat-note"><span data-fill="btc5_live_rows"></span> live-filled BTC5 rows</div>
               </div>
-              <div class="info-row">
-                <dt>Worker wedge</dt>
-                <dd data-fill="jjn_offer_name"></dd>
+              <div class="proof-stat">
+                <div class="proof-stat-label">JJ-N wedge</div>
+                <div class="proof-stat-value proof-stat-value-small" data-fill="jjn_offer_name"></div>
+                <div class="proof-stat-note"><span data-fill="jjn_claim_status"></span></div>
               </div>
-              <div class="info-row">
-                <dt>Verification</dt>
-                <dd data-fill="verification_summary"></dd>
+              <div class="proof-stat">
+                <div class="proof-stat-label">Verification</div>
+                <div class="proof-stat-value proof-stat-value-small" data-fill="verification_summary"></div>
+                <div class="proof-stat-note">Searchable evidence beats hand-written platform claims.</div>
               </div>
-            </dl>
+            </div>
           </aside>
         </div>
       </section>
@@ -85,29 +100,158 @@
       <section class="page-section">
         <div class="container">
           <div class="section-header">
-            <div class="section-kicker">Why the fit is strong</div>
-            <h2>Elastifund gives Elastic a public, technically serious surface for agentic work.</h2>
+            <div class="section-kicker">Why this matters for agentic AI</div>
+            <h2>Elastic fits the parts of agentic systems that usually break first.</h2>
+            <p class="section-copy">The claim here is not “agents need more dashboards.” It is that useful agents need retrieval, grounded context, observability, evaluation, and governed workflow in one substrate.</p>
           </div>
           <div class="surface-grid">
             <article class="surface-card">
-              <div class="tag good">System memory</div>
-              <h3>Claims stay tied to searchable evidence instead of drifting into prose.</h3>
-              <p class="surface-copy">The site, runtime snapshots, and operating docs can all point back to the same checked-in artifact set.</p>
+              <div class="tag good">Search</div>
+              <h3>Long-running agents need memory that stays queryable after the prompt window is gone.</h3>
+              <p class="surface-copy">Elastic is the retrieval layer that keeps reports, runtime truth, dispatches, and worker outputs available as searchable operating memory.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag good">Context engineering</div>
+              <h3>Better agent context comes from artifact truth, not whatever the last run happened to remember.</h3>
+              <p class="surface-copy">Runtime snapshots, tests, dispatches, and worker state can be pulled back into the loop as grounded context instead of freehand summaries.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag good">Observability</div>
+              <h3>Agent behavior needs traces, telemetry, and anomalies, not just final outputs.</h3>
+              <p class="surface-copy">The Elastic layer is where signal quality, latency, kill rules, and orderbook conditions can remain legible across long runtimes.</p>
             </article>
             <article class="surface-card">
               <div class="tag good">Evaluation</div>
-              <h3>Promotion depends on labeled evidence, not blended dashboards.</h3>
-              <p class="surface-copy">Trading proof, forecast confidence, and JJ-N launch-prep work are separated so the system stays legible.</p>
+              <h3>Promotion decisions need labeled proof and blocked-claim discipline.</h3>
+              <p class="surface-copy">Trading proof, forecast surfaces, JJ-N readiness, and verification stay separated so the system can improve without flattening unlike-for-like evidence.</p>
             </article>
             <article class="surface-card">
-              <div class="tag good">Employee learning path</div>
-              <h3>Contributors can clone the repo, run it, and inspect the proof surfaces.</h3>
-              <p class="surface-copy">The project is understandable from the outside because the route map, live board, and build path all agree.</p>
+              <div class="tag good">Workflow control</div>
+              <h3>Agentic systems need governed automation, approval gates, and publishable outputs.</h3>
+              <p class="surface-copy">Elastic is a strong fit for the control layer where anomaly signals, approvals, and publishing triggers can tighten or pause behavior.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">Elastic in the middle</div>
+            <h2>Trading workers and JJ-N write into the same evidence layer.</h2>
+            <p class="section-copy">That shared layer is what makes evaluation, workflow control, and public publishing coherent instead of split across disconnected tools.</p>
+          </div>
+          <article class="card">
+            <div class="diagram" style="grid-template-columns: repeat(3, minmax(0, 1fr));">
+              <article class="diagram-step">
+                <div class="diagram-title">Trading workers</div>
+                <div class="diagram-copy">Research, simulation, execution, and market telemetry generate decisions, traces, and review points.</div>
+              </article>
+              <article class="diagram-step">
+                <div class="diagram-title">Elastic-backed evidence layer</div>
+                <div class="diagram-copy">System memory, searchable artifacts, observability, and public-safe truth surfaces stay in one shared substrate.</div>
+              </article>
+              <article class="diagram-step">
+                <div class="diagram-title">JJ-N workers</div>
+                <div class="diagram-copy">Revenue workflow state, approvals, reports, and launch-prep evidence land in the same searchable layer.</div>
+              </article>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container split-grid">
+          <article class="card">
+            <div class="card-kicker">Evaluation + workflow control</div>
+            <h3>One substrate decides what gets promoted, paused, or published.</h3>
+            <p class="card-copy">
+              Blocked claims, anomaly-triggered caution, approval gates, and verification summaries can all point back to the same searchable evidence instead of drifting into separate narratives.
+            </p>
+          </article>
+          <article class="card">
+            <div class="card-kicker">Public publishing loop</div>
+            <h3>The site and docs stay tied to artifacts instead of fake screenshots.</h3>
+            <p class="card-copy">
+              <code>/live/</code>, the leaderboards, repo docs, and this route are strongest when they are generated from or anchored to checked-in contracts. That is why public scope stays separate from direct Elastic browser reads.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">What Elastic is doing in this system today</div>
+            <h2>Concrete Elastic-backed surfaces already visible from public-safe artifacts.</h2>
+            <p class="section-copy">No hidden browser tab is required for this route. The repo and checked-in outputs are enough to show the shape of the system.</p>
+          </div>
+          <div class="surface-grid">
+            <article class="surface-card">
+              <div class="tag neutral">Searchable artifacts</div>
+              <h3>The repo already exposes an evidence inventory that is easy to query and publish.</h3>
+              <p class="surface-copy"><span data-fill="strategy_total"></span> tracked strategies, <span data-fill="dispatch_orders"></span> active work-orders, <span data-fill="benchmarked_systems"></span> benchmarked systems, runtime snapshots, and JJ-N reports make the public story inspectable.</p>
             </article>
             <article class="surface-card">
-              <div class="tag good">Partner narrative</div>
-              <h3>A public reference architecture beats a vague agent demo.</h3>
-              <p class="surface-copy">It shows how search, observability, evaluation, and workflow controls work together in a real system.</p>
+              <div class="tag neutral">Telemetry</div>
+              <h3>Signals, trades, kill events, and orderbook state are first-class observability surfaces.</h3>
+              <p class="surface-copy">The Elastic guide defines signal, trade, kill-rule, and orderbook indices so worker behavior can be inspected instead of guessed.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag neutral">Traces</div>
+              <h3>The signal-to-order path is treated as a trace problem, not just a logging problem.</h3>
+              <p class="surface-copy">Latency across model calls, exchange APIs, internal orchestration, and fill detection is part of the operator surface described in the repo today.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag neutral">ML / anomaly jobs</div>
+              <h3>Anomaly detection is part of the safety model, not a decorative extra.</h3>
+              <p class="surface-copy">VPIN spikes, OFI divergence, spread shocks, and confidence drift are explicitly framed as Elastic ML feedback that can tighten posture or trigger review.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag neutral">Operator dashboards</div>
+              <h3>The repo already names the dashboards that matter.</h3>
+              <p class="surface-copy">Trading Overview, Signal Quality, Kill Rule Monitor, Orderbook Health, APM, and anomaly monitoring are public-safe dashboard concepts even when this route does not read them live.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag neutral">Public publishing loop</div>
+              <h3>Elastic supports a route from internal evidence to public-safe proof.</h3>
+              <p class="surface-copy">The site, README, docs, and leaderboards can all stay anchored to sanitized contracts so the public narrative remains useful without exposing private runtime access.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">What an Elastic employee can do next</div>
+            <h2>Use the public route, then contribute through paper-mode-safe entry points.</h2>
+          </div>
+          <div class="path-grid">
+            <article class="path-card">
+              <div class="path-kicker">Read the proof surface</div>
+              <h3>Open <code>/live/</code> and inspect the current artifact contract first.</h3>
+              <p class="path-copy">That route shows runtime posture, BTC5 proof, forecast labels, JJ-N readiness, and freshness badges without pretending to be a live Elastic browser.</p>
+              <a class="inline-link" href="/live/">Open /live/</a>
+            </article>
+            <article class="path-card">
+              <div class="path-kicker">Trace the repo</div>
+              <h3>Follow the implementation and the Elastic guide in the same place.</h3>
+              <p class="path-copy">The repo root is the public proof surface, and <code>docs/ELASTIC_INTEGRATION.md</code> is the clearest operator map for what Elastic is supposed to do here.</p>
+              <a class="inline-link" href="https://github.com/CrunchyJohnHaven/elastifund" target="_blank" rel="noopener">Explore the GitHub repo</a>
+              <a class="inline-link" href="https://github.com/CrunchyJohnHaven/elastifund/blob/main/docs/ELASTIC_INTEGRATION.md" target="_blank" rel="noopener">Read the Elastic guide</a>
+            </article>
+            <article class="path-card">
+              <div class="path-kicker">Boot in paper mode</div>
+              <h3>Use the verified path into the repo before touching any sensitive lane.</h3>
+              <p class="path-copy"><code>/develop/</code> keeps the onboarding flow narrow: evidence first, root quickstart second, paper mode by default, and explicit ownership once you edit.</p>
+              <a class="inline-link" href="/develop/">Open /develop/</a>
+            </article>
+            <article class="path-card">
+              <div class="path-kicker">Contribute safely</div>
+              <h3>Start with memory, evaluation, workflow, and publishing improvements.</h3>
+              <p class="path-copy">The best first contributions are public-safe: route copy, artifact contracts, evaluation labels, dashboard definitions, workflow wiring, and paper-mode validation. Capital changes stay behind human review.</p>
+              <a class="inline-link" href="/develop/">Start a paper-mode contribution</a>
             </article>
           </div>
         </div>
@@ -116,50 +260,19 @@
       <section class="page-section">
         <div class="container split-grid">
           <article class="card">
-            <div class="card-kicker">What Elastic gets</div>
-            <h3>A public-safe product story that can sell the system.</h3>
+            <div class="card-kicker">Paper mode + public scope</div>
+            <h3>This route stays useful because it is constrained.</h3>
             <p class="card-copy">
-              Elastifund now has a homepage that leads with proof, a live route that reads only sanitized checked-in artifacts, and separate trading and worker boards that show how one substrate supports different worker families without collapsing them into one fake metric.
+              Public browser surfaces stay on sanitized checked-in artifacts, explicit proof labels, freshness badges, and repo-backed docs. That keeps the story inspectable without inventing a live Elastic browser in public.
             </p>
           </article>
           <article class="card">
-            <div class="card-kicker">What is already public</div>
-            <h3>The evidence surface exists today.</h3>
+            <div class="card-kicker">Guardrails</div>
+            <h3>Platform narrative does not override blocked-claim discipline.</h3>
             <p class="card-copy">
-              <span data-fill="strategy_total"></span> tracked strategies, <span data-fill="dispatch_orders"></span> active work-orders, <span data-fill="benchmarked_systems"></span> benchmarked systems, the BTC5 sleeve proof surface, and the JJ-N Phase 0 board are all visible without direct browser access to Elastic.
+              Fund-level realized ARR remains blocked until reconciliation closes, JJ-N remains launch prep until published evidence says otherwise, and contribution stays paper-mode first unless a narrower policy says more.
             </p>
           </article>
-        </div>
-      </section>
-
-      <section class="page-section">
-        <div class="container">
-          <div class="section-header">
-            <div class="section-kicker">Operating loop</div>
-            <h2>How the substrate maps to the product.</h2>
-          </div>
-          <div class="diagram">
-            <article class="diagram-step">
-              <div class="diagram-title">Workers</div>
-              <div class="diagram-copy">Trading workers and JJ-N generate decisions, traces, reports, and review points.</div>
-            </article>
-            <article class="diagram-step">
-              <div class="diagram-title">Memory</div>
-              <div class="diagram-copy">Artifacts and telemetry remain searchable instead of disappearing into local state.</div>
-            </article>
-            <article class="diagram-step">
-              <div class="diagram-title">Evaluation</div>
-              <div class="diagram-copy">Confidence, blocked claims, and promotion decisions are surfaced explicitly.</div>
-            </article>
-            <article class="diagram-step">
-              <div class="diagram-title">Publishing</div>
-              <div class="diagram-copy">The website, docs, and runtime snapshots all read from the same truth surfaces.</div>
-            </article>
-            <article class="diagram-step">
-              <div class="diagram-title">Contribution</div>
-              <div class="diagram-copy">Builders can enter through the repo, live board, or partner framing without losing context.</div>
-            </article>
-          </div>
         </div>
       </section>
     </main>
@@ -169,8 +282,8 @@
         <div class="footer-panel">
           <div>
             <div class="footer-kicker">Elastic route</div>
-            <h3>Reference architecture, not autonomy theater.</h3>
-            <p class="footer-meta">Current proof: <span data-fill="runtime_split_summary"></span>.</p>
+            <h3>Employee-facing proof surface, built from checked-in evidence.</h3>
+            <p class="footer-meta">Current runtime split: <span data-fill="runtime_split_summary"></span>.</p>
           </div>
           <div class="footer-links">
             <a href="/live/">Live</a>
@@ -179,6 +292,7 @@
             <a href="/leaderboards/trading/">Trading</a>
           </div>
           <div class="footer-meta">
+            <div>Verification: <span data-fill="verification_summary"></span>.</div>
             <div>Snapshot: <span data-fill="generated_utc"></span>.</div>
             <div>&copy; <span data-fill="year"></span> Elastifund.</div>
           </div>

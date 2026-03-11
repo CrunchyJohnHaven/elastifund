@@ -1,7 +1,7 @@
 {
   "allocator_guardrail": "comparison_only rows are excluded from live allocator decisions.",
   "evaluation_contract": "inventory/metrics/README.md",
-  "generated_at": "2026-03-10T15:06:04+00:00",
+  "generated_at": "2026-03-10T16:10:00+00:00",
   "items": [
     {
       "comparison_only": false,
@@ -9,7 +9,7 @@
       "excluded_from_allocator": false,
       "label": "Elastifund JJ-N",
       "metrics": {
-        "confidence": 0.1,
+        "confidence": 0.28,
         "cost_usd": 0.0,
         "cycle_time_seconds": 0.0,
         "decision_count": 3,

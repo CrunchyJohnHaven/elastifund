@@ -7,7 +7,7 @@
       "send_quota": 10
     },
     "compliance_status": "warning",
-    "confidence": 0.312,
+    "confidence": 0.28,
     "domain_health_penalty": 0.0,
     "engine_family": "revenue_audit",
     "expected_net_cash_30d": 0.0,
@@ -15,7 +15,7 @@
     "metadata": {
       "arr_lab": {
         "forecast_arr_usd_p50": 0.0,
-        "forecast_confidence": 0.48,
+        "forecast_confidence": 0.4,
         "forecast_confidence_label": "medium",
         "forecast_net_cash_30d_p50": 1488.0,
         "recommended_experiment": "better_monitor_upsell"
@@ -58,7 +58,7 @@
   "arr_lab": {
     "allocator_metadata": {
       "forecast_arr_usd_p50": 0.0,
-      "forecast_confidence": 0.48,
+      "forecast_confidence": 0.4,
       "forecast_confidence_label": "medium",
       "forecast_net_cash_30d_p50": 1488.0,
       "recommended_experiment": "better_monitor_upsell"
@@ -120,17 +120,18 @@
         "10 staged prospects are already in the bridge artifact.",
         "97 cycle reports anchor the funnel-rate assumptions.",
         "2 launch blockers still widen the time-to-cash spread.",
-        "No paid checkout evidence exists yet, so conversion remains partially assumption-driven."
+        "No paid checkout evidence exists yet, so conversion remains partially assumption-driven.",
+        "Recurring-monitor ARR is still modeled from an assumption-only contract."
       ],
       "label": "medium",
-      "score": 0.48
+      "score": 0.4
     },
     "experiments": [
       {
         "expected_arr_lift_usd": 186.27,
         "expected_net_cash_lift_usd_30d": 15.52,
         "experiment_key": "better_monitor_upsell",
-        "information_gain": 0.38,
+        "information_gain": 0.68,
         "label": "Strengthen the recurring-monitor upsell",
         "rank": 1,
         "reason": "Recurring-monitor ARR remains the least proven part of the wedge, so even small win-rate improvements compound into ARR quickly."
@@ -172,7 +173,7 @@
         "reason": "Moving more wins into premium pricing grows cash faster but slightly tests close-rate elasticity."
       }
     ],
-    "generated_at": "2026-03-10T16:08:39+00:00",
+    "generated_at": "2026-03-10T16:10:00+00:00",
     "inputs": {
       "cycle_history": {
         "accounts_researched": 201,
@@ -274,14 +275,14 @@
       "recurring_monitor": {
         "current_arr_usd": 0.0,
         "monthly_price_usd": 299.0,
-        "status": "not_started"
+        "status": "assumption_only"
       }
     },
     "recommended_next_experiment": {
       "expected_arr_lift_usd": 186.27,
       "expected_net_cash_lift_usd_30d": 15.52,
       "experiment_key": "better_monitor_upsell",
-      "information_gain": 0.38,
+      "information_gain": 0.68,
       "label": "Strengthen the recurring-monitor upsell",
       "rank": 1,
       "reason": "Recurring-monitor ARR remains the least proven part of the wedge, so even small win-rate improvements compound into ARR quickly."
@@ -361,7 +362,7 @@
   "comparison_artifact": {
     "allocator_guardrail": "comparison_only rows are excluded from live allocator decisions.",
     "evaluation_contract": "inventory/metrics/README.md",
-    "generated_at": "2026-03-10T16:08:39+00:00",
+    "generated_at": "2026-03-10T16:10:00+00:00",
     "items": [
       {
         "comparison_only": false,
@@ -369,7 +370,7 @@
         "excluded_from_allocator": false,
         "label": "Elastifund JJ-N",
         "metrics": {
-          "confidence": 0.312,
+          "confidence": 0.28,
           "cost_usd": 0.0,
           "cycle_time_seconds": 0.0,
           "decision_count": 3,
@@ -443,12 +444,12 @@
       "billing_webhook_not_ready"
     ],
     "checkout_sessions_created": 0,
-    "confidence": 0.312,
+    "confidence": 0.28,
     "delivery_artifacts_generated": 0,
     "expected_net_cash_30d": 0.0,
     "first_dollar_at": null,
     "first_paid_order_at": null,
-    "generated_at": "2026-03-10T16:08:39+00:00",
+    "generated_at": "2026-03-10T16:10:00+00:00",
     "launch_gates": {
       "billing_webhook_ready": false,
       "checkout_surface_ready": false,
@@ -479,7 +480,7 @@
   },
   "first_dollar_scoreboard": {
     "allocator_compliance_status": "warning",
-    "allocator_confidence": 0.312,
+    "allocator_confidence": 0.28,
     "allocator_required_budget": 12.0,
     "blocking_reasons": [
       "checkout_surface_not_ready",
@@ -534,7 +535,7 @@
     "researched_accounts": 3,
     "simulated_outcomes_recorded": 0
   },
-  "generated_at": "2026-03-10T16:08:39+00:00",
+  "generated_at": "2026-03-10T16:10:00+00:00",
   "headline": {
     "claim_status": "qualification_only",
     "current_phase": "phase_0_pipeline_seeded",
@@ -551,7 +552,7 @@
     "curated_candidates": 14,
     "delivery_artifacts_generated": 0,
     "fulfillment_ready": true,
-    "generated_at": "2026-03-10T16:08:39+00:00",
+    "generated_at": "2026-03-10T16:10:00+00:00",
     "launch_mode": "manual_close_only",
     "launchable": false,
     "live_offer_url": null,
@@ -562,7 +563,7 @@
         "checkout_surface_not_ready",
         "billing_webhook_not_ready"
       ],
-      "generated_at": "2026-03-10T16:08:39+00:00",
+      "generated_at": "2026-03-10T16:10:00+00:00",
       "launchable": false,
       "live_offer_url": null,
       "manual_close_context": {
@@ -769,7 +770,7 @@
     "current_mrr_usd": 0,
     "delivered_audits": 0,
     "enrollments": [],
-    "generated_at": "2026-03-10T16:05:44+00:00",
+    "generated_at": "2026-03-10T16:10:00+00:00",
     "monitor_runs_completed": 0,
     "monthly_price_usd": 299.0,
     "offer": {
@@ -788,7 +789,7 @@
     "schema_version": "revenue_audit_recurring_monitor.v1",
     "source_artifact": "/Users/johnbradley/Desktop/Elastifund/reports/nontrading_recurring_monitor/latest.json",
     "source_db_path": "/Users/johnbradley/Desktop/Elastifund/data/revenue_agent.db",
-    "status": "not_started",
+    "status": "assumption_only",
     "summary": {
       "active_arr_usd": 0.0,
       "active_enrollments": 0,

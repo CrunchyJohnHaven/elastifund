@@ -1,5 +1,10 @@
 # CODEX PLANNING PROMPT — Elastifund Parallel Instance Generator
 
+Status: canonical reusable prompt
+Last updated: 2026-03-11
+Category: checklist
+Canonical: yes
+
 > **Purpose:** Paste this prompt verbatim into Codex Planning. It will return a full execution plan organized by parallel instance. You then paste each instance block into a separate Codex session: "Execute Instance #N — [block]".
 >
 > **Evergreen:** This prompt reads live repo state. No hardcoded dates or balances. The instances discover current state at runtime.
