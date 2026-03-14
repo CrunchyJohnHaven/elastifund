@@ -719,6 +719,21 @@ def main() -> int:
     args = parse_args()
     max_cycles = _resolved_max_cycles(args)
     cycle_count = 0
+    consecutive_no_evidence = 0
+
+    # v2: Load persistent state
+    try:
+        from scripts.btc5_autoresearch_v2 import (
+            enhanced_cadence_decision,
+            load_kill_list,
+            save_kill_list,
+            save_row_hash_cache,
+            v2_cycle_metadata,
+        )
+        v2_available = True
+    except ImportError:
+        v2_available = False
+
     while True:
         history_entries = _parse_history_entries(args.loop_report_dir / "history.jsonl")
         previous_entry = history_entries[-1] if history_entries else None
@@ -749,11 +764,46 @@ def main() -> int:
             finished_at=finished_at,
             hook_result=hook_result,
         )
-        entry["cadence"] = _cadence_decision(
-            entry=entry,
-            previous_entry=previous_entry,
-            base_interval_seconds=int(args.interval_seconds),
-        )
+
+        # v2: Enhanced cadence with consecutive-stale tracking
+        if v2_available:
+            entry["cadence"] = enhanced_cadence_decision(
+                entry=entry,
+                previous_entry=previous_entry,
+                base_interval_seconds=int(args.interval_seconds),
+                consecutive_no_evidence_cycles=consecutive_no_evidence,
+            )
+            # Track consecutive no-evidence cycles
+            current_probe = entry.get("current_probe") if isinstance(entry.get("current_probe"), dict) else {}
+            live_delta = _safe_int(current_probe.get("live_filled_rows_delta"), 0)
+            val_delta = _safe_int(current_probe.get("validation_live_filled_rows_delta"), 0)
+            if live_delta > 0 or val_delta > 0:
+                consecutive_no_evidence = 0
+            else:
+                consecutive_no_evidence += 1
+
+            # v2: Update kill list from hypothesis lab results
+            try:
+                kill_list = load_kill_list()
+                hyp_lab = entry.get("hypothesis_lab") or {}
+                best_hyp = hyp_lab.get("best_hypothesis") or {}
+                if best_hyp:
+                    from scripts.btc5_autoresearch_v2 import evaluate_for_kill
+                    # We don't have raw rows here but we record the kill list state
+                    entry["v2_kill_list_size"] = len(kill_list.get("killed", {}))
+                save_row_hash_cache(
+                    row_hash=str(entry.get("validation_live_filled_rows", 0)),
+                    cycle_result=entry,
+                )
+            except Exception:
+                pass  # v2 features are best-effort
+        else:
+            entry["cadence"] = _cadence_decision(
+                entry=entry,
+                previous_entry=previous_entry,
+                base_interval_seconds=int(args.interval_seconds),
+            )
+
         if not args.skip_hypothesis_lab:
             entry["hypothesis_lab"] = _run_hypothesis_lab(args)
         if not args.skip_regime_policy_lab:

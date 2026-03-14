@@ -408,8 +408,36 @@ def rank_hypothesis_pool(
     max_candidates: int,
     min_live_fills: int,
 ) -> list[HypothesisSpec]:
+    # v2: Load evidence weights and kill list for informed ranking
+    evidence_weights: dict[str, Any] = {}
+    kill_list: dict[str, Any] = {}
+    try:
+        from scripts.btc5_autoresearch_v2 import (
+            build_evidence_weights,
+            evidence_weight_for_hypothesis,
+            is_hypothesis_killed,
+            load_evidence_cache,
+            load_kill_list,
+            save_evidence_cache,
+        )
+        kill_list = load_kill_list()
+        evidence_weights = build_evidence_weights(rows)
+        save_evidence_cache(evidence_weights)
+    except ImportError:
+        pass
+
     ranked: list[tuple[tuple[float, float, int, float], HypothesisSpec]] = []
+    killed_count = 0
     for spec in specs:
+        # v2: Skip killed hypotheses
+        if kill_list and evidence_weights:
+            try:
+                if is_hypothesis_killed(kill_list, spec.name):
+                    killed_count += 1
+                    continue
+            except Exception:
+                pass
+
         history = summarize_hypothesis_history(rows, spec)
         if int(history.get("replay_live_filled_rows") or 0) < min_live_fills:
             continue
@@ -454,6 +482,20 @@ def rank_hypothesis_pool(
             focus_weight *= 1.1
         if spec.max_abs_delta is not None and spec.max_abs_delta <= 0.00005 and spec.session_name != "any":
             focus_weight *= 1.15
+
+        # v2: Apply evidence-informed weights from prior fill performance
+        if evidence_weights:
+            try:
+                ev_weight = evidence_weight_for_hypothesis(
+                    evidence_weights,
+                    direction=spec.direction,
+                    session_name=spec.session_name,
+                    max_abs_delta=spec.max_abs_delta,
+                )
+                focus_weight *= ev_weight
+            except Exception:
+                pass
+
         exploration_score *= focus_weight
         key = (
             exploration_score,
