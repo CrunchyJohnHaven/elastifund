@@ -46,8 +46,11 @@ def test_public_report_moves_from_paid_order_seen_to_revenue_evidence(tmp_path: 
         stripe_api_base="https://api.stripe.com",
         stripe_success_url="https://elastifund.io/success?session_id={CHECKOUT_SESSION_ID}",
         stripe_cancel_url="https://elastifund.io/cancel",
+        recurring_monitor_success_url="https://elastifund.io/monitor/success?session_id={CHECKOUT_SESSION_ID}",
+        recurring_monitor_cancel_url="https://elastifund.io/monitor/cancel",
         stripe_webhook_tolerance_seconds=300,
         pricing=DEFAULT_PRICING,
+        recurring_monitor_pricing=DEFAULT_PRICING,
     )
     checkout_service = RevenueAuditCheckoutService(
         settings,

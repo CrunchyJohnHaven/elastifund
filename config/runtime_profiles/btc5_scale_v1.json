@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "description": "BTC5 scaled profile — $10/trade at stage 1, $20 at stage 2, $50 at stage 3. Delta widened to 0.0040 per 2026-03-14 guardrail fix. UP+DOWN live. Daily loss capped at $100. Regime skew and probe-after-loss active.",
+  "btc5_env_overrides": {
+    "BTC5_PAPER_TRADING": "false",
+    "BTC5_CAPITAL_STAGE": "1",
+    "BTC5_MAX_TRADE_USD": "5.00",
+    "BTC5_STAGE1_MAX_TRADE_USD": "10",
+    "BTC5_STAGE2_MAX_TRADE_USD": "20",
+    "BTC5_STAGE3_MAX_TRADE_USD": "50",
+    "BTC5_BANKROLL_USD": "377",
+    "BTC5_RISK_FRACTION": "0.02",
+    "BTC5_MAX_ABS_DELTA": "0.0040",
+    "BTC5_UP_MAX_BUY_PRICE": "0.52",
+    "BTC5_DOWN_MAX_BUY_PRICE": "0.53",
+    "BTC5_MIN_BUY_PRICE": "0.42",
+    "BTC5_DAILY_LOSS_LIMIT_USD": "100",
+    "BTC5_STAGE1_DAILY_LOSS_LIMIT_USD": "100",
+    "BTC5_STAGE2_DAILY_LOSS_LIMIT_USD": "150",
+    "BTC5_STAGE3_DAILY_LOSS_LIMIT_USD": "200",
+    "BTC5_ENABLE_RECENT_REGIME_SKEW": "1",
+    "BTC5_RECENT_REGIME_FILLS": "12",
+    "BTC5_REGIME_MIN_FILLS_PER_DIRECTION": "5",
+    "BTC5_REGIME_MIN_PNL_GAP_USD": "20",
+    "BTC5_ENABLE_PROBE_AFTER_DAILY_LOSS": "1",
+    "BTC5_ENABLE_PROBE_AFTER_RECENT_LOSS": "1",
+    "BTC5_PROBE_RECENT_FILLS": "8",
+    "BTC5_PROBE_RECENT_MIN_PNL_USD": "0.0",
+    "BTC5_RETRY_POST_ONLY_CROSS": "1",
+    "BTC5_RETRY_POST_ONLY_SAFETY_TICKS": "1"
+  },
+  "stage_gate_requirements": {
+    "stage_1_to_2": {
+      "trailing_12_fills_positive": true,
+      "trailing_40_fills_positive": true,
+      "order_failed_rate_below_25pct": true,
+      "probe_fresh_within_6h": true
+    },
+    "stage_2_to_3": {
+      "all_stage_2_gates": true,
+      "trailing_120_fills_positive": true
+    }
+  },
+  "monitoring": {
+    "pnl_alert_threshold_usd": -50,
+    "alert_window_hours": 24,
+    "min_fills_per_hour_during_active_hours": 1,
+    "active_hours_utc": [14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+  }
+}
