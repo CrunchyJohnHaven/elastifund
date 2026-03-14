@@ -985,8 +985,16 @@ class LivePositionMerger:
 
 
 def default_user_address() -> str | None:
+    """Return the wallet address used for Polymarket data-API position queries.
+
+    Checks POLY_DATA_API_ADDRESS first (the proxy wallet that holds positions),
+    then falls back to POLY_SAFE_ADDRESS / POLYMARKET_FUNDER (the signing address).
+    These differ when using signature_type=1 (POLY_PROXY): the EOA signs on behalf
+    of the proxy wallet, but positions are keyed by the proxy address in the data API.
+    """
     return (
-        os.getenv("POLY_SAFE_ADDRESS")
+        os.getenv("POLY_DATA_API_ADDRESS")
+        or os.getenv("POLY_SAFE_ADDRESS")
         or os.getenv("POLYMARKET_FUNDER")
         or os.getenv("POLYMARKET_FUNDER_ADDRESS")
     )

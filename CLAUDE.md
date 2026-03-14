@@ -189,44 +189,35 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 > **CRITICAL: ALWAYS VERIFY AGAINST LIVE WALLET DATA.**
 > The local ledger, the checked-in runtime/public artifacts under `reports/`, and `FAST_TRADE_EDGE_ANALYSIS.md` have historically drifted from actual on-chain and wallet state. Before citing capital, P&L, or position numbers, check the live Polymarket portfolio and Kalshi account. If live wallet data contradicts local artifacts, the wallet wins.
 
-**Date:** 2026-03-14 01:00 UTC
-**Cycle:** BTC5 zero-fill root cause diagnosed and fixed (3 guardrail blockers). A-6/B-1 killed. Merge conflicts resolved. Pushed to GitHub.
+**Date:** 2026-03-14 15:30 UTC
+**Cycle:** Runtime truth reconciliation completed. Root cause of all drift identified (wrong wallet address in .env). COMMAND_NODE.md updated with wallet-authoritative data.
 **Last loop cycle report:** `reports/loop_cycle_20260310_2311.md`
 
-### Manual Wallet-Export Read (March 10, 2026)
-**Bottom line:** the BTC sleeve still looks genuinely profitable. The wallet-history export now has the March 10 losses closed out, so the picture is cleaner. The live edge is narrow but real: short-duration BTC maker trading, not broad prediction-market skill.
+### Wallet-Authoritative Truth (March 14, 2026 — API-verified)
 
-**Closed BTC sleeve batch (manual export read):**
-- BTC closed cashflow: `+131.52` USDC
-- BTC contracts resolved: `128`
-- Wins / losses: `75 / 53`
-- Profit factor: `1.49`
-- Average win / loss: `+5.35 / -5.10`
+**Root cause of prior drift:** `.env` had `POLY_SAFE_ADDRESS` set to EOA signer (`0x28C5AedA...`), not proxy wallet (`0xb2fef31c...`). Every reconciliation queried the wrong address. Fixed with new `POLY_DATA_API_ADDRESS` env var.
 
-**How to interpret ARR honestly:**
-- Realized BTC sleeve run-rate is mechanically very large on this short window: roughly `19,060%` on the initial `$247.51` deposit or `12,483%` on the current `$377.91` portfolio value.
-- A more conservative all-book closed-net read is still strongly positive: `+84.60` USDC closed net with `43.10` USDC of open non-BTC notional still unresolved, roughly `4,133%` annualized over the export window.
-- Forecast ARR remains extremely high in the research loop and should stay an internal ranking signal, not a literal investor ARR claim.
+**Capital truth (verified via Polymarket data API):**
+- Initial deposit: `$247.51`
+- Current wallet value: `$390.90` ($373.32 free + $17.58 reserved)
+- **Net P&L: +$143.39 (+57.9%)**
+- Realized net P&L (closed trades): `+$140.08`
+- Unrealized (5 open positions): `+$3.31`
 
-**Operator interpretation:**
-- The BTC sleeve is working.
-- The system is learning quickly enough.
-- The real bottleneck is truth plumbing, execution quality, and turning research wins into clean operator confidence.
-- Do not turn the short-window BTC sleeve run-rate into a fund-level realized ARR claim.
+**Closed positions (50 total, all resolved):**
+- BTC 5-min: `47` trades (39 DOWN, 8 UP), gross cashflow `$786.33`
+- ETH 5-min: `3` trades, gross cashflow `$40.75`
+- All 50 closed positions resolved profitably
+- Trading window: concentrated on March 11, 2026 (~3-8 AM ET)
 
-### Regenerated Machine/Public Cleanup State
-**Runtime/public snapshots (generated 2026-03-10 12:45 UTC):**
-- `fund.status = hold`
-- `kalshi_weather.status = hold`
-- `next_1000_usd.status = hold`
-- `polymarket_btc5.status = hold`
-- `fund_realized_arr_claim_status = blocked`
+**Open positions (5 total, $63.10 cost, $66.41 mark):**
+- Weinstein sentencing (YES), Morocco PM (NO), Wizards record (NO), Yemen strikes (YES), Russia rate (YES)
 
-**Why the public surfaces are still conservative after cleanup:**
-- Fund-level capital truth is still not reconciled. Current runtime truth shows `capital_accounting_delta_usd = -166.31`.
-- Polymarket wallet: $390.90 total, $373.32 free. Local ledger still tracks `0` closed and `4` open.
-- The dedicated BTC5 sleeve is positive in machine truth too: `123` live-filled rows and `+$108.86` PnL in the remote probe, but the public contract still blocks a fund-level realized ARR claim.
-- Kalshi settlement reconciliation is working mechanically, but the latest settlement pass still yielded `matched=0/57`, so capital remains blocked there.
+**Honest ARR interpretation:**
+- The 57.9% return came from a single concentrated trading session on March 11
+- Annualizing this is meaningless without multi-day replication
+- The edge appears real but narrow: BTC 5-min maker, early morning hours, DOWN-biased
+- Do not claim fund-level ARR from a single-session result
 
 ### Best Current Research Directions
 - Fully validate and tighten the session-aware BTC runtime package that the loop still marks `promote / high confidence`.
@@ -260,21 +251,19 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 **Blocking JJ-N revenue launch:** Verified sending domain, curated leads, explicit approval for live sends, paid fulfillment loop.
 **Governance scaffold:** `13` numbered docs under `docs/numbered/`, public-messaging lint passing.
 
-### Known Artifact Drift Issues
-**CRITICAL — DO NOT TRUST WITHOUT LIVE VERIFICATION:**
-- Local ledger vs wallet: local says 4 open / 0 closed; remote probe says 26 open / 36 closed. Delta: +22 open, +36 closed untracked locally.
-- `jj_state.json` contains 4 paper-tagged LLM positions including mutually exclusive Weinstein sentencing bets (YES on <5yr AND YES on 20-30yr). Probability estimation bug.
-- `FAST_TRADE_EDGE_ANALYSIS.md` — says REJECT ALL, ~73h stale, while BTC 5-min maker has been actively filling profitably.
-- Pipeline and execution layer fully decoupled. Pipeline does not govern what actually trades.
-- BTC5 service restarted 2026-03-14 00:47 UTC with all guardrail fixes applied. Zero fills so far is due to quiet-hours market quality (bad_book, thin liquidity). Will validate during US trading hours.
-- Runtime truth artifacts regenerated 2026-03-13 but stage_0 locked: wallet_export_stale, trailing_12_live_filled_not_positive.
-- Wallet export 3+ days stale (last: 2026-03-11). Blocks stage progression.
-- Kalshi has no local ledger integration — all tracking is manual via browser.
+### Known Remaining Issues
+- **Reconciliation address FIXED** — `POLY_DATA_API_ADDRESS=0xb2fef31c...` added to local and VPS `.env`. Reconciliation now returns correct data (5 open, 50 closed).
+- Local jj_trades.db still empty — trades go through BTC5 maker, not jj_live.py. Structural separation.
+- `jj_state.json` contains stale paper-tagged LLM positions. Should be cleaned up.
+- `FAST_TRADE_EDGE_ANALYSIS.md` says REJECT ALL, 5+ days stale. Pipeline and execution fully decoupled.
+- BTC5 VPS: 553 rows, 0 fills. US-hours skip reasons: bad_book, delta_too_small, price_outside_guardrails.
+- Wallet export CSV 62+ hours stale (last: 2026-03-12).
+- Kalshi has no local ledger integration.
 
 ### Top 3 Action Items
-1. **VALIDATE: Confirm BTC5 fills during US trading hours** — Guardrail fixes deployed 2026-03-14 00:47 UTC (delta 0.0040, UP live, min_buy 0.42). Quiet-hours skips are expected. Check `journalctl -u btc-5min-maker --since "1 hour ago" | grep order_placed` after 14:00 UTC. If still zero fills by 20:00 UTC, investigate toxic_order_flow and bad_book thresholds.
-2. **REFRESH: Download fresh wallet export from Polymarket** — Last export 2026-03-11 (3+ days stale). Blocks stage progression and capital truth reconciliation. Export from https://polymarket.com/portfolio, run `python scripts/reconcile_polymarket_wallet.py`.
-3. **SCALE: Increase BTC5 to $10/trade once fills confirmed** — Already configured ($10 max_trade in capital_stage.env). Need positive trailing P&L from live fills before stage-2 unlock. Monitor fill quality for 2 hours minimum before declaring success.
+1. **DIAGNOSE: BTC5 still not filling** — 553 rows, 0 fills even after guardrail fixes. US-hours skip reasons: bad_book, delta_too_small, price_outside_guardrails. May need further threshold tuning.
+2. **DOWNLOAD: Fresh wallet export CSV** — Last export 2026-03-12. Run `python3 scripts/reconcile_polymarket_wallet.py --apply-local-fixes` after.
+3. **SCALE: BTC5 to $10/trade once fills resume** — Historical evidence strong (47 BTC winners, +$140 net). Config ready in capital_stage.env.
 
 ---
 

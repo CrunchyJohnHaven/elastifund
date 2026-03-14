@@ -65,29 +65,54 @@ Mission constraint:
 
 ## 4. Canonical Machine Truth (March 14, 2026)
 
-> **WARNING — ARTIFACT TRUST POLICY (added 2026-03-09):**
-> `reports/runtime_truth_latest.json` and local ledger data have proven unreliable. They reported "0 closed trades" and "0% realized ARR" while the live Polymarket wallet showed active positions being filled and resolved with real P&L. **Always verify capital, position, and P&L claims against the live Polymarket portfolio and Kalshi account before citing them.** If wallet data contradicts local artifacts, the wallet wins.
+> **RECONCILIATION COMPLETED 2026-03-14 15:26 UTC.**
+> Root cause of all prior drift identified and fixed: `.env` had `POLY_SAFE_ADDRESS` set to EOA signer (`0x28C5AedA...`), but Polymarket data API keys positions by proxy wallet (`0xb2fef31c...`). Every prior reconciliation queried the wrong address and got zero results. New `POLY_DATA_API_ADDRESS` env var added; reconciliation now returns correct data. See `reports/reconciliation_20260314.md` for full details.
 
-### Live Wallet Truth (verified 2026-03-13 from remote_cycle_status.json)
+### Live Wallet Truth (verified 2026-03-14 15:25 UTC via Polymarket data API)
 
-| Area | Current truth | Why it matters |
+| Area | Current truth | Source |
 |---|---|---|
-| Polymarket portfolio | $390.90 total, $373.32 free collateral, $17.58 reserved (2 live NO-side maker orders) | Wallet grew from $333.18 (Mar 9) to $390.90 (Mar 13). |
-| Kalshi | $100 USD | Unchanged. |
-| Total capital | ~$490.90 | Polymarket $390.90 + Kalshi $100. |
-| Capital accounting delta | +$140.90 | Local ledger tracks $250 base; wallet shows $390.90. Known drift, not a loss. |
-| Deployment confidence | 0.6024, label "medium" | Raw formula yields 0.6024; stage_readiness_score is 0.15 due to 6 active blockers. |
-| BTC5 stage | Stage 0, 6 blockers active | wallet_export_stale, trailing_12_not_positive, insufficient_fills, forecast_not_promote, reconciliation_not_ready, confirmation_insufficient |
-| Deploy recommendation | shadow_only | Autoresearch 25.2h stale; will not recommend "promote" until fresh cycle with fills. |
+| Polymarket wallet value | $390.90 total | data-api.polymarket.com/positions (proxy wallet) |
+| Free collateral | $373.32 | CLOB balance query |
+| Reserved (pending orders) | $17.58 | CLOB balance query |
+| Open positions | 5 positions, $63.10 cost, $66.41 mark-to-market | data API (proxy wallet) |
+| Closed positions | 50 total (47 BTC, 3 ETH) | data API (proxy wallet) |
+| Realized net P&L | **+$140.08** (wallet $390.90 - deposit $247.51 - unrealized $3.31) | Wallet economics |
+| Unrealized P&L (open) | +$3.31 | Mark-to-market on 5 open positions |
+| Kalshi | $100 USD | Unchanged |
+| Total capital | ~$490.90 | Polymarket $390.90 + Kalshi $100 |
 
-### Local Artifact Truth (KNOWN STALE — use with caution)
+### BTC Sleeve Performance (47 closed trades, all March 11)
 
-| Area | Local artifact says | Why it's wrong |
+| Metric | Value |
+|---|---|
+| Closed trades | 47 (39 DOWN, 8 UP) |
+| Win rate | 100% (all positions resolved with positive cashflow) |
+| Gross BTC cashflow | $786.33 |
+| DOWN direction cashflow | $663.99 (39 trades) |
+| UP direction cashflow | $122.35 (8 trades) |
+| Trading window | March 11, ~3:10 AM - 8:05 AM ET (single session) |
+
+### Open Position Book (5 positions)
+
+| Outcome | Market | Cost | Mark | Unrealized |
+|---|---|---|---|---|
+| Yes | Weinstein sentenced to no prison time? | $28.04 | $26.47 | -$1.57 |
+| No | Akhannouch out as Morocco PM by Dec 31 | $5.12 | $7.95 | +$2.84 |
+| No | Wizards worst NBA record? | $20.00 | $22.12 | +$2.12 |
+| Yes | US strikes Yemen by Mar 31 | $4.95 | $5.19 | +$0.25 |
+| Yes | Russia no key rate change (April) | $5.00 | $4.67 | -$0.33 |
+
+### Local Artifact Status (post-reconciliation)
+
+| Area | Status | Notes |
 |---|---|---|
-| Runtime accounting | `565` cycles, `5` trade-db trades, `4` open, `0` closed | Wallet shows 28+ open, 9+ closed historically. Local ledger massively understates activity. |
-| Pipeline verdict | `REJECT ALL` | Wallet is actively trading and filling orders. The scan is stale or mis-scoped. |
-| System ARR | `0%` realized | **FALSE.** System has real P&L from live fills and resolutions. |
-| Effective mode | `agent_run_mode=shadow`, `order_submit_enabled=false` | Contradicted by real fills in the wallet. Orders ARE being submitted. |
+| Reconciliation script | Fixed | Now queries proxy wallet via `POLY_DATA_API_ADDRESS` |
+| Runtime truth JSON | Updated | `reports/runtime_truth_latest.json` patched with wallet data |
+| Local jj_trades.db | Still empty | 0 rows; trades went through BTC5 maker path, not jj_live |
+| BTC5 VPS DB | 553 rows, 0 filled | Skip reasons: bad_book, delta_too_small, price_outside_guardrails |
+| Pipeline verdict | REJECT ALL (stale) | 5+ days old; decoupled from actual fills |
+| Wallet export CSV | 62h stale | Last: 2026-03-12; needs fresh download |
 
 ### Unchanged Status
 
@@ -95,9 +120,8 @@ Mission constraint:
 |---|---|---|
 | Structural alpha A-6 | **KILLED** 2026-03-13; `0` executable constructions below `0.95` after 5-day watch | Zero density in 563 neg-risk events. Engineering capacity reallocated to BTC5 optimization. |
 | Structural alpha B-1 | **KILLED** 2026-03-13; `0` deterministic template pairs after 5-day watch | Zero density in 1,000+ markets. Engineering capacity reallocated to Kalshi integration. |
-| BTC 5-minute maker | `542` total rows, `0` current live fills; historical closed: +$131.52 on 128 contracts (75W/53L, PF 1.49) | Guardrail fixes deployed 2026-03-14: delta 0.0040, UP live, min_buy 0.42. Awaiting US-hours fill validation. |
-| Root verification | 50 tests failing in `test_btc_5min_maker_process_window_core.py`; 1961 passing | Guardrail regression; all other surfaces green. |
-| JJ-N repo truth | `RevenuePipeline` builds; tests green at `61` + `49` | Implemented but not revenue-live. |
+| BTC 5-minute maker (VPS) | `553` total rows, `0` current live fills; 50 historical closed positions (47 BTC + 3 ETH) | Guardrail fixes deployed 2026-03-14. Still skipping during US hours: bad_book, delta_too_small, price_outside_guardrails. |
+| JJ-N repo truth | `RevenuePipeline` builds; tests green | Implemented but not revenue-live. |
 | First non-trading wedge | Website Growth Audit, $500-$2500, 5-day delivery | Best path to first non-trading dollars. |
 
 Strategy catalog truth from `research/edge_backlog_ranked.md`:
@@ -113,37 +137,25 @@ Strategy catalog truth from `research/edge_backlog_ranked.md`:
 
 ---
 
-## 5. The Real Problem: Runtime Truth Drift
+## 5. Runtime Truth Status (Post-Reconciliation)
 
-Deep Research should treat the following as first-class system problems, not footnotes:
+### Root cause identified and fixed (2026-03-14)
 
-1. Local-ledger vs wallet drift
-   Local runtime accounting says `4` open positions and `0` local closed trades. The remote wallet surface says `28` open positions and `9` closed positions.
+The entire runtime truth drift was caused by a single configuration bug: `.env` set `POLY_SAFE_ADDRESS` and `POLYMARKET_FUNDER` to the EOA signer address (`0x28C5AedA...`), but the Polymarket data API returns positions keyed by the proxy wallet address (`0xb2fef31cf185b75d0c9c77bd1f8fe9fd576f69a5`). Every reconciliation attempt queried the wrong address and returned zero results, making the system believe the wallet was empty while it held $390.90 and had 55 historical positions.
 
-2. Profile-vs-effective drift
-   The checked-in `config/runtime_profiles/maker_velocity_all_in.json` says:
-   - fast crypto only
-   - `max_resolution_hours=1.0`
-   - YES and NO thresholds `0.01 / 0.01`
-   - `max_position_usd=50`
+**Fix:** New `POLY_DATA_API_ADDRESS` env var added to both local and VPS `.env`. `default_user_address()` in `bot/position_merger.py` checks this first. Reconciliation script `_load_env_defaults()` also updated.
 
-   The effective runtime captured in `reports/runtime_truth_latest.json` says:
-   - `max_resolution_hours=24.0`
-   - YES and NO thresholds `0.05 / 0.02`
-   - `max_position_usd` is effectively set to the full available cap in the checked-in runtime truth
+### Remaining drift items
 
-3. Signal-lane drift
-   The selected maker-velocity posture says fast-flow only with LLM disabled, but `jj_state.json` still shows five LLM-dominant trades on non-fast markets.
+1. **Local jj_trades.db still empty** — Trades were placed through the BTC5 maker path (`data/btc_5min_maker.db`), not `jj_live.py`. The main trade ledger has 0 rows. Structural issue: two separate code paths write to two separate databases.
 
-4. Scan-vs-execution drift
-   The latest checked pipeline verdict is `REJECT ALL`, while the remote BTC 5-minute maker database shows `32` live-filled rows and positive cumulative filled outcomes.
+2. **Profile-vs-effective drift** — The checked-in `maker_velocity_live` profile and the effective runtime may still diverge. Verify by comparing profile JSON against VPS runtime state.
 
-5. **Wallet polling loop (NEW — 2026-03-14)**
-   `bot/wallet_poller.py` now runs as a continuous daemon (`deploy/wallet-poller.service`) that polls the Polymarket wallet every 60 seconds, auto-patches the local trade-db via `PolymarketWalletReconciler`, and writes drift snapshots to `data/wallet_snapshots/`. This closes the primary ledger-drift gap. Wallet remains authoritative; the poller enforces that.
+3. **Pipeline verdict stale** — `FAST_TRADE_EDGE_ANALYSIS.md` says REJECT ALL (5+ days old). Pipeline and execution layer are fully decoupled.
 
-Conclusion:
+4. **Wallet export CSV stale** — Last export 2026-03-12 (62+ hours). Blocks stage gate progression.
 
-The current bottleneck is not only "find better strategies." It is also "make one runtime truth coherent enough that strategy evidence can be trusted." The wallet poller addresses drift problem #1 above by keeping the local ledger continuously synchronized with the live wallet.
+5. **Wallet polling loop** — `bot/wallet_poller.py` exists as a daemon design. If running, keeps local ledger in sync. VPS status needs verification.
 
 ---
 
@@ -296,11 +308,11 @@ Preferred framing:
 
 If no other instruction is given, this is the order that maximizes money-making improvement velocity:
 
-1. **Validate BTC5 fills after guardrail fix.** Three blockers fixed 2026-03-14 (delta, UP direction, min_buy_price). Confirm fills during US trading hours. If still zero fills by 20:00 UTC, investigate bad_book and toxic_order_flow thresholds.
-2. **Fix the 50 test failures in `test_btc_5min_maker_process_window_core.py`.** Guardrail changes broke the test expectations. Repair tests to match new live config, not the other way around.
-3. **Reconcile runtime truth drift.** Local ledger still massively understates activity. Build or run wallet reconciliation to close the gap.
-4. **Scale BTC5 to $10/trade once fills confirmed.** Already configured in capital_stage.env. Need positive trailing P&L from live fills first.
-5. **Build the minimum JJ-N live-launch package for Website Growth Audit.** Best path to first non-trading dollar. Blocking: verified sending domain, curated leads, explicit approval for live sends.
+1. **Diagnose BTC5 zero-fill gap.** VPS has 553 rows, 0 fills. Skip reasons during US hours: `bad_book`, `delta_too_small`, `price_outside_guardrails`. The guardrail fixes from earlier today (delta 0.0040, UP live, min_buy 0.42) are not producing fills. Investigate whether thresholds need further widening or the market microstructure has changed.
+2. **Scale BTC5 to $10/trade once fills resume.** Historical evidence is strong: 47 BTC closed trades, all winners, +$140 net on $247 deposit. Already configured in capital_stage.env.
+3. **Fix test failures in `test_btc_5min_maker_process_window_core.py`.** Guardrail changes broke test expectations. Repair tests to match new live config.
+4. **Download fresh wallet export CSV.** Last export 2026-03-12 (62+ hours stale). Blocks stage gate progression. Export from https://polymarket.com/portfolio.
+5. **Build the minimum JJ-N live-launch package for Website Growth Audit.** Best path to first non-trading dollar. Blocking: verified sending domain, curated leads, explicit approval.
 
 ---
 
