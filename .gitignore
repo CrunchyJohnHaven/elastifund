@@ -154,4 +154,6 @@ data/
 state/elastifund/
 state/local/
 state/btc5_evidence_cache.json
+state/btc5_hypothesis_kill_list.json
+state/btc5_row_hash_cache.json
 exports/
