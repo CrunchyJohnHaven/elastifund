@@ -1,8 +1,8 @@
 # Edge Strategy Discovery System — Ranked Backlog
 
-**Version:** 3.6.4
-**Date:** 2026-03-09
-**Flywheel Cycle:** 2 (Machine Truth Reconciliation)
+**Version:** 3.7.0
+**Date:** 2026-03-13
+**Flywheel Cycle:** 3 (A-6/B-1 Kill, BTC5 Focus)
 **Purpose:** Master list of every strategy evaluated, tested, or queued. Updated every flywheel cycle. Part of the Elastifund research flywheel — see `docs/strategy/flywheel_strategy.md`.
 **Assessment:** See `research/jj_assessment_dispatch.md` for execution orders.
 
@@ -11,8 +11,7 @@
 |--------|-------|
 | Deployed (live/ready) | 7 |
 | Building (code written) | 6 |
-| **Building — Structural Alpha (A-6/B-1)** | **2** |
-| Tested & Rejected | 10 |
+| Tested & Rejected | 12 |
 | Pre-Rejected (v3, <10% P(Works) + impractical) | 8 |
 | Re-Evaluating (maker-only) | 1 |
 | Research Pipeline (pre-v3) | 37 |
@@ -25,7 +24,7 @@
 
 **Remote posture note (2026-03-09):** `reports/remote_service_status.json` shows `jj-live.service` `inactive` at `2026-03-09T01:28:43Z`, and `reports/remote_cycle_status.json` shows wallet-flow `ready` with `fast_flow_restart_ready=true`. The latest edge scan still returned `stay_paused`, and launch remains `blocked` because the service is stopped, there are no closed trades, no deployed capital, and the A-6/B-1 gates remain unresolved.
 
-**Structural-alpha decision note (2026-03-09):** `reports/structural_alpha_decision.md` now turns the March 9 evidence into an explicit kill watch. Only `30.834` of the planned `168` observation hours are logged so far, so the current call is still "keep both lanes blocked," but the deadline is now concrete: if A-6 still shows `0` relaxed candidates below `0.97` and B-1 still shows `0` deterministic template pairs by `2026-03-14T18:49:58+00:00`, kill both lanes and reallocate the effort.
+**Structural-alpha kill (2026-03-13):** A-6 and B-1 formally killed at the March 14 deadline. Both showed zero evidence after 5+ days of observation: A-6 had 0 executable constructions below 0.95 across 510+ neg-risk events; B-1 had 0 deterministic template pairs in 1,000+ markets. Effort reallocated to BTC5 guardrail optimization and scaling.
 
 ---
 
@@ -54,12 +53,12 @@
 
 **Fast-flow readiness note (2026-03-09):** wallet-flow is still `ready` in `reports/remote_cycle_status.json` with `80` scored wallets and `fast_flow_restart_ready=true`, but the service is stopped and the latest edge scan still says `stay_paused`. Keep the lane paused until a paper/shadow restart is explicitly approved; the latest scan found `0` viable markets even under the wide-open threshold profile.
 
-## BUILDING — STRUCTURAL ALPHA (Parallel Sprint, 2026-03-07)
+## KILLED — STRUCTURAL ALPHA (Killed 2026-03-13, March 14 Deadline)
 
-| # | Strategy | Modules | Tests | Status |
-|---|----------|---------|-------|--------|
-| SA-1 | A-6 Guaranteed Dollar Scanner | constraint_arb_engine, sum_violation_scanner, a6_sum_scanner, a6_executor, neg_risk_inventory, resolution_normalizer, signals/sum_violation/guaranteed_dollar.py | 223 total | March 8 broad audit found 563 allowed neg-risk events with 0 executable-at-threshold constructions below the initial 0.95 cost gate. The March 9 empirical snapshot then saw 149 active multi-outcome events, 57 qualified A-6 live-surface events, and 0 executable opportunities below the gate. `reports/structural_alpha_decision.md` now shows the seven-day kill watch is only `30.834` hours old, with `0` relaxed candidates below `0.97`, `0` underround observations, and a kill-if-unchanged deadline at `2026-03-14T18:49:58+00:00`. No promotion. |
-| SA-2 | B-1 Templated Dependency Engine | dependency_graph, relation_classifier, b1_executor, b1_monitor, relation_cache, bot/b1_template_engine.py | See above | March 9 live-public-data template audit still found 0 deterministic pairs in the first 1,000 active allowed markets. `reports/structural_alpha_decision.md` now fixes the decision clock: only `30.834` observation hours are logged so far, current call is still keep-blocked, and B-1 moves to kill-if-unchanged at `2026-03-14T18:49:58+00:00` if template-pair density stays zero. Keep scope narrow; do not widen graph yet. |
+| # | Strategy | Kill Date | Kill Reason |
+|---|----------|-----------|-------------|
+| SA-1 | A-6 Guaranteed Dollar Scanner | 2026-03-13 | Zero density after 5+ day kill-watch ending March 14, 2026. 0 executable constructions below 0.95 gate across 510+ neg-risk events. 0 relaxed candidates below 0.97. 0 underround observations. 0 live fills, 0 settlements. Killed per CLAUDE.md policy. |
+| SA-2 | B-1 Templated Dependency Engine | 2026-03-13 | Zero density after 5+ day kill-watch ending March 14, 2026. 0 deterministic template pairs in first 1,000 allowed markets. 0 live fills, 0 settlements, unmeasured classification accuracy. Killed per CLAUDE.md policy. |
 
 ## RE-EVALUATING (Previously Rejected, New Evidence)
 
@@ -163,8 +162,8 @@ Each edge scored on four dimensions (1–5 scale):
 
 | v3 Rank | Strategy ID | Name | P(Works) | v3 Composite | JJ Tier | Notes |
 |---------|------------|------|----------|-------------|---------|-------|
-| 1 | A-6 | Guaranteed Dollar Scanner | 45% | 4.2 | **BUILDING** | Current shipped lane ranks straddles vs full baskets, but the March 8 broad audit and March 9 live scan still show 0 executable opportunities below the initial 0.95 cost gate. No promotion. Fill/dwell study comes before more buildout. |
-| 2 | B-1 | Templated Dependency Engine | 45% | 4.1 | **BUILDING** | Broad graph work is frozen behind density. Promotion still requires a 50-pair gold set with >=85% precision, and the March 9 template audit still found 0 deterministic pairs in the first 1,000 allowed markets. No promotion. |
+| 1 | A-6 | Guaranteed Dollar Scanner | 45% | 4.2 | **KILLED** | Killed 2026-03-13 at March 14 deadline. 0 executable constructions below 0.95 gate across 510+ neg-risk events after 5+ day kill-watch. Zero evidence of exploitable density. |
+| 2 | B-1 | Templated Dependency Engine | 45% | 4.1 | **KILLED** | Killed 2026-03-13 at March 14 deadline. 0 deterministic template pairs in first 1,000 allowed markets after 5+ day kill-watch. Zero evidence of exploitable density. |
 | 3 | D-12 | Adaptive Platt Calibration (Rolling) | 10% | 2.2 | TIER 4 | Validated negative on 2026-03-07. The current static fitted Platt curve beat rolling windows 50/100/200 on the 532-market walk-forward holdout. Revisit only after 100+ live resolved trades. |
 | 4 | G-1 | WebSocket Upgrade (REST→WS) | 95%* | 3.9 | TIER 1 | *Infrastructure, not alpha. Prerequisite for 8+ strategies. |
 | 5 | D-9 | Ensemble Disagreement Signal | 30% | 3.8 | TIER 2 | 1 day. Simple std() on multi-model outputs. |

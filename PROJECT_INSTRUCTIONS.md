@@ -1,5 +1,5 @@
 # Elastifund — Project Instructions
-**Version:** 3.9.3 | **Updated:** 2026-03-09 | **Owner:** John Bradley
+**Version:** 3.10.0 | **Updated:** 2026-03-13 | **Owner:** John Bradley
 **Paste this into any new ChatGPT, Claude web, Claude Code, or Cowork session.**
 **Canonical filename:** `PROJECT_INSTRUCTIONS.md`. Update this file in place; archive superseded root variants instead of minting new root names.
 **For one root-level Deep Research handoff, prefer `COMMAND_NODE.md`; this file is the operator-policy surface.**
@@ -55,7 +55,7 @@ Kalshi API Key ID: [stored in .env — see .env.example]
 | Past-day P&L | +$1.91 |
 | Open positions | 26+ across multiple market categories |
 | Closed/resolved trades | 36+ (wallet-verified) |
-| Structural-alpha gate | A-6 `blocked` (0 executable constructions), B-1 `blocked` (0 template pairs). Kill-watch deadline March 14 |
+| Structural-alpha gate | A-6 **KILLED** (0 constructions, 5+ day watch), B-1 **KILLED** (0 template pairs, 5+ day watch). Killed 2026-03-13 at March 14 deadline |
 | Verification status | **1,397 tests passing** across all surfaces |
 | Dispatch inventory | `11` `DISPATCH_*` work-orders; `95` markdown files in `research/dispatches/` |
 | Known issue | Local ledger drift: local trade-db reports fewer positions than wallet actually shows. Reconciliation pipeline in progress |
@@ -105,18 +105,15 @@ SIGNAL 4: Cross-Platform Arb [COMPLETE, NOT ACTIVATED]
   Sizing: Quarter-Kelly
   Status: Code complete, needs live market matching + ops activation
 
-SIGNAL 5: Guaranteed Dollar Scanner (A-6) [SHADOW MODE, EMPIRICAL GATE]
+SIGNAL 5: Guaranteed Dollar Scanner (A-6) [KILLED 2026-03-13]
   Markets: Neg-risk event groups only
   Edge: cheapest guaranteed-dollar construction < 0.95
-  Construction order: YES+NO first, neg-risk-conversion second, full basket last
-  Sizing: Execution-risk-adjusted, capped at $5/leg
-  Status: top-of-book ranking landed; current audit still shows 0 constructions below the 0.95 gate, so live fill/dwell capture is the next gate and no promotion is allowed yet
+  Status: KILLED at March 14 deadline. 0 executable constructions below 0.95 gate across 510+ events after 5+ day watch.
 
-SIGNAL 6: Templated Dependency Engine (B-1) [NARROWED / GATED]
+SIGNAL 6: Templated Dependency Engine (B-1) [KILLED 2026-03-13]
   Markets: Deterministic template families in one event cluster
   Edge: implication / exclusion / complement violations > 5% and >= 2x combined spread
-  Sizing: Execution-risk-adjusted, capped at $5/leg
-  Status: template matcher landed; current density audit still shows zero deterministic pairs in the first 1,000 allowed markets, so no promotion is allowed yet
+  Status: KILLED at March 14 deadline. 0 deterministic template pairs in 1,000+ markets after 5+ day watch.
 
 CONFIRMATION LAYER:
   2+ predictive sources agree → highest confidence, boosted size
@@ -308,12 +305,12 @@ Other completed modules still available for parallel promotion work:
 - Rolling adaptive Platt selector and ensemble disagreement sizing in `bot/jj_live.py` + `bot/ensemble_estimator.py`
 - Validation coverage in `tests/test_kalshi_weather_arb.py` and `bot/tests/test_ensemble_estimator.py`
 
-### P1 — 14-Day Execution Order (Do In Sequence)
-1. **Phase 0 (48-hour empirical gate):** Measure top-of-book costs, cheapest construction type, dwell time, and maker fill behavior for the allowed neg-risk universe.
-2. **Phase 1 (A-6 narrow live shadow):** Keep A-6 to guaranteed-dollar ranking plus maker-only entry logic; do not widen into full-basket optimization first.
-3. **Phase 2 (B-1 templated only):** One event family, deterministic compatibility matrix, manual gold set, then live shadow.
-4. **Phase 3 (integration):** Route A-6/B-1 into the live confirmation/execution stack only if Phase 0 and Phase 2 actually justify it.
-6. **Days 13-14 (shadow mode):** Paper trade the combined arb stack, simulate realistic maker fills, and publish capture-rate / rollback-loss attribution.
+### P1 — BTC5 Optimization Sprint (Post A-6/B-1 Kill)
+1. **Fix BTC5 zero-fill problem:** Diagnose skip reasons, widen guardrails if needed, restart service.
+2. **Scale BTC5 to $10/trade:** After confirming fills flowing, double position size.
+3. **Optimize guardrails for current volatility regime:** Tune delta, price bounds, and session filters using autoresearch data.
+4. **Run fresh autoresearch cycle + stage probe:** Advance toward stage_1.
+5. **Reconcile wallet truth:** Fresh export, run reconciliation pipeline, clear stale artifacts.
 
 ### P2 — Website: Competitive Benchmark Harness (Sequenced into Cycles 2-4)
 1. **Cycle 2:** Publish methodology page (`/benchmark/methodology`) with T0-T7 test matrix and scoring rubric. No results yet — methodology-first establishes trust.
@@ -375,4 +372,4 @@ See `research/dispatches/DISPATCH_097_competitive_inventory_benchmark_blueprint.
 
 ---
 
-*v3.9.3 — Updated 2026-03-09. Reconciled the latest runtime artifacts after stopping `jj-live`: service is now `stopped`, launch posture remains blocked, the local runtime ledger still shows `565` cycles / `5` trade-db trades / `4` local open positions, the remote Polymarket wallet shows `28` open positions and `9` closed positions, BTC 5-minute maker evidence has advanced to `32` live-filled rows with positive cumulative filled outcomes, A-6/B-1 remain blocked, root verification artifact is passing (`1140 + 25`), JJ-N test surfaces are green in this worktree (`64` and `49`), pipeline wiring is active in `nontrading/main.py`, and live-provider startup now blocks placeholder/unverified sender identity.*
+*v3.10.0 — Updated 2026-03-13. A-6 and B-1 structural alpha lanes formally killed at March 14 deadline (zero evidence after 5+ days). Effort reallocated to BTC5 optimization and scaling. BTC5 service running but producing 0 live fills (302 total rows); diagnostic and guardrail fix pending. Wallet: $390.90 total, $373.32 free. Strategy counts updated: 12 rejected (was 10+2 building structural). Main jj-live stopped (intentional).*

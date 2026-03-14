@@ -148,7 +148,7 @@ This is standard practice. Quantopian was open-source but nobody published their
 
 **Mac repo path:** `/Users/johnbradley/Desktop/Elastifund`
 **VPS path:** `/home/ubuntu/polymarket-trading-bot`
-**VPS host:** `ubuntu@52.208.155.0`
+**VPS host:** `ubuntu@34.244.34.108`
 **VPS internal hostname:** `ip-172-26-6-252.eu-west-1.compute.internal`
 **VPS SSH key:** configured via `LIGHTSAIL_KEY` in `.env` (do not hardcode absolute local paths)
 **VPS region:** AWS Lightsail `eu-west-1` (Dublin)
@@ -189,8 +189,8 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 > **CRITICAL: ALWAYS VERIFY AGAINST LIVE WALLET DATA.**
 > The local ledger, the checked-in runtime/public artifacts under `reports/`, and `FAST_TRADE_EDGE_ANALYSIS.md` have historically drifted from actual on-chain and wallet state. Before citing capital, P&L, or position numbers, check the live Polymarket portfolio and Kalshi account. If live wallet data contradicts local artifacts, the wallet wins.
 
-**Date:** 2026-03-10 12:50 UTC
-**Cycle:** Cleanup pass after the March 10 capital-gate and Kalshi repair work
+**Date:** 2026-03-13
+**Cycle:** A-6/B-1 kill, BTC5 focus pivot
 **Last loop cycle report:** `reports/loop_cycle_20260310_2311.md`
 
 ### Manual Wallet-Export Read (March 10, 2026)
@@ -224,7 +224,7 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 
 **Why the public surfaces are still conservative after cleanup:**
 - Fund-level capital truth is still not reconciled. Current runtime truth shows `capital_accounting_delta_usd = -166.31`.
-- Polymarket wallet now reads `50` closed positions, `7` open positions, and `$370.61` total wallet value, while the local ledger still tracks `0` closed and `4` open.
+- Polymarket wallet: $390.90 total, $373.32 free. Local ledger still tracks `0` closed and `4` open.
 - The dedicated BTC5 sleeve is positive in machine truth too: `123` live-filled rows and `+$108.86` PnL in the remote probe, but the public contract still blocks a fund-level realized ARR claim.
 - Kalshi settlement reconciliation is working mechanically, but the latest settlement pass still yielded `matched=0/57`, so capital remains blocked there.
 
@@ -239,13 +239,13 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 **Live trading:** MAKER VELOCITY LIVE — `maker_velocity_live` profile is the active deploy target
 **Live config:** $10/position (main), $5/trade (BTC 5-min), 30 max open positions, uncapped daily loss, 0.25 Kelly, 24h max resolution, 30s scan interval
 **Execution mode:** 100% Post-Only maker orders (Dispatch #75 pivot)
-**BTC 5-min maker:** Instance 2 (`btc-5min-maker.service`). 97 total rows (remote_probe DB), 55 live filled, +$85.68 P&L. DOWN direction dominant (40 fills, +$66.28, 65% win rate). UP: 15 fills, +$19.40, 60% win rate.
+**BTC 5-min maker:** Instance 2 (`btc-5min-maker.service`). 302 total rows but 0 live fills currently flowing. Autoresearch widened delta to 0.00130 and enabled UP live. Prior performance: DOWN direction dominant (65% win rate). Service running on VPS 34.244.34.108 but needs diagnostic.
 
 ### Pipeline & Strategy Status
 **Fast-market pipeline:** v2.8.0 says `REJECT ALL` (last run 01:34 UTC Mar 9, now ~73h stale). All 9 tested strategies failed kill rules. Pipeline and execution layer are decoupled — wallet trades regardless.
 **Next best hypothesis:** Early Informed-Flow Convergence — CONTINUE_DATA_COLLECTION (3 raw signals, 0 resolved).
-**Strategies in backlog:** 131 tracked total (7 deployed, 6 building, 2 structural alpha, 10 rejected, 8 pre-rejected, 1 re-evaluating, 97 research pipeline)
-**Structural gates:** A-6/B-1 kill-watch deadline is March 14, 2026 (4 days). Both remain blocked with zero executable constructions / zero template pairs. Recommendation: KILL both lanes at deadline.
+**Strategies in backlog:** 131 tracked total (7 deployed, 6 building, 12 rejected, 8 pre-rejected, 1 re-evaluating, 97 research pipeline)
+**Structural alpha:** A-6 and B-1 formally KILLED on 2026-03-13 at the March 14 deadline. Zero evidence after 5+ days: A-6 had 0 constructions below 0.95 gate; B-1 had 0 template pairs. Effort reallocated to BTC5 optimization.
 **BTC5 autoresearch:** 1 cycle completed. Latest hypothesis `hyp_down_up0.49_down0.51_hour_et_11` (DOWN bias, exploratory evidence, 5 validation fills).
 
 ### Infrastructure Health
@@ -267,13 +267,14 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 - `FAST_TRADE_EDGE_ANALYSIS.md` — says REJECT ALL, ~73h stale, while BTC 5-min maker has been actively filling profitably.
 - Pipeline and execution layer fully decoupled. Pipeline does not govern what actually trades.
 - BTC 5-min P&L corrected: +$85.68 on 55 fills (remote_probe DB canonical), not +$91.79 on 56 as previously stated.
-- 30+ hour fill gap on BTC 5-min maker. BTC at $70.8K likely above guardrails. Unknown if service running or stopped.
+- BTC5 service running but producing 0 live fills despite 302 total rows. Autoresearch widened parameters but fills still not flowing.
+- Wallet export 2+ days stale (last: 2026-03-11).
 - Kalshi has no local ledger integration — all tracking is manual via browser.
 
 ### Top 3 Action Items
-1. **URGENT: Verify VPS btc-5min-maker service status** — 30+ hour fill gap since 2026-03-09 20:35 UTC. BTC rallied to $70.8K (+4.17%) — likely above configured guardrail ceiling causing continuous `skip_price_outside_guardrails`. Run `systemctl status btc-5min-maker && journalctl -u btc-5min-maker --since "30 min ago"` on VPS. If guardrails are the issue, widen them to accommodate $68K-$75K range. We are missing fills in a favorable extreme-fear environment.
-2. **Scale BTC 5-min maker to $10/trade** — 55 fills, 63.6% win rate, +$1.56/fill avg. Edge validated. Extreme fear (index 21, recovering from 10-12), whale accumulation 270K BTC, $700M ETF inflows in March. Double position size after confirming service health.
-3. **Kill A-6/B-1 at March 14 deadline** — Both at zero. Reallocate to BTC 5-min guardrail optimization + Kalshi weather city-specific calibration (Miami subtropical bias fix).
+1. **FIX BTC5 ZERO-FILL PROBLEM** — Service running on VPS (34.244.34.108) with 302 total rows but 0 live fills flowing. Autoresearch widened delta to 0.00130 and enabled UP live but fills still not flowing. Diagnose: check skip reasons (guardrails, delta, shadow_only), verify env is being read, restart if needed. Widen BTC5_MAX_ABS_DELTA to 0.0020 if delta-skipping.
+2. **Scale BTC5 to $10/trade** — Once fills confirmed flowing, update BTC5_AMOUNT_USD from 5 to 10. Edge validated on prior fills (63.6% win rate, +$1.56/fill avg). Monitor for 30 minutes post-change.
+3. **Optimize BTC5 guardrails for current volatility regime** — Use autoresearch cycle data to tune delta, price bounds, and session filters. Focus on DOWN-biased modes where edge is strongest. Run fresh autoresearch cycle and stage probe to advance toward stage_1.
 
 ---
 
