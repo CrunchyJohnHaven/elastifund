@@ -219,16 +219,25 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 - The edge appears real but narrow: BTC 5-min maker, early morning hours, DOWN-biased
 - Do not claim fund-level ARR from a single-session result
 
+### BTC5 Promotion Gate (DISPATCH_102, March 14)
+**Gate result: FAIL** (3 of 6 criteria failed). Do NOT scale to $10/trade.
+- Wallet balance confirms +$143.39 total PnL (API-verified, authoritative)
+- Per-trade CSV analysis (March 9-11, 243 markets): 125W/118L, 51.4% WR, PF 1.01, max DD $236.68
+- Discrepancy between wallet PnL (+$143) and CSV per-trade PnL (+$14.62) needs investigation
+- Daily breakdown: March 9 +$136.86, March 10 -$38.70, March 11 -$83.53
+- Hour-of-day signal: loses money 00-02 ET and 08-09 ET; profitable 03-06 ET and 12-19 ET
+- Kelly fraction: 0.006 (effectively zero edge at current parameters)
+
 ### Best Current Research Directions
-- Fully validate and tighten the session-aware BTC runtime package that the loop still marks `promote / high confidence`.
-- Try one-sided ultra-tight DOWN-biased BTC modes where the live edge still looks strongest.
-- Reduce execution drag: queue priority, maker-only quality, and fewer failed or cancelled orders.
-- Use the fully closed March 10 loss clusters to suppress the worst session, bucket, and delta combinations.
-- Keep Kalshi and non-BTC from diluting the BTC signal until they have comparable evidence quality.
+- Implement time-of-day filter to suppress losing hours (00-02, 08-09 ET)
+- DOWN-only mode: DOWN is +$52.80 PnL, UP is -$38.18
+- Fix zero-fill problem before any scaling decision
+- Run 7+ more days at $5/trade to establish statistical significance
+- Reconcile wallet PnL vs CSV per-trade PnL discrepancy
 
 ### System Configuration
 **Live trading:** MAKER VELOCITY LIVE — `maker_velocity_live` profile is the active deploy target
-**Live config:** $10/position (main), $10/trade (BTC 5-min, scaled from $5 per DISPATCH_102 promotion gate), 30 max open positions, $100 daily loss cap (BTC5), 0.25 Kelly, 24h max resolution, 30s scan interval
+**Live config:** $10/position (main), $5/trade (BTC 5-min; scale to $10 BLOCKED by promotion gate failure), 30 max open positions, uncapped daily loss, 0.25 Kelly, 24h max resolution, 30s scan interval
 **Execution mode:** 100% Post-Only maker orders (Dispatch #75 pivot)
 **BTC 5-min maker:** Instance 2 (`btc-5min-maker.service`). 553+ total rows, 0 live fills. Service running on VPS (34.244.34.108). DISPATCH_100 (2026-03-14 16:05 UTC) found and fixed **four** blockers, not three: (1) `POLY_SAFE_ADDRESS` was set to EOA, not proxy wallet — caused `invalid signature` on every order attempt, (2) UP shadow-only, (3) delta cap too tight, (4) lt049 skip baseline redundant with min_buy_price. All four fixed. Config: max_trade=$10, delta 0.0003-0.0040, up_max=0.52, down_max=0.53, min_buy=0.42, lt049 skip disabled. Remaining skips are legitimate market conditions (delta_too_small, bad_book, price above max_buy). Fills expected during active BTC trading hours.
 
@@ -261,9 +270,9 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 - Kalshi has no local ledger integration.
 
 ### Top 3 Action Items
-1. **DEPLOY: BTC5 at $10/trade** — Config committed (`btc5_scale_v1.json`). Run `./scripts/deploy.sh --clean-env --profile maker_velocity_live --restart --btc5 --monitor` from Mac. Verify BTC5_MAX_TRADE_USD=10 on VPS. Monitor for first fill at new size.
-2. **DOWNLOAD: Fresh wallet export CSV** — Last export 2026-03-12. Run `python3 scripts/reconcile_polymarket_wallet.py --apply-local-fixes` after. Clears `wallet_export_stale` blocker.
-3. **VERIFY: BTC5 fills flowing post-guardrail-fix** — 553+ rows, 0 fills. Guardrails widened (delta 0.0040, UP live, min_buy 0.42). Fills expected during US trading hours. If still 0 after deploy, check skip reasons in VPS logs.
+1. **FIX: BTC5 zero-fill on VPS** — 553+ rows, 0 fills despite guardrail fix (DISPATCH_100). SSH to VPS, check skip reasons in live logs, verify POLY_SAFE_ADDRESS is proxy wallet (0xb2fef31c...). If orders are being placed but not filled, check order pricing vs market spread.
+2. **DOWNLOAD: Fresh wallet export CSV** — Last export 2026-03-13 (now 4+ days stale from today). Run reconciliation after. Clears `wallet_export_stale` blocker and enables stage progression.
+3. **DO NOT SCALE: Promotion gate FAILED** — DISPATCH_102 shows 51.4% WR, PF 1.01, $236 max DD. Hold at $5/trade. Implement time-of-day filter and run 7+ more days before reconsidering. Previous $10/trade config (`btc5_scale_v1.json`) should NOT be deployed.
 
 ---
 
