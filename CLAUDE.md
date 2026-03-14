@@ -189,8 +189,8 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 > **CRITICAL: ALWAYS VERIFY AGAINST LIVE WALLET DATA.**
 > The local ledger, the checked-in runtime/public artifacts under `reports/`, and `FAST_TRADE_EDGE_ANALYSIS.md` have historically drifted from actual on-chain and wallet state. Before citing capital, P&L, or position numbers, check the live Polymarket portfolio and Kalshi account. If live wallet data contradicts local artifacts, the wallet wins.
 
-**Date:** 2026-03-13 22:40 UTC
-**Cycle:** Instance 5 refresh: autoresearch + scale comparison + runtime truth regenerated. A-6/B-1 formally killed.
+**Date:** 2026-03-13 23:00 UTC
+**Cycle:** A-6/B-1 killed, all profiles updated, BTC5 fill recovery + scale-up pending VPS diagnosis
 **Last loop cycle report:** `reports/loop_cycle_20260310_2311.md`
 
 ### Manual Wallet-Export Read (March 10, 2026)
@@ -239,13 +239,13 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 **Live trading:** MAKER VELOCITY LIVE — `maker_velocity_live` profile is the active deploy target
 **Live config:** $10/position (main), $5/trade (BTC 5-min), 30 max open positions, uncapped daily loss, 0.25 Kelly, 24h max resolution, 30s scan interval
 **Execution mode:** 100% Post-Only maker orders (Dispatch #75 pivot)
-**BTC 5-min maker:** Instance 2 (`btc-5min-maker.service`). 302 total rows, 0 live_filled in current probe window. Service running on VPS (34.244.34.108) but producing zero fills. Autoresearch widened delta to 0.00130 and enabled UP live mode, but fills still not flowing. Diagnosis pending (Instance 1).
+**BTC 5-min maker:** Instance 2 (`btc-5min-maker.service`). 302 total rows, 0 live_filled in current probe window. Service running on VPS (34.244.34.108) but producing zero fills. Autoresearch widened delta to 0.00130 and enabled UP live mode. Wallet: $390.90 total, $373.32 free. VPS diagnosis needed.
 
 ### Pipeline & Strategy Status
 **Fast-market pipeline:** v2.8.0 says `REJECT ALL` (last run 01:34 UTC Mar 9, now ~73h stale). All 9 tested strategies failed kill rules. Pipeline and execution layer are decoupled — wallet trades regardless.
 **Next best hypothesis:** Early Informed-Flow Convergence — CONTINUE_DATA_COLLECTION (3 raw signals, 0 resolved).
-**Strategies in backlog:** 131 tracked total (7 deployed, 4 building, 12 rejected, 8 pre-rejected, 1 re-evaluating, 97 research pipeline)
-**Structural gates:** A-6 and B-1 **KILLED** 2026-03-13. Zero density after 5-day kill-watch. A-6: 0 constructions below 0.95 gate across 510+ neg-risk events. B-1: 0 deterministic template pairs in first 1,000 markets. Capacity reallocated to BTC5 optimization and Kalshi calibration.
+**Strategies in backlog:** 131 tracked total (7 deployed, 4 building, 12 rejected, 2 structural-alpha killed, 8 pre-rejected, 1 re-evaluating, 97 research pipeline)
+**Structural alpha:** A-6 and B-1 **KILLED** 2026-03-13. Zero density after 5-day kill-watch. 0 constructions (A-6) and 0 template pairs (B-1). Capacity reallocated to BTC5 optimization and Kalshi calibration.
 **BTC5 autoresearch:** 1 cycle completed. Latest hypothesis `hyp_down_up0.49_down0.51_hour_et_11` (DOWN bias, exploratory evidence, 5 validation fills).
 
 ### Infrastructure Health
@@ -266,14 +266,15 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 - `jj_state.json` contains 4 paper-tagged LLM positions including mutually exclusive Weinstein sentencing bets (YES on <5yr AND YES on 20-30yr). Probability estimation bug.
 - `FAST_TRADE_EDGE_ANALYSIS.md` — says REJECT ALL, ~73h stale, while BTC 5-min maker has been actively filling profitably.
 - Pipeline and execution layer fully decoupled. Pipeline does not govern what actually trades.
-- BTC 5-min maker: 302 total rows but 0 live_filled in current probe. Service confirmed running on VPS but zero fills flowing. Autoresearch env updated (delta 0.00130, UP live mode) but VPS may need restart to pick up new values.
-- Runtime truth artifacts regenerated 2026-03-13 but stage_0 locked: wallet_export_stale (54h), trailing_12_live_filled_not_positive, insufficient_trailing_12_live_fills.
+- BTC 5-min: 302 total rows but 0 live_filled in current probe. Service running on VPS but zero fills. Autoresearch env updated (delta 0.00130, UP live mode) but VPS may need restart.
+- Runtime truth artifacts regenerated 2026-03-13 but stage_0 locked: wallet_export_stale (54h+), trailing_12_live_filled_not_positive, insufficient_trailing_12_live_fills.
+- Wallet export 2+ days stale. Need fresh export from Polymarket portfolio.
 - Kalshi has no local ledger integration — all tracking is manual via browser.
 
 ### Top 3 Action Items
-1. **URGENT: Fix BTC5 zero-fill condition on VPS** — 302 total rows, 0 live_filled in current probe. Service running but not filling. Diagnose via SSH: check skip reasons (delta too narrow, shadow_only mode, price outside guardrails). Widen BTC5_MAX_ABS_DELTA to 0.0020 if needed. Restart service after env changes.
-2. **Scale BTC 5-min maker to $10/trade** — After fills confirmed flowing. Update BTC5 position size in VPS .env, restart service, verify fills at new notional.
-3. **Download fresh wallet export and re-run runtime truth** — Wallet export 54+ hours stale, blocking stage progression. Download from Polymarket portfolio, re-run autoresearch + scale comparison + runtime truth to advance from stage_0 to stage_1.
+1. **URGENT: Diagnose BTC5 zero-fill state on VPS** — Service running but 0 live_filled in current probe. 302 total rows. SSH to VPS, check journalctl for skip reasons (guardrails, shadow_only, delta). Fix env and restart. Target: fills flowing within 30 min of fix.
+2. **Scale BTC5 to $10/trade after fills confirmed** — Wallet supports it ($390.90 total). Double position size once 5-10 new fills confirm the fix worked. Update maker_velocity_live.json to match.
+3. **Clear stale artifact blockers and advance stage** — Fresh wallet export, run autoresearch cycle, strategy scale comparison, stage probe. Goal: advance from stage_0 to stage_1+.
 
 ---
 

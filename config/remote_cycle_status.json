@@ -2,8 +2,9 @@
   "capital_sources": [
     {
       "account": "Polymarket",
-      "amount_usd": 250.0,
-      "source": "jj_state.json"
+      "amount_usd": 390.90,
+      "free_usd": 373.32,
+      "source": "wallet_probe_2026-03-13"
     },
     {
       "account": "Kalshi",
@@ -15,7 +16,7 @@
     "pull_cadence_minutes": 30,
     "full_cycle_cadence_minutes": 60,
     "freshness_sla_minutes": 45,
-    "expected_next_data_note": "Expect the next synced dataset on the next 30-minute pull. Expect material new trading evidence only after the runtime records the first closed trades or structural alpha samples.",
+    "expected_next_data_note": "Expect the next synced dataset on the next 30-minute pull. BTC5 maker is the only active trading sleeve.",
     "manual_pull_triggers": [
       "Immediately before any deploy.",
       "Immediately after any deploy or service restart.",
@@ -27,35 +28,45 @@
     "metric_name": "annualized_return_run_rate_pct",
     "definition": "Operator forecast for annualized return run-rate on currently tracked capital; not realized performance.",
     "status": "speculative",
-    "confidence": "low",
+    "confidence": "low-medium",
     "current_annualized_return_pct": 0.0,
-    "next_target_annualized_return_pct": 10.0,
-    "next_target_after_hours_of_work": 3.0,
-    "basis": "Best guess assumes one more focused engineering session clears the immediate deployment blockers and gets a small live or shadow sleeve collecting calibration data.",
+    "next_target_annualized_return_pct": 50.0,
+    "next_target_after_hours_of_work": 2.0,
+    "basis": "BTC5 sleeve historically profitable (+$131.52 closed, 75W/53L, 1.49 PF). Currently zero-filling due to guardrail/env issue. Once fills resume at $10/trade, run-rate should materialize quickly.",
     "assumptions": [
-      "jj-live can resume without new safety or import failures.",
-      "A-6 maker-fill and B-1 precision gating work can be closed in one focused session.",
-      "The first resumed sleeve starts producing decision-grade telemetry quickly enough to move us off a zero run-rate."
+      "BTC5 fill issue is an env/guardrail config problem, not a market structure change.",
+      "Scaling to $10/trade doubles revenue per fill without degrading edge.",
+      "Autoresearch timer keeps guardrails tuned to current volatility."
     ],
     "invalidators": [
-      "If jj-live remains paused after the next focused session, the 10% target is too aggressive.",
-      "If A-6 or B-1 evidence fails the current gate, the near-term run-rate forecast should be revised downward.",
-      "If resumed runtime still generates zero closed trades, annualized return remains effectively unobservable."
+      "If BTC5 fills do not resume after VPS diagnosis, the edge may have decayed.",
+      "If $10/trade fills show worse win rate than $5/trade, scale-up is premature.",
+      "If BTC volatility regime shifts (e.g., sustained low vol), the 5-min maker edge compresses."
     ]
   },
   "deployment_finish": {
-    "status": "blocked",
-    "eta": "TBD",
+    "status": "partially_live",
+    "eta": "2026-03-13",
+    "active_sleeves": [
+      "btc-5min-maker (running, zero fills currently — diagnosis needed)"
+    ],
+    "stopped_sleeves": [
+      "jj-live (main service, intentionally stopped)"
+    ],
+    "killed_lanes": [
+      "A-6 structural alpha: killed 2026-03-13, zero constructions after 5-day watch",
+      "B-1 structural alpha: killed 2026-03-13, zero template pairs after 5-day watch"
+    ],
     "blockers": [
-      "jj-live is intentionally stopped while structural alpha integration is completed.",
-      "No capital is currently deployed and the current cycle has no closed trades for calibration.",
-      "A-6 maker-fill and B-1 precision promotion gates are still unresolved."
+      "BTC5 zero-fill state needs VPS diagnosis and env fix.",
+      "Wallet export 2+ days stale.",
+      "Stage progression blocked at stage_0."
     ],
     "exit_criteria": [
-      "Resume jj-live in shadow or micro-live mode without triggering kill rails.",
-      "Finish the A-6 maker-fill and violation half-life evidence pass.",
-      "Finish the B-1 gold-set precision audit at or above 85%.",
-      "Record the first closed trades needed for calibration and promotion decisions."
+      "BTC5 fills resume at $10/trade with positive net P&L.",
+      "Autoresearch timer running and self-tuning guardrails.",
+      "Stage progression advances to stage_1+.",
+      "Runtime truth artifacts fresh (< 1 hour old)."
     ]
   }
 }

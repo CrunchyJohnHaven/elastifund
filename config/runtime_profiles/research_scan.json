@@ -13,11 +13,11 @@
     "enable_lmsr": true,
     "enable_cross_platform_arb": true,
     "fast_flow_only": false,
-    "enable_a6_shadow": true,
+    "enable_a6_shadow": false,
     "enable_a6_live": false,
-    "enable_b1_shadow": true,
+    "enable_b1_shadow": false,
     "enable_b1_live": false,
-    "enable_a6_embedded_shadow_scanner": true
+    "enable_a6_embedded_shadow_scanner": false
   },
   "risk_limits": {
     "max_position_usd": 2.5,

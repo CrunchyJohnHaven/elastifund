@@ -93,8 +93,8 @@ Mission constraint:
 
 | Area | Current truth | Why it matters |
 |---|---|---|
-| Structural alpha A-6 | **KILLED** 2026-03-13; `0` executable constructions below `0.95` after 5-day watch | Capacity reallocated to BTC5 optimization. |
-| Structural alpha B-1 | **KILLED** 2026-03-13; `0` deterministic template pairs after 5-day watch | Capacity reallocated to Kalshi calibration. |
+| Structural alpha A-6 | **KILLED** 2026-03-13. Zero density after 5-day kill-watch. 0 constructions below 0.95 across 510+ events. | Capacity reallocated to BTC5 optimization. |
+| Structural alpha B-1 | **KILLED** 2026-03-13. Zero density after 5-day kill-watch. 0 template pairs in 1,000 markets. | Capacity reallocated to Kalshi calibration. |
 | BTC 5-minute maker | `51` rows, `32` live_filled, positive cumulative outcomes | Real short-horizon evidence exists. |
 | Root verification | `1140 passed in 25.88s; 25 passed in 4.47s` | Green. |
 | JJ-N repo truth | `RevenuePipeline` builds; tests green at `61` + `49` | Implemented but not revenue-live. |
@@ -103,10 +103,9 @@ Mission constraint:
 Strategy catalog truth from `research/edge_backlog_ranked.md`:
 
 - `7` deployed or ready
-- `6` building
-- `2` building structural-alpha lanes
+- `4` building (was 6; A-6 and B-1 moved to killed)
+- `12` rejected (was 10; +2 from A-6/B-1 kill)
 - `1` re-evaluating
-- `10` rejected
 - `8` pre-rejected
 - `97` research-pipeline items
 - `131` total tracked
@@ -221,8 +220,8 @@ Still blocking revenue launch:
    - wallet flow
    - LMSR
    - cross-platform arb
-   - A-6
-   - B-1
+   - ~~A-6~~ KILLED 2026-03-13
+   - ~~B-1~~ KILLED 2026-03-13
 
 5. Turn filled-trade evidence into decision-quality evidence
    Recommend the minimum closed-trade and fill-quality contract needed before changing capital, thresholds, or automation level.
@@ -278,7 +277,7 @@ Preferred framing:
 
 - Do not invent new runtime APIs when existing JSON artifacts already carry state.
 - Treat `bot/`, `execution/`, `strategies/`, `signals/`, and `infra/` as live-trading-sensitive paths.
-- Treat A-6 and B-1 as blocked until their empirical gates are actually cleared.
+- A-6 and B-1 are formally killed (2026-03-13). Do not rebuild or revisit without new structural evidence.
 - Distinguish clearly between:
   - local trade-db truth
   - remote wallet truth
@@ -297,7 +296,7 @@ If no other instruction is given, this is the order that maximizes money-making 
 2. Prove or kill the active BTC maker-velocity lane with a clean closed-trade and fill-quality contract.
 3. Decide the canonical market universe and thresholds.
 4. Build the minimum JJ-N live-launch package for Website Growth Audit.
-5. Keep A-6 and B-1 blocked unless the evidence changes materially.
+5. A-6 and B-1 killed 2026-03-13. Reallocate to BTC5 guardrail optimization and Kalshi calibration.
 
 ---
 
