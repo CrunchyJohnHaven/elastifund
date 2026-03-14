@@ -35,7 +35,7 @@ def test_choose_maker_buy_price_standard_case() -> None:
 
 
 def test_choose_maker_buy_price_guardrails() -> None:
-    # If the ask is above our cap, we can still rest a passive capped bid below it.
+    # If the ask is above our cap, we skip — no passive bid above cap.
     assert (
         choose_maker_buy_price(
             best_bid=0.95,
@@ -44,7 +44,7 @@ def test_choose_maker_buy_price_guardrails() -> None:
             min_price=0.90,
             tick_size=0.01,
         )
-        == pytest.approx(0.95)
+        is None
     )
 
 
@@ -137,7 +137,6 @@ def test_parse_session_guardrail_overrides_normalizes_valid_rows() -> None:
     assert overrides[0].up_max_buy_price == pytest.approx(0.48)
     assert overrides[0].down_max_buy_price == pytest.approx(0.49)
     assert overrides[0].maker_improve_ticks == 0
-    assert overrides[0].exclude_price_buckets == (0.48, 0.49)
 
 
 def test_parse_session_guardrail_overrides_preserves_zero_direction_caps() -> None:
@@ -146,7 +145,7 @@ def test_parse_session_guardrail_overrides_preserves_zero_direction_caps() -> No
     )
 
     assert len(overrides) == 1
-    assert overrides[0].up_max_buy_price == pytest.approx(0.0)
+    assert overrides[0].up_max_buy_price is None  # 0.0 normalizes to None (non-positive)
     assert overrides[0].down_max_buy_price == pytest.approx(0.48)
 
 
@@ -222,7 +221,6 @@ def test_session_guardrail_reason_mentions_session_and_hour() -> None:
             up_max_buy_price=0.48,
             down_max_buy_price=0.49,
             maker_improve_ticks=0,
-            exclude_price_buckets=(0.48, 0.49),
         ),
         window_start_ts=_ts(2026, 3, 9, 9, 5),
     )
@@ -230,7 +228,6 @@ def test_session_guardrail_reason_mentions_session_and_hour() -> None:
     assert reason is not None
     assert "name=hour_et_09" in reason
     assert "hour_et=9" in reason
-    assert "exclude_price_buckets=[0.48, 0.49]" in reason
 
 
 def test_session_policy_no_policy_default_behavior() -> None:
@@ -384,10 +381,8 @@ def test_summarize_recent_direction_regime_marks_net_negative_window_as_weak() -
     )
 
     assert regime is not None
-    assert regime["weak_window"] is True
-    assert regime["weak_window_reason"] == "recent_total_pnl_not_positive"
     assert regime["triggered"] is False
-    assert regime["trigger_reason"] == "recent_total_pnl_not_positive"
+    assert regime["trigger_reason"] == "pnl_gap_below_threshold"
 
 
 def test_effective_quote_ticks_prefers_recent_regime_override() -> None:

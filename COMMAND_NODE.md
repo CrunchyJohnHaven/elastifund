@@ -110,7 +110,7 @@ Mission constraint:
 | Reconciliation script | Fixed | Now queries proxy wallet via `POLY_DATA_API_ADDRESS` |
 | Runtime truth JSON | Updated | `reports/runtime_truth_latest.json` patched with wallet data |
 | Local jj_trades.db | Still empty | 0 rows; trades went through BTC5 maker path, not jj_live |
-| BTC5 VPS DB | 553 rows, 0 filled | Skip reasons: bad_book, delta_too_small, price_outside_guardrails |
+| BTC5 VPS DB | 553+ rows, signature fix deployed | DISPATCH_100: funder address fixed (was EOA, now proxy). Delta cap 0.0040, UP live, lt049 skip disabled. |
 | Pipeline verdict | REJECT ALL (stale) | 5+ days old; decoupled from actual fills |
 | Wallet export CSV | 62h stale | Last: 2026-03-12; needs fresh download |
 
@@ -120,7 +120,7 @@ Mission constraint:
 |---|---|---|
 | Structural alpha A-6 | **KILLED** 2026-03-13; `0` executable constructions below `0.95` after 5-day watch | Zero density in 563 neg-risk events. Engineering capacity reallocated to BTC5 optimization. |
 | Structural alpha B-1 | **KILLED** 2026-03-13; `0` deterministic template pairs after 5-day watch | Zero density in 1,000+ markets. Engineering capacity reallocated to Kalshi integration. |
-| BTC 5-minute maker (VPS) | `553` total rows, `0` current live fills; 50 historical closed positions (47 BTC + 3 ETH) | Guardrail fixes deployed 2026-03-14. Still skipping during US hours: bad_book, delta_too_small, price_outside_guardrails. |
+| BTC 5-minute maker (VPS) | `553+` total rows, signature fix deployed 2026-03-14 16:05 UTC | DISPATCH_100: 4th blocker found (invalid signature from wrong funder address). All 4 blockers now fixed. Remaining skips are legitimate market conditions. Fills expected during active BTC trading hours. |
 | JJ-N repo truth | `RevenuePipeline` builds; tests green | Implemented but not revenue-live. |
 | First non-trading wedge | Website Growth Audit, $500-$2500, 5-day delivery | Best path to first non-trading dollars. |
 
@@ -308,9 +308,9 @@ Preferred framing:
 
 If no other instruction is given, this is the order that maximizes money-making improvement velocity:
 
-1. **Diagnose BTC5 zero-fill gap.** VPS has 553 rows, 0 fills. Skip reasons during US hours: `bad_book`, `delta_too_small`, `price_outside_guardrails`. The guardrail fixes from earlier today (delta 0.0040, UP live, min_buy 0.42) are not producing fills. Investigate whether thresholds need further widening or the market microstructure has changed.
-2. **Scale BTC5 to $10/trade once fills resume.** Historical evidence is strong: 47 BTC closed trades, all winners, +$140 net on $247 deposit. Already configured in capital_stage.env.
-3. **Fix test failures in `test_btc_5min_maker_process_window_core.py`.** Guardrail changes broke test expectations. Repair tests to match new live config.
+1. **MONITOR: Confirm BTC5 fills during active trading hours.** DISPATCH_100 deployed 2026-03-14 16:05 UTC. All 4 blockers fixed (signature, delta, UP shadow, lt049 skip). Zero `invalid signature` errors since fix. Remaining skips are legitimate market conditions. Check `journalctl -u btc-5min-maker --since "1 hour ago" | grep order_placed` after 18:00 UTC Mon-Fri.
+2. **Scale BTC5 to $10/trade once fills confirmed.** Historical evidence is strong: 47 BTC closed trades, all winners, +$140 net on $247 deposit. Already configured in capital_stage.env. Wait for 3+ live fills before declaring success.
+3. **Fix test failures in `test_btc_5min_maker_process_window_core.py`.** Guardrail changes broke test expectations. Repair tests to match new live config (delta 0.0040, buy prices 0.52/0.53, lt049 skip disabled).
 4. **Download fresh wallet export CSV.** Last export 2026-03-12 (62+ hours stale). Blocks stage gate progression. Export from https://polymarket.com/portfolio.
 5. **Build the minimum JJ-N live-launch package for Website Growth Audit.** Best path to first non-trading dollar. Blocking: verified sending domain, curated leads, explicit approval.
 
