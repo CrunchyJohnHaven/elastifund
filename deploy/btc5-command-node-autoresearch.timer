@@ -1,0 +1,11 @@
+[Unit]
+Description=Run BTC5 Command-Node Autoresearch every 60 minutes
+
+[Timer]
+OnBootSec=20min
+OnUnitActiveSec=60min
+Persistent=true
+Unit=btc5-command-node-autoresearch.service
+
+[Install]
+WantedBy=timers.target

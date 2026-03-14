@@ -1,0 +1,16 @@
+[Unit]
+Description=BTC5 Policy Autoresearch Loop
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/polymarket-trading-bot
+ExecStart=/bin/bash -lc 'mkdir -p state reports/autoresearch && export PYTHONPATH=/home/ubuntu/polymarket-trading-bot:/home/ubuntu/polymarket-trading-bot/bot:/home/ubuntu/polymarket-trading-bot/polymarket-bot && /usr/bin/python3 scripts/btc5_dual_autoresearch_ops.py run-lane --lane policy --write-morning-report'
+Restart=on-failure
+RestartSec=60
+TimeoutStartSec=600
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=btc5policyautoresearch

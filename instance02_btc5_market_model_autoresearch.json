@@ -1,0 +1,61 @@
+{
+  "champion": {
+    "benchmark_id": "btc5_market_v1",
+    "candidate_hash": "279bcae73cb78faae2549a8000d5d67cc94b4ab7ba709ec4efb35269148c58c0",
+    "candidate_model_name": "empirical_backoff_v1",
+    "candidate_path": "btc5_market_model_candidate.py",
+    "decision_reason": "baseline_frontier",
+    "epoch_id": "2026-03-10T10:55:00Z__2026-03-11T15:20:00Z",
+    "experiment_id": 1,
+    "generated_at": "2026-03-11T17:51:01Z",
+    "loss": 5.178301,
+    "manifest_path": "benchmarks/btc5_market/v1/manifest.json",
+    "packet_json": "reports/autoresearch/btc5_market/packets/experiment_0001.json"
+  },
+  "deliverables": {
+    "candidate_path": "btc5_market_model_candidate.py",
+    "champion_path": "reports/autoresearch/btc5_market/champion.json",
+    "chart_svg": "research/btc5_market_model_progress.svg",
+    "latest_json": "reports/autoresearch/btc5_market/latest.json",
+    "latest_md": "reports/autoresearch/btc5_market/latest.md",
+    "ledger_path": "reports/autoresearch/btc5_market/results.jsonl",
+    "manifest_path": "benchmarks/btc5_market/v1/manifest.json",
+    "packet_json": "reports/autoresearch/btc5_market/packets/experiment_0001.json",
+    "packet_md": "reports/autoresearch/btc5_market/packets/experiment_0001.md"
+  },
+  "generated_at": "2026-03-11T17:51:01Z",
+  "instance": 2,
+  "latest_experiment": {
+    "artifact_paths": {
+      "chart_svg": "research/btc5_market_model_progress.svg",
+      "manifest_path": "benchmarks/btc5_market/v1/manifest.json",
+      "packet_json": "reports/autoresearch/btc5_market/packets/experiment_0001.json",
+      "packet_md": "reports/autoresearch/btc5_market/packets/experiment_0001.md"
+    },
+    "benchmark_id": "btc5_market_v1",
+    "candidate_hash": "279bcae73cb78faae2549a8000d5d67cc94b4ab7ba709ec4efb35269148c58c0",
+    "candidate_model_name": "empirical_backoff_v1",
+    "candidate_path": "btc5_market_model_candidate.py",
+    "champion_id": 1,
+    "chart_svg": "research/btc5_market_model_progress.svg",
+    "decision_reason": "baseline_frontier",
+    "epoch_id": "2026-03-10T10:55:00Z__2026-03-11T15:20:00Z",
+    "error": null,
+    "experiment_id": 1,
+    "generated_at": "2026-03-11T17:51:01Z",
+    "keep": true,
+    "loss": 5.178301,
+    "manifest_path": "benchmarks/btc5_market/v1/manifest.json",
+    "metrics": {
+      "fill_rate_mae_pct": 0.477688,
+      "p95_drawdown_mae_pct": 32.364399,
+      "pnl_window_mae_pct": 0.419397,
+      "side_brier": 0.182304,
+      "simulator_loss": 5.178301
+    },
+    "packet_json": "reports/autoresearch/btc5_market/packets/experiment_0001.json",
+    "packet_md": "reports/autoresearch/btc5_market/packets/experiment_0001.md",
+    "status": "keep"
+  },
+  "project": "BTC5 Dual Autoresearch"
+}

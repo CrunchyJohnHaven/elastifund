@@ -1,0 +1,127 @@
+{
+  "benchmark_id": "btc5_market_v1",
+  "version": 1,
+  "data": {
+    "feature_fields": [
+      "direction",
+      "session_name",
+      "et_hour",
+      "price_bucket",
+      "delta_bucket",
+      "delta",
+      "abs_delta",
+      "order_price",
+      "best_bid",
+      "best_ask",
+      "open_price",
+      "current_price",
+      "edge_tier",
+      "session_policy_name",
+      "effective_stage",
+      "loss_cluster_suppressed"
+    ],
+    "snapshot_path": "benchmarks/btc5_market/v1/frozen_windows.jsonl",
+    "snapshot_sha256": "d880e751e174450fc9ad2f3bf09f7701480fecc456251d626e06dfe292943838",
+    "source_artifacts": [
+      {
+        "exists": true,
+        "path": "reports/tmp_remote_btc5_window_rows.json",
+        "role": "cached_rows",
+        "rows_loaded": 548
+      },
+      {
+        "exists": true,
+        "path": "data/btc_5min_maker.db",
+        "role": "local_db_rows",
+        "rows_loaded": 0
+      },
+      {
+        "exists": true,
+        "path": "data/btc_5min_maker.db",
+        "role": "db_only_enrichments",
+        "rows_loaded": 0
+      },
+      {
+        "merge": {
+          "db_enrichment_hits": 0,
+          "db_rows": 0,
+          "merged_rows": 548,
+          "remote_cache_rows": 548
+        }
+      }
+    ],
+    "target_fields": [
+      "actual_side_up",
+      "actual_fill_rate",
+      "actual_pnl_pct"
+    ],
+    "total_rows": 548
+  },
+  "epoch": {
+    "benchmark_rows": 288,
+    "epoch_end_iso": "2026-03-11T15:20:00Z",
+    "epoch_end_ts": 1773242400,
+    "epoch_expires_at_utc": "2026-03-12T18:18:50Z",
+    "epoch_id": "2026-03-10T10:55:00Z__2026-03-11T15:20:00Z",
+    "epoch_length_hours_actual": 28.5,
+    "epoch_length_hours_target": 24,
+    "epoch_row_target": 288,
+    "epoch_started_at_utc": "2026-03-11T18:18:50Z",
+    "epoch_start_iso": "2026-03-10T10:55:00Z",
+    "epoch_start_ts": 1773140100,
+    "frozen_at": "2026-03-11T18:18:50Z",
+    "warmup_rows": 260
+  },
+  "immutable_runner_paths": [
+    "benchmarks/btc5_market/v1/benchmark.py",
+    "scripts/run_btc5_market_model_autoresearch.py",
+    "scripts/render_btc5_market_model_progress.py"
+  ],
+  "lane": "btc5_market",
+  "mutable_surface": "btc5_market_model_candidate.py",
+  "objective": {
+    "formula": "0.40*pnl_window_mae_pct + 0.25*fill_rate_mae_pct + 0.20*side_brier + 0.15*p95_drawdown_mae_pct",
+    "higher_is_better": false,
+    "name": "simulator_loss"
+  },
+  "replay": {
+    "block_size": 4,
+    "bootstrap_paths": 32,
+    "fit_seed": 0,
+    "path_length": 288,
+    "seed_list": [
+      11,
+      29,
+      53,
+      71,
+      97,
+      113,
+      149,
+      173,
+      197,
+      223,
+      251,
+      281,
+      313,
+      337,
+      367,
+      397,
+      421,
+      449,
+      479,
+      503,
+      541,
+      569,
+      601,
+      631,
+      659,
+      691,
+      719,
+      751,
+      787,
+      811,
+      839,
+      863
+    ]
+  }
+}

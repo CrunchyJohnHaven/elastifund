@@ -1,0 +1,66 @@
+{
+  "schema_version": "2026-03-11.benchmarks-index.v1",
+  "package": "benchmarks",
+  "canonical_readme": "benchmarks/README.md",
+  "purpose": "Machine-readable index for frozen benchmark lanes.",
+  "lanes": [
+    {
+      "id": "calibration_v1",
+      "path": "benchmarks/calibration_v1",
+      "status": "active",
+      "classification": "canonical_frozen_benchmark_lane",
+      "manifest_path": "benchmarks/calibration_v1/manifest.json",
+      "entry_module": "benchmarks/calibration_v1/benchmark.py",
+      "readme": "benchmarks/calibration_v1/README.md"
+    },
+    {
+      "id": "btc5_market_v1",
+      "path": "benchmarks/btc5_market/v1",
+      "status": "active",
+      "classification": "canonical_frozen_benchmark_lane",
+      "manifest_path": "benchmarks/btc5_market/v1/manifest.json",
+      "entry_module": "benchmarks/btc5_market/v1/benchmark.py",
+      "readme": "benchmarks/btc5_market/v1/README.md"
+    },
+    {
+      "id": "command_node_btc5_v1",
+      "path": "benchmarks/command_node_btc5/v1",
+      "status": "active",
+      "classification": "canonical_frozen_benchmark_lane",
+      "manifest_path": "benchmarks/command_node_btc5/v1/manifest.json",
+      "entry_module": "benchmarks/command_node_btc5/v1/benchmark.py",
+      "readme": "benchmarks/command_node_btc5/v1/README.md"
+    },
+    {
+      "id": "command_node_btc5_v2",
+      "path": "benchmarks/command_node_btc5/v2",
+      "status": "active",
+      "classification": "canonical_frozen_benchmark_lane",
+      "manifest_path": "benchmarks/command_node_btc5/v2/manifest.json",
+      "entry_module": "benchmarks/command_node_btc5/v2/benchmark.py",
+      "readme": "benchmarks/command_node_btc5/v2/README.md"
+    },
+    {
+      "id": "command_node_btc5_v3",
+      "path": "benchmarks/command_node_btc5/v3",
+      "status": "active",
+      "classification": "canonical_frozen_benchmark_lane",
+      "manifest_path": "benchmarks/command_node_btc5/v3/manifest.json",
+      "entry_module": "benchmarks/command_node_btc5/v3/benchmark.py",
+      "readme": "benchmarks/command_node_btc5/v3/README.md"
+    },
+    {
+      "id": "command_node_btc5_v4",
+      "path": "benchmarks/command_node_btc5/v4",
+      "status": "active",
+      "classification": "canonical_frozen_benchmark_lane",
+      "manifest_path": "benchmarks/command_node_btc5/v4/manifest.json",
+      "entry_module": "benchmarks/command_node_btc5/v4/benchmark.py",
+      "readme": "benchmarks/command_node_btc5/v4/README.md"
+    }
+  ],
+  "rules": {
+    "lane_names_lowercase_snake_case": true,
+    "benchmark_win_does_not_imply_runtime_promotion": true
+  }
+}

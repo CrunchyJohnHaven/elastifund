@@ -1,0 +1,11 @@
+[Unit]
+Description=Run BTC5 Market-Model Autoresearch every 60 minutes
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=60min
+Persistent=true
+Unit=btc5-market-model-autoresearch.service
+
+[Install]
+WantedBy=timers.target

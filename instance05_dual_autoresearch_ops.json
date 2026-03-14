@@ -1,0 +1,207 @@
+{
+  "artifact": "instance05_dual_autoresearch_ops",
+  "audit_trail_paths": {
+    "lane_event_history": {
+      "command_node": "reports/autoresearch/command_node/results.jsonl",
+      "market": "reports/autoresearch/btc5_market/results.jsonl",
+      "policy": "reports/autoresearch/btc5_policy/results.jsonl"
+    },
+    "service_audit_jsonl": "reports/autoresearch/ops/service_audit.jsonl"
+  },
+  "current_champions": {
+    "command_node": {
+      "id": "headroom-command-node-v4-proposal_0005-proposal_0006-proposal_0007-proposal_0001-proposal_0002",
+      "loss": 7.3532,
+      "model_name": "headroom-command-node-v4-proposal_0005-proposal_0006-proposal_0007-proposal_0001-proposal_0002",
+      "updated_at": "2026-03-11T22:17:24+00:00"
+    },
+    "market": {
+      "id": "279bcae73cb78faae2549a8000d5d67cc94b4ab7ba709ec4efb35269148c58c0",
+      "loss": 5.178301,
+      "model_name": "empirical_backoff_v1",
+      "updated_at": "2026-03-11T17:51:01Z"
+    },
+    "policy": {
+      "id": "current_live_profile",
+      "loss": -54143.0069,
+      "policy_id": "current_live_profile",
+      "updated_at": "2026-03-11T19:48:35.039695+00:00"
+    }
+  },
+  "generated_at": "2026-03-11T22:29:53.089508+00:00",
+  "lane_summaries": {
+    "command_node": {
+      "benchmark_label": "BTC5 command-node benchmark progress",
+      "benchmark_progress_only": true,
+      "blockers": [],
+      "champion": {
+        "id": "headroom-command-node-v4-proposal_0005-proposal_0006-proposal_0007-proposal_0001-proposal_0002",
+        "loss": 7.3532,
+        "model_name": "headroom-command-node-v4-proposal_0005-proposal_0006-proposal_0007-proposal_0001-proposal_0002",
+        "updated_at": "2026-03-11T22:17:24+00:00"
+      },
+      "chart": {
+        "age_seconds": 748.6325,
+        "exists": true,
+        "freshness": "fresh",
+        "path": "research/btc5_command_node_progress.svg"
+      },
+      "recent_crash_count_24h": 0,
+      "recent_experiment_count_24h": 2,
+      "recent_keep_count_24h": 2,
+      "recent_promotion_count_24h": 0,
+      "status": "healthy"
+    },
+    "market": {
+      "benchmark_label": "BTC5 market-model benchmark progress",
+      "benchmark_progress_only": true,
+      "blockers": [],
+      "champion": {
+        "id": "279bcae73cb78faae2549a8000d5d67cc94b4ab7ba709ec4efb35269148c58c0",
+        "loss": 5.178301,
+        "model_name": "empirical_backoff_v1",
+        "updated_at": "2026-03-11T17:51:01Z"
+      },
+      "chart": {
+        "age_seconds": 748.7134,
+        "exists": true,
+        "freshness": "fresh",
+        "path": "research/btc5_market_model_progress.svg"
+      },
+      "recent_crash_count_24h": 0,
+      "recent_experiment_count_24h": 8,
+      "recent_keep_count_24h": 1,
+      "recent_promotion_count_24h": 0,
+      "status": "healthy"
+    },
+    "policy": {
+      "benchmark_label": "BTC5 policy benchmark progress",
+      "benchmark_progress_only": true,
+      "blockers": [],
+      "champion": {
+        "id": "current_live_profile",
+        "loss": -54143.0069,
+        "policy_id": "current_live_profile",
+        "updated_at": "2026-03-11T19:48:35.039695+00:00"
+      },
+      "chart": {},
+      "recent_crash_count_24h": 0,
+      "recent_experiment_count_24h": 2,
+      "recent_keep_count_24h": 0,
+      "recent_promotion_count_24h": 0,
+      "status": "healthy"
+    }
+  },
+  "morning_summary": null,
+  "overnight_closeout_summary": [
+    "BTC5 overnight closeout.",
+    "Benchmark progress only, not realized P&L.",
+    "Green gates on market + command_node overnight supervision; policy is informational unless it crashes.",
+    "Overall overnight status: red.",
+    "Service audit rows in window: 0.",
+    "Objective-lane service-audit span: 0.0000h (target >= 8h).",
+    "Service-audit run counts in window: market=0, policy=0, command_node=0.",
+    "Burn-in window anchored to deployment marker at 2026-03-11T22:29:53.087425+00:00.",
+    "Outcome surfaces: ARR=-312655.67% USD/day=$-208.13 source=outcome_ledger.",
+    "market: no_experiments; before=empirical_backoff_v1 (loss=5.178301); after=empirical_backoff_v1 (loss=5.178301); experiments=0 keeps=0 crashes=0 service_runs=0 service_failures=0 fresh=True.",
+    "policy: no_experiments; before=current_live_profile (loss=-54143.0069); after=current_live_profile (loss=-54143.0069); experiments=0 keeps=0 crashes=0 service_runs=0 service_failures=0 fresh=True.",
+    "command_node: no_experiments; before=headroom-command-node-v4-proposal_0005-proposal_0006-proposal_0007-proposal_0001-proposal_0002 (loss=7.3532); after=headroom-command-node-v4-proposal_0005-proposal_0006-proposal_0007-proposal_0001-proposal_0002 (loss=7.3532); experiments=0 keeps=0 crashes=0 service_runs=0 service_failures=0 fresh=True.",
+    "Blockers: service_audit_did_not_grow_in_window, service_audit_span_below_target:0.0000h/8h, market_run_count_below_target:0/4, command_node_run_count_below_target:0/4"
+  ],
+  "public_charts": {
+    "arr_outcome": {
+      "benchmark_progress_only": false,
+      "exists": true,
+      "label": "BTC5 continuation ARR (outcome estimate, not benchmark loss)",
+      "path": "research/btc5_arr_progress.svg"
+    },
+    "command_node": {
+      "benchmark_progress_only": true,
+      "exists": true,
+      "label": "BTC5 command-node loss (lower is better)",
+      "path": "research/btc5_command_node_progress.svg"
+    },
+    "market_model": {
+      "benchmark_progress_only": true,
+      "exists": true,
+      "label": "BTC5 market-model loss (lower is better)",
+      "path": "research/btc5_market_model_progress.svg"
+    },
+    "usd_per_day_outcome": {
+      "benchmark_progress_only": false,
+      "exists": true,
+      "label": "BTC5 USD/day (outcome estimate, not benchmark loss)",
+      "path": "research/btc5_usd_per_day_progress.svg"
+    }
+  },
+  "runtime_safety": {
+    "allow_order_submission": false,
+    "blockers": [
+      "No closed trades are available for calibration yet.",
+      "No capital is currently deployed.",
+      "no_closed_trades",
+      "no_deployed_capital",
+      "mode_alignment: agent_run_mode=live, execution_mode=shadow",
+      "forecast_deploy_recommendation_conflict_requires_repair_branch",
+      "finance_gate_blocked:hold_no_spend:next_100_live_hold,next_1000_live_hold,wallet_flow_vs_llm_not_ready,signal_source_audit_stale,signal_source_audit_capital_expansion_blocked,trailing_40_live_filled_not_positive",
+      "mode_alignment",
+      "finance_gate_blocked",
+      "wallet_export_candidate_conflict_requires_repair_branch",
+      "launch_posture_not_clear:blocked"
+    ],
+    "launch_posture": "blocked",
+    "service_status": "running",
+    "source_artifacts": [
+      "reports/runtime_truth_latest.json",
+      "reports/remote_service_status.json",
+      "reports/remote_cycle_status.json"
+    ]
+  },
+  "schema_version": 1,
+  "service_health": {
+    "backoff_lanes": [],
+    "blocked_lanes": [],
+    "budget_exhausted_lanes": [],
+    "degraded_lanes": [],
+    "overall_status": "healthy",
+    "stale_artifact_alarms": []
+  },
+  "services": [
+    {
+      "cadence_seconds": 3600,
+      "daily_runtime_budget_seconds": 10800,
+      "lane": "market",
+      "service_name": "btc5-market-model-autoresearch.service",
+      "timeout_seconds": 1800,
+      "timer_name": "btc5-market-model-autoresearch.timer"
+    },
+    {
+      "cadence_seconds": 900,
+      "daily_runtime_budget_seconds": 14400,
+      "lane": "policy",
+      "service_name": "btc5-policy-autoresearch.service",
+      "timeout_seconds": 600,
+      "timer_name": "btc5-policy-autoresearch.timer"
+    },
+    {
+      "cadence_seconds": 3600,
+      "daily_runtime_budget_seconds": 10800,
+      "lane": "command_node",
+      "service_name": "btc5-command-node-autoresearch.service",
+      "timeout_seconds": 1800,
+      "timer_name": "btc5-command-node-autoresearch.timer"
+    }
+  ],
+  "summary": "BTC5 dual-autoresearch surface. Benchmark progress only, not realized P&L. Healthy lanes: 3/3.",
+  "surface_artifacts": {
+    "arr_chart_svg": "research/btc5_arr_progress.svg",
+    "morning_json": "reports/autoresearch/morning/latest.json",
+    "morning_markdown": "reports/autoresearch/morning/latest.md",
+    "outcomes_json": "reports/autoresearch/outcomes/latest.json",
+    "overnight_closeout_json": "reports/autoresearch/overnight_closeout/latest.json",
+    "overnight_closeout_markdown": "reports/autoresearch/overnight_closeout/latest.md",
+    "service_audit_jsonl": "reports/autoresearch/ops/service_audit.jsonl",
+    "surface_json": "reports/autoresearch/latest.json",
+    "usd_per_day_chart_svg": "research/btc5_usd_per_day_progress.svg"
+  }
+}

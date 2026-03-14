@@ -1,0 +1,69 @@
+{
+  "schema_version": "2026-03-11.inventory-index.v1",
+  "package": "inventory",
+  "canonical_readme": "inventory/README.md",
+  "purpose": "Machine-readable index for benchmark inventory taxonomy and API/service entrypoints.",
+  "surface_groups": [
+    {
+      "id": "data_contracts",
+      "path": "inventory/data",
+      "classification": "canonical_machine_contract",
+      "items": [
+        "inventory/data/systems.json",
+        "inventory/data/runs.json"
+      ]
+    },
+    {
+      "id": "service_surface",
+      "path": "inventory/service.py",
+      "classification": "canonical_service_surface",
+      "items": [
+        "list_systems_payload",
+        "system_detail_payload",
+        "rankings_payload",
+        "runs_payload",
+        "paper_status_payload",
+        "run_artifacts_payload"
+      ],
+      "compatibility_aliases": [
+        "list_bots_payload",
+        "bot_detail_payload"
+      ]
+    },
+    {
+      "id": "adapter_surface",
+      "path": "inventory/systems",
+      "classification": "canonical_adapter_surface",
+      "items": [
+        "inventory/systems/openclaw/adapter.py",
+        "inventory/systems/openclaw/upstream.lock.json",
+        "inventory/systems/openclaw/openclaw.benchmark.json"
+      ]
+    },
+    {
+      "id": "evidence_contract",
+      "path": "inventory/metrics/evidence_plane.py",
+      "classification": "canonical_contract",
+      "items": [
+        "BENCHMARK_EVIDENCE_SPEC_VERSION",
+        "BenchmarkEvidencePacket",
+        "BenchmarkTelemetrySummary",
+        "IsolationBoundary",
+        "OutcomeComparison"
+      ]
+    },
+    {
+      "id": "artifact_sink",
+      "path": "inventory/results",
+      "classification": "canonical_artifact_sink",
+      "items": [
+        "inventory/results/README.md"
+      ]
+    }
+  ],
+  "policy_flags": {
+    "comparison_only_requires_allocator_ineligible": true,
+    "comparison_only_requires_isolation_wallet_access_none": true,
+    "comparison_only_requires_isolation_shared_state_access_none": true
+  }
+}

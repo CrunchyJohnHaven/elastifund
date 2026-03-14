@@ -1,0 +1,51 @@
+{
+  "benchmark_id": "command_node_btc5_v1",
+  "mutable_surface": "btc5_command_node.md",
+  "objective": {
+    "name": "agent_loss",
+    "formula": "100 - total_score",
+    "lower_is_better": true,
+    "components": {
+      "source_path_correctness": 30,
+      "dependency_correctness": 25,
+      "dispatch_completeness": 25,
+      "judge_clarity": 20
+    }
+  },
+  "epoch": {
+    "length_hours": 24,
+    "champion_roll_rule": "Champion evaluators can roll only at epoch boundary.",
+    "mutable_surface_rule": "Only btc5_command_node.md can change inside the benchmark lane."
+  },
+  "data": {
+    "tasks_path": "benchmarks/command_node_btc5/v1/tasks.jsonl",
+    "tasks_sha256": "3720e5f569457b00863507892d8a87ebfec111348736bb34e9920a757c021b24",
+    "task_count": 5
+  },
+  "scoring": {
+    "task_suite_id": "command_node_btc5_v1",
+    "owner_model_points": 10,
+    "read_first_points": 10,
+    "files_to_edit_points": 10,
+    "output_files_points": 10,
+    "dependency_order_points": 25,
+    "verification_points": 8,
+    "checklist_points": 7,
+    "clarity_structure_points": 14,
+    "clarity_term_points": 6
+  },
+  "artifacts": {
+    "results_ledger": "reports/autoresearch/command_node/results.jsonl",
+    "champion_registry": "reports/autoresearch/command_node/champion.json",
+    "latest_summary": "reports/autoresearch/command_node/latest.json",
+    "progress_chart": "research/btc5_command_node_progress.svg"
+  },
+  "chart_spec": {
+    "discard_color": "#B8B8B8",
+    "keep_color": "#2D8A4E",
+    "running_best_color": "#2D8A4E",
+    "annotation_style": "angled",
+    "x_axis": "experiment number",
+    "y_axis": "BTC5 command-node loss (lower is better)"
+  }
+}
