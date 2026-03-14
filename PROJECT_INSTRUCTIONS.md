@@ -55,7 +55,7 @@ Kalshi API Key ID: [stored in .env — see .env.example]
 | Past-day P&L | +$1.91 |
 | Open positions | 26+ across multiple market categories |
 | Closed/resolved trades | 36+ (wallet-verified) |
-| Structural-alpha gate | A-6 `blocked` (0 executable constructions), B-1 `blocked` (0 template pairs). Kill-watch deadline March 14 |
+| Structural-alpha gate | A-6 **KILLED** 2026-03-13 (0 constructions after 5-day watch), B-1 **KILLED** 2026-03-13 (0 template pairs). Capacity reallocated to BTC5 + Kalshi |
 | Verification status | **1,397 tests passing** across all surfaces |
 | Dispatch inventory | `11` `DISPATCH_*` work-orders; `95` markdown files in `research/dispatches/` |
 | Known issue | Local ledger drift: local trade-db reports fewer positions than wallet actually shows. Reconciliation pipeline in progress |

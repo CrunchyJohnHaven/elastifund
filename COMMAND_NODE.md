@@ -93,8 +93,8 @@ Mission constraint:
 
 | Area | Current truth | Why it matters |
 |---|---|---|
-| Structural alpha A-6 | `blocked`; `0` executable constructions below `0.95` | No promotion. Kill-watch deadline March 14. |
-| Structural alpha B-1 | `blocked`; `0` deterministic template pairs | No promotion. Kill-watch deadline March 14. |
+| Structural alpha A-6 | **KILLED** 2026-03-13; `0` executable constructions below `0.95` after 5-day watch | Capacity reallocated to BTC5 optimization. |
+| Structural alpha B-1 | **KILLED** 2026-03-13; `0` deterministic template pairs after 5-day watch | Capacity reallocated to Kalshi calibration. |
 | BTC 5-minute maker | `51` rows, `32` live_filled, positive cumulative outcomes | Real short-horizon evidence exists. |
 | Root verification | `1140 passed in 25.88s; 25 passed in 4.47s` | Green. |
 | JJ-N repo truth | `RevenuePipeline` builds; tests green at `61` + `49` | Implemented but not revenue-live. |

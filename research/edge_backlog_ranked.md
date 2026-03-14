@@ -11,7 +11,7 @@
 |--------|-------|
 | Deployed (live/ready) | 7 |
 | Building (code written) | 6 |
-| **Building — Structural Alpha (A-6/B-1)** | **2** |
+| **Rejected — Structural Alpha (A-6/B-1)** | **2** |
 | Tested & Rejected | 10 |
 | Pre-Rejected (v3, <10% P(Works) + impractical) | 8 |
 | Re-Evaluating (maker-only) | 1 |
@@ -163,8 +163,8 @@ Each edge scored on four dimensions (1–5 scale):
 
 | v3 Rank | Strategy ID | Name | P(Works) | v3 Composite | JJ Tier | Notes |
 |---------|------------|------|----------|-------------|---------|-------|
-| 1 | A-6 | Guaranteed Dollar Scanner | 45% | 4.2 | **BUILDING** | Current shipped lane ranks straddles vs full baskets, but the March 8 broad audit and March 9 live scan still show 0 executable opportunities below the initial 0.95 cost gate. No promotion. Fill/dwell study comes before more buildout. |
-| 2 | B-1 | Templated Dependency Engine | 45% | 4.1 | **BUILDING** | Broad graph work is frozen behind density. Promotion still requires a 50-pair gold set with >=85% precision, and the March 9 template audit still found 0 deterministic pairs in the first 1,000 allowed markets. No promotion. |
+| 1 | A-6 | Guaranteed Dollar Scanner | 45% | 4.2 | **REJECTED** | KILLED 2026-03-13. Zero density after 5-day kill-watch (deadline March 14). 0 executable constructions below 0.95 gate across 510+ neg-risk events. Capacity reallocated to BTC5 optimization. |
+| 2 | B-1 | Templated Dependency Engine | 45% | 4.1 | **REJECTED** | KILLED 2026-03-13. Zero density after 5-day kill-watch (deadline March 14). 0 deterministic template pairs in first 1,000 allowed markets. Capacity reallocated to Kalshi calibration. |
 | 3 | D-12 | Adaptive Platt Calibration (Rolling) | 10% | 2.2 | TIER 4 | Validated negative on 2026-03-07. The current static fitted Platt curve beat rolling windows 50/100/200 on the 532-market walk-forward holdout. Revisit only after 100+ live resolved trades. |
 | 4 | G-1 | WebSocket Upgrade (REST→WS) | 95%* | 3.9 | TIER 1 | *Infrastructure, not alpha. Prerequisite for 8+ strategies. |
 | 5 | D-9 | Ensemble Disagreement Signal | 30% | 3.8 | TIER 2 | 1 day. Simple std() on multi-model outputs. |
