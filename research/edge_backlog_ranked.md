@@ -2,11 +2,7 @@
 
 **Version:** 3.7.0
 **Date:** 2026-03-13
-<<<<<<< HEAD
-**Flywheel Cycle:** 3 (A-6/B-1 Kill, BTC5 Focus)
-=======
 **Flywheel Cycle:** 2 (Machine Truth Reconciliation)
->>>>>>> 4e3d28a (Kill A-6/B-1 structural alpha lanes: zero density after 5-day kill-watch)
 **Purpose:** Master list of every strategy evaluated, tested, or queued. Updated every flywheel cycle. Part of the Elastifund research flywheel — see `docs/strategy/flywheel_strategy.md`.
 **Assessment:** See `research/jj_assessment_dispatch.md` for execution orders.
 
@@ -28,11 +24,7 @@
 
 **Remote posture note (2026-03-09):** `reports/remote_service_status.json` shows `jj-live.service` `inactive` at `2026-03-09T01:28:43Z`, and `reports/remote_cycle_status.json` shows wallet-flow `ready` with `fast_flow_restart_ready=true`. The latest edge scan still returned `stay_paused`, and launch remains `blocked` because the service is stopped, there are no closed trades, no deployed capital, and the A-6/B-1 gates remain unresolved.
 
-<<<<<<< HEAD
-**Structural-alpha kill (2026-03-13):** A-6 and B-1 formally killed at the March 14 deadline. Both showed zero evidence after 5+ days of observation: A-6 had 0 executable constructions below 0.95 across 510+ neg-risk events; B-1 had 0 deterministic template pairs in 1,000+ markets. Effort reallocated to BTC5 guardrail optimization and scaling.
-=======
 **Structural-alpha kill decision (2026-03-13):** A-6 and B-1 are formally KILLED. Both lanes reached the March 14 kill-watch deadline with zero evidence: A-6 had 0 executable constructions below 0.95 (or even 0.97) across 563 neg-risk events; B-1 had 0 deterministic template pairs in 1,000+ markets. Engineering capacity reallocated to BTC5 guardrail optimization and Kalshi integration.
->>>>>>> 4e3d28a (Kill A-6/B-1 structural alpha lanes: zero density after 5-day kill-watch)
 
 ---
 
@@ -61,21 +53,12 @@
 
 **Fast-flow readiness note (2026-03-09):** wallet-flow is still `ready` in `reports/remote_cycle_status.json` with `80` scored wallets and `fast_flow_restart_ready=true`, but the service is stopped and the latest edge scan still says `stay_paused`. Keep the lane paused until a paper/shadow restart is explicitly approved; the latest scan found `0` viable markets even under the wide-open threshold profile.
 
-<<<<<<< HEAD
-## KILLED — STRUCTURAL ALPHA (Killed 2026-03-13, March 14 Deadline)
-
-| # | Strategy | Kill Date | Kill Reason |
-|---|----------|-----------|-------------|
-| SA-1 | A-6 Guaranteed Dollar Scanner | 2026-03-13 | Zero density after 5+ day kill-watch ending March 14, 2026. 0 executable constructions below 0.95 gate across 510+ neg-risk events. 0 relaxed candidates below 0.97. 0 underround observations. 0 live fills, 0 settlements. Killed per CLAUDE.md policy. |
-| SA-2 | B-1 Templated Dependency Engine | 2026-03-13 | Zero density after 5+ day kill-watch ending March 14, 2026. 0 deterministic template pairs in first 1,000 allowed markets. 0 live fills, 0 settlements, unmeasured classification accuracy. Killed per CLAUDE.md policy. |
-=======
 ## KILLED — STRUCTURAL ALPHA (Killed 2026-03-13, Sprint started 2026-03-07)
 
 | # | Strategy | Modules | Kill Reason |
 |---|----------|---------|-------------|
 | SA-1 | A-6 Guaranteed Dollar Scanner | constraint_arb_engine, sum_violation_scanner, a6_sum_scanner, a6_executor, neg_risk_inventory, resolution_normalizer, signals/sum_violation/guaranteed_dollar.py | Zero density after 5-day kill-watch (March 8 to March 13). 563 allowed neg-risk events audited, 0 executable constructions below the 0.95 cost gate, 0 relaxed candidates below 0.97. No promotion possible. |
 | SA-2 | B-1 Templated Dependency Engine | dependency_graph, relation_classifier, b1_executor, b1_monitor, relation_cache, bot/b1_template_engine.py | Zero density after 5-day kill-watch. 1,000+ active allowed markets audited, 0 deterministic template pairs found. No promotion possible. |
->>>>>>> 4e3d28a (Kill A-6/B-1 structural alpha lanes: zero density after 5-day kill-watch)
 
 ## RE-EVALUATING (Previously Rejected, New Evidence)
 
@@ -179,18 +162,8 @@ Each edge scored on four dimensions (1–5 scale):
 
 | v3 Rank | Strategy ID | Name | P(Works) | v3 Composite | JJ Tier | Notes |
 |---------|------------|------|----------|-------------|---------|-------|
-<<<<<<< HEAD
-<<<<<<< HEAD
-| 1 | A-6 | Guaranteed Dollar Scanner | 45% | 4.2 | **REJECTED** | KILLED 2026-03-13. Zero density after 5-day kill-watch (deadline March 14). 0 executable constructions below 0.95 gate across 510+ neg-risk events. Capacity reallocated to BTC5 optimization. |
-| 2 | B-1 | Templated Dependency Engine | 45% | 4.1 | **REJECTED** | KILLED 2026-03-13. Zero density after 5-day kill-watch (deadline March 14). 0 deterministic template pairs in first 1,000 allowed markets. Capacity reallocated to Kalshi calibration. |
-=======
-| 1 | A-6 | Guaranteed Dollar Scanner | 45% | 4.2 | **KILLED** | Killed 2026-03-13 at March 14 deadline. 0 executable constructions below 0.95 gate across 510+ neg-risk events after 5+ day kill-watch. Zero evidence of exploitable density. |
-| 2 | B-1 | Templated Dependency Engine | 45% | 4.1 | **KILLED** | Killed 2026-03-13 at March 14 deadline. 0 deterministic template pairs in first 1,000 allowed markets after 5+ day kill-watch. Zero evidence of exploitable density. |
->>>>>>> 39e32dc (Kill A-6/B-1 structural alpha: zero evidence at March 14 deadline)
-=======
 | 1 | A-6 | Guaranteed Dollar Scanner | 45% | 4.2 | **KILLED** | Killed 2026-03-13. Zero executable constructions below 0.95 cost gate across 563 neg-risk events after 5-day kill-watch. No market density to support this strategy. |
 | 2 | B-1 | Templated Dependency Engine | 45% | 4.1 | **KILLED** | Killed 2026-03-13. Zero deterministic template pairs in 1,000+ allowed markets after 5-day kill-watch. Insufficient dependency density in current Polymarket universe. |
->>>>>>> 4e3d28a (Kill A-6/B-1 structural alpha lanes: zero density after 5-day kill-watch)
 | 3 | D-12 | Adaptive Platt Calibration (Rolling) | 10% | 2.2 | TIER 4 | Validated negative on 2026-03-07. The current static fitted Platt curve beat rolling windows 50/100/200 on the 532-market walk-forward holdout. Revisit only after 100+ live resolved trades. |
 | 4 | G-1 | WebSocket Upgrade (REST→WS) | 95%* | 3.9 | TIER 1 | *Infrastructure, not alpha. Prerequisite for 8+ strategies. |
 | 5 | D-9 | Ensemble Disagreement Signal | 30% | 3.8 | TIER 2 | 1 day. Simple std() on multi-model outputs. |

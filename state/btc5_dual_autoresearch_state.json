@@ -1,0 +1,45 @@
+{
+  "lanes": {
+    "command_node": {
+      "backoff_until": null,
+      "consecutive_failures": 0,
+      "last_run_at": "2026-03-11T22:17:24.465552+00:00",
+      "last_status": "ok",
+      "last_success_at": "2026-03-11T22:17:24.465552+00:00"
+    },
+    "market": {
+      "backoff_until": null,
+      "consecutive_failures": 0,
+      "last_run_at": "2026-03-11T21:46:55.948351+00:00",
+      "last_status": "ok",
+      "last_success_at": "2026-03-11T21:46:55.948351+00:00"
+    },
+    "policy": {
+      "backoff_until": null,
+      "consecutive_failures": 0,
+      "last_run_at": "2026-03-11T19:48:35.707133+00:00",
+      "last_status": "ok",
+      "last_success_at": "2026-03-11T19:48:35.707133+00:00"
+    }
+  },
+  "previous_champions": {
+    "command_node": {
+      "id": "headroom-command-node-v4-proposal_0005-proposal_0006-proposal_0007-proposal_0001-proposal_0002",
+      "loss": 7.3532,
+      "model_name": "headroom-command-node-v4-proposal_0005-proposal_0006-proposal_0007-proposal_0001-proposal_0002",
+      "updated_at": "2026-03-11T22:17:24+00:00"
+    },
+    "market": {
+      "id": "279bcae73cb78faae2549a8000d5d67cc94b4ab7ba709ec4efb35269148c58c0",
+      "loss": 5.178301,
+      "model_name": "empirical_backoff_v1",
+      "updated_at": "2026-03-11T17:51:01Z"
+    },
+    "policy": {
+      "id": "current_live_profile",
+      "loss": -54143.0069,
+      "policy_id": "current_live_profile",
+      "updated_at": "2026-03-11T19:48:35.039695+00:00"
+    }
+  }
+}
