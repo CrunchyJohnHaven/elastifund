@@ -22,7 +22,7 @@ For everything else — writing code, running tests, deploying to VPS, researchi
 
 **Elastifund** is an open, self-improving agentic operating system for real economic work. AI persona: **JJ**. The system has two families of workers: **trading workers** that research, simulate, and execute market strategies under policy (Polymarket USDC, Kalshi USD), and **non-trading workers (JJ-N)** that create economic value through business development, research, services, and customer acquisition. 20% of net profits fund veteran suicide prevention. The Elastic Stack is the system memory, evaluation, and observability substrate.
 
-**Status (machine truth reconciled on March 9, 2026):** Bot remains deployed to the Dublin VPS. `reports/public_runtime_snapshot.json` and `reports/runtime_truth_latest.json` are the canonical runtime handoff. `reports/runtime_truth_latest.json` generated at `2026-03-09T16:19:45Z` shows `jj-live.service` now `stopped`, so service-state drift is cleared and the only intended live lane is the dedicated BTC 5-minute maker. Current local runtime accounting still shows `565` cycles, `5` trade-db trades, `4` local open positions, and `0` local closed trades, while the remote Polymarket wallet shows `28` open positions and `9` closed positions; that accounting split remains a first-class problem. The remote BTC 5-minute maker database now shows `51` rows, `32` `live_filled`, positive cumulative filled outcomes, and a current guardrail recommendation of `max_abs_delta=0.00015`, `UP max=0.51`, `DOWN max=0.51`. A-6 remains blocked (`0` executable constructions below `0.95`) and B-1 remains blocked (`0` deterministic template pairs in first `1,000` allowed markets). Latest root verification artifact is passing (`1140 passed in 25.88s; 25 passed in 4.47s`). JJ-N verification is green in this worktree (`64` package tests, `49` repo-root tests), `nontrading/main.py` runs `RevenuePipeline`, and startup hard-blocks live providers when sender domain/auth is placeholder or unverified.
+**Status (machine truth reconciled on March 9, 2026):** Bot remains deployed to the Dublin VPS. `reports/public_runtime_snapshot.json` and `reports/runtime_truth_latest.json` are the canonical runtime handoff. `reports/runtime_truth_latest.json` generated at `2026-03-09T16:19:45Z` shows `jj-live.service` now `stopped`, so service-state drift is cleared and the only intended live lane is the dedicated BTC 5-minute maker. Current local runtime accounting still shows `565` cycles, `5` trade-db trades, `4` local open positions, and `0` local closed trades, while the remote Polymarket wallet shows `28` open positions and `9` closed positions; that accounting split remains a first-class problem. The remote BTC 5-minute maker database now shows `51` rows, `32` `live_filled`, positive cumulative filled outcomes, and a current guardrail recommendation of `max_abs_delta=0.00015`, `UP max=0.51`, `DOWN max=0.51`. A-6 and B-1 formally killed 2026-03-13 after 5-day kill-watch with zero density (0 constructions, 0 template pairs). Latest root verification artifact is passing (`1140 passed in 25.88s; 25 passed in 4.47s`). JJ-N verification is green in this worktree (`64` package tests, `49` repo-root tests), `nontrading/main.py` runs `RevenuePipeline`, and startup hard-blocks live providers when sender domain/auth is placeholder or unverified.
 
 **Primary goal: Make the first dollar.** Fast feedback loops. Trading: markets that resolve within hours, not months. Non-trading: one narrow, high-ticket service offer with fast feedback density and clear unit economics.
 
@@ -105,25 +105,18 @@ SIGNAL 4: Cross-Platform Arb [COMPLETE, NOT ACTIVATED]
   Sizing: Quarter-Kelly
   Status: Code complete, needs live market matching + ops activation
 
-SIGNAL 5: Guaranteed Dollar Scanner (A-6) [SHADOW MODE, EMPIRICAL GATE]
-  Markets: Neg-risk event groups only
-  Edge: cheapest guaranteed-dollar construction < 0.95
-  Construction order: YES+NO first, neg-risk-conversion second, full basket last
-  Sizing: Execution-risk-adjusted, capped at $5/leg
-  Status: top-of-book ranking landed; current audit still shows 0 constructions below the 0.95 gate, so live fill/dwell capture is the next gate and no promotion is allowed yet
+SIGNAL 5: Guaranteed Dollar Scanner (A-6) [KILLED 2026-03-13]
+  Status: REJECTED. Zero density after 5-day kill-watch (Mar 9-14). 0 executable constructions below 0.95 gate across 510+ neg-risk events. 0 live fills, 0 settlement evidence. Capacity reallocated to BTC5 optimization.
 
-SIGNAL 6: Templated Dependency Engine (B-1) [NARROWED / GATED]
-  Markets: Deterministic template families in one event cluster
-  Edge: implication / exclusion / complement violations > 5% and >= 2x combined spread
-  Sizing: Execution-risk-adjusted, capped at $5/leg
-  Status: template matcher landed; current density audit still shows zero deterministic pairs in the first 1,000 allowed markets, so no promotion is allowed yet
+SIGNAL 6: Templated Dependency Engine (B-1) [KILLED 2026-03-13]
+  Status: REJECTED. Zero density after 5-day kill-watch (Mar 9-14). 0 deterministic template pairs in first 1,000 markets. 0 live fills, 0 settlement evidence. Capacity reallocated to Kalshi calibration.
 
 CONFIRMATION LAYER:
   2+ predictive sources agree → highest confidence, boosted size
   LLM alone → standard size, slow markets only
   Wallet flow alone → small size, fast markets only
   LLM + wallet consensus → best signal (Bridgewater finding: 67/33 blend outperforms either)
-  Signal 5 or 6 → bypass predictive confirmation and route to arb executor after structural validation
+  ~~Signal 5 or 6 → bypass predictive confirmation and route to arb executor after structural validation~~ (Signals 5 and 6 killed 2026-03-13)
 ```
 
 ### Smart Wallet Strategy Detail (Optimal Path to First Dollar)
@@ -279,7 +272,7 @@ Private investor and legal materials are intentionally kept outside this repo in
 
 ## 9. Priority Queue (What to Build Next)
 
-> **UPDATED 2026-03-07:** Canonical implementation spec now lives in `docs/strategy/combinatorial_arb_implementation_deep_dive.md`. Structural alpha is now gated by live executable density: A-6 guaranteed-dollar first, B-1 templated only.
+> **UPDATED 2026-03-13:** A-6 and B-1 formally killed after 5-day kill-watch with zero density. See `research/edge_backlog_ranked.md` for kill evidence. Capacity reallocated to BTC5 guardrail optimization and Kalshi calibration.
 
 ### P0 — Build Status (Current)
 1. [x] Added `bot/constraint_arb_engine.py` with candidate generation, relation classification, resolution gating, sum/graph violation scanning, VPIN veto hook, SQLite logging, and shadow-report CLI.
@@ -310,10 +303,11 @@ Other completed modules still available for parallel promotion work:
 
 ### P1 — 14-Day Execution Order (Do In Sequence)
 1. **Phase 0 (48-hour empirical gate):** Measure top-of-book costs, cheapest construction type, dwell time, and maker fill behavior for the allowed neg-risk universe.
-2. **Phase 1 (A-6 narrow live shadow):** Keep A-6 to guaranteed-dollar ranking plus maker-only entry logic; do not widen into full-basket optimization first.
-3. **Phase 2 (B-1 templated only):** One event family, deterministic compatibility matrix, manual gold set, then live shadow.
-4. **Phase 3 (integration):** Route A-6/B-1 into the live confirmation/execution stack only if Phase 0 and Phase 2 actually justify it.
-6. **Days 13-14 (shadow mode):** Paper trade the combined arb stack, simulate realistic maker fills, and publish capture-rate / rollback-loss attribution.
+2. ~~**Phase 1 (A-6 narrow live shadow):**~~ KILLED. Zero constructions below 0.95 across 510+ events.
+3. ~~**Phase 2 (B-1 templated only):**~~ KILLED. Zero template pairs in 1,000 markets.
+4. ~~**Phase 3 (integration):**~~ Moot: both killed.
+5. **Replacement: BTC5 guardrail optimization** — Widen guardrails for current BTC price range, scale to $10/trade.
+6. **Replacement: Kalshi weather calibration** — City-specific calibration refinement.
 
 ### P2 — Website: Competitive Benchmark Harness (Sequenced into Cycles 2-4)
 1. **Cycle 2:** Publish methodology page (`/benchmark/methodology`) with T0-T7 test matrix and scoring rubric. No results yet — methodology-first establishes trust.
@@ -324,13 +318,13 @@ Other completed modules still available for parallel promotion work:
 See `research/dispatches/DISPATCH_097_competitive_inventory_benchmark_blueprint.md` for the implementation brief, `research/competitive_inventory_benchmark_deep_research.md` for the full integrated research, and `docs/website/benchmark-methodology.md` for the first public-facing benchmark page.
 
 ### P3 — Hard Kill Rules (Non-Negotiable)
-1. **A-6 kill:** reject if realized capture `<50%` of theoretical over a trailing 20-event window.
-2. **A-6 kill:** reject if the allowed universe fails to produce any event below the initial `0.95` guaranteed-dollar cost gate over the observation window.
-3. **B-1 kill:** reject if relation accuracy drops below `80%` on the 50-pair gold set.
-4. **B-1 kill:** reject if deterministic template density remains effectively zero or if resolved false-positive rate exceeds `5%`.
-5. **Global kill:** decommission both strategies if combined cumulative P&L is negative after 30 live days.
-6. **Program kill:** reject live promotion if partial-basket rollback loss exceeds `30%` of gross edge.
-7. **Program kill:** reject immediately on any augmented-neg-risk rule violation (`Other` traded, placeholder leakage, broken resolution-equivalence gate).
+~~1. **A-6 kill:** reject if realized capture `<50%` of theoretical over a trailing 20-event window.~~ Triggered: zero density, killed 2026-03-13.
+~~2. **A-6 kill:** reject if the allowed universe fails to produce any event below the initial `0.95` guaranteed-dollar cost gate over the observation window.~~ Triggered: killed 2026-03-13.
+~~3. **B-1 kill:** reject if relation accuracy drops below `80%` on the 50-pair gold set.~~ Triggered: zero density, killed 2026-03-13.
+~~4. **B-1 kill:** reject if deterministic template density remains effectively zero or if resolved false-positive rate exceeds `5%`.~~ Triggered: killed 2026-03-13.
+5. ~~**Global kill:** decommission both strategies if combined cumulative P&L is negative after 30 live days.~~ Moot: both killed before reaching live.
+6. **Program kill (BTC5):** reject live promotion if trailing 12-fill P&L is not positive.
+7. **Program kill (general):** reject immediately on any augmented-neg-risk rule violation (`Other` traded, placeholder leakage, broken resolution-equivalence gate).
 8. **Program diagnostic:** if VPIN-gated variant materially outperforms ungated variant, treat the issue as execution quality failure before scaling alpha.
 
 ---

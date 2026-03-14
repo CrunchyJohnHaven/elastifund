@@ -189,8 +189,8 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 > **CRITICAL: ALWAYS VERIFY AGAINST LIVE WALLET DATA.**
 > The local ledger, the checked-in runtime/public artifacts under `reports/`, and `FAST_TRADE_EDGE_ANALYSIS.md` have historically drifted from actual on-chain and wallet state. Before citing capital, P&L, or position numbers, check the live Polymarket portfolio and Kalshi account. If live wallet data contradicts local artifacts, the wallet wins.
 
-**Date:** 2026-03-13 22:40 UTC
-**Cycle:** Instance 5 refresh: autoresearch + scale comparison + runtime truth regenerated. A-6/B-1 formally killed.
+**Date:** 2026-03-13 22:50 UTC
+**Cycle:** Instance 4+5 refresh: wallet reconciliation attempted (API blocked from sandbox; must run from Mac terminal), autoresearch + scale comparison + runtime truth regenerated. A-6/B-1 formally killed and merged.
 **Last loop cycle report:** `reports/loop_cycle_20260310_2311.md`
 
 ### Manual Wallet-Export Read (March 10, 2026)
@@ -267,7 +267,9 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 - `FAST_TRADE_EDGE_ANALYSIS.md` — says REJECT ALL, ~73h stale, while BTC 5-min maker has been actively filling profitably.
 - Pipeline and execution layer fully decoupled. Pipeline does not govern what actually trades.
 - BTC 5-min maker: 302 total rows but 0 live_filled in current probe. Service confirmed running on VPS but zero fills flowing. Autoresearch env updated (delta 0.00130, UP live mode) but VPS may need restart to pick up new values.
-- Runtime truth artifacts regenerated 2026-03-13 but stage_0 locked: wallet_export_stale (54h), trailing_12_live_filled_not_positive, insufficient_trailing_12_live_fills.
+- Runtime truth artifacts regenerated 2026-03-13 but stage_0 locked: wallet_export_stale (54h+), trailing_12_live_filled_not_positive, insufficient_trailing_12_live_fills.
+- Wallet API probe from sandbox returns 0 positions (proxy blocks Polymarket API). Must run reconciliation from Mac terminal or VPS.
+- Wallet surface confirmed via runtime truth: $390.90 total, $373.32 free, $17.58 reserved in orders, 0 open positions visible to API (likely a probe scope issue).
 - Kalshi has no local ledger integration — all tracking is manual via browser.
 
 ### Top 3 Action Items
