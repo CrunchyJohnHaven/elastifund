@@ -149,5 +149,7 @@ data/
 !polymarket-bot/src/data/ingest/*.py
 !inventory/data/
 !inventory/data/*.json
+!AEActivityApp/src/data/
+!AEActivityApp/src/data/*.ts
 state/elastifund/
 state/local/
