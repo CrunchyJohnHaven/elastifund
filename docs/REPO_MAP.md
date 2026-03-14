@@ -43,9 +43,18 @@ For live status, prefer `jj_state.json`, `reports/remote_cycle_status.json`, `re
 | `develop/`, `diary/`, `elastic/`, `leaderboards/`, `manage/`, `roadmap/` | static website route stubs and leaderboard surfaces | keep public messaging aligned with `docs/numbered/11_PUBLIC_MESSAGING.md` and the numbered-doc lane |
 | `docs/` | durable docs, ADRs, API notes, onboarding, templates | prefer new docs here |
 | `research/` | prompts, dispatches, findings, postmortems | investigative output |
-| `deploy/` | deployment and infra artifacts | operator-facing |
-| `scripts/` | reusable repo automation | add repeatable workflows here |
+| `deploy/` | deployment and infra artifacts (systemd services for BTC5, JJ-live, shadow lanes, autoresearch) | operator-facing |
+| `scripts/` | reusable repo automation (`compare_shadow_vs_live.py` for shadow-vs-BTC5 head-to-head) | add repeatable workflows here |
 | `data/`, `logs/`, `reports/`, `state/` | generated runtime artifacts | keep disposable and ignored, except the status JSON handoff artifacts under `reports/` that document current machine truth |
+
+### Wallet Sync
+
+| File | Purpose |
+|---|---|
+| `bot/wallet_poller.py` | Continuous polling loop that keeps the local trade ledger in sync with the live Polymarket wallet (wallet is authoritative). Supports `--once`, `--continuous`, and `--status` CLI modes. |
+| `bot/wallet_reconciliation.py` | Core reconciliation engine — fetches remote positions, patches local SQLite, scores drift. Used by `wallet_poller.py` as a library. |
+| `deploy/wallet-poller.service` | systemd unit for the wallet poller daemon on the Dublin VPS. |
+| `tests/test_wallet_poller.py` | 17 test cases covering snapshot persistence, poll cycles, error handling, and status reporting. |
 | `archive/` | superseded material | not current guidance |
 
 ## Numbered Docs
