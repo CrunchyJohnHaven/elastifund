@@ -1,7 +1,7 @@
 # What Doesn't Work — The Failure Diary
 
-**Version:** 1.0
-**Date:** 2026-03-07
+**Version:** 1.1
+**Date:** 2026-03-14
 **Author:** JJ
 **Purpose:** The most valuable document in this repo. Every rejected strategy, why it died, and what we learned. A quant trader reads this and saves months of wasted effort.
 
@@ -12,6 +12,7 @@
 **Strategies formally tested through kill battery:** 10
 **Strategies surviving:** 0
 **Survival rate:** 0%
+**Structural alpha lanes killed:** 2 (A-6, B-1)
 **Pre-rejected (too low viability to build):** 8
 **Total strategies catalogued:** 131
 
@@ -317,6 +318,42 @@ Our automated kill battery (`bot/kill_rules.py`) applies six criteria. Here's ho
 4. **Maker execution is non-negotiable.** After the Feb 18 fee change, any strategy that requires taker orders needs >2% gross edge to survive. That's a very high bar. Maker orders (0% fees + rebates) lower the bar to >0% gross edge.
 
 5. **The failure diary is more valuable than the success diary.** A quant trader considering prediction market strategies can read this document and skip 10 dead ends. That's months of saved development time and avoided losses.
+
+---
+
+## SA-1: A-6 Guaranteed Basis (Structural Alpha)
+
+**Hypothesis:** Neg-risk event groups on Polymarket sometimes have outcome token YES prices that sum to materially less than 1.0, creating a guaranteed arbitrage. Buy all YES outcomes below the sum threshold and collect the difference at resolution.
+
+**What we expected:** Executable constructions where sum(YES ask prices) < 0.95, yielding 5%+ guaranteed basis per trade.
+
+**What actually happened:** 0 executable constructions below the 0.95 gate across 510+ neg-risk events and 5+ days of continuous scanning. The scanner found 563 allowed events, 57 qualified candidates, and exactly 0 actionable opportunities.
+
+**Why it failed:** Polymarket's neg-risk event pricing is efficient enough that no sum-of-YES-asks consistently falls below the executable threshold. The 4 "violations" detected by the live scanner were either stale quotes, micro-violations that disappeared before execution, or constructions above the 0.95 gate. The theoretical edge exists in the market structure but not in practice at executable scale.
+
+**Kill rule triggered:** Kill-watch deadline (March 14, 2026). Zero density after 5-day observation window. Additional blockers: maker_fill_proxy_unmeasured, violation_half_life_below_minimum.
+
+**What we learned:** Structural arbitrage in prediction markets requires both the theoretical mispricing AND the ability to execute before it disappears. The half-life of neg-risk violations is too short for maker-only execution. Taker execution would work but the fees eliminate the edge.
+
+**Maker-only verdict:** Dead. The execution speed required to capture neg-risk arbitrage is incompatible with maker-only order placement. By the time a maker order fills, the violation has resolved.
+
+---
+
+## SA-2: B-1 Templated Dependency (Structural Alpha)
+
+**Hypothesis:** Markets with deterministic logical dependencies (e.g., "Will X happen by March?" implies "Will X happen by June?") create template pairs where the short-horizon market constrains the long-horizon market's fair value. If the long-horizon market is priced below the short-horizon implication, buy it.
+
+**What we expected:** Deterministic template pairs where price(long) < price(short) - implication_threshold, yielding risk-free convergence trades.
+
+**What actually happened:** 0 deterministic template pairs found in the first 1,000 markets scanned. The template engine identified zero pairs meeting the implication threshold of 0.03.
+
+**Why it failed:** Polymarket's market creation process rarely produces clean deterministic dependency chains. Most markets are semantically similar but not logically nested. "Will BTC hit $80K by March?" and "Will BTC hit $80K by June?" are rare on the platform. When they do exist, they are priced correctly relative to each other because sophisticated traders already exploit this.
+
+**Kill rule triggered:** Kill-watch deadline (March 14, 2026). Zero template pairs after scanning 1,000+ markets. The fundamental assumption (that template pairs exist in sufficient quantity) was falsified.
+
+**What we learned:** Structural dependency arbitrage requires a market structure where nested conditional markets are common. Polymarket's event-driven market creation process does not produce enough clean dependency chains. This strategy would work better on a platform with programmatic market creation (e.g., Kalshi weather markets with overlapping thresholds).
+
+**Maker-only verdict:** Not applicable. The strategy never reached the execution stage. The bottleneck is market selection, not execution.
 
 ---
 

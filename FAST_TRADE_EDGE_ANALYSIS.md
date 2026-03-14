@@ -129,9 +129,8 @@ No new feature candidates flagged.
 ---
 
 ## A-6 Structural Scan
-- Status: blocked | allowed events=563 | qualified=57 | executable=0
-- Live scanner: status=active | candidate markets=58 | executable=0 | violations=4
-- Blockers: maker_fill_proxy_unmeasured, violation_half_life_below_minimum, public_audit_zero_executable_constructions_below_0.95_gate
+- Status: **KILLED** 2026-03-13 | Zero executable constructions below 0.95 gate across 510+ neg-risk events after 5-day kill-watch
+- See: research/dispatches/DISPATCH_101_pipeline_execution_gap.md, research/edge_backlog_ranked.md
 
 ---
 
@@ -152,6 +151,22 @@ Ready: True, scored wallets=80, status=ready
 
 ---
 
+## INDEPENDENT TRADING LANES (Not Covered by This Report)
+
+**IMPORTANT:** This report evaluates the LLM-probability trading pipeline only. The following trading lanes operate independently with their own edge validation and are NOT subject to this report's REJECT ALL recommendation:
+
+### BTC 5-Minute Maker (`btc_5min_maker.py`)
+- **Status:** ACTIVE (running on VPS as `btc-5min-maker.service`)
+- **Signal type:** Binance spot price delta vs candle open (NOT LLM probability)
+- **Performance:** +$131.52 realized, 128 closed contracts, 75W/53L, 1.49 profit factor
+- **Database:** `data/btc_5min_maker.db` (separate from `data/edge_discovery.db`)
+- **Why excluded:** Uses price-delta microstructure, not probability estimation. Different market universe, different signal type, different execution engine.
+- **Gap analysis:** See `research/dispatches/DISPATCH_101_pipeline_execution_gap.md`
+
+The REJECT ALL recommendation applies to: Residual Horizon, Time-of-Day, Wallet Flow, Informed Flow, Cross-Timeframe, Mean Reversion, Order Book Imbalance, and Volatility Regime strategies tested through the LLM pipeline.
+
+---
+
 ## NEXT ACTIONS
 - Increase data collection horizon to reach >=100 signals for top strategy.
 - Tighten entry thresholds or drop low-confidence signals for top strategy.
@@ -160,6 +175,7 @@ Ready: True, scored wallets=80, status=ready
 - Run ML scanner on next 6-hour interval for new feature proposals.
 - Kill conditions: reject if OOS expectancy <= 0 or cost-stress flips sign
 - Promotion conditions: n>=300, p<0.01, positive taker EV under stress
+- Set up VPS cron for edge scan freshness (every 6 hours)
 
 ---
 

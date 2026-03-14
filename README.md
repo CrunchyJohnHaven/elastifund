@@ -8,7 +8,7 @@
 | Role | Public overview and **Start Here** path |
 | Operator packet | `COMMAND_NODE.md` |
 | Operator policy | `PROJECT_INSTRUCTIONS.md` |
-| Last updated | 2026-03-11 |
+| Last updated | 2026-03-14 |
 
 Elastifund is building a governed system where agents do work, record what happened, learn from outcomes, and improve through shared memory, evaluation, observability, and workflow control.
 
@@ -47,9 +47,11 @@ Elastic is the shared substrate for system memory, evaluation, observability, wo
 
 ---
 
-## What To Believe Right Now (March 11, 2026)
+## What To Believe Right Now (March 14, 2026)
 
-- **Live proof:** the BTC5 sleeve is the active trading proof lane. Broader fund-level claims stay blocked until reconciliation and attribution are consistent.
+- **Live proof:** the BTC5 sleeve is the active trading proof lane. 128 closed contracts, 75W/53L, +$131.52 realized, 1.49 profit factor. Currently diagnosing a zero-fill condition on VPS (service running but not filling). Broader fund-level claims stay blocked until reconciliation and attribution are consistent.
+- **Structural alpha killed:** A-6 (Guaranteed Basis) and B-1 (Templated Dependency) formally killed 2026-03-13 after 5-day kill-watch with zero evidence. Engineering capacity reallocated to BTC5 optimization and Kalshi calibration.
+- **Pipeline-execution gap:** FAST_TRADE_EDGE_ANALYSIS.md says REJECT ALL, but this only covers the LLM-probability pipeline. The BTC5 maker operates independently using price-delta microstructure. See `research/dispatches/DISPATCH_101_pipeline_execution_gap.md`.
 - **Historical validation:** `71.2%` is the strongest labeled calibrated validation result on `532` resolved markets. It is historical validation, not a live-performance headline.
 - **Non-trading wedge:** JJ-N's first offer is the Website Growth Audit. It is built in code, explicitly gated, and not yet presented as launched revenue.
 - **Contribution posture:** public routes read sanitized checked-in artifacts and the default contribution path is paper mode. No live exchange credentials are required to inspect or improve the system.
@@ -134,8 +136,8 @@ This is the autoresearch-style improvement log. Each entry represents a validate
 - Launch-contract drift still blocks live promotion: `agent_run_mode=live`, `execution_mode=shadow`, `allow_order_submission=false`, `launch_posture=blocked`.
 - Capital accounting is still not coherent even though position counts are reconciled; the latest Polymarket accounting delta remains non-zero versus tracked capital.
 - `scripts/run_pm_fast_market_registry.py` reached Gamma successfully on March 11 but still wrote **0 discovered eligible markets**, while direct Gamma pulls show active crypto threshold, range, and candle markets. The registry logic is stale relative to the live API.
-- `FAST_TRADE_EDGE_ANALYSIS.md` still says "REJECT ALL" while fresh wallet/export and BTC5 probe data show nontrivial live activity. The scan is stale relative to actual execution behavior.
-- A-6 (Guaranteed Basis) and B-1 (Templated Dependency) structural alpha lanes have zero evidence after weeks. Kill decision on March 14.
+- `FAST_TRADE_EDGE_ANALYSIS.md` says "REJECT ALL" for the LLM-probability pipeline. This is correct for that pipeline. The BTC5 maker operates on a different signal (price delta) and is not subject to this report. See `research/dispatches/DISPATCH_101_pipeline_execution_gap.md`.
+- A-6 (Guaranteed Basis) and B-1 (Templated Dependency) structural alpha lanes **KILLED** 2026-03-13. Zero evidence after 5-day kill-watch. Capacity reallocated.
 
 ### Cycle 1 — Foundation & First Trades
 
