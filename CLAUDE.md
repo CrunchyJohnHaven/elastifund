@@ -189,8 +189,8 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 > **CRITICAL: ALWAYS VERIFY AGAINST LIVE WALLET DATA.**
 > The local ledger, the checked-in runtime/public artifacts under `reports/`, and `FAST_TRADE_EDGE_ANALYSIS.md` have historically drifted from actual on-chain and wallet state. Before citing capital, P&L, or position numbers, check the live Polymarket portfolio and Kalshi account. If live wallet data contradicts local artifacts, the wallet wins.
 
-**Date:** 2026-03-13
-**Cycle:** A-6/B-1 kill, BTC5 focus pivot, autoresearch + runtime truth regenerated
+**Date:** 2026-03-14 01:00 UTC
+**Cycle:** BTC5 zero-fill root cause diagnosed and fixed (3 guardrail blockers). A-6/B-1 killed. Merge conflicts resolved. Pushed to GitHub.
 **Last loop cycle report:** `reports/loop_cycle_20260310_2311.md`
 
 ### Manual Wallet-Export Read (March 10, 2026)
@@ -239,12 +239,12 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 **Live trading:** MAKER VELOCITY LIVE — `maker_velocity_live` profile is the active deploy target
 **Live config:** $10/position (main), $5/trade (BTC 5-min), 30 max open positions, uncapped daily loss, 0.25 Kelly, 24h max resolution, 30s scan interval
 **Execution mode:** 100% Post-Only maker orders (Dispatch #75 pivot)
-**BTC 5-min maker:** Instance 2 (`btc-5min-maker.service`). 302 total rows, 0 live fills currently flowing. Service running on VPS (34.244.34.108) but producing zero fills. Autoresearch widened delta to 0.00130 and enabled UP live mode. Prior performance: DOWN direction dominant (65% win rate). Diagnosis pending.
+**BTC 5-min maker:** Instance 2 (`btc-5min-maker.service`). 378+ total rows, 0 live fills. Service running on VPS (34.244.34.108). Root cause diagnosed 2026-03-14: three simultaneous blockers (delta too tight at 0.00075, UP shadow-only, min_buy_price too high). All three fixed: delta widened to 0.0040, UP live mode enabled, min_buy_price lowered to 0.42. Remaining skips are legitimate market quality gates (bad_book, toxic_order_flow). Orders expected during US trading hours. Config: max_trade=$10, up_max=0.52, down_max=0.53.
 
 ### Pipeline & Strategy Status
 **Fast-market pipeline:** v2.8.0 says `REJECT ALL` (last run 01:34 UTC Mar 9, now ~73h stale). All 9 tested strategies failed kill rules. Pipeline and execution layer are decoupled — wallet trades regardless.
 **Next best hypothesis:** Early Informed-Flow Convergence — CONTINUE_DATA_COLLECTION (3 raw signals, 0 resolved).
-**Strategies in backlog:** 131 tracked total (7 deployed, 6 building, 12 rejected (including killed A-6/B-1), 8 pre-rejected, 1 re-evaluating, 97 research pipeline)
+**Strategies in backlog:** 131 tracked total (7 deployed, 4 building, 12 rejected (including killed A-6/B-1), 8 pre-rejected, 1 re-evaluating, 99 research pipeline)
 **Structural gates:** A-6 and B-1 formally KILLED 2026-03-13. Both reached kill-watch deadline with zero evidence: A-6 had 0 executable constructions below 0.95 across 563 neg-risk events; B-1 had 0 deterministic template pairs in 1,000+ markets. Engineering capacity reallocated to BTC5 optimization and Kalshi.
 **BTC5 autoresearch:** 1 cycle completed. Latest hypothesis `hyp_down_up0.49_down0.51_hour_et_11` (DOWN bias, exploratory evidence, 5 validation fills).
 
@@ -266,15 +266,15 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 - `jj_state.json` contains 4 paper-tagged LLM positions including mutually exclusive Weinstein sentencing bets (YES on <5yr AND YES on 20-30yr). Probability estimation bug.
 - `FAST_TRADE_EDGE_ANALYSIS.md` — says REJECT ALL, ~73h stale, while BTC 5-min maker has been actively filling profitably.
 - Pipeline and execution layer fully decoupled. Pipeline does not govern what actually trades.
-- BTC5 service running but producing 0 live fills despite 302 total rows. Autoresearch env updated (delta 0.00130, UP live mode) but VPS may need restart to pick up new values.
-- Runtime truth artifacts regenerated 2026-03-13 but stage_0 locked: wallet_export_stale (54h), trailing_12_live_filled_not_positive, insufficient_trailing_12_live_fills.
-- Wallet export 2+ days stale (last: 2026-03-11).
+- BTC5 service restarted 2026-03-14 00:47 UTC with all guardrail fixes applied. Zero fills so far is due to quiet-hours market quality (bad_book, thin liquidity). Will validate during US trading hours.
+- Runtime truth artifacts regenerated 2026-03-13 but stage_0 locked: wallet_export_stale, trailing_12_live_filled_not_positive.
+- Wallet export 3+ days stale (last: 2026-03-11). Blocks stage progression.
 - Kalshi has no local ledger integration — all tracking is manual via browser.
 
 ### Top 3 Action Items
-1. **URGENT: Verify VPS btc-5min-maker service status** — 30+ hour fill gap since 2026-03-09 20:35 UTC. BTC rallied to $70.8K (+4.17%) — likely above configured guardrail ceiling causing continuous `skip_price_outside_guardrails`. Run `systemctl status btc-5min-maker && journalctl -u btc-5min-maker --since "30 min ago"` on VPS. If guardrails are the issue, widen them to accommodate $68K-$75K range. We are missing fills in a favorable extreme-fear environment.
-2. **Scale BTC 5-min maker to $10/trade** — 55 fills, 63.6% win rate, +$1.56/fill avg. Edge validated. Extreme fear (index 21, recovering from 10-12), whale accumulation 270K BTC, $700M ETF inflows in March. Double position size after confirming service health.
-3. **Optimize BTC5 guardrails for current volatility regime** — A-6/B-1 killed 2026-03-13. Freed capacity goes to widening BTC5 guardrails for $68K-$75K range + Kalshi weather city-specific calibration (Miami subtropical bias fix).
+1. **VALIDATE: Confirm BTC5 fills during US trading hours** — Guardrail fixes deployed 2026-03-14 00:47 UTC (delta 0.0040, UP live, min_buy 0.42). Quiet-hours skips are expected. Check `journalctl -u btc-5min-maker --since "1 hour ago" | grep order_placed` after 14:00 UTC. If still zero fills by 20:00 UTC, investigate toxic_order_flow and bad_book thresholds.
+2. **REFRESH: Download fresh wallet export from Polymarket** — Last export 2026-03-11 (3+ days stale). Blocks stage progression and capital truth reconciliation. Export from https://polymarket.com/portfolio, run `python scripts/reconcile_polymarket_wallet.py`.
+3. **SCALE: Increase BTC5 to $10/trade once fills confirmed** — Already configured ($10 max_trade in capital_stage.env). Need positive trailing P&L from live fills before stage-2 unlock. Monitor fill quality for 2 hours minimum before declaring success.
 
 ---
 
