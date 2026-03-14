@@ -1474,9 +1474,15 @@ def log_settlement_outcomes(
         # Try API lookup for settlement.
         result_str = None
         try:
+            market_data = None
             if session.markets_api is not None:
-                market_resp = session.markets_api.get_market(ticker=ticker)
-                market_data = market_resp
+                try:
+                    market_resp = session.markets_api.get_market(ticker=ticker)
+                    market_data = market_resp
+                except Exception:
+                    # SDK Pydantic model may reject newer status values like "finalized";
+                    # fall back to raw JSON endpoint.
+                    market_data = _json_get(f"{KALSHI_API_BASE}/markets/{ticker}", timeout=10.0)
             else:
                 market_data = _json_get(f"{KALSHI_API_BASE}/markets/{ticker}", timeout=10.0)
             status = str(_field(market_data, "status", "") or _field(market_data, "market", {}).get("status", "")).lower()
