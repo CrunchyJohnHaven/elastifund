@@ -55,11 +55,7 @@ Kalshi API Key ID: [stored in .env — see .env.example]
 | Past-day P&L | +$1.91 |
 | Open positions | 26+ across multiple market categories |
 | Closed/resolved trades | 36+ (wallet-verified) |
-<<<<<<< HEAD
-| Structural-alpha gate | A-6 **KILLED** (0 constructions, 5+ day watch), B-1 **KILLED** (0 template pairs, 5+ day watch). Killed 2026-03-13 at March 14 deadline. Effort reallocated to BTC5 |
-=======
 | Structural-alpha gate | A-6 and B-1 **KILLED** 2026-03-13. Zero density after 5-day kill-watch. Engineering capacity reallocated. |
->>>>>>> 4e3d28a (Kill A-6/B-1 structural alpha lanes: zero density after 5-day kill-watch)
 | Verification status | **1,397 tests passing** across all surfaces |
 | Dispatch inventory | `11` `DISPATCH_*` work-orders; `95` markdown files in `research/dispatches/` |
 | Known issue | Local ledger drift: local trade-db reports fewer positions than wallet actually shows. Reconciliation pipeline in progress |
@@ -112,20 +108,12 @@ SIGNAL 4: Cross-Platform Arb [COMPLETE, NOT ACTIVATED]
 SIGNAL 5: Guaranteed Dollar Scanner (A-6) [KILLED 2026-03-13]
   Markets: Neg-risk event groups only
   Edge: cheapest guaranteed-dollar construction < 0.95
-<<<<<<< HEAD
-  Status: KILLED at March 14 deadline. 0 executable constructions below 0.95 gate across 510+ events after 5+ day watch.
-=======
   Status: KILLED. Zero executable constructions below 0.95 across 563 neg-risk events after 5-day kill-watch. No market density to support this strategy.
->>>>>>> 4e3d28a (Kill A-6/B-1 structural alpha lanes: zero density after 5-day kill-watch)
 
 SIGNAL 6: Templated Dependency Engine (B-1) [KILLED 2026-03-13]
   Markets: Deterministic template families in one event cluster
   Edge: implication / exclusion / complement violations > 5% and >= 2x combined spread
-<<<<<<< HEAD
-  Status: KILLED at March 14 deadline. 0 deterministic template pairs in 1,000+ markets after 5+ day watch.
-=======
   Status: KILLED. Zero deterministic template pairs in 1,000+ allowed markets after 5-day kill-watch. Insufficient dependency density.
->>>>>>> 4e3d28a (Kill A-6/B-1 structural alpha lanes: zero density after 5-day kill-watch)
 
 CONFIRMATION LAYER:
   2+ predictive sources agree → highest confidence, boosted size
@@ -317,20 +305,11 @@ Other completed modules still available for parallel promotion work:
 - Rolling adaptive Platt selector and ensemble disagreement sizing in `bot/jj_live.py` + `bot/ensemble_estimator.py`
 - Validation coverage in `tests/test_kalshi_weather_arb.py` and `bot/tests/test_ensemble_estimator.py`
 
-<<<<<<< HEAD
-### P1 — BTC5 Optimization Sprint (Post A-6/B-1 Kill)
-1. **Fix BTC5 zero-fill problem:** Diagnose skip reasons, widen guardrails if needed, restart service.
-2. **Scale BTC5 to $10/trade:** After confirming fills flowing, double position size.
-3. **Optimize guardrails for current volatility regime:** Tune delta, price bounds, and session filters using autoresearch data.
-4. **Run fresh autoresearch cycle + stage probe:** Advance toward stage_1.
-5. **Reconcile wallet truth:** Fresh export, run reconciliation pipeline, clear stale artifacts.
-=======
 ### P1 — Near-Term Execution Order
 1. **BTC5 guardrail optimization:** Widen guardrails for current volatility regime, scale to $10/trade after fill confirmation.
 2. **Kalshi integration:** Build settlement reconciliation and city-specific calibration (Miami subtropical bias fix).
 3. **Runtime truth reconciliation:** Close the local-ledger vs wallet drift gap.
 4. **JJ-N launch package:** Verified sending domain, curated leads, and first live outreach for Website Growth Audit.
->>>>>>> 4e3d28a (Kill A-6/B-1 structural alpha lanes: zero density after 5-day kill-watch)
 
 ### P2 — Website: Competitive Benchmark Harness (Sequenced into Cycles 2-4)
 1. **Cycle 2:** Publish methodology page (`/benchmark/methodology`) with T0-T7 test matrix and scoring rubric. No results yet — methodology-first establishes trust.
@@ -392,8 +371,4 @@ See `research/dispatches/DISPATCH_097_competitive_inventory_benchmark_blueprint.
 
 ---
 
-<<<<<<< HEAD
-*v3.10.0 — Updated 2026-03-13. A-6 and B-1 structural alpha lanes formally killed at March 14 deadline (zero evidence after 5+ days). Effort reallocated to BTC5 optimization and scaling. BTC5 service running but producing 0 live fills (302 total rows); diagnostic and guardrail fix pending. Wallet: $390.90 total, $373.32 free. Strategy counts updated: 12 rejected (was 10+2 building structural). Main jj-live stopped (intentional).*
-=======
 *v3.10.0 — Updated 2026-03-13. A-6 and B-1 structural alpha lanes formally KILLED after reaching the March 14 kill-watch deadline with zero evidence (0 executable constructions for A-6, 0 deterministic template pairs for B-1). Engineering capacity reallocated to BTC5 guardrail optimization and Kalshi integration. BTC5 sleeve remains the active trading proof lane. JJ-N test surfaces remain green.*
->>>>>>> 4e3d28a (Kill A-6/B-1 structural alpha lanes: zero density after 5-day kill-watch)
