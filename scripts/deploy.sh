@@ -285,6 +285,9 @@ fi
 if [ -f "$PROJECT_DIR/state/btc5_autoresearch.env" ]; then
     sync_file "state/btc5_autoresearch.env"
 fi
+if [ -f "$PROJECT_DIR/state/btc5_capital_stage.env" ]; then
+    sync_file "state/btc5_capital_stage.env"
+fi
 for local_path in "$PROJECT_DIR"/config/runtime_profiles/*.json; do
     relative_path="config/runtime_profiles/$(basename "$local_path")"
     sync_file "$relative_path"
