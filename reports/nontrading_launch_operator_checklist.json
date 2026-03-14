@@ -1,15 +1,12 @@
 {
-  "blocking_reasons": [
-    "checkout_surface_not_ready",
-    "billing_webhook_not_ready"
-  ],
-  "generated_at": "2026-03-10T16:10:00+00:00",
+  "blocking_reasons": [],
+  "generated_at": "2026-03-14T16:24:15+00:00",
   "launchable": false,
   "live_offer_url": null,
   "manual_close_context": {
-    "curated_candidates": 14,
+    "curated_candidates": 0,
     "launch_mode": "manual_close_only",
-    "selected_prospects": 10
+    "selected_prospects": 0
   },
   "missing_requirements": [
     {

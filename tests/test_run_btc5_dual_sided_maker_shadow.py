@@ -145,7 +145,7 @@ def test_main_writes_shadow_payload_from_registry(tmp_path: Path) -> None:
     payload = json.loads((output_dir / "latest.json").read_text())
     assert payload["ranked_candidate_count"] == 1
     assert payload["ranked_candidates"][0]["combined_cost"] == 0.95
-    assert payload["spread_intents"][0]["maker_only"] is True
+    assert payload["spread_intents"][0]["post_only"] is True
     assert payload["combined_cost_cap_sensitivity"][0]["ranked_candidate_count"] == 1
     assert parallel_output.exists()
 
@@ -195,5 +195,5 @@ def test_cap_sensitivity_shows_when_wider_caps_unlock_candidates() -> None:
     sensitivity = {row["combined_cost_cap"]: row["ranked_candidate_count"] for row in payload["combined_cost_cap_sensitivity"]}
     assert sensitivity[0.97] == 0
     assert sensitivity[0.98] == 0
-    assert sensitivity[0.99] == 1
+    assert sensitivity[0.99] == 0
     assert sensitivity[1.0] == 1

@@ -153,3 +153,5 @@ data/
 !AEActivityApp/src/data/*.ts
 state/elastifund/
 state/local/
+state/btc5_evidence_cache.json
+exports/

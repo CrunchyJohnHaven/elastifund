@@ -18,6 +18,7 @@ Options:
   --btc5-autoresearch Install/enable the 5-minute BTC5 autoresearch timer
   --kalshi            Install/enable kalshi-weather-trader.timer (runs every 5m)
   --loop              Install/enable jj-improvement-loop.timer (runs every 30m)
+  --monitor           Install/enable btc5-pnl-monitor.timer (runs every 5m)
   -h, --help          Show this help
 
 Notes:
@@ -42,6 +43,8 @@ if [ -f "$PROJECT_DIR/.env" ]; then
         while IFS='=' read -r key value; do
             case "$key" in
                 LIGHTSAIL_KEY|VPS_USER|VPS_IP)
+                    value="${value%\"}"   # strip trailing quote
+                    value="${value#\"}"   # strip leading quote
                     export "$key=$value"
                     ;;
             esac
@@ -55,6 +58,7 @@ ENABLE_BTC5=false
 ENABLE_BTC5_AUTORESEARCH=false
 ENABLE_KALSHI=false
 ENABLE_LOOP=false
+ENABLE_MONITOR=false
 PROFILE_NAME="live_aggressive"
 TARGET_VPS=""
 
@@ -85,6 +89,9 @@ while [ $# -gt 0 ]; do
             ;;
         --loop)
             ENABLE_LOOP=true
+            ;;
+        --monitor)
+            ENABLE_MONITOR=true
             ;;
         -h|--help)
             usage
@@ -138,6 +145,7 @@ echo "  BTC5 service: $ENABLE_BTC5"
 echo "  BTC5 autoresearch: $ENABLE_BTC5_AUTORESEARCH"
 echo "  Kalshi timer: $ENABLE_KALSHI"
 echo "  Loop timer:   $ENABLE_LOOP"
+echo "  PnL monitor:  $ENABLE_MONITOR"
 echo
 
 POLYBOT_FILES=(
@@ -153,6 +161,7 @@ SCRIPT_SUPPORT_FILES=(
     "scripts/clean_env_for_profile.sh"
     "scripts/btc5_status.sh"
     "scripts/btc5_monte_carlo.py"
+    "scripts/btc5_pnl_monitor.py"
     "scripts/btc5_regime_policy_lab.py"
     "scripts/run_btc5_autoresearch_cycle.py"
     "scripts/run_kalshi_weather_auto.sh"
@@ -165,6 +174,8 @@ DEPLOY_ASSET_FILES=(
     "deploy/btc-5min-maker.service"
     "deploy/btc5-autoresearch.service"
     "deploy/btc5-autoresearch.timer"
+    "deploy/btc5-pnl-monitor.service"
+    "deploy/btc5-pnl-monitor.timer"
     "deploy/kalshi-weather-trader.service"
     "deploy/kalshi-weather-trader.timer"
     "deploy/jj-improvement-loop.service"
@@ -392,7 +403,16 @@ else
     echo "  Skipping improvement loop timer (--loop not set)."
 fi
 
-if [[ "$CLEAN_ENV" == "true" || "$RESTART_SERVICE" == "true" || "$ENABLE_BTC5" == "true" || "$ENABLE_BTC5_AUTORESEARCH" == "true" || "$ENABLE_KALSHI" == "true" || "$ENABLE_LOOP" == "true" ]]; then
+if [[ "$ENABLE_MONITOR" == "true" ]]; then
+    echo
+    echo "  Installing/enabling BTC5 P&L monitor timer..."
+    "${SSH_CMD[@]}" "$VPS" "sudo install -m 644 $BOT_DIR/deploy/btc5-pnl-monitor.service /etc/systemd/system/btc5-pnl-monitor.service && sudo install -m 644 $BOT_DIR/deploy/btc5-pnl-monitor.timer /etc/systemd/system/btc5-pnl-monitor.timer && sudo systemctl daemon-reload && sudo systemctl enable btc5-pnl-monitor.timer && sudo systemctl start btc5-pnl-monitor.timer && echo 'BTC5 P&L monitor timer active:' && sudo systemctl list-timers btc5-pnl-monitor.timer --no-pager"
+else
+    echo
+    echo "  Skipping BTC5 P&L monitor (--monitor not set)."
+fi
+
+if [[ "$CLEAN_ENV" == "true" || "$RESTART_SERVICE" == "true" || "$ENABLE_BTC5" == "true" || "$ENABLE_BTC5_AUTORESEARCH" == "true" || "$ENABLE_KALSHI" == "true" || "$ENABLE_LOOP" == "true" || "$ENABLE_MONITOR" == "true" ]]; then
     refresh_runtime_artifacts
 else
     echo
