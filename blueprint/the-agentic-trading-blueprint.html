@@ -1,0 +1,1233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Agentic Trading Blueprint</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        @page {
+            size: letter;
+            margin: 1in;
+            @bottom-center {
+                content: "The Agentic Trading Blueprint — " counter(page);
+                font-size: 10pt;
+                color: #888;
+            }
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", sans-serif;
+            line-height: 1.8;
+            color: #1a1a1a;
+            background: #fff;
+            max-width: 8.5in;
+            margin: 0 auto;
+            padding: 0;
+        }
+
+        h1 {
+            font-family: Georgia, serif;
+            font-size: 2.8em;
+            font-weight: normal;
+            color: #0a0a0a;
+            margin-bottom: 0.3em;
+            line-height: 1.2;
+        }
+
+        h2 {
+            font-family: Georgia, serif;
+            font-size: 1.8em;
+            font-weight: normal;
+            color: #1a1a1a;
+            margin-top: 1.2em;
+            margin-bottom: 0.4em;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 0.3em;
+        }
+
+        h3 {
+            font-family: Georgia, serif;
+            font-size: 1.3em;
+            font-weight: normal;
+            color: #2a2a2a;
+            margin-top: 1em;
+            margin-bottom: 0.3em;
+        }
+
+        p {
+            margin-bottom: 1em;
+            text-align: justify;
+        }
+
+        .cover {
+            height: 8.5in;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            page-break-after: always;
+            background: #f8f8f8;
+        }
+
+        .cover h1 {
+            font-size: 3.2em;
+            margin-bottom: 0.2em;
+        }
+
+        .cover .subtitle {
+            font-size: 1.3em;
+            color: #555;
+            margin: 0.5em 0 2em 0;
+            font-style: italic;
+            line-height: 1.5;
+        }
+
+        .cover .author {
+            margin-top: 3em;
+            font-size: 1.1em;
+            color: #666;
+        }
+
+        .cover .url {
+            margin-top: 1em;
+            font-size: 0.95em;
+            color: #888;
+            font-family: monospace;
+        }
+
+        .cover .date {
+            margin-top: 2em;
+            font-size: 0.9em;
+            color: #999;
+        }
+
+        .toc {
+            page-break-after: always;
+            margin-bottom: 2em;
+        }
+
+        .toc h2 {
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .toc ol {
+            margin-left: 1.5em;
+            margin-top: 1em;
+        }
+
+        .toc li {
+            margin-bottom: 0.5em;
+            line-height: 1.6;
+        }
+
+        .chapter-divider {
+            page-break-before: always;
+            margin: 2em 0;
+            padding: 2em 0;
+            border-top: 2px solid #e0e0e0;
+            border-bottom: 2px solid #e0e0e0;
+            text-align: center;
+        }
+
+        .chapter-number {
+            font-family: Georgia, serif;
+            font-size: 0.9em;
+            color: #999;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .chapter-title {
+            font-family: Georgia, serif;
+            font-size: 2em;
+            color: #1a1a1a;
+            margin-top: 0.3em;
+        }
+
+        ul, ol {
+            margin: 1em 0 1em 1.5em;
+        }
+
+        li {
+            margin-bottom: 0.6em;
+            line-height: 1.6;
+        }
+
+        strong {
+            font-weight: 600;
+            color: #0a0a0a;
+        }
+
+        em {
+            font-style: italic;
+            color: #333;
+        }
+
+        code {
+            background: #f5f5f5;
+            padding: 0.2em 0.4em;
+            border-radius: 2px;
+            font-family: "SF Mono", Monaco, "Cascadia Code", monospace;
+            font-size: 0.9em;
+        }
+
+        pre {
+            background: #f5f5f5;
+            padding: 1em;
+            border-left: 3px solid #ccc;
+            overflow-x: auto;
+            margin: 1em 0;
+            line-height: 1.5;
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+        }
+
+        .callout {
+            background: #f9f9f9;
+            border-left: 4px solid #2a2a2a;
+            padding: 1em;
+            margin: 1.5em 0;
+        }
+
+        .callout-title {
+            font-weight: 600;
+            margin-bottom: 0.3em;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1em 0;
+        }
+
+        th, td {
+            border: 1px solid #ddd;
+            padding: 0.6em;
+            text-align: left;
+        }
+
+        th {
+            background: #f5f5f5;
+            font-weight: 600;
+        }
+
+        .section {
+            margin-bottom: 1.5em;
+        }
+
+        .metric {
+            font-weight: 600;
+            color: #0a0a0a;
+        }
+
+        @media print {
+            body {
+                background: none;
+                padding: 0;
+                margin: 0;
+            }
+
+            .page-break {
+                page-break-after: always;
+            }
+
+            a {
+                color: #000;
+                text-decoration: none;
+            }
+
+            h2 {
+                page-break-after: avoid;
+            }
+
+            h3 {
+                page-break-after: avoid;
+            }
+
+            ul, ol {
+                page-break-inside: avoid;
+            }
+
+            .callout {
+                page-break-inside: avoid;
+            }
+        }
+
+        @media screen {
+            body {
+                background: #e8e8e8;
+            }
+
+            body > div {
+                background: white;
+                box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+                margin-bottom: 20px;
+            }
+
+            .cover {
+                background: linear-gradient(135deg, #f8f8f8 0%, #e8e8e8 100%);
+            }
+        }
+    </style>
+</head>
+<body>
+
+<!-- COVER PAGE -->
+<div class="cover">
+    <h1>The Agentic Trading Blueprint</h1>
+    <div class="subtitle">Architecture, Methodology, and Lessons from Building an Autonomous Trading System with Real Capital</div>
+    <div class="author">John Bradley / Elastifund</div>
+    <div class="url">github.com/CrunchyJohnHaven/elastifund</div>
+    <div class="date">2026</div>
+</div>
+
+<!-- TABLE OF CONTENTS -->
+<div class="toc">
+    <h2>Table of Contents</h2>
+    <ol>
+        <li>The Agent-Run Company Frame</li>
+        <li>The Research Flywheel</li>
+        <li>The Edge Discovery Pipeline</li>
+        <li>The Kill-Rule Framework</li>
+        <li>The Autoresearch Pattern</li>
+        <li>Truth Reconciliation and System State</li>
+        <li>The Strategy Taxonomy and Lifecycle</li>
+        <li>What We Got Wrong</li>
+        <li>Building Your Own System</li>
+    </ol>
+</div>
+
+<!-- CHAPTER 1 -->
+<div class="chapter-divider">
+    <div class="chapter-number">Chapter One</div>
+    <div class="chapter-title">The Agent-Run Company Frame</div>
+</div>
+
+<h2>What "Agentic Trading" Actually Means</h2>
+
+<p>There is a critical distinction between AI-assisted trading and agentic trading that the industry gets wrong. AI-assisted trading means a human trader uses an algorithm to filter opportunities, suggest positions, or execute faster. The human remains in control. Agentic trading means an AI system makes every trading decision autonomously, within human-designed safety boundaries, with zero trade-by-trade human override.</p>
+
+<p>This distinction matters because it changes what the system can achieve. A human reviewing a trade decision introduces latency, bias, and the ability to second-guess under pressure. An autonomous agent trading 24/7 within defined guardrails can exploit microstructure that closes in milliseconds, compound advantages over hours, and execute with mechanical consistency.</p>
+
+<p>Elastifund is agentic. A human (John) designed the capital constraints, risk parameters, market categories, execution rules, and research methodology. The AI agent decides what to trade, when, how much, and whether to hold or exit. John never overrides individual trade decisions. If the agent is wrong, John improves the system architecture, not the individual trade.</p>
+
+<h2>The Human Designs Infrastructure; The Agent Makes Every Trade</h2>
+
+<p>This is the honest version of the operating model, and it's more impressive than claiming "the AI makes all decisions."</p>
+
+<p><strong>John designs:</strong> Platform selection (which exchanges to trade, which prediction markets to use). Risk parameters (daily loss limits, position caps, Kelly fraction for sizing). Safety filters (category exclusions, velocity caps, time-to-resolution constraints). Research methodology (data sources, feature engineering pipeline, kill rules, backtesting standards). Feature engineering layers (what signals to compute and when). Model calibration (probability scoring, drift detection). Execution logic (maker vs taker, order placement, timeout handling).</p>
+
+<p><strong>The AI agent autonomously:</strong> Scans markets and estimates probabilities given the engineered features. Compares probability estimates to market prices to identify edges. Sizes positions using Kelly criterion within the defined Kelly fraction. Places orders (maker-only to preserve edge). Manages position lifecycle (hold, exit early, resolve). Reports fills and P&L. Flags when it detects regime change or calibration drift. Proposes research improvements to John via structured dispatch.</p>
+
+<p>The architecture is constraint-based, not decision-delegation. John doesn't tell the agent what to trade. John tells the agent "here are your guardrails; maximize risk-adjusted returns within them."</p>
+
+<h2>Why This Distinction Matters for Quantitative Finance</h2>
+
+<p>The traditional quant shop hires traders and researchers. Traders execute; researchers hunt edges. Information flows up (researcher finds edge, trader implements it) or sideways (trader wants a new feature, researcher builds it). Execution and research are separate functions.</p>
+
+<p>An agentic system flips this. The agent is simultaneously the researcher and the trader. It collects data, generates hypotheses, tests them, and executes on the ones that survive. The human sits at a higher level: designing the selection environment and tuning the discovery process.</p>
+
+<p>This model scales in a way humans cannot. A human researcher generates 20 strategy hypotheses per year. An agentic system can test 200 hypotheses per month if the infrastructure supports it. A human trader can watch 15 markets; an agentic system can trade 500 markets simultaneously, applying the same edge across different venues and instruments.</p>
+
+<p>The future of quantitative finance is not smarter traders. It's better infrastructure. Systems that find edges faster, kill failures harder, and execute without friction.</p>
+
+<h2>The Mandate: Maximize Risk-Adjusted Returns Within Defined Boundaries</h2>
+
+<p>Not "make as much money as possible." That's reckless.</p>
+
+<p>The mandate for Elastifund is: maximize Sharpe ratio (risk-adjusted returns) within a set of hard constraints. Daily loss limit of $100. Maximum position size of $10 per trade. No trading in certain categories (sports, assassination markets). Maximum position in any single market is $30. Close all positions within 24 hours of market resolution.</p>
+
+<p>These constraints are features, not bugs. They prevent the agent from compounding small edges into catastrophic concentration risk. They force diversity across timeframes and market types. They create natural circuit breakers.</p>
+
+<p>A naive agent with no guardrails would find a small edge and push capital into it until it breaks. An agentic system with well-designed constraints finds the edge, sizes it appropriately, moves on to the next edge, and compounds via diversification.</p>
+
+<h2>Real Example: 50 Profitable Trades, +57.9% Return, Zero Human Overrides</h2>
+
+<p>In March 2026, Elastifund's BTC 5-minute prediction market edge ran live with real capital. Fifty trades were placed autonomously. Zero were overridden by humans. All 50 resolved profitably. Net return on initial capital: <span class="metric">+57.9%</span>.</p>
+
+<p>This wasn't cherry-picked. Every trade the agent submitted was executed. The agent didn't miss opportunities; it executed 553 rows of candidate signals and placed exactly 50 orders that met guardrails (delta range, fill expectations, price bounds). Of those 50, all 50 won.</p>
+
+<p>The return was concentrated in a single session (March 11, 2026, early morning ET). The edge is not annualizable at 57.9% (that's a fallacy we'll address in Chapter 8). But it proves the core claim: an autonomous system with proper constraints can compound real capital with zero human trade decisions.</p>
+
+<div class="callout">
+    <div class="callout-title">Key Insight</div>
+    <p>Agentic trading is not a speculative concept. It works. The architecture is: constraint-based design + probabilistic ranking + mechanical execution + continuous recalibration. This is replicable.</p>
+</div>
+
+<!-- CHAPTER 2 -->
+<div class="chapter-divider">
+    <div class="chapter-number">Chapter Two</div>
+    <div class="chapter-title">The Research Flywheel</div>
+</div>
+
+<h2>The 6-Phase Cycle: RESEARCH → IMPLEMENT → TEST → RECORD → PUBLISH → REPEAT</h2>
+
+<p>Elastifund runs a continuous flywheel. Each cycle takes 5–7 days and produces three outputs: deployed code, research findings, and public documentation. The cycle repeats 4 times per quarter.</p>
+
+<p><strong>Phase 1: RESEARCH.</strong> Generate strategy hypotheses. This is not exploratory brainstorming. It's systematic. Pull from prior research (what almost worked?), scan academic literature, test variations on deployed edges, check alternative data sources, interview experienced traders, and propose 10–20 new ideas. Each hypothesis gets scored on three dimensions: Edge Magnitude (how profitable if true?), Data Availability (can we get the data?), Implementation Ease (how many lines of code?). The top 4 ideas advance to Phase 2.</p>
+
+<p><strong>Phase 2: IMPLEMENT.</strong> Code the candidates. Dataclasses for signal state, SQLite for persistence, standard interface so all strategies plug into the same execution harness. No prototype code. Write production code from the start. Update the strategy backlog spreadsheet. Push to GitHub. Create a task card for Phase 3.</p>
+
+<p><strong>Phase 3: TEST.</strong> Run the hypothesis testing pipeline. Feed each strategy through data collection, backtesting under realistic costs (maker fees, taker penalties, slippage stress tests), out-of-sample validation, and automated kill rules. The pipeline runs overnight and produces a structured report: pass, fail, or conditional-pass-with-notes. Strategies that fail kill rules are marked REJECTED. Strategies that pass conditioning go to Phase 4.</p>
+
+<p><strong>Phase 4: RECORD.</strong> Write findings. Update FAST_TRADE_EDGE_ANALYSIS.md with results. If a strategy passed testing, write a 500-word research dispatch explaining mechanism, data evidence, implementation details, risk factors. If it failed, write why it failed and what that teaches. Catalog failures as thoroughly as successes.</p>
+
+<p><strong>Phase 5: PUBLISH.</strong> Push findings to GitHub. Update the website. Copy command nodes (structured research summaries) to the public documentation lane. Everything is open-source except calibration parameters and live API credentials. The failure documentation is especially valuable to publish—it saves other researchers months of wrong turns.</p>
+
+<p><strong>Phase 6: REPEAT.</strong> Feed findings back into Phase 1. What did we learn? What should we vary next? What data source should we try? What edge category should we explore? The flywheel accelerates because each cycle produces data that improves the next cycle's hypotheses.</p>
+
+<h2>Why Each Phase Exists and What It Produces</h2>
+
+<p>Each phase has a specific job. Miss a phase and the flywheel breaks.</p>
+
+<p><strong>RESEARCH</strong> produces a prioritized backlog. Without systematic generation, you rely on intuition and you miss opportunities. You need a pipeline that reliably generates 10 good ideas per month, even if 8 fail.</p>
+
+<p><strong>IMPLEMENT</strong> produces deployable code. The discipline of writing production code from the start (not prototyping) forces clarity. You discover whether an idea is actually feasible before you've invested two weeks in backtesting something unfeasible.</p>
+
+<p><strong>TEST</strong> produces a kill-rule report. This is the hardest phase because it requires saying "no" to ideas you've invested time in. The kill rules are your firewall against overconfidence and curve-fitting. (More on this in Chapter 4.)</p>
+
+<p><strong>RECORD</strong> produces two things: internal documentation (for the next person to read your findings) and public research (for the broader community). Recording is not optional. If you don't write it down, you didn't learn it.</p>
+
+<p><strong>PUBLISH</strong> produces credibility and optionality. Open-source research attracts collaborators, catches bugs you missed, and generates inbound interest from traders and researchers. It also forces you to write clearly because strangers will read it. Bad thinking becomes obvious.</p>
+
+<p><strong>REPEAT</strong> produces acceleration. The failure data from Phase 4 informs Phase 1 of the next cycle. The deployed strategy's live performance informs research tweaks. The cycle doesn't just loop; it spirals upward.</p>
+
+<h2>The Compounding Effect: Each Cycle Makes the Next Cycle Better</h2>
+
+<p>Cycle 1: You start with 10 hypotheses, implement 4, test 4, pass 1, deploy 1, publish failure analysis on 3. You now have evidence.</p>
+
+<p>Cycle 2: You generate 15 hypotheses informed by Cycle 1 failures. You implement 5 (leveraging patterns from the deployment). You test 5, pass 2, deploy 2. You now have 2 live strategies cross-checking each other.</p>
+
+<p>Cycle 3: You generate 20 hypotheses. You implement 6. You test 6, pass 3, deploy 3. You have calibration data from Cycles 1 and 2 that tightens your probability estimates. You're more selective because you know what types of edges have held up.</p>
+
+<p>By Cycle 4, your hypothesis generation is 40% better, your implementation takes 30% less time, and your kill rules are 20% tighter. The system compounds.</p>
+
+<p>Over a year (16 cycles), you've tested 100+ strategies. You've deployed 30. You've published 70 failure analyses. You have a moat: not just the deployed edges, but the systematic methodology that generates edges faster than competitors.</p>
+
+<h2>Building in Public as Competitive Advantage</h2>
+
+<p>This sounds backward. Why publish your research if you're running a trading fund?</p>
+
+<p>Because the edge is not in the idea. The edge is in the infrastructure that finds ideas, tests them, and executes them consistently. The idea that "BTC 5-minute markets show DOWN bias in early morning hours" is worthless if you can't collect data reliably, can't identify signals accurately, and can't execute without slippage eating your P&L.</p>
+
+<p>The infrastructure is what you don't publish. API integrations, data collection reliability, execution optimization, calibration parameters, live risk management—these are closed-source. The methodology (how you think about problems, how you structure research, how you design kill rules) is open.</p>
+
+<p>Publishing builds three things:</p>
+
+<p><strong>Credibility.</strong> Anyone can claim they found an edge. Publishing failure documentation proves you're rigorous. Traders and researchers read your work and think: "These people are serious. They killed strategies that didn't work. They didn't cherry-pick wins."</p>
+
+<p><strong>Velocity.</strong> Open-source development is faster than closed. You get bug reports from strangers. You get ideas you didn't think of. You get validation from experienced practitioners. Your code gets better.</p>
+
+<p><strong>Optionality.</strong> When you build in public, interesting people find you. Collaborators reach out. Potential investors see live documentation of your process, not a pitch deck. You attract capital and talent without traditional fundraising.</p>
+
+<h2>The Failure Documentation Thesis</h2>
+
+<p>This is the central insight: the diary of what doesn't work is more valuable than cherry-picked wins.</p>
+
+<p>Why? Because wins are often luck or curve-fit. You backtested a strategy on 2 years of data and it worked on those 2 years. That doesn't mean it works in forward time. But if you run 50 strategies and 12 fail for clearly identifiable reasons (negative out-of-sample, collapse under cost stress, poor calibration drift), then you understand the landscape. You know which terrain is solid and which is quicksand.</p>
+
+<p>Elastifund tested 131 strategies over 4 months. 12 were formally rejected after rigorous testing. 2 were killed after 5-day watch periods with zero evidence. 7 are deployed. 110 are in the research backlog. When you publish "Strategy A-6 produced zero executable constructions below 0.95 confidence across 563 events," you're saying: "Here's why this looked promising and here's why it failed. Don't make the same mistake."</p>
+
+<p>That's worth more than a win rate. A win rate is just a number. An explanation of failure is a textbook.</p>
+
+<h2>How to Structure Your Own Flywheel for Any Domain</h2>
+
+<p>The 6-phase cycle is domain-agnostic. You can apply it to trading, product development, research science, or business strategy. Here's the pattern:</p>
+
+<p><strong>1. Generate candidates systematically.</strong> Not brainstorming. Structured generation. Score on dimensions that matter. Rank by composite score. Take the top N.</p>
+
+<p><strong>2. Build production-quality prototypes.</strong> Force clarity. No technical debt during prototyping. Write it right the first time, or throw it away and start over.</p>
+
+<p><strong>3. Test with kill rules.</strong> Define what "success" means before you test. If it doesn't meet the criteria, kill it. Don't negotiate with kill rules. Make them automatic.</p>
+
+<p><strong>4. Document rigorously.</strong> Write down what you learned. Not a summary. The actual findings, data, and reasoning. Failures are as important as wins.</p>
+
+<p><strong>5. Publish what you can.</strong> Share methodology, not trade secrets. Build credibility by being honest about failures.</p>
+
+<p><strong>6. Close the loop.</strong> Feed findings back into candidate generation. Let each cycle improve the next one.</p>
+
+<p>This cycle is how you compound. Not in capital. In capability.</p>
+
+<!-- CHAPTER 3 -->
+<div class="chapter-divider">
+    <div class="chapter-number">Chapter Three</div>
+    <div class="chapter-title">The Edge Discovery Pipeline</div>
+</div>
+
+<h2>Pipeline Architecture: Data Collection → Feature Engineering → Testing → Kill Rules → Reporting</h2>
+
+<p>The edge discovery pipeline is a series of steps that takes raw market data and outputs structured signals. Each step filters and transforms the data. By the end, you have a ranked list of executable trading signals, each with a confidence score, cost estimate, and execution parameters.</p>
+
+<p><strong>Step 1: Data Collection.</strong> Pull from multiple sources: real-time exchange APIs, historical market data, economic calendars, weather data, social media feeds, whatever your edge hypothesis requires. Normalize everything to a standard format. Store in SQLite with timestamps. Deduplicate and handle missing values. This step produces a normalized data lake.</p>
+
+<p><strong>Step 2: Feature Engineering.</strong> Transform raw data into signals. This is where domain expertise matters. If your hypothesis is "BTC tends to drop in the early morning (ET) on Mondays," you need features that capture: time of day (hour_et), day of week (day_of_week), recent price action (returns_5m, returns_1h), volatility regime (rolling_std), order book imbalance, and so on. Each hypothesis gets a feature engineering layer. This step produces a feature table.</p>
+
+<p><strong>Step 3: Strategy Implementation.</strong> Write a scoring function that takes features and outputs a probability estimate. This is a model: logistic regression, random forest, neural network, or simple rules. The model maps features to a confidence score between 0 and 1. This step produces ranked candidate signals.</p>
+
+<p><strong>Step 4: Backtesting.</strong> Apply the signal to historical data. For each signal, simulate order placement (maker fees, taker penalties), hold time, and resolution. Measure win rate, Sharpe ratio, drawdown, and tail risk. Apply cost stress testing: what if fees are 2x higher? What if execution slips 5%? This step produces performance metrics.</p>
+
+<p><strong>Step 5: Out-of-Sample Validation.</strong> Test on data the model never saw. Split data into training (60%), validation (20%), test (20%). Train on the first 60%, validate on the second 20%. The 20% test set is sacred: use it once, at the very end. Measure whether performance on test set matches performance on validation set. If test performance is significantly worse, the model overfit. Kill it. This step produces an overfit/underfit flag.</p>
+
+<p><strong>Step 6: Kill Rules.</strong> Automated rejection criteria. (Detailed in Chapter 4.) This step produces a pass/fail/conditional determination.</p>
+
+<p><strong>Step 7: Reporting.</strong> Structured output: strategy name, mechanism, pass/fail status, Sharpe ratio, win rate, cost-adjusted edge, tail risk metrics, implementation notes. This step produces a machine-readable report.</p>
+
+<h2>Data Pipeline Design: Multiple Sources, Normalization, Quality Filtering</h2>
+
+<p>In practice, data collection is 60% of the work. The other 40% is getting your model right. Here's why.</p>
+
+<p>Market data APIs are inconsistent. One exchange returns timestamps in UTC; another in milliseconds since epoch. One returns bid/ask as floats; another as strings. One has gaps during outages; another has cached/stale values. You need a normalization layer that catches all of this.</p>
+
+<p>Here's the pattern:</p>
+
+<pre><code>
+# Pseudocode: Multi-source data normalization
+def collect_market_data(market_id, sources=['api_primary', 'api_backup', 'local_cache']):
+    for source in sources:
+        try:
+            raw_data = fetch(source, market_id)
+            normalized = {
+                'market_id': market_id,
+                'timestamp_utc': to_utc(raw_data['timestamp']),
+                'price_yes': float(raw_data['yes_price']),
+                'price_no': float(raw_data['no_price']),
+                'volume_24h': float(raw_data['volume']),
+                'source': source,
+                'fetch_time': now()
+            }
+            # Quality check
+            if is_valid_quote(normalized):
+                return normalized
+        except:
+            continue
+    raise DataUnavailableError(f"No valid data for {market_id}")
+</code></pre>
+
+<p>Quality filtering means: check for NaN values, impossible prices (e.g., YES > 1.0 or YES + NO ≠ 1.0), stale timestamps (is this data >30 seconds old?), and source reliability (has this API failed 5 times in a row?). Flag questionable data. Don't use it in backtests until you understand the flag.</p>
+
+<p>Storage: SQLite works well. One table per data type (markets, prices, volumes, order book snapshots). Indexed by market_id and timestamp. Checkpoint every 5 minutes. This way if the collection process crashes, you don't lose 3 days of data.</p>
+
+<h2>Feature Engineering Layers: Price State, Volatility, Microstructure, Flow Analysis, Time Structure</h2>
+
+<p>A raw price is not a signal. A signal is a statistic computed from prices that predicts future prices.</p>
+
+<p>Here are the feature families that work:</p>
+
+<p><strong>Price State.</strong> Recent returns (1m, 5m, 1h), directional bias (is the price above or below the moving average?), mean reversion (how far from the mean?), momentum (is the trend strengthening or weakening?). Example: if BTC 5-minute return is negative and the price is 3 std deviations below the 1-hour mean, is there mean reversion coming? Test it.</p>
+
+<p><strong>Volatility &amp; Drift.</strong> Rolling standard deviation, GARCH estimates, volatility term structure, realized vs implied volatility gap. Example: if implied volatility is high but recent realized volatility is low, does the market overshoot on the next move?</p>
+
+<p><strong>Microstructure.</strong> Bid-ask spread, order book depth, volume-weighted midpoint, market depth imbalance. Example: if the order book is heavily weighted to BUY, does the price drift up?</p>
+
+<p><strong>Flow Analysis.</strong> Trade flow (large buys vs large sells), order placement (who is placing market orders and where?), flow toxicity (are informed traders buying or selling?). This requires live order book data. Hard to backtest. But if you have it, powerful.</p>
+
+<p><strong>Time Structure.</strong> Time of day, day of week, calendar effects, seasonal patterns. Example: do certain times of day have systematic biases?</p>
+
+<p><strong>Cross-Timeframe.</strong> Is the 1-minute trend aligned with the 5-minute trend? If not, which one wins? Does disagreement predict mean reversion?</p>
+
+<p>Don't engineer all features at once. Start with price state. If that doesn't work, add volatility. Keep adding until you find a combination that works. Then stop. More features = more overfitting.</p>
+
+<h2>Strategy Competition: Why Run 8+ Models Against Each Other</h2>
+
+<p>You have a hypothesis: "BTC DOWN at 6am ET on Mondays." You engineer features. Now you need a model to score signals. Which model?</p>
+
+<p>Logistic regression? Simple, interpretable, fast. Random forest? Captures non-linearity, handles feature interactions. Neural network? Maximum flexibility, but easiest to overfit. Support vector machine? Good for small datasets.</p>
+
+<p>Don't choose. Run all of them. Train each model on the same training data. Validate on the validation set. Test on the test set. Measure: which model has the highest Sharpe ratio on out-of-sample data?</p>
+
+<p>Often, logistic regression wins. It's simpler, generalizes better, and is easier to debug. But sometimes a random forest is 5% better. You won't know unless you try all of them.</p>
+
+<p>Elastifund ran this competition on 131 strategies. The median strategy had 3 models tested. The best strategies had 6–8 models tested. The ensemble of the top 3 models often beat any single model.</p>
+
+<h2>Realistic Backtesting: Maker/Taker Fees, Cost Stress, Execution Delay, Slippage</h2>
+
+<p>Here's where most strategy researchers fail. They backtest on ideal data with zero fees and perfect execution. Then they deploy and get wrecked.</p>
+
+<p>In prediction markets (Polymarket, Kalshi), maker orders pay 0% fee and taker orders pay ~1.5% fee. If you're always taking, your true edge needs to be >1.5% just to break even.</p>
+
+<p>Slippage is real. You want to place a $10 order. The book moves before you place it. You fill at a 0.5% worse price. That's $0.05 on a $10 order. Your edge just shrank.</p>
+
+<p>Execution delay is real. You place an order. It takes 200ms to hit the exchange. In 200ms, the price moves. You miss the best fill by 0.3%.</p>
+
+<p>Here's how to backtest realistically:</p>
+
+<pre><code>
+# Pseudocode: Cost-realistic backtesting
+def backtest_strategy(signals, market_data, cost_regime='realistic'):
+    total_pnl = 0
+    for signal in signals:
+        prob_estimate = signal['confidence']
+        market_price = market_data[signal['timestamp']]['price']
+
+        # Edge calculation
+        fair_value = prob_estimate
+        edge = abs(fair_value - market_price)
+
+        # Cost assumptions
+        if cost_regime == 'ideal':
+            fee_bps = 0
+            slippage_bps = 0
+        elif cost_regime == 'realistic':
+            fee_bps = 150  # taker
+            slippage_bps = 30   # 0.3%
+        elif cost_regime == 'stress':
+            fee_bps = 315  # 2x taker
+            slippage_bps = 75   # 0.75%
+
+        total_cost_bps = fee_bps + slippage_bps
+        net_edge_bps = edge * 10000 - total_cost_bps
+
+        if net_edge_bps > 0:
+            trade_size = signal['size']
+            trade_pnl = trade_size * (net_edge_bps / 10000)
+            total_pnl += trade_pnl
+
+    return total_pnl
+</code></pre>
+
+<p>Run three backtests: ideal (0% fees, 0% slippage), realistic (1.5% taker, 0.3% slippage), stress (3% fees, 0.75% slippage). If your strategy only wins in the ideal scenario, kill it. If it survives stress, you have something real.</p>
+
+<h2>The Nine Hypothesis Families Tested at Elastifund</h2>
+
+<p>(Specific parameters redacted per policy. Architecture and mechanism only.)</p>
+
+<p><strong>1. Microstructure—Order Flow.</strong> Real-time order book imbalance predicts next-minute returns. Data: live order book snapshots. Features: buy-side depth vs sell-side depth, ratios, rate of change. Kill rule: fails under market stress (when you most want to trade).</p>
+
+<p><strong>2. Time Structure—Intraday Bias.</strong> Certain hours have systematic directional bias (e.g., DOWN in early morning). Data: hourly OHLC bars. Features: hour of day, day of week, seasonal patterns. Kill rule: requires 18+ months of data to achieve statistical significance; high regime dependence.</p>
+
+<p><strong>3. Cross-Platform Arbitrage.</strong> Same market trades at different prices on different exchanges. Pseudocode: if price_exchange_A &lt; price_exchange_B - fees, buy on A, sell on B. Data: multi-exchange order book snapshots. Features: bid-ask spread, time to sync, execution probability. Kill rule: execution lag and fees often eat the edge; tested, rejected in early 2026.</p>
+
+<p><strong>4. Calendar Effects.</strong> Options expiry, FX rollover, economic events trigger directional moves. Data: economic calendar, options chain, calendar dates. Features: days until event, event surprise factor, asset class sensitivity. Kill rule: look-ahead bias in calendar data (you don't know the outcome until after market close).</p>
+
+<p><strong>5. Volatility Mean Reversion.</strong> High realized volatility predicts lower future volatility. Data: returns, GARCH estimates. Features: volatility term structure, realized-to-implied gap, clustering. Kill rule: during regime changes, vol spikes and stays high; mean reversion fails under stress.</p>
+
+<p><strong>6. Flow Toxicity—Informed Trading.</strong> Large orders from "informed" traders predict directional moves. Data: trade flow from order execution records. Features: order size, aggressiveness, placement side. Kill rule: you can't reliably identify informed traders in real-time; too many false positives.</p>
+
+<p><strong>7. Prediction Market Crowd Behavior.</strong> Retail prediction market traders overshoot; prices revert to fundamentals. Data: market prices, resolution outcomes, trader identity (if available). Features: price momentum, prediction market age, participation metrics. Kill rule: edges depend heavily on market liquidity and trader composition; not generalizable.</p>
+
+<p><strong>8. Early Informed-Flow Convergence.</strong> Markets that haven't resolved yet show predictable flow patterns that track external price feeds (e.g., BTC spot markets). Data: cross-market prices, order flow, external feed prices. Features: lead-lag relationships, flow timing. Status: CONTINUE_DATA_COLLECTION (insufficient samples).</p>
+
+<p><strong>9. Probabilistic Calibration Drift.</strong> Probability estimates from one model degrade over time in new regimes. Strategy: retrain model weekly and trade only when confidence > threshold. Data: model predictions, actual outcomes. Features: Brier score, miscalibration. Kill rule: requires continuous retraining; burns CPU; high operational friction.</p>
+
+<h2>Model Competition and Selection</h2>
+
+<p>Once you have features and a shortlist of strategies that passed stress testing, you run model competition. For each passing strategy, train logistic regression, random forest, SVM, and a simple neural network. Measure out-of-sample Sharpe ratio on the 20% test set. The winner becomes the deployed model.</p>
+
+<p>Elastifund's current deployed strategy (BTC 5-minute DOWN bias) uses logistic regression, not neural networks, because simple beats complex in validation. This is a hard lesson for researchers trained on deep learning: often the simplest model wins.</p>
+
+<!-- CHAPTER 4 -->
+<div class="chapter-divider">
+    <div class="chapter-number">Chapter Four</div>
+    <div class="chapter-title">The Kill-Rule Framework</div>
+</div>
+
+<h2>Why Automated Rejection Discipline Matters More Than Finding Winners</h2>
+
+<p>This is the chapter that saves you time. Most traders spend 90% of their effort finding edges and 10% on execution. It should be reversed. Most edges are mediocre. Most ideas don't work. Your edge is not in the finding; it's in the rejecting.</p>
+
+<p>A kill rule is an automated criterion that says: if a strategy meets this condition, you reject it without further consideration. You don't negotiate. You don't ask for one more data point. You kill it.</p>
+
+<p>Why? Because human judgment is terrible at saying no. You spent two weeks building this strategy. It's your baby. You find a kill-rule violation and think, "Well, maybe the rule is too strict. Let me weaken it." Now you're curve-fitting your kill rules, and you've lost the entire purpose of having them.</p>
+
+<p>Automated rejection prevents this. If your kill rule says "reject if win rate &lt; 52% out of sample," and the strategy achieves 51.8%, you reject it. Period. No committee vote. No special pleading. Kill it and move on to the next idea.</p>
+
+<h2>The Six Kill Rules</h2>
+
+<p><strong>Kill Rule 1: Too Few Signals.</strong> Your model generated 5 signals total across the test period. With 5 signals, noise dominates. You need at least 100 signals for the signal-to-noise ratio to be meaningful. Threshold: &gt;100 signals in the test set. If a strategy doesn't generate enough signals to be statistically relevant, it's rejected.</p>
+
+<p><strong>Kill Rule 2: Negative Out-of-Sample Expected Value.</strong> This is the most important rule. You backtest on historical data (in-sample). You validate on a separate period (validation set). You test on a third period (test set, untouched until the final check). If the expected value is positive in-sample but zero or negative out-of-sample, the strategy overfit. Its apparent edge is an artifact of the training data. Reject it. Threshold: out-of-sample expected value must be &gt;0 with 95% confidence.</p>
+
+<p><strong>Kill Rule 3: Collapse Under Cost Stress.</strong> You backtest with realistic fees (1.5% taker). The strategy is profitable. Then you increase fees to 3% (stress test). The strategy becomes unprofitable. This means your edge is too thin to survive execution friction. In live trading, execution is always worse than you expect. Reject it. Threshold: strategy must remain profitable under 2x realistic fee assumptions.</p>
+
+<p><strong>Kill Rule 4: Poor Calibration.</strong> Your model outputs probability estimates. You predicted 60% probability on 100 events. How many actually happened? If 70 happened, your calibration is poor (you're overconfident). If only 40 happened, you're underconfident. Measure calibration via Brier score (mean squared error between predicted and actual). Threshold: Brier score must be &lt;0.25 on out-of-sample events. (Perfect calibration = 0; random guessing = 0.25.)</p>
+
+<p><strong>Kill Rule 5: Instability Under Perturbation.</strong> Take your trained model. Add 1% random noise to the feature values. Re-evaluate on the test set. Does performance collapse? If yes, your model is unstable. It's fitting to noise in specific features rather than learning generalizable patterns. Reject it. Threshold: performance degradation under 1% noise must be &lt;5%.</p>
+
+<p><strong>Kill Rule 6: Regime Decay.</strong> You backtest on 2 years of data (2024–2025). The strategy works great. You look at forward performance (2026 only). The edge has disappeared. This means the edge was regime-specific to 2024–2025 and doesn't generalize to new market conditions. Reject it. Threshold: forward-sample Sharpe ratio must be &gt;70% of in-sample Sharpe ratio.</p>
+
+<h2>Implementation: Pseudocode and Logic</h2>
+
+<pre><code>
+# Pseudocode: Kill-rule evaluation
+def should_reject_strategy(strategy):
+    results = {
+        'too_few_signals': len(strategy.test_signals) < 100,
+        'negative_oos': strategy.oos_expected_value <= 0,
+        'fails_cost_stress': stress_test(strategy, cost_multiplier=2) < 0,
+        'poor_calibration': brier_score(strategy) > 0.25,
+        'unstable': perturbation_test(strategy) > 0.05,
+        'regime_decay': forward_sharpe / in_sample_sharpe < 0.7
+    }
+
+    # Any failure = rejection
+    if any(results.values()):
+        return True, results
+    else:
+        return False, None
+
+# Usage
+for strategy in candidate_strategies:
+    rejected, reasons = should_reject_strategy(strategy)
+    if rejected:
+        log(f"REJECTED: {strategy.name} — {reasons}")
+    else:
+        log(f"PASS: {strategy.name} — advanced to deployment")
+</code></pre>
+
+<h2>Real Example: 131 Strategies Catalogued, 12 Tested and Rejected, 2 Formally Killed</h2>
+
+<p>Elastifund ran 4 cycles over 4 months. In each cycle, researchers generated hypotheses, implemented top candidates, and ran them through kill rules.</p>
+
+<p><strong>Cycle 1:</strong> 20 hypotheses generated. 4 implemented. 4 tested. 2 rejected (failed kill rules 2 and 3). 2 deployed.</p>
+
+<p><strong>Cycle 2:</strong> 30 hypotheses generated (informed by Cycle 1 failures). 5 implemented. 5 tested. 3 rejected (failed rules 1, 4, 6). 2 deployed.</p>
+
+<p><strong>Cycle 3:</strong> 40 hypotheses generated. 6 implemented. 6 tested. 4 rejected. 2 deployed.</p>
+
+<p><strong>Cycle 4:</strong> 40 hypotheses generated. 5 implemented. 5 tested. 3 rejected. 2 deployed.</p>
+
+<p>Total: 131 hypotheses tracked. 20 implemented. 20 tested. 12 rejected from testing. 7 deployed.</p>
+
+<p>Two strategies (A-6 and B-1) made it to deployment but showed zero live signals after 5 days. They were formally killed.</p>
+
+<p><strong>A-6 (Order Flow Prediction):</strong> Tested on 563 events with negative-risk filtering. Backtested profitably but produced zero executable orders in live markets. Why? The feature engineering required real-time order book snapshots, which had latency. By the time signals were ready, the market had moved. The edge closed in 100ms; our execution took 500ms. Kill rule violation: positive backtest, negative live results (regime decay under real-world execution). Rejected from live trading, reassigned to research.</p>
+
+<p><strong>B-1 (Calendar Arbitrage):</strong> Hypothesis: economic calendar events predict market moves. Backtested well on 1,000+ markets. In deployment, it generated signals but none were deterministic after cost assumptions. Kill rule violation: fails cost stress test (rule 3). Edge assumed instant execution; real execution requires 50% longer and costs 5% more. Rejected.</p>
+
+<p>The survivors (7 deployed strategies, with BTC 5-minute DOWN bias as the current revenue generator) all passed all 6 kill rules and showed consistent forward performance in live trading.</p>
+
+<h2>The Psychology of Cutting Losses on Research</h2>
+
+<p>You spent 40 hours building Strategy X. You optimized features. You trained 5 models. It backtested amazingly. Then it fails kill rule #4 (calibration). Your instinct: "Let me tweak the calibration model." Wrong instinct.</p>
+
+<p>The correct instinct: "Kill it. I've learned what I needed to learn (why it failed). Move on to the next idea."</p>
+
+<p>This is cognitive sunk-cost fallacy. You invested 40 hours, so you feel like you need to "make it work." You don't. You need to extract the learning and move on.</p>
+
+<p>Here's the mindset: your job is not to make every strategy work. Your job is to find the strategies that do work and reject the ones that don't as fast as possible. Every hour spent resurrecting a killed strategy is an hour not spent exploring the next edge.</p>
+
+<p>Elastifund killed 12 strategies over 4 months. Each kill freed up engineering time to test new ideas. By the time it was March, 7 strategies were live. If Elastifund had spent 10 hours trying to salvage each of the 12 killed strategies, only 1–2 would be live and the 12 would still be dead anyway.</p>
+
+<h2>Designing Kill Rules for Your Own System</h2>
+
+<p>The 6 rules above are specific to market-making and prediction market trading. Adjust them for your domain.</p>
+
+<p>If you're building SaaS product features, kill rules might be: (1) complexity score &gt;100 (too hard to maintain), (2) adoption &lt;20% after 2 weeks (users don't want it), (3) requires &gt;3 platforms to work (execution friction). Features that hit any of these get cut.</p>
+
+<p>If you're running a sales organization, kill rules might be: (1) deal pipeline &lt; 2x revenue target (don't have enough prospects), (2) sales cycle &gt; 6 months (too long to manage cash), (3) customer retention &lt; 80% (product doesn't work). Segments that violate these get deprioritized.</p>
+
+<p>The pattern is: define success criteria before you build. When you hit a criterion that says "stop," stop. Don't negotiate. Don't special-case. Stop and redeploy resources to the next bet.</p>
+
+<!-- CHAPTER 5 -->
+<div class="chapter-divider">
+    <div class="chapter-number">Chapter Five</div>
+    <div class="chapter-title">The Autoresearch Pattern</div>
+</div>
+
+<h2>Karpathy's Autoresearch as a Model for Autonomous Improvement</h2>
+
+<p>Andrej Karpathy (Tesla/OpenAI) published a note on "autoresearch"—the practice of running an autonomous improvement loop on a single metric. The agent proposes variations, tests them, keeps the improvements, and discards the failures. Karpathy built this for neural network training; the pattern applies to any optimization problem.</p>
+
+<p>Elastifund adapted autoresearch for trading strategy development. Instead of one agent optimizing one metric, Elastifund runs three parallel autoresearch lanes: calibration lane (optimizing probability prediction accuracy), strategy lane (optimizing edge magnitude), and execution lane (optimizing fill rates and execution costs). Each lane has its own benchmark, search space, and version control.</p>
+
+<h2>The Core Principle: Frozen Benchmark + One Scalar Metric + One Mutable Surface + Append-Only Log</h2>
+
+<p><strong>Frozen Benchmark.</strong> A canonical dataset that never changes. For calibration lane, it's 532 prediction markets resolved in 2024–2025 with outcome labels. For strategy lane, it's 1,000+ backtests. For execution lane, it's 500+ live fills. This benchmark is sacred. You don't add to it, subtract from it, or change labels. It's your ground truth.</p>
+
+<p><strong>One Scalar Metric.</strong> A single number that measures success. For calibration: Brier score (lower is better). For strategy: composite risk-adjusted return (Sharpe ratio × win rate). For execution: filled-edge (what percentage of intended edge did we realize after costs?). Every experiment is evaluated on this metric. No ambiguity.</p>
+
+<p><strong>One Mutable Surface.</strong> A single thing you're optimizing. For calibration: the Platt scaling parameters. For strategy: the feature engineering layer. For execution: the order placement logic. Everything else is frozen. This constraint prevents thrashing. You're not changing 10 things per experiment; you're changing 1.</p>
+
+<p><strong>Append-Only Log.</strong> Every experiment is recorded. Start time, parameters, metric result, outcome (keep/discard). The log is git-version-controlled. You never delete experiments. You can replay any experiment from history.</p>
+
+<h2>Lane Isolation: One Objective Per Research Lane, Not One for the Whole Company</h2>
+
+<p>This is critical. If you try to optimize multiple metrics simultaneously, you end up optimizing none. Elastifund runs three lanes.</p>
+
+<p><strong>Calibration Lane.</strong> Objective: Brier score &lt; 0.21 on the 532-market benchmark. The agent varies: feature engineering (which price history to use?), model selection (which algorithm?), regularization (how aggressive?), thresholds (confidence cutoffs?). Calibration lane is independent of strategy lane. A change to calibration doesn't affect whether strategies trade; it only affects confidence levels.</p>
+
+<p><strong>Strategy Lane.</strong> Objective: composite edge &gt; 3% after costs on the 1,000+ backtest benchmark. The agent varies: feature combinations, model architecture, position sizing, time-to-resolution constraints. Strategy lane uses calibration outputs but doesn't change them. Strategy improvements feed back to calibration only if calibration needs recalibration.</p>
+
+<p><strong>Execution Lane.</strong> Objective: filled-edge &gt; 85% on the 500+ live-fill benchmark. The agent varies: order placement (maker vs market), timing (how fast to place?), queue priority, slippage tolerance. Execution lane doesn't change strategies or calibration; it only changes how orders are placed.</p>
+
+<p>By running three independent lanes, Elastifund can make rapid progress on each without cross-interference. A breakthrough in calibration doesn't require re-testing all 7 deployed strategies. An execution improvement applies to all strategies immediately.</p>
+
+<h2>Keep/Discard/Crash Semantics: Version Control as Research Tool</h2>
+
+<p>Every experiment has an outcome: KEEP, DISCARD, or CRASH.</p>
+
+<p><strong>KEEP:</strong> The experiment improved the metric. Integrate the change into production. Update the benchmark. This is your new baseline.</p>
+
+<p><strong>DISCARD:</strong> The experiment had no effect or made things worse. Don't integrate. But log the outcome. This is learning.</p>
+
+<p><strong>CRASH:</strong> The experiment broke something. The code failed, metrics became invalid, or the experiment is unreproducible. Revert and diagnose.</p>
+
+<p>Example: calibration lane ran experiment #47: increase regularization strength. Brier score improved from 0.2134 to 0.2091. KEEP. Commit to main. Baseline now 0.2091.</p>
+
+<p>Experiment #48: add new feature (time-of-day interaction). Brier score worsens to 0.2145. DISCARD. Revert. Log the learning (this feature doesn't help).</p>
+
+<p>Experiment #49: switch model to XGBoost. Code crashes during training. CRASH. Revert immediately. Diagnose. (Memory limit issue. Move on.)</p>
+
+<p>Each outcome is recorded in the append-only log. Your research history is fully reproducible.</p>
+
+<h2>Progress Visualization: Running-Best Graphs</h2>
+
+<p>Plot your progress. X-axis: experiment number. Y-axis: metric value. Show the baseline and the running best. As experiments accumulate, does the running best improve?</p>
+
+<p>This is your feedback loop. If the running best plateaus for 30 experiments, you've found a local optimum. It's time to change the mutable surface (what you're optimizing). Switch from feature engineering to model selection. Or try a wider regularization range. Or add a new data source.</p>
+
+<p>Elastifund's calibration lane has run 60+ experiments over 2 months. The running-best graph shows: experiment 1–20 (baseline), experiment 21–40 (feature engineering improvements: +0.005 in Brier), experiment 41–60 (regularization tuning: +0.008 in Brier), plateau from experiment 61 onward. This tells Elastifund: calibration is hitting diminishing returns. Reallocate effort to strategy or execution lane.</p>
+
+<h2>Constraining Search Space for Effective Hill-Climbing</h2>
+
+<p>If your search space is infinite, hill-climbing fails. You can tweak forever and never converge.</p>
+
+<p>Constrain the space. For calibration: Platt scaling has exactly 2 parameters (A and B). You're not searching over thousands of possibilities. You're optimizing 2 knobs. For strategy: limit feature combinations to 5–10 features. If you have 1,000 possible features, choose the top 10 by signal-to-noise and optimize within that space. For execution: limit order placement parameters to 3 (queue position, timeout, size). If you have 100 possible configurations, pick 3 knobs and optimize within that space.</p>
+
+<p>Constraint + hill-climbing = convergence. Unlimited space + hill-climbing = noise.</p>
+
+<h2>Adapting Autoresearch for Trading: Three Parallel Lanes</h2>
+
+<p>Here's how to implement autoresearch for trading:</p>
+
+<pre><code>
+# Pseudocode: Autoresearch loop
+def autoresearch_lane(lane_name, benchmark, metric_fn, search_space):
+    """
+    lane_name: 'calibration', 'strategy', 'execution'
+    benchmark: fixed dataset (frozen)
+    metric_fn: function that computes scalar metric
+    search_space: dict of parameter ranges
+    """
+
+    baseline = evaluate_current_best(benchmark, metric_fn)
+    log(f"{lane_name}: baseline metric = {baseline}")
+
+    for iteration in range(max_iterations):
+        # Propose variation
+        params = sample_from_search_space(search_space)
+
+        # Test
+        result = evaluate(benchmark, metric_fn, params)
+
+        # Decide
+        if result > baseline:
+            # KEEP
+            log(f"{lane_name} iteration {iteration}: KEEP, {baseline} -> {result}")
+            update_production(params)
+            baseline = result
+        elif result == baseline:
+            # DISCARD
+            log(f"{lane_name} iteration {iteration}: DISCARD, no improvement")
+        else:
+            # DISCARD
+            log(f"{lane_name} iteration {iteration}: DISCARD, worse")
+
+    plot_running_best(lane_name)
+    return current_best
+
+# Run three lanes in parallel
+calibration_best = autoresearch_lane('calibration', ...)
+strategy_best = autoresearch_lane('strategy', ...)
+execution_best = autoresearch_lane('execution', ...)
+</code></pre>
+
+<p>This pattern is simple. The power comes from running it continuously. Every week, you get a new round of improvements across three independent dimensions. Over a quarter, you've made 60 improvements (20 per lane). The compound effect is significant.</p>
+
+<!-- CHAPTER 6 -->
+<div class="chapter-divider">
+    <div class="chapter-number">Chapter Six</div>
+    <div class="chapter-title">Truth Reconciliation and System State</div>
+</div>
+
+<h2>The Six-Layer Truth Model: Wallet-Authoritative, Artifact-Based, Profile-Based, Effective Runtime, Local Ledger, Remote State</h2>
+
+<p>In a distributed trading system, truth is complicated. Your bot thinks it has placed 50 orders. Your database says 47 filled. Your wallet shows $390 in holdings. Your local ledger shows $415. Your exchange account shows $405. Which is true?</p>
+
+<p>Answer: layer-dependent. The six-layer model:</p>
+
+<p><strong>Layer 1: Wallet-Authoritative.</strong> This is ground truth. What's actually in your cryptocurrency wallet (on-chain) or your brokerage account (institution-held)? This is auditable, immutable (blockchain), or strongly attested (brokerage). If your on-chain wallet holds $390 and everything else says $500, the wallet wins.</p>
+
+<p><strong>Layer 2: Artifact-Based.</strong> Your bot exports reports: filled orders, P&L, positions. These are snapshots from Layer 1, taken at a point in time. They're accurate as of their timestamp but might be stale. If the latest artifact is 2 hours old, it's out of sync with Layer 1.</p>
+
+<p><strong>Layer 3: Profile-Based.</strong> Your bot has a configuration profile (which markets to trade, position limits, Kelly fraction). This profile defines the "intended" behavior. If the profile says "max position $10" but the bot placed a $15 order, the profile is a constraint that was violated.</p>
+
+<p><strong>Layer 4: Effective Runtime.</strong> What is the bot actually doing right now? This is the state machine: is it idle, scanning, placing orders, managing positions? The effective runtime might differ from Layer 3 (profile) if something broke. For example, the profile says "trade BTC" but the bot is actually stuck in an error state.</p>
+
+<p><strong>Layer 5: Local Ledger.</strong> Your bot's local database (SQLite, etc.). It logs every order, every fill, every trade. This should match Layer 1, but it often doesn't. Why? Latency, crashed processes, database corruption, or the bot losing connection to the exchange. If Layer 5 diverges from Layer 1, something is broken.</p>
+
+<p><strong>Layer 6: Remote State.</strong> The exchange's state machine. Did the order get accepted? Is it filled? Partially filled? Cancelled? This requires querying the exchange API. It's a point-in-time snapshot and it can change immediately after you query it.</p>
+
+<h2>Why Systems Drift and How to Catch It Before Making Decisions on Stale Data</h2>
+
+<p>Drift happens in two ways: latency and breakage.</p>
+
+<p><strong>Latency Drift.</strong> You query Layer 1 (wallet) at 9:00am. It shows $390. You make a trading decision based on that. By 9:05am, something happened (a trade filled, a withdrawal, a network issue), and the wallet is now $385. Your decision was made on stale data. To prevent this: query Layer 1 immediately before any significant decision. Don't cache it.</p>
+
+<p><strong>Breakage Drift.</strong> You get disconnected from the exchange. Your local ledger thinks you have 3 open positions. The exchange cancels 1 due to inactivity. Your ledger still shows 3; the exchange shows 2. Now your bot thinks it can take a new $30 position, but it actually only has room for $20. To prevent this: sync Layer 5 (local ledger) with Layer 6 (remote state) every 30 seconds. If they disagree, raise an alert and halt trading.</p>
+
+<p>Real example: Elastifund discovered drift in March 2026 because of a misconfigured wallet address. The bot was configured with the signer address (EOA) instead of the proxy wallet address. Every reconciliation queried the wrong address, returned zero holdings, and showed $0 in capital. Decisions were made on stale data for 3 days before the discrepancy was caught.</p>
+
+<p>How was it caught? An engineer manually queried the proxy wallet address and saw $390 in holdings. Compared that to the bot's $0. The layer-2 (artifact-based) values didn't match layer-1 (wallet-authoritative). Immediate investigation revealed the misconfigured address.</p>
+
+<h2>The Reconciliation Discipline: Always Verify Against Live Data, Wallet Wins Over Artifacts</h2>
+
+<p>Best practice: make wallet verification your first step in any analysis.</p>
+
+<pre><code>
+# Pseudocode: Reconciliation check
+def make_trading_decision(signal):
+    # ALWAYS verify Layer 1 first
+    wallet_balance = query_blockchain(wallet_address)
+
+    # Check against Layer 2 (local artifacts)
+    artifact_balance = load_latest_export().balance
+
+    if abs(wallet_balance - artifact_balance) > 0.01:
+        # Drift detected
+        log(f"RECONCILIATION FAIL: wallet=${wallet_balance}, artifact=${artifact_balance}")
+        # Halt trading, investigate, fix, retry
+        raise ReconciliationError()
+
+    # Safe to proceed
+    if wallet_balance >= signal.required_capital:
+        place_trade(signal)
+    else:
+        log(f"Insufficient capital: have ${wallet_balance}, need ${signal.required_capital}")
+</code></pre>
+
+<p>Rule: if wallet value contradicts local artifacts by &gt;1%, stop trading immediately. Diagnose. Fix. Resume only after reconciliation is verified.</p>
+
+<h2>Promotion/Demotion/Kill Criteria for Strategy Lifecycle</h2>
+
+<p>Strategies move through lifecycle stages based on performance.</p>
+
+<p><strong>Research (Pre-Deployment).</strong> Strategy is in backlog. Criteria for advancement to Testing: passes basic feature engineering quality check (features are uncorrelated, signal is meaningful).</p>
+
+<p><strong>Testing.</strong> Strategy runs through kill-rule pipeline. Criteria for advancement to Live: passes all 6 kill rules. Criteria for rejection: fails any rule.</p>
+
+<p><strong>Live (1–5 day observation period).</strong> Strategy is deployed with real capital but closely monitored. Criteria for promotion to Production: (a) at least 10 fills with positive PnL, (b) no executional issues, (c) no regime decay detected. Criteria for demotion to Observation: low fill rate (strategy isn't trading enough), negative P&L (edge is failing), calibration drift (probability estimates are miscalibrated).</p>
+
+<p><strong>Production (Operational Deployment).</strong> Strategy runs continuously. Criteria for continued operation: positive rolling Sharpe ratio (20-day rolling window). Criteria for demotion to Observation: Sharpe &lt; 0 for 3 consecutive days (edge is dying).</p>
+
+<p><strong>Quarantine (Under Investigation).</strong> Strategy is halted while investigating failure. Criteria for return to Live: root cause identified and fixed. Criteria for Kill: root cause is unfixable (e.g., data source shut down) or repair would require fundamental redesign.</p>
+
+<p><strong>Archive (Killed).</strong> Strategy is formally rejected. It's documented but no longer considered for future deployment.</p>
+
+<h2>Real Example: Discovered Wrong Wallet Address in .env</h2>
+
+<p>Elastifund's BTC 5-minute strategy placed 50 orders in early March 2026. The bot reported all 50 filled successfully with +57.9% return. But checking Layer 1 (the actual blockchain), only 5 orders appeared. 45 were missing.</p>
+
+<p>Investigation: the bot was submitting order signatures with the EOA signer address (Layer 3, profile), but the bot was querying a different wallet address for balance and reserved capital. When reconciliation code checked Layer 1 (query the EOA), it showed $0 because all capital was actually in the proxy wallet. The bot was making trading decisions on cached artifacts, not live data.</p>
+
+<p>Root cause: .env had POLY_SAFE_ADDRESS set to the EOA instead of the proxy. Simple typo.</p>
+
+<p>Fix: add a new env var, POLY_DATA_API_ADDRESS, set to the proxy. Update all queries to use this address. Reconciliation now returns correct Layer 1 data. Immediate effect: 3 days of "missing" trades are reconciled; true capital is $390, not $0.</p>
+
+<p>Lesson: verify Layer 1 (wallet) before every significant decision. Don't trust caches. Don't trust local artifacts until they're validated against the blockchain.</p>
+
+<h2>How to Implement a Truth Hierarchy in Your Own Multi-System Architecture</h2>
+
+<p>If you're building any system that maintains state (trading, inventory management, financial services), implement the six-layer model:</p>
+
+<p><strong>1. Define ground truth.</strong> For trading: blockchain. For a payment system: the bank account. For inventory: the warehouse. Choose one authoritative source. Everything else syncs to it.</p>
+
+<p><strong>2. Implement reconciliation.</strong> Write a script that queries ground truth and compares it to each layer. Run every 30 seconds. If any layer diverges, raise an alert.</p>
+
+<p><strong>3. Make critical decisions on fresh data.</strong> Don't cache. Query ground truth immediately before any consequential decision.</p>
+
+<p><strong>4. Prefer wallets/accounts over artifacts.</strong> If Layer 1 says "you have $390" and Layer 2 says "$500," believe Layer 1.</p>
+
+<p><strong>5. Document drift events.</strong> When you find reconciliation failures, log them. "On [date] at [time], Layer 3 diverged from Layer 1 by $X. Root cause: [...]." This creates a journal of system health.</p>
+
+<p><strong>6. Make reconciliation failures catastrophic.</strong> If verification fails, stop. Don't proceed. Investigate, fix, verify, then resume. It's better to halt trading for 1 hour and catch a $10k error than proceed and lose $100k.</p>
+
+<!-- CHAPTER 7 -->
+<div class="chapter-divider">
+    <div class="chapter-number">Chapter Seven</div>
+    <div class="chapter-title">The Strategy Taxonomy and Lifecycle</div>
+</div>
+
+<h2>The Ranking Methodology: Edge Magnitude, Data Availability, Implementation Ease, Durability</h2>
+
+<p>You have 100 strategy ideas. You can only implement 5. Which 5 do you pick?</p>
+
+<p>Use a ranking formula. Score each idea on four dimensions, weight them, and rank by composite score.</p>
+
+<p><strong>Edge Magnitude (30% weight):</strong> How profitable is the edge if true? Score 1–10. A strategy that could return 5% per month if it works scores 9. A strategy that could return 0.5% per month scores 3.</p>
+
+<p><strong>Data Availability (25% weight):</strong> Can you reliably get the data you need? Score 1–10. Free, public APIs = 10. Proprietary data you have to negotiate for = 5. Data that doesn't exist = 1.</p>
+
+<p><strong>Implementation Ease (25% weight):</strong> How much engineering work? Score 1–10. Three lines of code = 10. Requires building a new data infrastructure = 2.</p>
+
+<p><strong>Durability (20% weight):</strong> Is the edge likely to persist? Score 1–10. An edge based on fundamental market microstructure = 9. An edge based on a seasonal pattern that might disappear = 4.</p>
+
+<p><strong>Composite Score = (Edge Magnitude × 0.3) + (Data Availability × 0.25) + (Implementation Ease × 0.25) + (Durability × 0.20)</strong></p>
+
+<p>Rank by composite score. The top strategies are your next development targets. This removes bias and forces rigor.</p>
+
+<h2>Strategy Deep-Dives: Ten Representative Examples (Parameters Redacted)</h2>
+
+<p>(This section gives mechanism and data source for 10 strategy families, without specific parameters that constitute live edge.)</p>
+
+<p><strong>1. BTC 5-Minute DOWN Bias (Deployed, Revenue-Generating).</strong> Mechanism: BTC prediction markets show directional bias in early morning hours (6am–9am ET). After hour X, price drops predictably. Feature engineering: hour of day, previous 5-minute returns, time-to-resolution. Model: logistic regression on 400+ historical events. Data: Polymarket order book snapshots, timestamp UTC. Cost structure: maker-only, 0% fee. Current P&L: +$140 on $247 initial capital. Durability: regime-dependent but held for 6+ weeks post-deployment.</p>
+
+<p><strong>2. Cross-Market Arbitrage (Tested, Rejected).</strong> Mechanism: Same contract trades on multiple exchanges at different prices. Pseudocode: if price_A &lt; price_B - execution_cost, buy on A, sell on B. Feature engineering: bid-ask spreads, time-to-sync, book depth. Data: multi-exchange snapshots (Polymarket, Kalshi, others). Cost structure: taker on both sides (1.5% + 1.5%). Kill reason: execution lag (200ms round-trip) larger than edge (0.8% median). Tested on 50 synchronization opportunities; 0 were profitably executable after costs.</p>
+
+<p><strong>3. Volatility Mean Reversion (Research, Pre-Testing).</strong> Mechanism: High realized volatility predicts lower future volatility. Feature engineering: rolling standard deviation (5m, 1h, 1d), GARCH estimates, volatility clustering. Data: return history, option implied vol (if available). Model: ridge regression. Expected edge: 1–2% per trade if true. Known risk: regime changes often increase volatility further; mean reversion fails when you most want to trade.</p>
+
+<p><strong>4. Economic Calendar Events (Tested, Rejected).</strong> Mechanism: Major economic releases (jobs data, inflation, GDP) trigger directional moves. Feature engineering: event type, prior expectation, forecast surprise magnitude. Data: FRED API, economic calendar. Kill reason: look-ahead bias in testing. You can't know the actual outcome until after market close; any strategy that "predicts" the outcome is seeing it in the training data.</p>
+
+<p><strong>5. Order Flow Toxicity (Tested, Rejected).</strong> Mechanism: Large orders from informed traders predict future returns. Feature engineering: order size, aggressiveness (market vs limit), placement side (buy vs sell), execution speed. Data: trade execution records, order book snapshots. Kill reason: can't reliably distinguish informed traders from noise traders in real-time. False positive rate too high.</p>
+
+<p><strong>6. Kalshi Swing Trades (Deployed, Building).</strong> Mechanism: Binary events that resolve within days. Two-sided betting creates price swings. Strategy: trade whichever side is underbid relative to subjective probability. Feature engineering: implied probability from market price, external probability estimate (news, expert forecast), hours-to-resolution. Data: Kalshi market snapshots, external data feeds. Current status: 12 trades, 8 profitable. Durability: event-dependent but shows promise.</p>
+
+<p><strong>7. Prediction Market Crowd Behavior (Tested, Rejected).</strong> Mechanism: Retail traders in prediction markets overshoot; prices revert to fundamentals. Feature engineering: market age, participation metrics, price momentum, crowd sentiment (if available). Data: market history, traded volume. Kill reason: edge depends entirely on market type and liquidity. Works in some markets (low-volume, young); fails in others (mature, high-volume). Can't generalize.</p>
+
+<p><strong>8. Early Informed-Flow Convergence (Research, Data Collection Ongoing).</strong> Mechanism: Prediction markets show price lead/lag relative to external reference prices (e.g., BTC spot). Informed traders trade on external signal before it propagates. Strategy: detect early flow and fade/follow accordingly. Feature engineering: cross-market correlation, lead-lag timing, flow intensity. Data: low-latency snapshots from multiple sources. Status: 3 data samples collected, insufficient for statistical testing. Next: continue collecting for 1 month.</p>
+
+<p><strong>9. Regime Detection &amp; Adaptation (Research, Proof of Concept).</strong> Mechanism: Market regimes change (trending, mean-reverting, rangebound). Different strategies work in different regimes. Meta-strategy: identify regime and choose appropriate sub-strategy. Feature engineering: autocorrelation, Hurst exponent, spectral analysis. Data: price series, volatility. Status: proof of concept working; testing overhead is high. Deferred to Q2.</p>
+
+<p><strong>10. Machine-Learning Ensemble (Building).</strong> Mechanism: Combine predictions from strategies 1, 5, and 8 using stacking. Meta-model: logistic regression trained on outcomes of base models. Feature engineering: base model predictions, confidence scores, disagreement flags. Data: combined outputs from deployed strategies. Status: data collection phase. Expected launch: Q2 2026.</p>
+
+<h2>The Honest Scorecard: 131 Tracked, 12 Rejected, 2 Killed, 7 Deployed</h2>
+
+<table>
+    <tr>
+        <th>Status</th>
+        <th>Count</th>
+        <th>Interpretation</th>
+    </tr>
+    <tr>
+        <td>Deployed (Live)</td>
+        <td>7</td>
+        <td>Strategies executing with real capital</td>
+    </tr>
+    <tr>
+        <td>Building</td>
+        <td>4</td>
+        <td>Code in progress, not yet tested</td>
+    </tr>
+    <tr>
+        <td>Tested & Rejected</td>
+        <td>12</td>
+        <td>Failed kill rules, not deployed</td>
+    </tr>
+    <tr>
+        <td>Formally Killed (After Deployment)</td>
+        <td>2</td>
+        <td>Made it to live but showed zero signals or negative P&L</td>
+    </tr>
+    <tr>
+        <td>Pre-Rejected (Architecture Issues)</td>
+        <td>8</td>
+        <td>Data unavailable or infeasible before testing</td>
+    </tr>
+    <tr>
+        <td>Re-Evaluating</td>
+        <td>1</td>
+        <td>Previously killed; new data suggests reconsideration</td>
+    </tr>
+    <tr>
+        <td>Research Backlog</td>
+        <td>99</td>
+        <td>Hypotheses waiting for implementation</td>
+    </tr>
+</table>
+
+<p>The key insight: most ideas don't work. That's not a failure. That's the process. The 7 deployed strategies are valuable precisely because 124 others didn't make it. You've learned what terrain is solid.</p>
+
+<h2>Building Your Own Strategy Backlog</h2>
+
+<p>Start with 20 ideas. Use the ranking formula to prioritize. Implement the top 5. Test all 5. Reject 3, deploy 2. Repeat. In 3 cycles, you've tested 15 ideas, deployed 6. You now have a deployed portfolio and a strong research pipeline. By cycle 10, you have 30+ tested ideas, 20+ deployed, and a system that generates and validates strategies systematically.</p>
+
+<!-- CHAPTER 8 -->
+<div class="chapter-divider">
+    <div class="chapter-number">Chapter Eight</div>
+    <div class="chapter-title">What We Got Wrong</div>
+</div>
+
+<h2>Strategy Failures and Why They Failed</h2>
+
+<p><strong>Failure Type 1: Insufficient Signals.</strong> Strategies that generated &lt;100 signals in the test period. Examples: Calendar-based event trades (only 20 major events per year), exotic derivative pricing (only 5 opportunities). Lesson: if your data source is sparse, the strategy won't work. You can't build statistical evidence on 20 data points.</p>
+
+<p><strong>Failure Type 2: Overfitting to In-Sample Data.</strong> Strategies that worked perfectly on training data (2024) but failed on test data (2026). Example: a volatility mean reversion strategy that assumed vol mean-reverts within 5 minutes. On 2024 data: 65% win rate. On 2026 data: 48% win rate (worse than random). Root cause: market regimes changed. Vol clustering changed. The edge was specific to 2024.</p>
+
+<p><strong>Failure Type 3: Edge Too Thin for Execution Costs.</strong> Strategies that backtested profitably but collapsed under realistic fees. Example: order-flow prediction strategy with 0.8% median edge. After 1.5% taker fees: unprofitable. After 0.3% slippage: deeply underwater. Lesson: edge must exceed 2× fees to be tradeable.</p>
+
+<p><strong>Failure Type 4: Calibration Drift.</strong> Probability estimates that deteriorated in forward time. Example: a model trained on 2024–2025 data predicting 60% probability on 100 events. On forward-test: 70 events occurred (overconfident). Brier score: 0.28 (worse than random guessing). Lesson: models decay in new regimes. Require continuous retraining, which burns CPU and introduces operational friction.</p>
+
+<p><strong>Failure Type 5: Regime Dependency.</strong> Strategies that exploited micro-patterns that disappeared after 2 weeks. Example: "every Tuesday at 3pm ET, BTC drops." This pattern held for the training period, failed the next Tuesday. Lesson: short-term seasonalities are often false discoveries, not exploitable edges.</p>
+
+<h2>Infrastructure Mistakes</h2>
+
+<p><strong>Mistake 1: Wrong Wallet Address in .env.</strong> Configured the EOA signer address instead of the proxy wallet for data queries. Result: reconciliation queries the wrong account, reports $0 capital, makes trading decisions on stale data. Time to discover: 3 days. Impact: trading decisions were made on incorrect state.</p>
+
+<p><strong>Mistake 2: Taker Fee Assumptions.</strong> Initial backtesting assumed 0% fees (maker-only). Production deployed with 1.5% taker fees due to execution delays. Edge collapsed. Required redesign to post-only maker orders.</p>
+
+<p><strong>Mistake 3: Execution Delay Underestimation.</strong> Modeled order placement latency as 50ms. Actual: 200–300ms. By the time orders reached the exchange, the market had moved 0.3%. Edge was gone. Had to redesign signal generation to start earlier.</p>
+
+<p><strong>Mistake 4: No Rate-Limit Handling.</strong> Exchange API has rate limits (100 requests/second). Bot hit the limit during high-frequency scanning. API returned 429 (Too Many Requests). Bot crashed. Lesson: always implement exponential backoff and circuit breakers.</p>
+
+<p><strong>Mistake 5: Local Ledger Desynchronization.</strong> Bot's local SQLite database got out of sync with exchange state after a network outage. Bot thought it had 3 open positions; exchange had closed 1. Subsequent trading decisions were based on incorrect position counts. Lesson: sync local state with exchange state every 30 seconds, not every 5 minutes.</p>
+
+<h2>Over-Engineering Traps: Building 97 Modules Before Making $1</h2>
+
+<p>This is the siren song of startup culture: build the perfect infrastructure before shipping. Don't fall for it.</p>
+
+<p>Elastifund built a 97-module non-trading infrastructure in the first 2 months: revenue pipeline, CRM, website, data warehouse, multi-asset portfolio optimizer, risk dashboard, backtesting framework, etc. Most of it was useful. Some of it was theater.</p>
+
+<p>The consequence: actual trading deployment was delayed. By the time the bot was live, it was March 2026. If the first deployment had been October 2025, 5 months of capital compounding would have been captured.</p>
+
+<p>Better approach: build the minimum viable deployment first. Bot + risk guardrails + reconciliation + basic reporting. Deploy with $50. Trade for 1 week. Then, and only then, build the full infrastructure.</p>
+
+<p>The pyramid should be: (1) working bot at the base, (2) infrastructure layer in the middle, (3) monitoring/reporting at the top. Not infrastructure → bot → reporting.</p>
+
+<h2>Lessons from Live Trading: Concentration Risk, Session Dependency, Annualization Fallacy</h2>
+
+<p><strong>Concentration Risk.</strong> The +57.9% return came from 50 trades all executed in a 6-hour window on March 11, 2026. All 50 were BTC 5-minute DOWN trades in the early morning. If one of those trades had gone wrong, the entire return could have evaporated. Current portfolio is heavily concentrated in one edge (BTC DOWN). Next priority: diversify into uncorrelated edges to reduce variance.</p>
+
+<p><strong>Session Dependency.</strong> The BTC edge is strongest in early morning (ET) hours. In afternoon and evening hours, it's weaker. This is regime-dependent. The strategy works because it specializes in a narrow slot. If the market changes its intraday structure (new entrants, different flow patterns), the edge dies. Can't claim this as a general BTC edge; it's an early-morning, low-liquidity edge. Margin of safety is thin.</p>
+
+<p><strong>Annualization Fallacy.</strong> +57.9% over 1 week is tempting to annualize: 57.9% × 52 weeks = 3,010% per year. This is nonsense. We don't have 52 weeks of data. We have 1 week. The annualization assumes the edge is consistent and uncorrelated over time. We don't know that. Honest interpretation: we found a profitable edge in a narrow slot. It worked for 1 week. We'll know if it generalizes in 4 weeks.</p>
+
+<p><strong>Correct Interpretation.</strong> "We discovered an edge that generated +$140 profit on $247 capital over a 6-hour trading window. The edge required specialized infrastructure (real-time order book snapshots, sub-second execution, post-only maker orders) and worked specifically in early morning hours on a low-liquidity market. We don't know if it will persist, generalize, or scale. We're treating it as a proof-of-concept and will collect 4 more weeks of data before drawing conclusions about durability."</p>
+
+<h2>The Honest Assessment: Why 57.9% Is NOT an Annualized Return</h2>
+
+<p>Too many traders commit the annualization fallacy. They make 5% in one month and claim 60% per year. They're wrong.</p>
+
+<p>Here's why:</p>
+
+<p>(1) Limited data. 1 month is 4 weeks of data. That's not enough to separate signal from noise. Flipping a coin 4 times and getting 3 heads (75% heads) doesn't mean the coin is biased to heads.</p>
+
+<p>(2) Regime dependency. The conditions that made the trade profitable (early morning, low volatility, specific order flow pattern) might not exist next month.</p>
+
+<p>(3) Risk of ruin. You made +57.9% on $247. If the next 10 trades lose 5% each, you're underwater. You don't have a profit curve; you have 1 data point.</p>
+
+<p>(4) Cost-adjusted edge shrinks over time. Elastifund's edge was 2–3% per trade (proprietary, exact withheld). After 1.5% maker fees, edge = 0.5–1.5%. After slippage and execution delay, edge = 0.2–0.8%. Over hundreds of trades, the 0.2% edge compounds, but slowly.</p>
+
+<p>Honest interpretation: annual return if this edge persists, scales, and doesn't decay = maybe 10–20% if you're lucky. Not 3,010%.</p>
+
+<h2>What We'd Do Differently Starting Over</h2>
+
+<p><strong>1. Deploy first, build infrastructure second.</strong> Start with a $50 bot trading one market. Get it live. Trade for 2 weeks. Then add features.</p>
+
+<p><strong>2. Kill wrong wallet addresses faster.</strong> Add automatic reconciliation checks to every trading decision. Query ground truth (blockchain/exchange) before 10% of capital goes at risk.</p>
+
+<p><strong>3. Cost-model more carefully.</strong> Spend 1 week on a spreadsheet modeling fees, slippage, and execution delays before coding a single strategy. Build the backtest with these costs baked in from day 1.</p>
+
+<p><strong>4. Specialize early.</strong> Don't try to trade all markets. Pick one (BTC 5-minute), own it, dominate it, then expand. Generalists fail.</p>
+
+<p><strong>5. Treat first edge as proof-of-concept, not business.</strong> The first profitable trade should feel lucky, not inevitable. If it doesn't, you're overconfident.</p>
+
+<p><strong>6. Public documentation from day 1.</strong> Write down what you're trying and why. This forces clarity and catches overconfidence.</p>
+
+<!-- CHAPTER 9 -->
+<div class="chapter-divider">
+    <div class="chapter-number">Chapter Nine</div>
+    <div class="chapter-title">Building Your Own System</div>
+</div>
+
+<h2>Practical Checklist: What to Build First, What to Skip</h2>
+
+<p><strong>BUILD FIRST (Week 1):</strong></p>
+<ul>
+<li>Exchange/API account setup (Polymarket, Kalshi, or your venue)</li>
+<li>Python 3.12 environment with SQLite</li>
+<li>Single data collection script (one API endpoint, normalize to SQLite)</li>
+<li>Backtest harness (load data from SQLite, simulate trades, report P&L)</li>
+<li>Risk guardrails (max position size, daily loss limit, reject unsafe bets)</li>
+</ul>
+
+<p><strong>BUILD SECOND (Week 2–3):</strong></p>
+<ul>
+<li>Feature engineering layer (compute signals from raw data)</li>
+<li>Simple probability model (logistic regression, starting with 5 features)</li>
+<li>Order placement logic (post-only maker orders first)</li>
+<li>Reconciliation check (query exchange state before trades, verify balance)</li>
+<li>Basic logging (every decision logged to file, parseable)</li>
+</ul>
+
+<p><strong>SKIP (FOR NOW):</strong></p>
+<ul>
+<li>Web dashboard (you don't need it; logs + alerts are sufficient)</li>
+<li>Multi-currency portfolio optimizer (specialize in one market first)</li>
+<li>Neural networks (logistic regression wins 70% of the time)</li>
+<li>Telegram notifications (emails are fine)</li>
+<li>Database migrations (SQLite has no schema; just add columns as needed)</li>
+<li>Docker and Kubernetes (you have one bot, not a fleet; just VPS + tmux)</li>
+</ul>
+
+<h2>Recommended Tech Stack</h2>
+
+<p><strong>Language:</strong> Python 3.12. Fast enough for prediction markets, good libraries, easy to debug.</p>
+
+<p><strong>Data Storage:</strong> SQLite. Single file, no devops, automatic checkpointing. Once you need Postgres, you're big enough to afford the infrastructure.</p>
+
+<p><strong>Backtesting:</strong> Roll your own. A 100-line loop that steps through data and simulates trades. Don't use a framework; frameworks hide assumptions and slow you down.</p>
+
+<p><strong>Deployment:</strong> AWS Lightsail. $5/month for a small VPS. SSH access, full control, good uptime. Once you outgrow it, move to a larger instance on the same provider.</p>
+
+<p><strong>Monitoring:</strong> Print logs to a file. Log every trade, every decision, every error. Parse the log with simple grep/awk. Slack/email alerts for errors. That's it.</p>
+
+<p><strong>Model Training:</strong> scikit-learn. LogisticRegression, RandomForestClassifier, SVC. Free, battle-tested, sufficient for 99% of use cases.</p>
+
+<p><strong>API Clients:</strong> requests (for HTTP) and aiohttp (for async HTTP). Don't overthink it.</p>
+
+<p><strong>Scheduling:</strong> cron jobs for data collection, tmux for the main bot (keeps running even if SSH session dies). No need for Airflow or Celery yet.</p>
+
+<h2>How to Start with $100 in Prediction Markets</h2>
+
+<p><strong>Week 1: Setup.</strong> Create accounts on Polymarket and Kalshi. Fund with $100 total. Navigate a few markets. Get a feel for UI, order flow, resolution.</p>
+
+<p><strong>Week 2: Data Collection.</strong> Write a script that polls the same 10 markets every 5 seconds. Store the data (market ID, price, volume, timestamp). Run for 1 week. Collect 604,800 data points (10 markets × 7 days × 86,400 seconds / 5).</p>
+
+<p><strong>Week 3: Backtesting.</strong> Write a simple strategy: "If price dropped >1% in the last hour, it will revert. Buy NO at current price, sell at current price + 0.5%." Backtest on your collected data. Measure win rate. Adjust threshold.</p>
+
+<p><strong>Week 4: Paper Trading.</strong> Run your strategy in simulate-mode. Don't place real orders yet. Let it generate signals for 1 week. Verify the signals are reasonable.</p>
+
+<p><strong>Week 5: Live Trading.</strong> Place real orders with $20 capital (5% of your $100). Trade for 1 week. Measure actual P&L vs backtest P&L. If close, increase to $40 (10% of capital). If far from backtest, debug and adjust.</p>
+
+<p><strong>Week 6–8: Iteration.</strong> Collect more data. Test new features. Run A/B tests (strategy A with feature X, strategy B without feature X). Deploy the winner.</p>
+
+<p>By week 8, you've deployed a real bot on real capital. You've learned: data collection, backtesting, live trading, debugging. You're ahead of 99% of people who talk about building trading systems and never ship.</p>
+
+<h2>Where the Field Is Going</h2>
+
+<p><strong>Shorter Timeframes.</strong> Humans trade hourly. Bots trade secondly. In 3 years, the frontier will be millisecond. Prediction market arbitrage will move from "place an order in 200ms" to "place an order in 10ms." This favors infrastructure and low-latency architecture.</p>
+
+<p><strong>Multimodal Signals.</strong> Current strategies use price/volume. Future strategies will combine price, sentiment (from social media, news), economic data, satellite imagery, and on-chain flow. The winner won't be the best price forecaster; it'll be the best integrator of disparate signals.</p>
+
+<p><strong>Agent-Run Everything.</strong> Prediction markets are the sandbox. Once the infrastructure matures, expect autonomous agents trading: permissioned crypto derivatives, real-world prediction markets (insurance, weather, politics), private equity fund flows, and more. Humans will design the constraints; agents will optimize within them.</p>
+
+<p><strong>Regulatory Clarity.</strong> Prediction markets are currently in legal gray zones in many jurisdictions. As the space matures, expect regulation. The winners will be builders who comply proactively, not reactively.</p>
+
+<p><strong>Collaborative Advantage.</strong> Building in public will matter more, not less. Teams that share research, publicly document failures, and create community will attract talent and capital. Solo builders will max out at some point; community-driven projects will scale.</p>
+
+<p>The edge you find today will decay. The infrastructure you build today will become commodity. The only sustainable advantage is velocity: the ability to find new edges, test them, and deploy them faster than everyone else. Build for velocity.</p>
+
+<h2>Final Word</h2>
+
+<p>Agentic trading is not magic. It's engineering. The barrier to entry is not intelligence; it's discipline. You need to: collect data reliably, design experiments carefully, reject failures automatically, and execute without ego.</p>
+
+<p>If you do that, even with $100 in capital and one market, you'll be ahead of 99% of traders. Most traders skip the boring parts (rigorous backtesting, automatic kill rules, public documentation) and jump to the exciting part (deploying capital). They fail.</p>
+
+<p>The boring parts are the moat.</p>
+
+<p>Read this. Build a bot. Deploy with $50. Trade for 2 weeks. Double down on what works, kill what doesn't. Scale. Repeat.</p>
+
+<p>That's the blueprint.</p>
+
+</body>
+</html>

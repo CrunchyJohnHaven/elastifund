@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Elastifund / Consult | Architecture Review Sessions</title>
+  <meta name="description" content="45-minute architecture review for your agentic trading system. From the team behind Elastifund's +57.9% return with autonomous AI trading.">
+  <link rel="stylesheet" href="/site.css">
+  <script src="/site.js" defer></script>
+  <style>
+    .offer-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-top: 32px;
+    }
+    @media (max-width: 1080px) {
+      .offer-grid { grid-template-columns: 1fr; }
+    }
+    .offer-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      padding: 28px;
+    }
+    .offer-card.featured {
+      border: 2px solid var(--accent);
+      background: var(--panel-strong);
+    }
+    .offer-card h3 {
+      font-family: var(--font-display);
+      font-size: 1.3rem;
+      margin: 0 0 4px 0;
+    }
+    .offer-price {
+      font-family: var(--font-display);
+      font-size: 2.2rem;
+      font-weight: 700;
+      color: var(--slate-900);
+      margin: 12px 0;
+    }
+    .offer-card p {
+      color: var(--slate-600);
+      font-size: 0.92rem;
+      margin: 0 0 16px 0;
+      line-height: 1.55;
+    }
+    .offer-includes {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .offer-includes li {
+      font-size: 0.88rem;
+      color: var(--slate-700);
+      padding: 6px 0;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+    .offer-includes li:last-child { border-bottom: none; }
+    .offer-includes .check {
+      color: var(--good);
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .offer-card .button {
+      margin-top: 20px;
+      width: 100%;
+      justify-content: center;
+    }
+    .process-steps {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+      margin-top: 32px;
+    }
+    @media (max-width: 1080px) {
+      .process-steps { grid-template-columns: 1fr; }
+    }
+    .step-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      padding: 24px;
+    }
+    .step-num {
+      font-family: var(--font-display);
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--accent);
+      line-height: 1;
+    }
+    .step-card h3 {
+      font-family: var(--font-body);
+      font-weight: 600;
+      font-size: 1.05rem;
+      margin: 10px 0 6px 0;
+    }
+    .step-card p {
+      color: var(--slate-600);
+      font-size: 0.88rem;
+      margin: 0;
+      line-height: 1.55;
+    }
+    .credential-row {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-top: 32px;
+    }
+    .credential-item {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      padding: 16px 20px;
+      flex: 1;
+      min-width: 180px;
+    }
+    .credential-item .cred-label {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--slate-600);
+    }
+    .credential-item .cred-value {
+      font-weight: 600;
+      font-size: 1rem;
+      color: var(--slate-900);
+      margin-top: 2px;
+    }
+  </style>
+</head>
+<body data-page="consult">
+  <div class="page-wrap">
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="/">
+          <span class="brand-mark"></span>
+          <span class="brand-text">
+            <span class="brand-name">Elastifund</span>
+            <span class="brand-subtitle">Architecture reviews</span>
+          </span>
+        </a>
+        <nav class="header-nav" aria-label="Primary">
+          <a class="nav-link" data-page="home" href="/">Home</a>
+          <a class="nav-link" data-page="live" href="/live/">Live</a>
+          <a class="nav-link" data-page="elastic" href="/elastic/">Elastic</a>
+          <a class="nav-link" data-page="develop" href="/develop/">Develop</a>
+          <a class="nav-link" data-page="trading" href="/leaderboards/trading/">Trading</a>
+          <a class="nav-link" data-page="worker" href="/leaderboards/worker/">Worker</a>
+        </nav>
+        <div class="header-actions">
+          <span class="status-pill" data-role="status-pill">runtime syncing</span>
+          <a class="header-link" href="https://github.com/CrunchyJohnHaven/elastifund" target="_blank" rel="noopener">GitHub</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="route-hero">
+        <div class="container route-hero-grid">
+          <div>
+            <span class="eyebrow">Consulting</span>
+            <h1>45 minutes. Your system. Specific, actionable feedback from someone who's done it live.</h1>
+            <p class="route-copy">
+              We built an autonomous trading system that returned +57.9% on real capital with zero human trade decisions. The architecture, testing methodology, and failure patterns are documented in a public repo with 1,400+ tests. If you're building something similar, we can save you months of wrong turns.
+            </p>
+            <div class="badge-row">
+              <span class="tag good">Live results</span>
+              <span class="tag neutral">Open-source system</span>
+              <span class="tag neutral">1,400+ tests passing</span>
+            </div>
+            <div class="cta-row">
+              <a class="button button-primary" href="YOUR_CALENDLY_LINK_HERE">Book a session</a>
+              <a class="button button-secondary" href="/blueprint/">Get the Blueprint first</a>
+            </div>
+          </div>
+
+          <aside class="status-panel">
+            <div class="status-panel-header">
+              <div>
+                <div class="panel-kicker">Credentials</div>
+                <h3>What backs this</h3>
+              </div>
+            </div>
+            <div class="info-list">
+              <div class="info-row"><span class="info-label">Live P&L</span><span class="info-value" style="color: var(--good);">+$143.39 (+57.9%)</span></div>
+              <div class="info-row"><span class="info-label">Trades resolved</span><span class="info-value">50 / 50 profitable</span></div>
+              <div class="info-row"><span class="info-label">Strategies tested</span><span class="info-value">131</span></div>
+              <div class="info-row"><span class="info-label">Automated kill rules</span><span class="info-value">6 rejection criteria</span></div>
+              <div class="info-row"><span class="info-label">Test suite</span><span class="info-value">1,397 tests green</span></div>
+              <div class="info-row"><span class="info-label">Code</span><span class="info-value"><a href="https://github.com/CrunchyJohnHaven/elastifund" target="_blank" rel="noopener" style="color: var(--accent);">100% open-source</a></span></div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- Offers -->
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <span class="eyebrow">Sessions</span>
+            <h2>Two formats. Pick what fits.</h2>
+          </div>
+
+          <div class="offer-grid">
+            <div class="offer-card featured">
+              <h3>Architecture Review</h3>
+              <div class="offer-price">$200</div>
+              <p>We review your trading system architecture, identify structural problems, and give you a prioritized list of what to fix first. Best for people who already have something built.</p>
+              <ul class="offer-includes">
+                <li><span class="check">+</span> 45 minutes, video call</li>
+                <li><span class="check">+</span> Pre-session review of your codebase or architecture doc</li>
+                <li><span class="check">+</span> Written summary with prioritized action items</li>
+                <li><span class="check">+</span> Follow-up questions via email (7 days)</li>
+              </ul>
+              <a class="button button-primary" href="YOUR_CALENDLY_LINK_HERE">Book architecture review</a>
+            </div>
+
+            <div class="offer-card">
+              <h3>Strategy Deep-Dive</h3>
+              <div class="offer-price">$350</div>
+              <p>We go deep on a specific trading strategy or hypothesis you're evaluating. We'll apply our kill-rule framework, stress-test your assumptions, and tell you whether to proceed, pivot, or abandon.</p>
+              <ul class="offer-includes">
+                <li><span class="check">+</span> 60 minutes, video call</li>
+                <li><span class="check">+</span> Pre-session review of your strategy specification</li>
+                <li><span class="check">+</span> Written kill-or-proceed assessment with evidence</li>
+                <li><span class="check">+</span> Backtest design suggestions</li>
+                <li><span class="check">+</span> Follow-up questions via email (14 days)</li>
+              </ul>
+              <a class="button button-primary" href="YOUR_CALENDLY_LINK_HERE">Book strategy deep-dive</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Process -->
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <span class="eyebrow">How it works</span>
+            <h2>Simple process. No fluff.</h2>
+          </div>
+          <div class="process-steps">
+            <div class="step-card">
+              <div class="step-num">1</div>
+              <h3>Book and share context</h3>
+              <p>Pick a time. Send us your architecture doc, repo link, or strategy writeup. We review it before the call so we don't waste your 45 minutes on orientation.</p>
+            </div>
+            <div class="step-card">
+              <div class="step-num">2</div>
+              <h3>Session</h3>
+              <p>We go through your system, ask hard questions, and identify the structural issues that will cost you the most if left unfixed. No hand-holding. Direct feedback.</p>
+            </div>
+            <div class="step-card">
+              <div class="step-num">3</div>
+              <h3>Written summary</h3>
+              <p>Within 48 hours, you get a written document with our findings, prioritized action items, and specific recommendations. Plus email access for follow-up questions.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <footer class="footer">
+      <div class="container footer-inner">
+        <div class="footer-panel">
+          <div class="footer-links">
+            <a href="/">Home</a>
+            <a href="/live/">Live</a>
+            <a href="/leaderboards/trading/">Trading</a>
+            <a href="/leaderboards/worker/">Worker</a>
+            <a href="/blueprint/">Blueprint</a>
+            <a href="/consult/">Consult</a>
+            <a href="https://github.com/CrunchyJohnHaven/elastifund" target="_blank" rel="noopener">GitHub</a>
+          </div>
+          <p class="footer-legal">Elastifund is an experimental, agent-run trading operation. Past performance does not guarantee future results. All metrics are sourced from live, verified wallet data and public artifacts.</p>
+        </div>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Elastifund / Blueprint | The Agentic Trading Blueprint</title>
+  <meta name="description" content="Everything we learned building an autonomous AI trading system with real money. 131 strategies tested. 50 trades resolved. Full architecture, methodology, and failure documentation.">
+  <link rel="stylesheet" href="/site.css">
+  <script src="/site.js" defer></script>
+  <style>
+    .product-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-top: 32px;
+    }
+    @media (max-width: 1080px) {
+      .product-grid { grid-template-columns: 1fr; }
+    }
+    .product-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      padding: 28px;
+    }
+    .product-card h3 {
+      font-family: var(--font-display);
+      font-size: 1.3rem;
+      margin: 0 0 10px 0;
+    }
+    .product-card p {
+      color: var(--slate-600);
+      font-size: 0.95rem;
+      margin: 0;
+      line-height: 1.55;
+    }
+    .chapter-list {
+      margin: 16px 0 0 0;
+      padding: 0;
+      list-style: none;
+    }
+    .chapter-list li {
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      color: var(--slate-700);
+      padding: 6px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .chapter-list li:last-child { border-bottom: none; }
+    .chapter-num {
+      color: var(--accent);
+      font-weight: 600;
+      margin-right: 8px;
+    }
+    .price-block {
+      background: var(--panel-strong);
+      border: 2px solid var(--accent);
+      border-radius: var(--radius-md);
+      padding: 32px;
+      text-align: center;
+      margin-top: 32px;
+    }
+    .price-block .price {
+      font-family: var(--font-display);
+      font-size: 3.2rem;
+      font-weight: 700;
+      color: var(--slate-900);
+      line-height: 1;
+    }
+    .price-block .price-note {
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      color: var(--slate-600);
+      margin-top: 6px;
+    }
+    .price-block .button {
+      margin-top: 20px;
+      display: inline-flex;
+    }
+    .proof-row {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-top: 20px;
+    }
+    .proof-item {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      padding: 14px 18px;
+      flex: 1;
+      min-width: 160px;
+    }
+    .proof-item .proof-label {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--slate-600);
+    }
+    .proof-item .proof-value {
+      font-family: var(--font-display);
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: var(--slate-900);
+      margin-top: 2px;
+    }
+    .faq-section {
+      margin-top: 48px;
+    }
+    .faq-item {
+      border-bottom: 1px solid var(--line);
+      padding: 20px 0;
+    }
+    .faq-item h3 {
+      font-family: var(--font-body);
+      font-weight: 600;
+      font-size: 1.05rem;
+      margin: 0 0 8px 0;
+    }
+    .faq-item p {
+      color: var(--slate-600);
+      font-size: 0.92rem;
+      margin: 0;
+      line-height: 1.6;
+    }
+    .consult-banner {
+      background: linear-gradient(135deg, var(--slate-800), var(--slate-900));
+      color: var(--paper);
+      border-radius: var(--radius-md);
+      padding: 32px;
+      margin-top: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+    .consult-banner h3 {
+      font-family: var(--font-display);
+      font-size: 1.4rem;
+      margin: 0 0 6px 0;
+      color: var(--paper);
+    }
+    .consult-banner p {
+      color: var(--slate-600);
+      font-size: 0.9rem;
+      margin: 0;
+      color: rgba(244, 239, 229, 0.7);
+    }
+    .consult-banner .button {
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body data-page="blueprint">
+  <div class="page-wrap">
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="/">
+          <span class="brand-mark"></span>
+          <span class="brand-text">
+            <span class="brand-name">Elastifund</span>
+            <span class="brand-subtitle">The Agentic Trading Blueprint</span>
+          </span>
+        </a>
+        <nav class="header-nav" aria-label="Primary">
+          <a class="nav-link" data-page="home" href="/">Home</a>
+          <a class="nav-link" data-page="live" href="/live/">Live</a>
+          <a class="nav-link" data-page="elastic" href="/elastic/">Elastic</a>
+          <a class="nav-link" data-page="develop" href="/develop/">Develop</a>
+          <a class="nav-link" data-page="trading" href="/leaderboards/trading/">Trading</a>
+          <a class="nav-link" data-page="worker" href="/leaderboards/worker/">Worker</a>
+        </nav>
+        <div class="header-actions">
+          <span class="status-pill" data-role="status-pill">runtime syncing</span>
+          <a class="header-link" href="https://github.com/CrunchyJohnHaven/elastifund" target="_blank" rel="noopener">GitHub</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="route-hero">
+        <div class="container route-hero-grid">
+          <div>
+            <span class="eyebrow">Digital product</span>
+            <h1>Everything we learned building an autonomous AI trading system with real money.</h1>
+            <p class="route-copy">
+              131 strategy hypotheses tested. 50 trades resolved profitably. Full architecture, statistical methodology, and honest failure documentation from a live agent-run trading fund. Not theory. Not a backtest. Real capital, real decisions, real results.
+            </p>
+            <div class="badge-row">
+              <span class="tag good">Live-tested</span>
+              <span class="tag neutral">131 strategies catalogued</span>
+              <span class="tag neutral">50 resolved trades</span>
+              <span class="tag accent" style="background: var(--accent); color: white;">+57.9% return</span>
+            </div>
+            <div class="cta-row">
+              <a class="button button-primary" href="#pricing">Get the Blueprint</a>
+              <a class="button button-secondary" href="https://github.com/CrunchyJohnHaven/elastifund" target="_blank" rel="noopener">See the public repo</a>
+            </div>
+          </div>
+
+          <aside class="status-panel">
+            <div class="status-panel-header">
+              <div>
+                <div class="panel-kicker">Proof of work</div>
+                <h3>This is not hypothetical</h3>
+              </div>
+            </div>
+            <div class="info-list">
+              <div class="info-row"><span class="info-label">Initial deposit</span><span class="info-value">$247.51</span></div>
+              <div class="info-row"><span class="info-label">Current value</span><span class="info-value">$390.90</span></div>
+              <div class="info-row"><span class="info-label">Net P&L</span><span class="info-value" style="color: var(--good);">+$143.39</span></div>
+              <div class="info-row"><span class="info-label">Win rate (closed)</span><span class="info-value">100% (50/50)</span></div>
+              <div class="info-row"><span class="info-label">Trading window</span><span class="info-value">BTC 5-min, maker-only</span></div>
+              <div class="info-row"><span class="info-label">Decision maker</span><span class="info-value">AI agent (autonomous)</span></div>
+              <div class="info-row"><span class="info-label">Code</span><span class="info-value"><a href="https://github.com/CrunchyJohnHaven/elastifund" target="_blank" rel="noopener" style="color: var(--accent);">Fully open-source</a></span></div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- What's inside -->
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <span class="eyebrow">What you get</span>
+            <h2>Four volumes. One system.</h2>
+            <p class="section-copy">
+              The Blueprint is a complete reference for building autonomous trading systems. Each volume stands alone, but together they form the full operational model we use to run Elastifund.
+            </p>
+          </div>
+
+          <div class="product-grid">
+            <div class="product-card">
+              <h3>Vol. 1 — System Architecture</h3>
+              <p>How to design the decision infrastructure for an agent-run fund. The 6-phase flywheel, truth reconciliation, promotion ladders, and the safety constraints that keep autonomy from becoming chaos.</p>
+              <ul class="chapter-list">
+                <li><span class="chapter-num">01</span> The agent-run company frame</li>
+                <li><span class="chapter-num">02</span> The 6-phase research flywheel</li>
+                <li><span class="chapter-num">03</span> Truth reconciliation across systems</li>
+                <li><span class="chapter-num">04</span> Promotion/demotion/kill gates</li>
+                <li><span class="chapter-num">05</span> Risk boundaries and Kelly sizing</li>
+                <li><span class="chapter-num">06</span> Open-source as competitive moat</li>
+              </ul>
+            </div>
+
+            <div class="product-card">
+              <h3>Vol. 2 — Edge Discovery Pipeline</h3>
+              <p>The automated hypothesis testing system that evaluates strategy ideas at speed. Feature engineering, kill rules, cost-stress testing, and the statistical framework that separates real edges from noise.</p>
+              <ul class="chapter-list">
+                <li><span class="chapter-num">07</span> Hypothesis generation methodology</li>
+                <li><span class="chapter-num">08</span> Feature engineering: 6 signal families</li>
+                <li><span class="chapter-num">09</span> Automated kill rules (the 6 rejection criteria)</li>
+                <li><span class="chapter-num">10</span> Cost-stress testing and execution modeling</li>
+                <li><span class="chapter-num">11</span> Calibration: Platt scaling and walk-forward validation</li>
+                <li><span class="chapter-num">12</span> From hypothesis to live deployment</li>
+              </ul>
+            </div>
+
+            <div class="product-card">
+              <h3>Vol. 3 — Strategy Compendium</h3>
+              <p>131 prediction market strategies, ranked and documented. Each entry includes the mechanism, data requirements, implementation sketch, success criteria, failure modes, and honest kill reasons for the ones that didn't survive.</p>
+              <ul class="chapter-list">
+                <li><span class="chapter-num">13</span> Ranking methodology (4 weighted dimensions)</li>
+                <li><span class="chapter-num">14</span> Top 10 deep dives with full specifications</li>
+                <li><span class="chapter-num">15</span> The 12 that were killed (and why)</li>
+                <li><span class="chapter-num">16</span> 99 research-pipeline candidates</li>
+                <li><span class="chapter-num">17</span> Re-evaluation: when dead strategies revive</li>
+                <li><span class="chapter-num">18</span> Building your own strategy taxonomy</li>
+              </ul>
+            </div>
+
+            <div class="product-card">
+              <h3>Vol. 4 — Research Operations</h3>
+              <p>How to run autonomous research at scale. The Karpathy autoresearch adaptation, lane isolation, scalar metrics, frozen benchmarks, and the operational discipline that makes self-improving systems actually improve.</p>
+              <ul class="chapter-list">
+                <li><span class="chapter-num">19</span> The autoresearch pattern</li>
+                <li><span class="chapter-num">20</span> Lane isolation and metric contracts</li>
+                <li><span class="chapter-num">21</span> Frozen benchmarks and hill-climbing</li>
+                <li><span class="chapter-num">22</span> Keep/discard/crash semantics</li>
+                <li><span class="chapter-num">23</span> Progress visualization and running-best graphs</li>
+                <li><span class="chapter-num">24</span> 100+ research dispatch case studies</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Proof metrics -->
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <span class="eyebrow">Why this is different</span>
+            <h2>Receipts, not promises.</h2>
+            <p class="section-copy">
+              Every trading course cherry-picks winners. This one documents the 12 strategies we killed, the 99 still in research, and the exact reasons each one failed or survived. The failure documentation is more valuable than the wins.
+            </p>
+          </div>
+          <div class="proof-row">
+            <div class="proof-item">
+              <div class="proof-label">Strategies tested</div>
+              <div class="proof-value">131</div>
+            </div>
+            <div class="proof-item">
+              <div class="proof-label">Strategies killed</div>
+              <div class="proof-value">12</div>
+            </div>
+            <div class="proof-item">
+              <div class="proof-label">Research dispatches</div>
+              <div class="proof-value">100+</div>
+            </div>
+            <div class="proof-item">
+              <div class="proof-label">Live return</div>
+              <div class="proof-value">+57.9%</div>
+            </div>
+            <div class="proof-item">
+              <div class="proof-label">Code</div>
+              <div class="proof-value">Open</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Pricing -->
+      <section class="page-section" id="pricing">
+        <div class="container">
+          <div class="section-header">
+            <span class="eyebrow">Pricing</span>
+            <h2>One price. Everything included.</h2>
+          </div>
+          <div class="price-block">
+            <div class="price">$49</div>
+            <div class="price-note">All 4 volumes. Lifetime access. Future updates included.</div>
+            <a class="button button-primary" href="https://bradleyhaven.gumroad.com/l/agentic-trading-blueprint" target="_blank" rel="noopener">Buy the Blueprint</a>
+            <p style="font-size: 0.8rem; color: var(--slate-600); margin-top: 12px;">
+              Delivered as PDF + Markdown. Hosted on Gumroad. 30-day refund policy.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- FAQ -->
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <span class="eyebrow">Questions</span>
+            <h2>Before you buy.</h2>
+          </div>
+          <div class="faq-section">
+            <div class="faq-item">
+              <h3>Is this just the GitHub repo in a PDF?</h3>
+              <p>No. The repo is the system. The Blueprint is the explanation of why the system works, how to build your own, and what we learned from the 120+ strategies that didn't make the cut. It's the map, not the territory.</p>
+            </div>
+            <div class="faq-item">
+              <h3>Will this give me a profitable trading strategy?</h3>
+              <p>It gives you the architecture to find your own. We document our live results honestly, but the real value is the hypothesis testing pipeline, kill-rule discipline, and strategy evaluation framework. Those are transferable to any market.</p>
+            </div>
+            <div class="faq-item">
+              <h3>Do I need to trade prediction markets?</h3>
+              <p>No. The methodology applies to any market with quantifiable outcomes: crypto, equities, options, sports, insurance. Prediction markets are our testing ground; the framework is general.</p>
+            </div>
+            <div class="faq-item">
+              <h3>What's the technical level?</h3>
+              <p>Intermediate to advanced. You should be comfortable with Python, basic statistics, and the concept of expected value. If you've built a trading bot before (even a simple one), you'll get the most out of this.</p>
+            </div>
+            <div class="faq-item">
+              <h3>Why $49 and not $499?</h3>
+              <p>Because we're building credibility, not maximizing revenue on day one. This is the first non-trading product from an agent-run fund. We want 1,000 people with the Blueprint who can verify our claims against the public repo. Price goes up when we have more live data.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Consult banner -->
+      <div class="container">
+        <div class="consult-banner">
+          <div>
+            <h3>Want hands-on guidance?</h3>
+            <p>Book a 45-minute architecture review. We'll look at your system, identify gaps, and give you a prioritized action plan.</p>
+          </div>
+          <a class="button button-primary" href="/consult/">$200 / session</a>
+        </div>
+      </div>
+
+    </main>
+
+    <footer class="footer">
+      <div class="container footer-inner">
+        <div class="footer-panel">
+          <div class="footer-links">
+            <a href="/">Home</a>
+            <a href="/live/">Live</a>
+            <a href="/leaderboards/trading/">Trading</a>
+            <a href="/leaderboards/worker/">Worker</a>
+            <a href="/blueprint/">Blueprint</a>
+            <a href="/consult/">Consult</a>
+            <a href="https://github.com/CrunchyJohnHaven/elastifund" target="_blank" rel="noopener">GitHub</a>
+          </div>
+          <p class="footer-legal">Elastifund is an experimental, agent-run trading operation. Past performance does not guarantee future results. All metrics are sourced from live, verified wallet data and public artifacts.</p>
+        </div>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>
