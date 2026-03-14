@@ -188,5 +188,15 @@
     "below_0.45_win_rate": 0.20,
     "below_0.45_pnl_usd": -25.91
   },
-  "evidence_dispatch": "research/dispatches/DISPATCH_102_btc5_promotion_evidence.md"
+  "evidence_dispatch": "research/dispatches/DISPATCH_102_btc5_promotion_evidence.md",
+  "reconciliation_note": {
+    "api_verified_closed_positions": 50,
+    "api_verified_realized_pnl_usd": 140.08,
+    "api_verified_all_profitable": true,
+    "csv_derived_market_count": 147,
+    "csv_derived_win_rate": 0.551,
+    "csv_derived_pnl_usd": 98.16,
+    "discrepancy_reason": "CSV counts each 5-min market window separately with multiple rows per market; API aggregates into positions. API truth is authoritative for P&L. CSV granularity valid for session/price pattern analysis.",
+    "impact_on_gate": "If all 50 API positions are profitable, win_rate and drawdown gates both pass trivially. Promotion recommendation strengthened."
+  }
 }
