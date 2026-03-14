@@ -57,7 +57,7 @@ def window_pnl(conn: sqlite3.Connection, window_hours: float) -> dict:
             COALESCE(MAX(pnl_usd), 0.0) AS best_fill,
             COALESCE(SUM(CASE WHEN won = 1 THEN 1 ELSE 0 END), 0) AS wins,
             COALESCE(SUM(CASE WHEN won = 0 THEN 1 ELSE 0 END), 0) AS losses
-        FROM fills
+        FROM window_trades
         WHERE filled = 1 AND created_at >= ?
         """,
         (cutoff_iso,),
@@ -69,7 +69,7 @@ def trailing_drawdown(conn: sqlite3.Connection, limit: int = 200) -> float:
     """Compute max drawdown from the last N fills."""
     rows = conn.execute(
         """
-        SELECT pnl_usd FROM fills
+        SELECT pnl_usd FROM window_trades
         WHERE filled = 1
         ORDER BY created_at DESC
         LIMIT ?
@@ -95,7 +95,7 @@ def trailing_drawdown(conn: sqlite3.Connection, limit: int = 200) -> float:
 def latest_fill_age_minutes(conn: sqlite3.Connection) -> float | None:
     """Minutes since the most recent fill."""
     row = conn.execute(
-        "SELECT MAX(created_at) AS latest FROM fills WHERE filled = 1"
+        "SELECT MAX(created_at) AS latest FROM window_trades WHERE filled = 1"
     ).fetchone()
     if not row or not row["latest"]:
         return None

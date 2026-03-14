@@ -228,7 +228,7 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 
 ### System Configuration
 **Live trading:** MAKER VELOCITY LIVE — `maker_velocity_live` profile is the active deploy target
-**Live config:** $10/position (main), $5/trade (BTC 5-min), 30 max open positions, uncapped daily loss, 0.25 Kelly, 24h max resolution, 30s scan interval
+**Live config:** $10/position (main), $10/trade (BTC 5-min, scaled from $5 per DISPATCH_102 promotion gate), 30 max open positions, $100 daily loss cap (BTC5), 0.25 Kelly, 24h max resolution, 30s scan interval
 **Execution mode:** 100% Post-Only maker orders (Dispatch #75 pivot)
 **BTC 5-min maker:** Instance 2 (`btc-5min-maker.service`). 378+ total rows, 0 live fills. Service running on VPS (34.244.34.108). Root cause diagnosed 2026-03-14: three simultaneous blockers (delta too tight at 0.00075, UP shadow-only, min_buy_price too high). All three fixed: delta widened to 0.0040, UP live mode enabled, min_buy_price lowered to 0.42. Remaining skips are legitimate market quality gates (bad_book, toxic_order_flow). Orders expected during US trading hours. Config: max_trade=$10, up_max=0.52, down_max=0.53.
 
@@ -261,9 +261,9 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 - Kalshi has no local ledger integration.
 
 ### Top 3 Action Items
-1. **DIAGNOSE: BTC5 still not filling** — 553 rows, 0 fills even after guardrail fixes. US-hours skip reasons: bad_book, delta_too_small, price_outside_guardrails. May need further threshold tuning.
-2. **DOWNLOAD: Fresh wallet export CSV** — Last export 2026-03-12. Run `python3 scripts/reconcile_polymarket_wallet.py --apply-local-fixes` after.
-3. **SCALE: BTC5 to $10/trade once fills resume** — Historical evidence strong (47 BTC winners, +$140 net). Config ready in capital_stage.env.
+1. **DEPLOY: BTC5 at $10/trade** — Config committed (`btc5_scale_v1.json`). Run `./scripts/deploy.sh --clean-env --profile maker_velocity_live --restart --btc5 --monitor` from Mac. Verify BTC5_MAX_TRADE_USD=10 on VPS. Monitor for first fill at new size.
+2. **DOWNLOAD: Fresh wallet export CSV** — Last export 2026-03-12. Run `python3 scripts/reconcile_polymarket_wallet.py --apply-local-fixes` after. Clears `wallet_export_stale` blocker.
+3. **VERIFY: BTC5 fills flowing post-guardrail-fix** — 553+ rows, 0 fills. Guardrails widened (delta 0.0040, UP live, min_buy 0.42). Fills expected during US trading hours. If still 0 after deploy, check skip reasons in VPS logs.
 
 ---
 
