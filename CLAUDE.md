@@ -239,7 +239,7 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 **Live trading:** MAKER VELOCITY LIVE — `maker_velocity_live` profile is the active deploy target
 **Live config:** $10/position (main), $5/trade (BTC 5-min; scale to $10 BLOCKED by promotion gate failure), 30 max open positions, uncapped daily loss, 0.25 Kelly, 24h max resolution, 30s scan interval
 **Execution mode:** 100% Post-Only maker orders (Dispatch #75 pivot)
-**BTC 5-min maker:** Instance 2 (`btc-5min-maker.service`). 553+ total rows, 0 live fills. Service running on VPS (34.244.34.108). DISPATCH_100 (2026-03-14 16:05 UTC) found and fixed **four** blockers, not three: (1) `POLY_SAFE_ADDRESS` was set to EOA, not proxy wallet — caused `invalid signature` on every order attempt, (2) UP shadow-only, (3) delta cap too tight, (4) lt049 skip baseline redundant with min_buy_price. All four fixed. Config: max_trade=$10, delta 0.0003-0.0040, up_max=0.52, down_max=0.53, min_buy=0.42, lt049 skip disabled. Remaining skips are legitimate market conditions (delta_too_small, bad_book, price above max_buy). Fills expected during active BTC trading hours.
+**BTC 5-min maker:** Instance 2 (`btc-5min-maker.service`). Local DB: 302 rows, ALL skips, 0 live fills. VPS DB: 553+ rows, signature fix deployed. Skip diagnosis (local): skip_delta_too_large 164 (54%), skip_shadow_only 56 (19%), skip_toxic_order_flow 42 (14%), skip_midpoint_kill_zone 21, skip_price_outside_guardrails 9, skip_bad_book 3. Last local entry: 2026-03-13 18:24 UTC. DISPATCH_100 fixed 4 blockers on VPS but fills still not flowing. Primary remaining issue: delta threshold too tight for current BTC volatility.
 
 ### Pipeline & Strategy Status
 **Fast-market pipeline:** v2.8.0 says `REJECT ALL` (last run 01:34 UTC Mar 9, now ~73h stale). All 9 tested strategies failed kill rules. Pipeline and execution layer are decoupled — wallet trades regardless.
@@ -261,18 +261,19 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 **Governance scaffold:** `13` numbered docs under `docs/numbered/`, public-messaging lint passing.
 
 ### Known Remaining Issues
-- **Reconciliation address FIXED** — `POLY_DATA_API_ADDRESS=0xb2fef31c...` added to local and VPS `.env`. Reconciliation now returns correct data (5 open, 50 closed).
-- Local jj_trades.db still empty — trades go through BTC5 maker, not jj_live.py. Structural separation.
-- `jj_state.json` contains stale paper-tagged LLM positions. Should be cleaned up.
+- **Reconciliation address FIXED** — `POLY_DATA_API_ADDRESS=0xb2fef31c...` added to local and VPS `.env`. Reconciliation returns correct data (5 open, 50 closed).
+- **Wallet truth (March 14):** Total $458.13, free $373.32. Realized P&L +$207.31 from $247.51 deposit.
+- Local jj_trades.db: 0 trade rows but wallet tables populated (5 open, 50 closed from API reconciliation).
+- BTC5 local DB: 302 rows, ALL skips (54% delta_too_large, 19% shadow_only, 14% toxic_flow). Zero live fills.
 - `FAST_TRADE_EDGE_ANALYSIS.md` says REJECT ALL, 5+ days stale. Pipeline and execution fully decoupled.
-- BTC5 VPS: 553 rows, 0 fills. US-hours skip reasons: bad_book, delta_too_small, price_outside_guardrails.
-- Wallet export CSV 62+ hours stale (last: 2026-03-12).
-- Kalshi has no local ledger integration.
+- Wallet export CSV: March 13 file downloaded but data only through March 12. Still flagged as stale.
+- Kalshi: $100, no local ledger integration.
+- SSH key: renamed to `LightsailDefaultKey-eu-west-1 (1).pem` in Downloads. Needs symlink or path fix in deploy.sh.
 
 ### Top 3 Action Items
-1. **FIX: BTC5 zero-fill on VPS** — 553+ rows, 0 fills despite guardrail fix (DISPATCH_100). SSH to VPS, check skip reasons in live logs, verify POLY_SAFE_ADDRESS is proxy wallet (0xb2fef31c...). If orders are being placed but not filled, check order pricing vs market spread.
-2. **DOWNLOAD: Fresh wallet export CSV** — Last export 2026-03-13 (now 4+ days stale from today). Run reconciliation after. Clears `wallet_export_stale` blocker and enables stage progression.
-3. **DO NOT SCALE: Promotion gate FAILED** — DISPATCH_102 shows 51.4% WR, PF 1.01, $236 max DD. Hold at $5/trade. Implement time-of-day filter and run 7+ more days before reconsidering. Previous $10/trade config (`btc5_scale_v1.json`) should NOT be deployed.
+1. **FIX: SSH key + BTC5 zero-fill** — SSH key is at `~/Downloads/LightsailDefaultKey-eu-west-1 (1).pem` (renamed with parens). Create symlink: `ln -sf "$HOME/Downloads/LightsailDefaultKey-eu-west-1 (1).pem" "$HOME/Downloads/LightsailDefaultKey-eu-west-1.pem"`. Then diagnose VPS skip reasons: 54% of local entries are skip_delta_too_large. Widen BTC5_MAX_ABS_DELTA to 0.0050+ on VPS.
+2. **DO NOT SCALE: Promotion gate FAILED** — DISPATCH_102 shows 51.4% WR, PF 1.01, $236 max DD. Hold at $5/trade. Implement time-of-day filter (suppress 00-02, 08-09 ET) and run 7+ more days. DOWN-only mode shows promise (+$52.80 vs UP -$38.18).
+3. **Wallet truth is solid but fills needed** — Wallet reconciled at $458.13 total, +$207.31 realized. But stage gate blocked by zero BTC5 fills. Fix fills first; everything else follows.
 
 ---
 

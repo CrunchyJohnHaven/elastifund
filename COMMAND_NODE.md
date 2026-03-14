@@ -72,15 +72,15 @@ Mission constraint:
 
 | Area | Current truth | Source |
 |---|---|---|
-| Polymarket wallet value | $390.90 total | data-api.polymarket.com/positions (proxy wallet) |
+| Polymarket wallet value | $458.13 total | data-api.polymarket.com/positions (proxy wallet), March 14 |
 | Free collateral | $373.32 | CLOB balance query |
-| Reserved (pending orders) | $17.58 | CLOB balance query |
+| Reserved (pending orders) | $84.81 | Wallet total minus free collateral |
 | Open positions | 5 positions, $63.10 cost, $66.41 mark-to-market | data API (proxy wallet) |
 | Closed positions | 50 total (47 BTC, 3 ETH) | data API (proxy wallet) |
-| Realized net P&L | **+$140.08** (wallet $390.90 - deposit $247.51 - unrealized $3.31) | Wallet economics |
+| Realized net P&L | **+$207.31** (wallet $458.13 - deposit $247.51 - unrealized $3.31) | Wallet economics |
 | Unrealized P&L (open) | +$3.31 | Mark-to-market on 5 open positions |
 | Kalshi | $100 USD | Unchanged |
-| Total capital | ~$490.90 | Polymarket $390.90 + Kalshi $100 |
+| Total capital | ~$558.13 | Polymarket $458.13 + Kalshi $100 |
 
 ### BTC Sleeve Performance (47 closed trades, all March 11)
 
@@ -110,9 +110,10 @@ Mission constraint:
 | Reconciliation script | Fixed | Now queries proxy wallet via `POLY_DATA_API_ADDRESS` |
 | Runtime truth JSON | Updated | `reports/runtime_truth_latest.json` patched with wallet data |
 | Local jj_trades.db | Still empty | 0 rows; trades went through BTC5 maker path, not jj_live |
-| BTC5 VPS DB | 553+ rows, signature fix deployed | DISPATCH_100: funder address fixed (was EOA, now proxy). Delta cap 0.0040, UP live, lt049 skip disabled. |
+| BTC5 local DB | 302 rows, ALL skips, 0 live fills | skip_delta_too_large: 164 (54%), skip_shadow_only: 56 (19%), skip_toxic: 42 (14%). Last entry: 2026-03-13 18:24 UTC. |
+| BTC5 VPS DB | 553+ rows, signature fix deployed | DISPATCH_100: funder address fixed. Delta cap 0.0040, UP live, lt049 skip disabled. VPS service running but local sync stale. |
 | Pipeline verdict | REJECT ALL (stale) | 5+ days old; decoupled from actual fills |
-| Wallet export CSV | 62h stale | Last: 2026-03-12; needs fresh download |
+| Wallet export CSV | 48h+ stale | Last: 2026-03-13 (data through 2026-03-12); partially useful |
 
 ### Unchanged Status
 
