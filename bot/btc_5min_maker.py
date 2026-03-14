@@ -788,6 +788,7 @@ class MakerConfig:
     stage_order_failed_rate_limit: float = float(os.environ.get("BTC5_STAGE_ORDER_FAILED_RATE_LIMIT", "0.25"))
     min_trade_usd: float = float(os.environ.get("BTC5_MIN_TRADE_USD", "5.00"))
     min_delta: float = float(os.environ.get("BTC5_MIN_DELTA", "0.0003"))
+    enable_spread_capture: bool = _env_flag("BTC5_ENABLE_SPREAD_CAPTURE", False)
     max_abs_delta: float | None = _optional_env_float("BTC5_MAX_ABS_DELTA")
     maker_improve_ticks: int = int(os.environ.get("BTC5_MAKER_IMPROVE_TICKS", "1"))
     max_buy_price: float = float(os.environ.get("BTC5_MAX_BUY_PRICE", "0.95"))
@@ -2530,6 +2531,16 @@ class BTC5MinMakerBot:
             return _result({"window_start_ts": window_start_ts, "status": row["order_status"]})
 
         direction, delta = direction_from_prices(open_price, current_price, effective_min_delta)
+        if direction is None and self.cfg.enable_spread_capture:
+            # Spread-capture mode: bypass delta gate when BTC is flat.
+            # Alternate UP/DOWN each window for statistical neutrality.
+            direction = "UP" if (window_start_ts // 300) % 2 == 0 else "DOWN"
+            delta = (current_price - open_price) / open_price if open_price > 0 else 0.0
+            logger.info(
+                "Spread-capture mode: delta=%.6f below threshold, "
+                "forcing direction=%s for window %d",
+                abs(delta), direction, window_start_ts,
+            )
         if direction is None:
             row = {
                 "window_start_ts": window_start_ts,
