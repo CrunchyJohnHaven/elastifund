@@ -46,8 +46,8 @@ The current trading architecture uses multiple signal families plus a confirmati
 | 2. Smart wallet flow detector | Wallet convergence in short-duration markets | Fast-market lane; wallet-flow readiness is tracked separately |
 | 3. LMSR Bayesian engine | Flow-based mispricing detection | Fast-market math lane |
 | 4. Cross-platform arb scanner | Polymarket versus Kalshi pricing gaps | Structural arbitrage lane |
-| 5. A-6 guaranteed-dollar scanner | Multi-outcome negative-risk constructions | Shadow-mode structural lane with empirical gate |
-| 6. B-1 dependency engine | Deterministic implication/exclusion violations | Gated structural lane |
+| 5. ~~A-6 guaranteed-dollar scanner~~ | Multi-outcome negative-risk constructions | **KILLED** 2026-03-13: zero density after 5-day kill-watch |
+| 6. ~~B-1 dependency engine~~ | Deterministic implication/exclusion violations | **KILLED** 2026-03-13: zero density after 5-day kill-watch |
 | 7. Elastic ML anomaly consumer | Toxicity and drift feedback | Caution and size-adjustment lane |
 
 ### Confirmation Layer

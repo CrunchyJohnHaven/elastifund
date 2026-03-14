@@ -135,7 +135,7 @@ This is the autoresearch-style improvement log. Each entry represents a validate
 - Capital accounting is still not coherent even though position counts are reconciled; the latest Polymarket accounting delta remains non-zero versus tracked capital.
 - `scripts/run_pm_fast_market_registry.py` reached Gamma successfully on March 11 but still wrote **0 discovered eligible markets**, while direct Gamma pulls show active crypto threshold, range, and candle markets. The registry logic is stale relative to the live API.
 - `FAST_TRADE_EDGE_ANALYSIS.md` still says "REJECT ALL" while fresh wallet/export and BTC5 probe data show nontrivial live activity. The scan is stale relative to actual execution behavior.
-- A-6 (Guaranteed Basis) and B-1 (Templated Dependency) structural alpha lanes have zero evidence after weeks. Kill decision on March 14.
+- A-6 (Guaranteed Basis) and B-1 (Templated Dependency) structural alpha lanes formally KILLED 2026-03-13. Zero evidence after 5-day kill-watch. Engineering capacity reallocated to BTC5 optimization and Kalshi.
 
 ### Cycle 1 — Foundation & First Trades
 

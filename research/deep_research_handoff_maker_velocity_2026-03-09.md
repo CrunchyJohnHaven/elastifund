@@ -37,7 +37,7 @@ Snapshot highlights (2026-03-09):
 - Current system ARR: `0%` realized.
 - Trades: `5` total in db, `0` closed trades, `open_positions=4`, realized pnl flat.
 - Fast-flow restart readiness: `true`.
-- Structural lanes A-6/B-1: still blocked by empirical gates.
+- Structural lanes A-6/B-1: **KILLED 2026-03-13** after reaching kill-watch deadline with zero evidence.
 
 ## 3. Runtime Posture to Assume
 

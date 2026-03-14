@@ -93,8 +93,13 @@ Mission constraint:
 
 | Area | Current truth | Why it matters |
 |---|---|---|
+<<<<<<< HEAD
 | Structural alpha A-6 | **KILLED** 2026-03-13; `0` executable constructions below `0.95` after 5+ day watch | Formally killed at March 14 deadline. Effort reallocated to BTC5. |
 | Structural alpha B-1 | **KILLED** 2026-03-13; `0` deterministic template pairs after 5+ day watch | Formally killed at March 14 deadline. Effort reallocated to BTC5. |
+=======
+| Structural alpha A-6 | **KILLED** 2026-03-13; `0` executable constructions below `0.95` after 5-day watch | Zero density in 563 neg-risk events. Engineering capacity reallocated to BTC5 optimization. |
+| Structural alpha B-1 | **KILLED** 2026-03-13; `0` deterministic template pairs after 5-day watch | Zero density in 1,000+ markets. Engineering capacity reallocated to Kalshi integration. |
+>>>>>>> 4e3d28a (Kill A-6/B-1 structural alpha lanes: zero density after 5-day kill-watch)
 | BTC 5-minute maker | `51` rows, `32` live_filled, positive cumulative outcomes | Real short-horizon evidence exists. |
 | Root verification | `1140 passed in 25.88s; 25 passed in 4.47s` | Green. |
 | JJ-N repo truth | `RevenuePipeline` builds; tests green at `61` + `49` | Implemented but not revenue-live. |
@@ -104,6 +109,10 @@ Strategy catalog truth from `research/edge_backlog_ranked.md`:
 
 - `7` deployed or ready
 - `6` building
+<<<<<<< HEAD
+=======
+- `2` killed structural-alpha lanes (A-6/B-1, killed 2026-03-13)
+>>>>>>> 4e3d28a (Kill A-6/B-1 structural alpha lanes: zero density after 5-day kill-watch)
 - `1` re-evaluating
 - `12` rejected (includes A-6 and B-1 killed 2026-03-13)
 - `8` pre-rejected
@@ -220,8 +229,8 @@ Still blocking revenue launch:
    - wallet flow
    - LMSR
    - cross-platform arb
-   - A-6
-   - B-1
+   - ~~A-6~~ (KILLED 2026-03-13)
+   - ~~B-1~~ (KILLED 2026-03-13)
 
 5. Turn filled-trade evidence into decision-quality evidence
    Recommend the minimum closed-trade and fill-quality contract needed before changing capital, thresholds, or automation level.
@@ -277,7 +286,11 @@ Preferred framing:
 
 - Do not invent new runtime APIs when existing JSON artifacts already carry state.
 - Treat `bot/`, `execution/`, `strategies/`, `signals/`, and `infra/` as live-trading-sensitive paths.
+<<<<<<< HEAD
 - A-6 and B-1 are formally killed (2026-03-13). Do not rebuild or re-evaluate without new evidence of exploitable density.
+=======
+- A-6 and B-1 are KILLED as of 2026-03-13. Do not invest further engineering effort in either lane.
+>>>>>>> 4e3d28a (Kill A-6/B-1 structural alpha lanes: zero density after 5-day kill-watch)
 - Distinguish clearly between:
   - local trade-db truth
   - remote wallet truth
@@ -296,7 +309,11 @@ If no other instruction is given, this is the order that maximizes money-making 
 2. Prove or kill the active BTC maker-velocity lane with a clean closed-trade and fill-quality contract.
 3. Decide the canonical market universe and thresholds.
 4. Build the minimum JJ-N live-launch package for Website Growth Audit.
+<<<<<<< HEAD
 5. A-6 and B-1 killed (2026-03-13). Reallocate effort to BTC5 guardrail optimization and scaling.
+=======
+5. ~~Keep A-6 and B-1 blocked unless the evidence changes materially.~~ Both KILLED 2026-03-13. Reallocate to BTC5 optimization and Kalshi.
+>>>>>>> 4e3d28a (Kill A-6/B-1 structural alpha lanes: zero density after 5-day kill-watch)
 
 ---
 

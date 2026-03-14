@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from bot.btc_5min_maker import (
+from bot.btc_5min_maker_core import (
     analyze_maker_buy_price,
     apply_contract_cap,
     classify_recent_price_volatility,

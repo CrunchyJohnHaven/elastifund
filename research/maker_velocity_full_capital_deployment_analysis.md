@@ -264,8 +264,8 @@ The BTC 5-min bot targets $2.50 per trade (`BTC5_RISK_FRACTION=0.01 × $250`), b
 **5. Fill Rate = Unknown (Serious)**
 The pipeline explicitly flags `maker_fill_proxy_unmeasured`. We've never placed a real maker order. We don't know if fill rate is 60% (assumption) or 5% (possible). The entire capital velocity model depends on this number.
 
-**6. A-6 and B-1 Kill Watch (Active, Deadline March 14)**
-Both structural alpha lanes show zero executable constructions. Kill deadline in 5 days. If we're going to reallocate to maker velocity, the kill watch gives us cover — we're already planning to sunset these lanes.
+**6. A-6 and B-1 KILLED (2026-03-13)**
+Both structural alpha lanes killed at the March 14 deadline with zero evidence. A-6: 0 executable constructions below 0.95 across 563 neg-risk events. B-1: 0 deterministic template pairs in 1,000+ markets. Engineering capacity reallocated to BTC5 optimization and Kalshi.
 
 **7. Zero Resolved Signals (Serious)**
 Best strategy variant (Bootstrap Cohort) has 3 raw signals, 0 resolved. We need 100 resolved for candidate status, 300 for validated. We are at the very beginning.

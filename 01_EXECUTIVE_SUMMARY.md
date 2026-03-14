@@ -42,7 +42,7 @@ The system is honest about current state:
 - publish failures as well as wins
 - keep launch blocked when evidence is insufficient
 
-As of the March 9, 2026 machine snapshot, the trading service was observed running on the VPS, but launch posture remained blocked because there were still no closed trades, no deployed capital, and the A-6/B-1 structural gates were unresolved. That is the kind of operational truth the project is designed to surface, not hide.
+As of March 13, 2026, the BTC5 sleeve is the active trading proof lane with real fills. The A-6 and B-1 structural alpha lanes were formally killed on March 13 after reaching the kill-watch deadline with zero evidence. That is the kind of operational truth the project is designed to surface, not hide.
 
 ## Why Contributors Should Care
 

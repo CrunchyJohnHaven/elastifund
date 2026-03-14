@@ -34,12 +34,12 @@
     "basis": "Best guess assumes one more focused engineering session clears the immediate deployment blockers and gets a small live or shadow sleeve collecting calibration data.",
     "assumptions": [
       "jj-live can resume without new safety or import failures.",
-      "A-6 maker-fill and B-1 precision gating work can be closed in one focused session.",
+      "A-6 and B-1 killed 2026-03-13; engineering capacity reallocated to BTC5 optimization and Kalshi.",
       "The first resumed sleeve starts producing decision-grade telemetry quickly enough to move us off a zero run-rate."
     ],
     "invalidators": [
       "If jj-live remains paused after the next focused session, the 10% target is too aggressive.",
-      "If A-6 or B-1 evidence fails the current gate, the near-term run-rate forecast should be revised downward.",
+      "A-6 and B-1 killed 2026-03-13 with zero density; run-rate forecast now depends solely on BTC5 sleeve performance.",
       "If resumed runtime still generates zero closed trades, annualized return remains effectively unobservable."
     ]
   },
@@ -49,12 +49,12 @@
     "blockers": [
       "jj-live is intentionally stopped while structural alpha integration is completed.",
       "No capital is currently deployed and the current cycle has no closed trades for calibration.",
-      "A-6 maker-fill and B-1 precision promotion gates are still unresolved."
+      "A-6 and B-1 killed 2026-03-13. No longer blocking."
     ],
     "exit_criteria": [
       "Resume jj-live in shadow or micro-live mode without triggering kill rails.",
-      "Finish the A-6 maker-fill and violation half-life evidence pass.",
-      "Finish the B-1 gold-set precision audit at or above 85%.",
+      "A-6 and B-1 killed 2026-03-13. No further evidence passes needed.",
+      "Scale BTC5 to $10/trade after confirming fills are flowing.",
       "Record the first closed trades needed for calibration and promotion decisions."
     ]
   }
