@@ -5201,6 +5201,31 @@ def _build_b1_gate_status(payload: dict[str, Any], *, jj_state: dict[str, Any]) 
     }
 
 
+def _load_killed_structural_alpha_lanes() -> set[str]:
+    """
+    Read reports/research/structural_alpha/structural_alpha_decision.json and
+    return the set of lane keys (e.g. {"a6", "b1"}) whose decision is "killed".
+    Fail-safe: returns empty set if the file is missing or unreadable, which
+    preserves the conservative default of keeping gates active.
+    """
+    decision_path = ROOT / "reports" / "research" / "structural_alpha" / "structural_alpha_decision.json"
+    try:
+        with open(decision_path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return set()
+    killed: set[str] = set()
+    for lane_key in ("a6", "b1"):
+        lane = data.get(lane_key) or {}
+        if (
+            str(lane.get("status") or "").lower() == "killed"
+            or str(lane.get("decision") or "").lower() == "killed"
+            or str(lane.get("kill_decision") or "").lower() == "killed"
+        ):
+            killed.add(lane_key)
+    return killed
+
+
 def _build_launch_status(
     *,
     status: dict[str, Any],
@@ -5278,10 +5303,14 @@ def _build_launch_status(
                 f"(delta {closed_delta:+d}); "
                 f"capital delta={_format_money(accounting_delta)}."
             )
-    if a6_gate["status"] == "blocked":
+    # Respect the formal kill decision for A-6 and B-1. If the kill decision
+    # file marks a lane as "killed", that lane no longer blocks launch.
+    # Fail-safe: if the file is missing or unreadable, gates remain active.
+    _killed_lanes = _load_killed_structural_alpha_lanes()
+    if a6_gate["status"] == "blocked" and "a6" not in _killed_lanes:
         blocked_checks.append("a6_gate_blocked")
         blocked_reasons.append(a6_gate["summary"])
-    if b1_gate["status"] == "blocked":
+    if b1_gate["status"] == "blocked" and "b1" not in _killed_lanes:
         blocked_checks.append("b1_gate_blocked")
         blocked_reasons.append(b1_gate["summary"])
     if flywheel.get("decision") != "deploy":
@@ -5309,7 +5338,7 @@ def _build_launch_status(
         )
     elif service["status"] != "running":
         next_operator_action = (
-            "Restart `jj_live` in paper or shadow with conservative caps, keep A-6/B-1 blocked, and collect the first closed trades or structural samples."
+            "Restart `jj_live` in paper or shadow with conservative caps and collect the first closed trades needed for calibration."
         )
     elif any(
         check in blocked_checks
@@ -5336,7 +5365,7 @@ def _build_launch_status(
     elif blocked_checks:
         next_operator_action = (
             "Confirm the running `jj_live` mode is paper or shadow; if it is unintentionally live, stop it. "
-            "Keep A-6/B-1 blocked and collect the first closed trades or structural samples."
+            "Resolve the remaining blocked checks and collect the first closed trades needed for calibration."
         )
     elif runtime.get("closed_trades", 0) <= 0:
         next_operator_action = (
