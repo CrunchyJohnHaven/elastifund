@@ -5,6 +5,15 @@
 **Fresh Pull:** 2026-03-09T01:58:34.672967+00:00
 **Instance Version:** 2.8.0
 
+> **STALE DATA WARNING (2026-03-14):** This report is 5+ days old. REJECT ALL applies only
+> to the 9 pipeline hypothesis families tested below. It does NOT cover BTC5, which operates
+> as a completely independent trading system with its own edge (+$131.52 closed, 1.49 profit
+> factor, 75W/53L). BTC5 is not registered in the pipeline's hypothesis registry and crypto
+> markets are excluded by the current category gate (priority 0 vs min 1). See
+> `research/dispatches/DISPATCH_105_edge_scan_gap_analysis.md` for full gap analysis.
+> To refresh: run `python3 bot/edge_scan_report.py` and `python3 scripts/run_kill_battery.py`
+> from VPS or Mac with network access.
+
 ## Data Coverage
 - Active markets pulled: 7050
 - Fast BTC markets discovered: 22

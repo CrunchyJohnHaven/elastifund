@@ -83,7 +83,7 @@ class StrategyStats:
 def load_strategy_stats(db_path: Path) -> list[StrategyStats]:
     """Load and aggregate shadow signal data by strategy group."""
     if not db_path.exists():
-        logger.warning("database_not_found", path=str(db_path))
+        logger.warning("database_not_found path=%s", str(db_path))
         return []
 
     conn = sqlite3.connect(str(db_path))
@@ -323,7 +323,7 @@ def _get_data_coverage(db_path: Path) -> dict:
                     row[1], tz=timezone.utc
                 ).isoformat()
     except Exception as e:
-        logger.warning("data_coverage_error", error=str(e))
+        logger.warning("data_coverage_error error=%s", str(e))
     finally:
         conn.close()
 
@@ -350,7 +350,7 @@ def main():
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info("kill_battery_start", db=str(db_path))
+    logger.info("kill_battery_start db=%s", str(db_path))
 
     # Load strategy stats
     strategies = load_strategy_stats(db_path)
@@ -366,19 +366,19 @@ def main():
         verdict, results = run_battery_on_strategy(stats)
         verdicts[stats.signal_group] = (verdict, results)
         logger.info(
-            "strategy_verdict",
-            strategy=stats.name,
-            verdict=verdict,
-            signals=stats.total_signals,
-            resolved=stats.resolved_signals,
-            win_rate=f"{stats.win_rate:.2%}",
+            "strategy_verdict strategy=%s verdict=%s signals=%d resolved=%d win_rate=%s",
+            stats.name,
+            verdict,
+            stats.total_signals,
+            stats.resolved_signals,
+            f"{stats.win_rate:.2%}",
         )
 
     # Generate report
     report = generate_report(strategies, verdicts, db_path)
     report_path = output_dir / "FAST_TRADE_EDGE_ANALYSIS.md"
     report_path.write_text(report)
-    logger.info("report_written", path=str(report_path))
+    logger.info("report_written path=%s", str(report_path))
 
     # Summary
     total_signals = sum(s.total_signals for s in strategies)
