@@ -26,6 +26,11 @@ if str(ROOT) not in sys.path:
 from bot.runtime_profile import load_runtime_profile as load_runtime_profile_bundle
 from bot.runtime_profile import write_effective_runtime_profile as write_runtime_profile_bundle
 from flywheel.status_report import build_remote_cycle_status as build_base_remote_cycle_status
+from scripts.remote_cycle_status_core import (  # noqa: E402
+    _apply_shared_truth_contract_to_status,
+    _load_btc5_selected_package_summary,
+    _resolve_authoritative_trade_totals,
+)
 
 
 DEFAULT_CONFIG_PATH = Path("config/remote_cycle_status.json")

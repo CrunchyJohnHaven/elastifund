@@ -171,6 +171,24 @@ def _is_post_only_cross_text(error_msg: Any) -> bool:
     return "post-only" in text and "crosses book" in text
 
 
+def _is_transient_request_error_text(error_msg: Any) -> bool:
+    text = str(error_msg or "").strip().lower()
+    if not text:
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "request exception",
+            "timeout",
+            "timed out",
+            "connection reset",
+            "connection aborted",
+            "temporarily unavailable",
+            "service unavailable",
+        )
+    )
+
+
 def parse_json_list(value: Any) -> list[Any]:
     if isinstance(value, list):
         return value

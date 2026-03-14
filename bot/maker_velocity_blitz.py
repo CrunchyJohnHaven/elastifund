@@ -357,6 +357,18 @@ def contract_schemas() -> dict[str, dict[str, Any]]:
         "RiskEvent": {
             "required": ["event_type", "level", "triggered", "reason", "cooldown_seconds", "timestamp"]
         },
+        "DualSidedSpreadIntent": {
+            "required": [
+                "market_id",
+                "yes_buy_price",
+                "no_buy_price",
+                "notional_usd",
+                "post_only",
+                "timeout_seconds",
+                "wallet_confirmation_mode",
+                "generated_at",
+            ]
+        },
     }
 
 
@@ -368,6 +380,108 @@ def validate_contract_payload(contract_name: str, payload: dict[str, Any]) -> tu
     if missing:
         return False, tuple(f"missing:{field}" for field in missing)
     return True, tuple()
+
+
+@dataclass(frozen=True)
+class DualSidedSpreadIntent:
+    market_id: str
+    yes_buy_price: float
+    no_buy_price: float
+    notional_usd: float
+    post_only: bool = True
+    timeout_seconds: int = 120
+    wallet_confirmation_mode: str = "overlay_only"
+    generated_at: str = ""
+
+
+def rank_dual_sided_spread_markets(
+    snapshots: list[MarketSnapshot],
+    *,
+    combined_cost_cap: float = 0.97,
+    max_toxicity: float = 0.35,
+    min_liquidity_usd: float = 200.0,
+    max_spread: float = 0.25,
+) -> list[dict[str, Any]]:
+    candidates = []
+    for snap in snapshots:
+        combined_cost = snap.yes_price + snap.no_price
+        locked_edge = 1.0 - combined_cost
+        if combined_cost >= combined_cost_cap:
+            continue
+        if snap.toxicity > max_toxicity:
+            continue
+        if snap.liquidity_usd < min_liquidity_usd:
+            continue
+        if snap.spread > max_spread:
+            continue
+        score = locked_edge * (1.0 - snap.toxicity) * min(snap.liquidity_usd / 1000.0, 1.0)
+        candidates.append({
+            "market_id": snap.market_id,
+            "question": snap.question,
+            "yes_price": snap.yes_price,
+            "no_price": snap.no_price,
+            "combined_cost": round(combined_cost, 6),
+            "locked_edge": round(locked_edge, 6),
+            "spread": snap.spread,
+            "liquidity_usd": snap.liquidity_usd,
+            "toxicity": snap.toxicity,
+            "score": round(score, 6),
+        })
+    candidates.sort(key=lambda c: c["score"], reverse=True)
+    return candidates
+
+
+def allocate_dual_sided_spread_notional(
+    *,
+    bankroll_usd: float,
+    ranked_candidates: list[dict[str, Any]],
+    reserve_pct: float = 0.20,
+    per_market_floor_usd: float = 5.0,
+    per_market_cap_usd: float = 10.0,
+    max_markets: int = 6,
+) -> list[dict[str, Any]]:
+    deployable = bankroll_usd * (1.0 - reserve_pct)
+    selected = ranked_candidates[:max_markets]
+    allocations = []
+    remaining = deployable
+    for candidate in selected:
+        alloc = max(per_market_floor_usd, min(per_market_cap_usd, remaining / max(1, len(selected) - len(allocations))))
+        alloc = min(alloc, remaining)
+        if alloc < per_market_floor_usd:
+            break
+        allocations.append({
+            "market_id": candidate["market_id"],
+            "notional_usd": round(alloc, 2),
+        })
+        remaining -= alloc
+    return allocations
+
+
+def build_dual_sided_spread_intents(
+    *,
+    allocations_usd: list[dict[str, Any]],
+    ranked_candidates: list[dict[str, Any]],
+    timeout_seconds: int = 120,
+    wallet_confirmation_mode: str = "overlay_only",
+) -> list[DualSidedSpreadIntent]:
+    candidate_map = {c["market_id"]: c for c in ranked_candidates}
+    intents = []
+    for alloc in allocations_usd:
+        mid = alloc["market_id"]
+        candidate = candidate_map.get(mid)
+        if candidate is None:
+            continue
+        intents.append(DualSidedSpreadIntent(
+            market_id=mid,
+            yes_buy_price=candidate.get("yes_price", 0.0),
+            no_buy_price=candidate.get("no_price", 0.0),
+            notional_usd=alloc["notional_usd"],
+            post_only=True,
+            timeout_seconds=timeout_seconds,
+            wallet_confirmation_mode=wallet_confirmation_mode,
+            generated_at=_iso_now(),
+        ))
+    return intents
 
 
 def deployment_kpis(*, bankroll_usd: float, inventory: InventoryState, fill_events: list[FillEvent]) -> dict[str, float]:

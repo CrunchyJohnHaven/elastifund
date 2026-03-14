@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from adaptive_platt import (  # noqa: E402
+from bot.adaptive_platt import (  # noqa: E402
     STATIC_PLATT_A,
     STATIC_PLATT_B,
     PlattCalibrator,
