@@ -1,7 +1,7 @@
 # COMMAND NODE - Deep Research Handoff
 
-**Version:** 3.1.0
-**Updated:** 2026-03-13  
+**Version:** 3.3.0
+**Updated:** 2026-03-14
 **Canonical filename:** `COMMAND_NODE.md`  
 **Use this when:** you want one root-level document to hand to Deep Research, ChatGPT, Claude, Cowork, or any coding agent.  
 **Primary rule:** if prose and machine artifacts disagree, machine artifacts win.
@@ -63,22 +63,22 @@ Mission constraint:
 
 ---
 
-## 4. Canonical Machine Truth (March 9, 2026)
+## 4. Canonical Machine Truth (March 14, 2026)
 
 > **WARNING — ARTIFACT TRUST POLICY (added 2026-03-09):**
 > `reports/runtime_truth_latest.json` and local ledger data have proven unreliable. They reported "0 closed trades" and "0% realized ARR" while the live Polymarket wallet showed active positions being filled and resolved with real P&L. **Always verify capital, position, and P&L claims against the live Polymarket portfolio and Kalshi account before citing them.** If wallet data contradicts local artifacts, the wallet wins.
 
-### Live Wallet Truth (verified 2026-03-09 from Polymarket web UI)
+### Live Wallet Truth (verified 2026-03-13 from remote_cycle_status.json)
 
 | Area | Current truth | Why it matters |
 |---|---|---|
-| Polymarket portfolio | $333.18 total, $286.86 available, ~$46.32 deployed | This is the real capital number. Prior artifacts understated this. |
+| Polymarket portfolio | $390.90 total, $373.32 free collateral, $17.58 reserved (2 live NO-side maker orders) | Wallet grew from $333.18 (Mar 9) to $390.90 (Mar 13). |
 | Kalshi | $100 USD | Unchanged. |
-| Total capital | ~$433.18 | Up from prior reports of $345.65 — reflects $247.51 deposit + trading activity. |
-| Realized trading status | **LIVE AND TRADING** — positions opening AND resolving, past-day P&L +$1.91 | The system is generating real P&L, not paper-trading. |
-| Known resolved trade | Seattle weather (highest temp 54-55°F March 7) — NO position — LOST | At least one position has resolved to completion with real money at risk. |
-| Active position categories | Weather, geopolitical (Yemen strikes, Morocco PM), central bank (Bank of Russia rate), plus others | Trading across multiple category lanes, not just crypto. |
-| Recent deposit | $247.51 deposited ~2 days ago | Capital base was increased. |
+| Total capital | ~$490.90 | Polymarket $390.90 + Kalshi $100. |
+| Capital accounting delta | +$140.90 | Local ledger tracks $250 base; wallet shows $390.90. Known drift, not a loss. |
+| Deployment confidence | 0.6024, label "medium" | Raw formula yields 0.6024; stage_readiness_score is 0.15 due to 6 active blockers. |
+| BTC5 stage | Stage 0, 6 blockers active | wallet_export_stale, trailing_12_not_positive, insufficient_fills, forecast_not_promote, reconciliation_not_ready, confirmation_insufficient |
+| Deploy recommendation | shadow_only | Autoresearch 25.2h stale; will not recommend "promote" until fresh cycle with fills. |
 
 ### Local Artifact Truth (KNOWN STALE — use with caution)
 
@@ -95,8 +95,8 @@ Mission constraint:
 |---|---|---|
 | Structural alpha A-6 | **KILLED** 2026-03-13; `0` executable constructions below `0.95` after 5-day watch | Zero density in 563 neg-risk events. Engineering capacity reallocated to BTC5 optimization. |
 | Structural alpha B-1 | **KILLED** 2026-03-13; `0` deterministic template pairs after 5-day watch | Zero density in 1,000+ markets. Engineering capacity reallocated to Kalshi integration. |
-| BTC 5-minute maker | `51` rows, `32` live_filled, positive cumulative outcomes | Real short-horizon evidence exists. |
-| Root verification | `1140 passed in 25.88s; 25 passed in 4.47s` | Green. |
+| BTC 5-minute maker | `542` total rows, `0` current live fills; historical closed: +$131.52 on 128 contracts (75W/53L, PF 1.49) | Guardrail fixes deployed 2026-03-14: delta 0.0040, UP live, min_buy 0.42. Awaiting US-hours fill validation. |
+| Root verification | 50 tests failing in `test_btc_5min_maker_process_window_core.py`; 1961 passing | Guardrail regression; all other surfaces green. |
 | JJ-N repo truth | `RevenuePipeline` builds; tests green at `61` + `49` | Implemented but not revenue-live. |
 | First non-trading wedge | Website Growth Audit, $500-$2500, 5-day delivery | Best path to first non-trading dollars. |
 
@@ -104,7 +104,7 @@ Strategy catalog truth from `research/edge_backlog_ranked.md`:
 
 - `7` deployed or ready
 - `6` building
-- `2` killed structural-alpha lanes (A-6/B-1, killed 2026-03-13)
+- `0` structural-alpha lanes (A-6/B-1 killed 2026-03-13, moved to rejected)
 - `1` re-evaluating
 - `12` rejected (includes A-6 and B-1 killed 2026-03-13)
 - `8` pre-rejected
@@ -138,9 +138,12 @@ Deep Research should treat the following as first-class system problems, not foo
 4. Scan-vs-execution drift
    The latest checked pipeline verdict is `REJECT ALL`, while the remote BTC 5-minute maker database shows `32` live-filled rows and positive cumulative filled outcomes.
 
+5. **Wallet polling loop (NEW — 2026-03-14)**
+   `bot/wallet_poller.py` now runs as a continuous daemon (`deploy/wallet-poller.service`) that polls the Polymarket wallet every 60 seconds, auto-patches the local trade-db via `PolymarketWalletReconciler`, and writes drift snapshots to `data/wallet_snapshots/`. This closes the primary ledger-drift gap. Wallet remains authoritative; the poller enforces that.
+
 Conclusion:
 
-The current bottleneck is not only "find better strategies." It is also "make one runtime truth coherent enough that strategy evidence can be trusted."
+The current bottleneck is not only "find better strategies." It is also "make one runtime truth coherent enough that strategy evidence can be trusted." The wallet poller addresses drift problem #1 above by keeping the local ledger continuously synchronized with the live wallet.
 
 ---
 
@@ -293,11 +296,11 @@ Preferred framing:
 
 If no other instruction is given, this is the order that maximizes money-making improvement velocity:
 
-1. Reconcile runtime truth drift.
-2. Prove or kill the active BTC maker-velocity lane with a clean closed-trade and fill-quality contract.
-3. Decide the canonical market universe and thresholds.
-4. Build the minimum JJ-N live-launch package for Website Growth Audit.
-5. ~~Keep A-6 and B-1 blocked unless the evidence changes materially.~~ Both KILLED 2026-03-13. Reallocate to BTC5 optimization and Kalshi.
+1. **Validate BTC5 fills after guardrail fix.** Three blockers fixed 2026-03-14 (delta, UP direction, min_buy_price). Confirm fills during US trading hours. If still zero fills by 20:00 UTC, investigate bad_book and toxic_order_flow thresholds.
+2. **Fix the 50 test failures in `test_btc_5min_maker_process_window_core.py`.** Guardrail changes broke the test expectations. Repair tests to match new live config, not the other way around.
+3. **Reconcile runtime truth drift.** Local ledger still massively understates activity. Build or run wallet reconciliation to close the gap.
+4. **Scale BTC5 to $10/trade once fills confirmed.** Already configured in capital_stage.env. Need positive trailing P&L from live fills first.
+5. **Build the minimum JJ-N live-launch package for Website Growth Audit.** Best path to first non-trading dollar. Blocking: verified sending domain, curated leads, explicit approval for live sends.
 
 ---
 

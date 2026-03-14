@@ -1,7 +1,7 @@
 # What Doesn't Work — The Failure Diary
 
-**Version:** 1.0
-**Date:** 2026-03-07
+**Version:** 1.1
+**Date:** 2026-03-14
 **Author:** JJ
 **Purpose:** The most valuable document in this repo. Every rejected strategy, why it died, and what we learned. A quant trader reads this and saves months of wasted effort.
 
@@ -9,7 +9,7 @@
 
 ## Summary
 
-**Strategies formally tested through kill battery:** 10
+**Strategies formally tested through kill battery:** 12
 **Strategies surviving:** 0
 **Survival rate:** 0%
 **Pre-rejected (too low viability to build):** 8
@@ -306,17 +306,53 @@ Our automated kill battery (`bot/kill_rules.py`) applies six criteria. Here's ho
 
 ---
 
+## SA-1: A-6 Guaranteed Dollar Scanner (Structural Alpha)
+
+**Hypothesis:** Polymarket neg-risk events (multi-outcome markets that must sum to $1.00) sometimes misprice so that buying all outcomes costs less than $1.00. The guaranteed dollar scanner finds these sum violations and exploits them for risk-free profit.
+
+**What we expected:** At least a handful of executable arbitrage opportunities per week where the total cost of covering all outcomes < $0.95 (our cost gate).
+
+**What actually happened:** Zero executable constructions found below the 0.95 cost gate. Zero even below the relaxed 0.97 threshold. Across 563 allowed neg-risk events audited over a 5-day kill-watch period (March 8-13, 2026), not a single opportunity materialized.
+
+**Why it failed:** Polymarket's neg-risk markets are efficiently priced at the structural level. Market makers keep sum-of-outcomes arbitrage tightly closed. The theoretical edge exists in textbooks but the density is zero in practice on this platform. Even when individual legs appear mispriced, the full-coverage cost consistently exceeds $0.95.
+
+**Kill rules triggered:** Zero density (no executable signals in 5-day kill-watch window). Formally KILLED 2026-03-13.
+
+**What we learned:** Structural arbitrage on neg-risk events is a valid concept but Polymarket's market maker ecosystem prices it away before any retail participant can capture it. The scan infrastructure is solid and could be reused if a new platform emerges with less efficient neg-risk pricing, but on Polymarket this lane is dead.
+
+**Maker-only verdict:** Irrelevant. The problem is opportunity density, not execution cost.
+
+---
+
+## SA-2: B-1 Templated Dependency Engine (Structural Alpha)
+
+**Hypothesis:** Some Polymarket markets have deterministic logical dependencies (e.g., "Team X wins Championship" implies "Team X makes Playoffs"). When the implied market is cheaper than the implying market, buy the underpriced leg.
+
+**What we expected:** Dozens of template pairs per week across sports, politics, and crypto markets.
+
+**What actually happened:** Zero deterministic template pairs found in 1,000+ active allowed markets audited over the 5-day kill-watch period (March 8-13, 2026).
+
+**Why it failed:** Two reasons. First, Polymarket's market titles don't follow templates that a deterministic matcher can reliably parse into logical dependency chains. The phrasing is too varied and context-dependent. Second, when logical dependencies do exist (e.g., championship vs playoff markets), the markets are either not simultaneously active, or they're priced consistently enough that no exploitable gap exists.
+
+**Kill rules triggered:** Zero density (no deterministic template pairs in 5-day kill-watch). Formally KILLED 2026-03-13.
+
+**What we learned:** Deterministic template matching at scale requires either (a) a much more sophisticated NLP pipeline that can handle varied market phrasing, or (b) a platform with standardized market templates. Polymarket has neither. The dependency concept is valid but the detection mechanism is too brittle for this market structure. An LLM-based semantic dependency detector might work but adds complexity and latency that may not be worth the edge.
+
+**Maker-only verdict:** Irrelevant. The problem is detecting opportunities, not executing them.
+
+---
+
 ## What This Diary Proves
 
-1. **The kill rules work.** Every rejected strategy would have lost money in live trading. The system prevented $X in real losses (exact amount depends on position sizing, but at quarter-Kelly on $247, conservatively $50-100 in avoided losses across all 10 strategies).
+1. **The kill rules work.** Every rejected strategy would have lost money in live trading. The system prevented real losses across all 12 rejected strategies (10 original + 2 structural alpha kills).
 
 2. **Prediction markets are harder than they look.** The 7.6% profitable-wallet rate on Polymarket is not an accident. Transaction costs, signal sparsity, and market efficiency combine to kill most approaches.
 
-3. **The survivor path is structural, not statistical.** The strategies still alive (A-6 sum violations, B-1 dependency constraints) exploit market structure, not price patterns. They work because of how Polymarket's multi-outcome markets are constructed, not because of historical price data.
+3. **The survivor path is empirical, not theoretical.** The only lane producing real P&L is BTC 5-minute maker trading — a narrow, high-frequency, microstructure-driven approach. Both structural alpha lanes (A-6 sum violations, B-1 dependency constraints) were killed with zero evidence after 5 days. Theoretical elegance does not guarantee practical density.
 
 4. **Maker execution is non-negotiable.** After the Feb 18 fee change, any strategy that requires taker orders needs >2% gross edge to survive. That's a very high bar. Maker orders (0% fees + rebates) lower the bar to >0% gross edge.
 
-5. **The failure diary is more valuable than the success diary.** A quant trader considering prediction market strategies can read this document and skip 10 dead ends. That's months of saved development time and avoided losses.
+5. **The failure diary is more valuable than the success diary.** A quant trader considering prediction market strategies can read this document and skip 12 dead ends. That's months of saved development time and avoided losses.
 
 ---
 

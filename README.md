@@ -8,7 +8,7 @@
 | Role | Public overview and **Start Here** path |
 | Operator packet | `COMMAND_NODE.md` |
 | Operator policy | `PROJECT_INSTRUCTIONS.md` |
-| Last updated | 2026-03-11 |
+| Last updated | 2026-03-14 |
 
 Elastifund is building a governed system where agents do work, record what happened, learn from outcomes, and improve through shared memory, evaluation, observability, and workflow control.
 
@@ -47,13 +47,14 @@ Elastic is the shared substrate for system memory, evaluation, observability, wo
 
 ---
 
-## What To Believe Right Now (March 11, 2026)
+## What To Believe Right Now (March 14, 2026)
 
-- **Live proof:** the BTC5 sleeve is the active trading proof lane. Broader fund-level claims stay blocked until reconciliation and attribution are consistent.
+- **Live proof:** the BTC5 sleeve is the active trading proof lane. Historical closed batch: +$131.52 on 128 contracts (75W/53L, PF 1.49). Broader fund-level claims stay blocked until reconciliation and attribution are consistent.
+- **Structural alpha killed:** A-6 (Guaranteed Dollar) and B-1 (Templated Dependency) formally killed 2026-03-13 after 5-day kill-watch with zero evidence. Engineering capacity reallocated to BTC5 optimization and Kalshi integration.
 - **Historical validation:** `71.2%` is the strongest labeled calibrated validation result on `532` resolved markets. It is historical validation, not a live-performance headline.
 - **Non-trading wedge:** JJ-N's first offer is the Website Growth Audit. It is built in code, explicitly gated, and not yet presented as launched revenue.
 - **Contribution posture:** public routes read sanitized checked-in artifacts and the default contribution path is paper mode. No live exchange credentials are required to inspect or improve the system.
-- **Verification:** the latest checked-in root verification summary is `1641 passed, 5 warnings in 37.10s; 25 passed, 1 warning in 4.56s`.
+- **Verification:** `1961 passed, 50 failed, 5 warnings` (root suite). The 50 failures are isolated to `test_btc_5min_maker_process_window_core.py` — a regression from recent guardrail changes. All other surfaces green.
 
 We are deliberately not leading this README with annualized forecast math, bankroll disclosure, or blended performance claims. Those numbers create more confusion than trust in the current public pass.
 
@@ -119,10 +120,10 @@ This is the autoresearch-style improvement log. Each entry represents a validate
 **Deployed improvements:**
 
 - **The reconciliation pass clarified market outcome attribution and exposure posture** from mixed realized and unresolved signals.
-- **BTC5 public status is currently in a cautious posture.** The deploy recommendation is now **shadow_only** (not promote) while blocked-claim alignment remains in force.
+- **BTC5 guardrail fixes deployed 2026-03-14.** Three simultaneous blockers diagnosed and fixed: delta widened from 0.00075 to 0.0040, UP direction enabled (was shadow-only), min_buy_price lowered to 0.42. Remaining skips are legitimate market-quality gates.
 - **Directional edge is still strongest in the DOWN lane, with price-bucket behavior currently the main structural discriminator.**
-- **Wallet and local ledger counts are back in sync.** The latest reconciliation surface shows **50** closed positions and **9** open positions on both the local ledger and the remote wallet, removing one major source of status drift.
-- **The live market-universe context is fresher.** The March 11 pull shows **7,017** active markets across **500** events, with **111** crypto markets in the broad universe and **26** active crypto markets resolving within **24 hours** on the active surface.
+- **A-6 and B-1 structural alpha lanes killed 2026-03-13.** Zero evidence after 5-day kill-watch. Full rationale in `research/what_doesnt_work_diary_v1.md`.
+- **Capital accounting delta remains non-zero.** Wallet shows $390.90 vs $250 tracked base. Known drift, not a loss — reconciliation in progress.
 - **Maker-only execution enforced.** 100% post-only orders. Zero taker fees. Maker rebates on every fill. This single change (Dispatch #75) eliminated the fee drag that killed earlier strategies.
 - **Six signal sources wired into the live loop.** LLM probability estimation, smart wallet flow detection, LMSR Bayesian pricing, cross-platform arbitrage, VPIN/OFI microstructure, and semantic lead-lag. Each can be independently enabled or disabled per runtime profile.
 - **Automated kill rules operational.** Semantic decay, toxicity survival, cost stress polynomial, and calibration enforcement — all running in production. Strategies that fail these die automatically.
@@ -132,10 +133,10 @@ This is the autoresearch-style improvement log. Each entry represents a validate
 **Known issues being worked:**
 
 - Launch-contract drift still blocks live promotion: `agent_run_mode=live`, `execution_mode=shadow`, `allow_order_submission=false`, `launch_posture=blocked`.
-- Capital accounting is still not coherent even though position counts are reconciled; the latest Polymarket accounting delta remains non-zero versus tracked capital.
-- `scripts/run_pm_fast_market_registry.py` reached Gamma successfully on March 11 but still wrote **0 discovered eligible markets**, while direct Gamma pulls show active crypto threshold, range, and candle markets. The registry logic is stale relative to the live API.
-- `FAST_TRADE_EDGE_ANALYSIS.md` still says "REJECT ALL" while fresh wallet/export and BTC5 probe data show nontrivial live activity. The scan is stale relative to actual execution behavior.
-- A-6 (Guaranteed Basis) and B-1 (Templated Dependency) structural alpha lanes formally KILLED 2026-03-13. Zero evidence after 5-day kill-watch. Engineering capacity reallocated to BTC5 optimization and Kalshi.
+- Capital accounting delta: wallet $390.90 vs $250 tracked base (+$140.90). Reconciliation in progress.
+- `FAST_TRADE_EDGE_ANALYSIS.md` still says "REJECT ALL" (~5 days stale) while BTC5 has real live fills. The edge scan pipeline is decoupled from actual execution.
+- 50 test failures in `test_btc_5min_maker_process_window_core.py` from recent guardrail changes. All other test surfaces green.
+- BTC5 guardrail fixes deployed 2026-03-14. Awaiting fill validation during US trading hours.
 
 ### Cycle 1 — Foundation & First Trades
 
@@ -221,9 +222,9 @@ make test-select
 
 `bootstrap-lite` intentionally skips runtime/research dependencies. For runtime-only dependencies without test/dev extras, use `make bootstrap-runtime`.
 
-## Verified On March 9, 2026
+## Verified On March 14, 2026
 
-All commands pass in this repo state: `make doctor`, `make quickstart`, `make test`, `make test-polymarket`, `make test-nontrading`, `make smoke-nontrading`.
+Core commands pass: `make doctor`, `make quickstart`, `make test-polymarket`, `make test-nontrading`, `make smoke-nontrading`. Root `make test` has 50 isolated failures in BTC5 process-window tests (guardrail regression); all other surfaces green.
 
 ## Public Snapshot Contract
 

@@ -1,6 +1,6 @@
 # 06 Experiment Diary
-Version: 1.0.0
-Date: 2026-03-09
+Version: 1.1.0
+Date: 2026-03-14
 Source: `docs/diary/*.md`, `research/edge_backlog_ranked.md`, `COMMAND_NODE.md`, `PROJECT_INSTRUCTIONS.md`
 Purpose: Provide the canonical chronological record of major experiments, outcomes, and lessons.
 Related docs: `03_METRICS_AND_LEADERBOARDS.md`, `04_TRADING_WORKERS.md`, `05_NON_TRADING_WORKERS.md`, `07_FORECASTS_AND_CHECKPOINTS.md`
@@ -29,6 +29,8 @@ It should record wins, misses, and directional changes with equal honesty.
 | 2026-03-07 | Day-one live wall | Launch blocked by speed versus edge mismatch | Forced the architecture pivot to multi-speed signals |
 | 2026-03-07 | Flywheel formalized | Documentation and research loop tightened | Made the repo itself part of the product |
 | 2026-03-07 | Weather bracket failure, latency win | One weather lane rejected, infra insight retained | Showed that failure and useful infra learning can coexist |
+| 2026-03-13 | A-6 and B-1 structural alpha killed | Zero evidence after 5-day kill-watch (0/563 neg-risk events, 0/1000+ markets) | Proved that theoretically elegant strategies can have zero practical density. Engineering reallocated to BTC5 and Kalshi. |
+| 2026-03-14 | BTC5 guardrail triple-blocker fix | Three simultaneous blockers diagnosed: delta too tight, UP shadow-only, min_buy_price too high | Root cause analysis on zero-fill periods produces more value than speculative new strategies. |
 
 ## Durable Lessons
 
