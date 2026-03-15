@@ -289,12 +289,16 @@ def evaluate_windows(
         key=lambda item: (item["sum_velocity_score"], item["passing_count"]),
         reverse=True,
     )
-    recommended = ranked_windows[0] if ranked_windows else None
+    recommended = next(
+        (item for item in ranked_windows if int(item.get("passing_count", 0)) > 0),
+        None,
+    )
     recommended_window = (
         f"{int(recommended['max_resolution_hours'])}h"
         if isinstance(recommended, dict)
         else None
     )
+    recommendation_reason = "ok" if recommended_window is not None else "no_eligible_markets"
     return {
         "evaluated_at": now.isoformat(),
         "total_markets_scanned": len(markets),
@@ -302,6 +306,7 @@ def evaluate_windows(
         "category_priority": category_priority,
         "windows": windows,
         "recommended_window": recommended_window,
+        "recommendation_reason": recommendation_reason,
         "method_note": (
             "velocity_score uses annualized edge proxy abs(0.5-yes_price); "
             "replace with model-estimated edge for live sizing decisions."

@@ -117,3 +117,29 @@ def test_evaluate_windows_recommends_wider_horizon_when_24h_empty():
     assert report["windows"]["24h"]["passing_count"] == 0
     assert report["windows"]["72h"]["passing_count"] == 2
     assert report["recommended_window"] in {"72h", "168h"}
+
+
+def test_evaluate_windows_returns_none_when_all_windows_empty():
+    now = datetime(2026, 3, 15, 12, 0, tzinfo=timezone.utc)
+    markets = [
+        _market(
+            question="Will Team A beat Team B?",
+            category="sports",
+            yes_price=0.55,
+            end_in_hours=4.0,
+        ),
+        _market(
+            question="Will BTC close green?",
+            category="crypto",
+            yes_price=0.52,
+            end_in_hours=6.0,
+        ),
+    ]
+    report = evaluate_windows(
+        markets,
+        now=now,
+        horizons=[24.0, 72.0, 168.0],
+        top_n=5,
+    )
+    assert report["recommended_window"] is None
+    assert report["recommendation_reason"] == "no_eligible_markets"
