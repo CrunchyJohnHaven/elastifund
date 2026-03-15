@@ -1,9 +1,9 @@
 [Unit]
-Description=Run BTC5 Autoresearch every 5 minutes
+Description=Run BTC5 Autoresearch every 3 hours
 
 [Timer]
-OnBootSec=5min
-OnUnitActiveSec=5min
+OnBootSec=15min
+OnUnitActiveSec=3h
 Persistent=true
 Unit=btc5-autoresearch.service
 

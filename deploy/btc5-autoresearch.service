@@ -1,5 +1,5 @@
 [Unit]
-Description=BTC5 Autoresearch Cycle
+Description=BTC5 Autoresearch Feedback Cycle (Core)
 After=network-online.target
 Wants=network-online.target
 
@@ -7,7 +7,11 @@ Wants=network-online.target
 Type=oneshot
 User=ubuntu
 WorkingDirectory=/home/ubuntu/polymarket-trading-bot
-ExecStart=/bin/bash -lc 'mkdir -p state reports/btc5_autoresearch && export PYTHONPATH=/home/ubuntu/polymarket-trading-bot:/home/ubuntu/polymarket-trading-bot/bot:/home/ubuntu/polymarket-trading-bot/polymarket-bot && /usr/bin/python3 scripts/run_btc5_autoresearch_cycle.py --db-path data/btc_5min_maker.db --strategy-env config/btc5_strategy.env --override-env state/btc5_autoresearch.env --report-dir reports/btc5_autoresearch --restart-on-promote'
+ExecStart=/bin/bash -lc 'mkdir -p state reports/btc5_autoresearch reports/btc5_autoresearch_current_probe && export PYTHONPATH=/home/ubuntu/polymarket-trading-bot:/home/ubuntu/polymarket-trading-bot/bot:/home/ubuntu/polymarket-trading-bot/polymarket-bot && /usr/bin/python3 scripts/run_btc5_autoresearch_cycle_core.py --db-path data/btc_5min_maker.db --strategy-env config/btc5_strategy.env --override-env state/btc5_autoresearch.env --report-dir reports/btc5_autoresearch --current-probe-latest reports/btc5_autoresearch_current_probe/latest.json --semantic-dedup-index reports/btc5_autoresearch/semantic_dedup_index.json --cycles-jsonl reports/autoresearch_cycles.jsonl --fill-feedback-state state/btc5_autoresearch_feedback_state.json --restart-on-promote'
+Restart=on-failure
+RestartSec=120
+TimeoutStartSec=900
+MemoryMax=8G
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=btc5autoresearch

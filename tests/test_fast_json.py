@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from infra.fast_json import dump_path_atomic, load_path, loads
+from infra.fast_json import dump_path_atomic, load_path, loads, write_text_atomic
 
 
 def test_fast_json_loads_bytes_payload() -> None:
@@ -23,3 +23,10 @@ def test_fast_json_atomic_path_round_trip(tmp_path) -> None:
     payload = load_path(target)
     assert payload["asset_id"] == "tok-3"
     assert payload["best_bid"] == 0.55
+
+
+def test_write_text_atomic_round_trip(tmp_path) -> None:
+    target = tmp_path / "notes.txt"
+    write_text_atomic(target, "alpha\nbeta\n")
+
+    assert target.read_text(encoding="utf-8") == "alpha\nbeta\n"
