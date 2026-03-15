@@ -1,0 +1,30 @@
+{
+  "updated_at": "2026-03-16T00:00:00Z",
+  "source": "seeded_from_research_wallet_intelligence",
+  "wallets": [
+    {
+      "label": "k9Q2mX4L8A7ZP3R",
+      "address": "0xd0d6053c3c37e727402d84c14069780d360993aa"
+    },
+    {
+      "label": "0x8dxd",
+      "address": "0x63ce342161250d705dc0b16df89036c8e5f9ba9a"
+    },
+    {
+      "label": "BoneReader",
+      "address": "0xd84c2b6d65dc596f49c7b6aadd6d74ca91e407b9"
+    },
+    {
+      "label": "vidarx",
+      "address": "0x2d8b401d2f0e6937afebf18e19e11ca568a5260a"
+    },
+    {
+      "label": "gabagool22",
+      "address": "0x6031b6eed1c97e853c6e0f03ad3ce3529351f96d"
+    },
+    {
+      "label": "0x1979",
+      "address": "0x1979ae6b7e6534de9c4539d0c205e582ca637c9d"
+    }
+  ]
+}
