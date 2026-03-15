@@ -588,8 +588,9 @@ def _parse_order_size(value: Any) -> float | None:
     return float(parsed)
 
 
-def market_slug_for_window(window_start_ts: int) -> str:
-    return f"btc-updown-5m-{int(window_start_ts)}"
+def market_slug_for_window(window_start_ts: int, slug_prefix: str = "") -> str:
+    prefix = slug_prefix or os.environ.get("BTC5_ASSET_SLUG_PREFIX", "btc")
+    return f"{prefix}-updown-5m-{int(window_start_ts)}"
 
 
 def direction_from_prices(open_price: float, current_price: float, min_delta: float) -> tuple[str | None, float]:
@@ -938,6 +939,9 @@ class MakerConfig:
     toxic_flow_depth_levels: int = int(os.environ.get("BTC5_TOXIC_FLOW_DEPTH_LEVELS", "3"))
     toxic_flow_imbalance_threshold: float = float(os.environ.get("BTC5_TOXIC_FLOW_IMBALANCE_THRESHOLD", "0.35"))
     toxic_flow_min_depth_shares: float = float(os.environ.get("BTC5_TOXIC_FLOW_MIN_DEPTH_SHARES", "25"))
+    toxic_flow_min_price_exempt: float = float(os.environ.get("BTC5_TOXIC_FLOW_MIN_PRICE_EXEMPT", "0.0"))
+    midpoint_kill_zone_min_price_exempt: float = float(os.environ.get("BTC5_MIDPOINT_KILL_ZONE_MIN_PRICE_EXEMPT", "0.0"))
+    market_slug_prefix: str = os.environ.get("BTC5_ASSET_SLUG_PREFIX", "btc")
     enable_volatility_guardrail: bool = _env_flag("BTC5_ENABLE_VOLATILITY_GUARDRAIL", True)
     volatility_lookback_seconds: int = int(os.environ.get("BTC5_VOLATILITY_LOOKBACK_SECONDS", "600"))
     volatility_high_range_bps: float = float(os.environ.get("BTC5_VOLATILITY_HIGH_RANGE_BPS", "35"))
@@ -2991,7 +2995,7 @@ class BTC5MinMakerBot:
 
     async def _process_window(self, *, window_start_ts: int, http: MarketHttpClient) -> dict[str, Any]:
         window_end_ts = window_start_ts + WINDOW_SECONDS
-        slug = market_slug_for_window(window_start_ts)
+        slug = market_slug_for_window(window_start_ts, self.cfg.market_slug_prefix)
         session_bucket = _btc5_session_bucket(window_start_ts)
         capital_stage = 1
         effective_max_trade_usd = float(self._max_trade_for_stage(capital_stage))
@@ -3519,8 +3523,14 @@ class BTC5MinMakerBot:
                 }
             )
 
+        _toxic_flow_price_exempt = (
+            self.cfg.toxic_flow_min_price_exempt > 0.0
+            and best_ask is not None
+            and float(best_ask) >= self.cfg.toxic_flow_min_price_exempt
+        )
         if (
             self.cfg.enable_toxic_flow_guardrail
+            and not _toxic_flow_price_exempt
             and book_imbalance is not None
             and top_depth_shares is not None
             and top_depth_shares >= float(self.cfg.toxic_flow_min_depth_shares)
@@ -3826,7 +3836,12 @@ class BTC5MinMakerBot:
                 "excluded_by_session_policy": excluded_by_session_policy,
             })
 
-        if should_skip_midpoint_kill_zone(
+        _midpoint_price_exempt = (
+            self.cfg.midpoint_kill_zone_min_price_exempt > 0.0
+            and best_ask is not None
+            and float(best_ask) >= self.cfg.midpoint_kill_zone_min_price_exempt
+        )
+        if not _midpoint_price_exempt and should_skip_midpoint_kill_zone(
             order_price=order_price,
             window_end_ts=window_end_ts,
             now_ts=time.time(),
