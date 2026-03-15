@@ -1,23 +1,12 @@
 #!/usr/bin/env python3
-"""
-Analyze smart-wallet BTC5 entry timing and produce an actionable verdict.
-
-Primary output:
-  reports/smart_wallet_timing_analysis.json
-
-The script prefers local artifacts when available:
-  1) data/wallet_scores.db / wallet_analysis.json / data/smart_wallets*.json
-  2) data/btc_5min_maker.db filled windows
-
-If local artifacts are missing, it falls back to public Polymarket APIs.
-"""
+"""Analyze smart-wallet BTC5 entry timing from Polymarket trade tape."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import logging
-import math
+import os
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -27,1107 +16,724 @@ from typing import Any
 
 import requests
 
+DATA_API_BASE = "https://data-api.polymarket.com"
+GAMMA_API_BASE = "https://gamma-api.polymarket.com"
+WINDOW_SECONDS = 300
+BTC5_PREFIX = "btc-updown-5m-"
 
-DATA_API = "https://data-api.polymarket.com"
-GAMMA_API = "https://gamma-api.polymarket.com"
-BTC5_SLUG_PREFIX = "btc-updown-5m-"
-BUCKETS: tuple[tuple[int, int], ...] = (
-    (0, 60),
-    (60, 120),
-    (120, 180),
-    (180, 240),
-    (240, 300),
-)
+DEFAULT_DB_PATH = Path(os.environ.get("BTC5_DB_PATH", "data/btc_5min_maker.db"))
+DEFAULT_WALLET_SCORES = Path("inventory/data/smart_wallets_scored.json")
+DEFAULT_OUTPUT_PATH = Path("reports/smart_wallet_timing_analysis.json")
 
-LOG = logging.getLogger("smart_wallet_timing_analysis")
+KNOWN_ELITE_WALLETS: dict[str, str] = {
+    "k9Q2mX4L8A7ZP3R": "0xd0d6053c3c37e727402d84c14069780d360993aa",
+    "0x8dxd": "0x63ce342161250d705dc0b16df89036c8e5f9ba9a",
+    "BoneReader": "0xd84c2b6d65dc596f49c7b6aadd6d74ca91e407b9",
+    "vidarx": "0x2d8b401d2f0e6937afebf18e19e11ca568a5260a",
+    "gabagool22": "0x6031b6eed1c97e853c6e0f03ad3ce3529351f96d",
+    "0x1979": "0x1979ae6b7e6534de9c4539d0c205e582ca637c9d",
+}
+
+BUCKETS: list[tuple[str, int, int]] = [
+    ("0-60s", 0, 60),
+    ("60-120s", 60, 120),
+    ("120-180s", 120, 180),
+    ("180-240s", 180, 240),
+    ("240-300s", 240, 300),
+]
+
+LOG = logging.getLogger("smart_wallet_timing")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
 
-@dataclass
-class SmartWallet:
-    address: str
-    rank: int
-    pnl_usd: float
-    volume_usd: float
-    source: str
-
-
-@dataclass
-class MarketWindow:
-    condition_id: str
-    slug: str
-    window_start_ts: int
-    winner_index: int | None
-    outcomes: list[str]
-    outcome_prices: list[float]
-    source: str
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def parse_float(value: Any, default: float = 0.0) -> float:
+def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
     except (TypeError, ValueError):
         return default
 
 
-def parse_int(value: Any, default: int = 0) -> int:
+def _safe_int(value: Any, default: int = 0) -> int:
     try:
         return int(float(value))
     except (TypeError, ValueError):
         return default
 
 
-def normalize_wallet(value: Any) -> str:
-    if not value:
-        return ""
-    wallet = str(value).strip().lower()
-    if wallet.startswith("0x") and len(wallet) == 42:
-        return wallet
+def _normalize_wallet(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text.startswith("0x") and len(text) == 42:
+        return text
     return ""
 
 
-def parse_json_maybe(value: Any, default: Any) -> Any:
-    if isinstance(value, list):
-        return value
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-            return parsed
-        except json.JSONDecodeError:
-            return default
-    return default
-
-
-def request_json(
-    url: str,
-    *,
-    params: dict[str, Any] | None = None,
-    timeout: float = 30.0,
-    retries: int = 4,
-    sleep_base: float = 0.75,
-) -> Any:
-    for attempt in range(retries):
-        try:
-            response = requests.get(url, params=params, timeout=timeout)
-            if response.status_code == 429:
-                wait = sleep_base * (2 ** attempt)
-                LOG.warning("429 from %s params=%s; waiting %.1fs", url, params, wait)
-                time.sleep(wait)
-                continue
-            if 400 <= response.status_code < 500:
-                # Non-429 client errors are generally deterministic and should not be retried.
-                response.raise_for_status()
-            response.raise_for_status()
-            return response.json()
-        except requests.RequestException as exc:
-            if attempt == retries - 1:
-                raise RuntimeError(f"Request failed url={url} params={params}: {exc}") from exc
-            status = getattr(getattr(exc, "response", None), "status_code", None)
-            if status is not None and 400 <= int(status) < 500 and int(status) != 429:
-                raise RuntimeError(f"Request failed url={url} params={params}: {exc}") from exc
-            wait = sleep_base * (2 ** attempt)
-            LOG.warning("Request error %s; retrying in %.1fs", exc, wait)
-            time.sleep(wait)
-    raise RuntimeError(f"Exhausted retries url={url} params={params}")
-
-
-def bucket_name(offset_seconds: int) -> str:
-    for lo, hi in BUCKETS:
-        if lo <= offset_seconds < hi:
-            return f"{lo}-{hi}s"
-    return "out_of_window"
-
-
-def parse_window_start_from_slug(slug: str) -> int | None:
-    slug = str(slug or "")
-    if not slug.startswith(BTC5_SLUG_PREFIX):
-        return None
-    suffix = slug[len(BTC5_SLUG_PREFIX) :]
-    if suffix.isdigit():
-        return int(suffix)
-    return None
-
-
-def parse_winner_index(outcome_prices: list[float]) -> int | None:
-    if len(outcome_prices) < 2:
-        return None
-    yes = parse_float(outcome_prices[0], default=-1.0)
-    no = parse_float(outcome_prices[1], default=-1.0)
-    if yes >= 0.99 and no <= 0.01:
+def _normalize_timestamp_seconds(raw_ts: Any) -> int:
+    ts = _safe_int(raw_ts, default=0)
+    if ts <= 0:
         return 0
-    if no >= 0.99 and yes <= 0.01:
-        return 1
+    # Data API timestamps are occasionally milliseconds.
+    if ts > 10_000_000_000:
+        ts = ts // 1000
+    return ts
+
+
+def _window_start_from_slug(slug: str) -> int:
+    text = str(slug or "").strip().lower()
+    if not text.startswith(BTC5_PREFIX):
+        return 0
+    suffix = text[len(BTC5_PREFIX) :]
+    return _safe_int(suffix, default=0)
+
+
+def _bucket_label_for_offset(offset_seconds: int) -> str | None:
+    for label, lo, hi in BUCKETS:
+        if lo <= offset_seconds < hi:
+            return label
     return None
 
 
-def effective_outcome_index(side: str, outcome_index: int) -> int:
-    return outcome_index if str(side).upper() == "BUY" else 1 - outcome_index
+def _effective_outcome_index(trade: dict[str, Any]) -> int:
+    idx = _safe_int(trade.get("outcomeIndex"), default=0)
+    side = str(trade.get("side") or "").strip().upper()
+    return idx if side == "BUY" else 1 - idx
 
 
-def notional_usd(trade: dict[str, Any]) -> float:
-    usdc = parse_float(trade.get("usdcSize"), default=0.0)
-    if usdc > 0:
-        return usdc
-    price = parse_float(trade.get("price"), default=0.0)
-    size = parse_float(trade.get("size"), default=0.0)
-    return max(0.0, price * size)
+def _trade_notional_usd(trade: dict[str, Any]) -> float:
+    usdc_size = _safe_float(trade.get("usdcSize"), default=0.0)
+    if usdc_size > 0:
+        return usdc_size
+    return _safe_float(trade.get("size"), default=0.0) * _safe_float(trade.get("price"), default=0.0)
 
 
-def wilson_lower_bound(successes: int, total: int, z: float = 1.96) -> float:
-    if total <= 0:
-        return 0.0
-    phat = successes / total
-    denom = 1.0 + (z * z) / total
-    centre = phat + (z * z) / (2 * total)
-    margin = z * math.sqrt((phat * (1.0 - phat) + (z * z) / (4 * total)) / total)
-    return max(0.0, (centre - margin) / denom)
+@dataclass(frozen=True)
+class MarketWindow:
+    condition_id: str
+    slug: str
+    window_start_ts: int
+    source: str
 
 
-def load_wallets_from_scores_db(db_path: Path, top_n: int) -> list[SmartWallet]:
-    if not db_path.exists():
-        return []
-    try:
-        with sqlite3.connect(str(db_path)) as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                """
-                SELECT wallet, total_pnl, total_volume
-                FROM wallet_scores
-                ORDER BY total_pnl DESC, total_volume DESC
-                LIMIT ?
-                """,
-                (int(top_n),),
-            ).fetchall()
-    except sqlite3.Error as exc:
-        LOG.warning("wallet_scores query failed: %s", exc)
-        return []
-    wallets: list[SmartWallet] = []
-    for idx, row in enumerate(rows, start=1):
-        address = normalize_wallet(row["wallet"])
-        if not address:
-            continue
-        wallets.append(
-            SmartWallet(
-                address=address,
-                rank=idx,
-                pnl_usd=round(parse_float(row["total_pnl"]), 6),
-                volume_usd=round(parse_float(row["total_volume"]), 6),
-                source=f"db:{db_path}",
-            )
-        )
-    return wallets
+class ApiClient:
+    def __init__(self, *, min_interval_seconds: float = 0.12, timeout_seconds: float = 20.0):
+        self.min_interval_seconds = max(0.0, float(min_interval_seconds))
+        self.timeout_seconds = float(timeout_seconds)
+        self._last_request_monotonic = 0.0
+        self.session = requests.Session()
 
+    def _throttle(self) -> None:
+        if self.min_interval_seconds <= 0.0:
+            return
+        now = time.monotonic()
+        elapsed = now - self._last_request_monotonic
+        sleep_for = self.min_interval_seconds - elapsed
+        if sleep_for > 0:
+            time.sleep(sleep_for)
 
-def _coerce_wallet_items(items: list[dict[str, Any]], source: str) -> list[SmartWallet]:
-    wallets: list[SmartWallet] = []
-    for row in items:
-        address = normalize_wallet(
-            row.get("address")
-            or row.get("wallet")
-            or row.get("proxyWallet")
-            or row.get("walletAddress")
-        )
-        if not address:
-            continue
-        rank = parse_int(row.get("rank"), default=0)
-        pnl = parse_float(
-            row.get("pnl_usd", row.get("total_pnl", row.get("pnl", row.get("realized_pnl", 0.0)))),
-            default=0.0,
-        )
-        volume = parse_float(
-            row.get("volume_usd", row.get("total_volume", row.get("volume", 0.0))),
-            default=0.0,
-        )
-        wallets.append(
-            SmartWallet(
-                address=address,
-                rank=rank,
-                pnl_usd=round(pnl, 6),
-                volume_usd=round(volume, 6),
-                source=source,
-            )
-        )
-    return wallets
-
-
-def load_wallets_from_json(json_path: Path, top_n: int) -> list[SmartWallet]:
-    if not json_path.exists():
-        return []
-    try:
-        payload = json.loads(json_path.read_text())
-    except (OSError, json.JSONDecodeError) as exc:
-        LOG.warning("Unable to read %s: %s", json_path, exc)
-        return []
-
-    rows: list[dict[str, Any]] = []
-    if isinstance(payload, list):
-        rows = [x for x in payload if isinstance(x, dict)]
-    elif isinstance(payload, dict):
-        if isinstance(payload.get("ranked_wallets"), list):
-            rows = [x for x in payload["ranked_wallets"] if isinstance(x, dict)]
-        elif isinstance(payload.get("wallets"), dict):
-            rows = [
-                {"address": address, **(data if isinstance(data, dict) else {})}
-                for address, data in payload["wallets"].items()
-            ]
-        elif isinstance(payload.get("wallets"), list):
-            rows = [x for x in payload["wallets"] if isinstance(x, dict)]
-    wallets = _coerce_wallet_items(rows, source=f"json:{json_path}")
-    wallets.sort(key=lambda w: (-w.pnl_usd, -w.volume_usd, w.address))
-    out: list[SmartWallet] = []
-    for idx, wallet in enumerate(wallets[:top_n], start=1):
-        out.append(
-            SmartWallet(
-                address=wallet.address,
-                rank=idx,
-                pnl_usd=wallet.pnl_usd,
-                volume_usd=wallet.volume_usd,
-                source=wallet.source,
-            )
-        )
-    return out
-
-
-def load_wallets_from_leaderboard(top_n: int) -> list[SmartWallet]:
-    payload = request_json(
-        f"{DATA_API}/v1/leaderboard",
-        params={
-            "category": "CRYPTO",
-            "timePeriod": "ALL",
-            "orderBy": "PNL",
-            "limit": max(50, top_n),
-        },
-    )
-    if not isinstance(payload, list):
-        return []
-    wallets: list[SmartWallet] = []
-    for idx, row in enumerate(payload, start=1):
-        address = normalize_wallet(row.get("proxyWallet") or row.get("walletAddress") or row.get("wallet"))
-        if not address:
-            continue
-        wallets.append(
-            SmartWallet(
-                address=address,
-                rank=idx,
-                pnl_usd=round(parse_float(row.get("pnl"), default=0.0), 6),
-                volume_usd=round(parse_float(row.get("volume"), default=0.0), 6),
-                source="api:data-api-v1-leaderboard-pnl-all",
-            )
-        )
-        if len(wallets) >= top_n:
-            break
-    return wallets
-
-
-def load_top_smart_wallets(top_n: int, wallet_scores_db: Path, wallet_json_paths: list[Path]) -> tuple[list[SmartWallet], dict[str, Any]]:
-    db_wallets = load_wallets_from_scores_db(wallet_scores_db, top_n=top_n)
-    if len(db_wallets) >= top_n:
-        return db_wallets[:top_n], {
-            "primary_source": f"db:{wallet_scores_db}",
-            "source_fallback_used": False,
-            "db_rows": len(db_wallets),
-        }
-
-    merged: dict[str, SmartWallet] = {w.address: w for w in db_wallets}
-    file_counts: dict[str, int] = {}
-    for path in wallet_json_paths:
-        rows = load_wallets_from_json(path, top_n=max(100, top_n))
-        file_counts[str(path)] = len(rows)
-        for wallet in rows:
-            existing = merged.get(wallet.address)
-            if existing is None or (wallet.pnl_usd, wallet.volume_usd) > (
-                existing.pnl_usd,
-                existing.volume_usd,
-            ):
-                merged[wallet.address] = wallet
-
-    if len(merged) < top_n:
-        api_wallets = load_wallets_from_leaderboard(top_n=max(60, top_n))
-        for wallet in api_wallets:
-            existing = merged.get(wallet.address)
-            if existing is None or (wallet.pnl_usd, wallet.volume_usd) > (
-                existing.pnl_usd,
-                existing.volume_usd,
-            ):
-                merged[wallet.address] = wallet
-
-    ranked = sorted(
-        merged.values(),
-        key=lambda w: (-w.pnl_usd, -w.volume_usd, w.address),
-    )[:top_n]
-    normalized: list[SmartWallet] = []
-    for idx, wallet in enumerate(ranked, start=1):
-        normalized.append(
-            SmartWallet(
-                address=wallet.address,
-                rank=idx,
-                pnl_usd=wallet.pnl_usd,
-                volume_usd=wallet.volume_usd,
-                source=wallet.source,
-            )
-        )
-    return normalized, {
-        "primary_source": normalized[0].source if normalized else "none",
-        "source_fallback_used": True,
-        "db_rows": len(db_wallets),
-        "json_rows": file_counts,
-        "selected_count": len(normalized),
-    }
-
-
-def load_btc5_filled_windows(db_path: Path, limit: int) -> list[dict[str, Any]]:
-    if not db_path.exists():
-        return []
-    try:
-        with sqlite3.connect(str(db_path)) as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                """
-                SELECT
-                    window_start_ts,
-                    slug,
-                    order_price,
-                    direction,
-                    won,
-                    pnl_usd,
-                    order_status,
-                    filled
-                FROM window_trades
-                WHERE COALESCE(filled, 0) = 1
-                   OR LOWER(COALESCE(order_status, '')) = 'live_filled'
-                ORDER BY window_start_ts DESC
-                LIMIT ?
-                """,
-                (int(limit),),
-            ).fetchall()
-    except sqlite3.Error as exc:
-        LOG.warning("Failed reading %s: %s", db_path, exc)
-        return []
-    out: list[dict[str, Any]] = []
-    for row in rows:
-        out.append({key: row[key] for key in row.keys()})
-    return out
-
-
-def fetch_btc5_markets_page(offset: int, limit: int = 500) -> list[dict[str, Any]]:
-    payload = request_json(
-        f"{GAMMA_API}/markets",
-        params={"limit": limit, "offset": offset, "order": "createdAt", "ascending": "false"},
-    )
-    return payload if isinstance(payload, list) else []
-
-
-def row_to_market_window(row: dict[str, Any], source: str) -> MarketWindow | None:
-    slug = str(row.get("slug") or "")
-    if not slug.startswith(BTC5_SLUG_PREFIX):
-        return None
-    window_start = parse_window_start_from_slug(slug)
-    if window_start is None:
-        return None
-    condition_id = str(row.get("conditionId") or row.get("condition_id") or "").strip()
-    if not condition_id:
-        return None
-    outcomes = parse_json_maybe(row.get("outcomes"), [])
-    outcomes = [str(x) for x in outcomes] if isinstance(outcomes, list) else []
-    prices_raw = parse_json_maybe(row.get("outcomePrices"), [])
-    outcome_prices = [parse_float(x, default=-1.0) for x in prices_raw] if isinstance(prices_raw, list) else []
-    winner_idx = parse_winner_index(outcome_prices)
-    return MarketWindow(
-        condition_id=condition_id,
-        slug=slug,
-        window_start_ts=window_start,
-        winner_index=winner_idx,
-        outcomes=outcomes if outcomes else ["Outcome0", "Outcome1"],
-        outcome_prices=outcome_prices,
-        source=source,
-    )
-
-
-def map_slugs_to_markets(slugs: set[str], max_pages: int = 120, page_size: int = 500) -> dict[str, MarketWindow]:
-    if not slugs:
-        return {}
-    unresolved = set(slugs)
-    mapping: dict[str, MarketWindow] = {}
-    for page in range(max_pages):
-        offset = page * page_size
-        rows = fetch_btc5_markets_page(offset=offset, limit=page_size)
-        if not rows:
-            break
-        for row in rows:
-            slug = str(row.get("slug") or "")
-            if slug not in unresolved:
+    def get_json(self, url: str, params: dict[str, Any] | None = None, *, retries: int = 4) -> Any:
+        for attempt in range(retries):
+            self._throttle()
+            try:
+                response = self.session.get(url, params=params, timeout=self.timeout_seconds)
+            except requests.RequestException as exc:
+                if attempt == retries - 1:
+                    raise RuntimeError(f"request failed for {url}: {exc}") from exc
+                time.sleep(2**attempt)
                 continue
-            market = row_to_market_window(row, source="gamma:slug_map")
-            if market is None:
+
+            self._last_request_monotonic = time.monotonic()
+            if response.status_code == 429:
+                time.sleep(2 ** (attempt + 1))
                 continue
-            mapping[slug] = market
-            unresolved.discard(slug)
-        if not unresolved:
-            break
-        if len(rows) < page_size:
-            break
-    if unresolved:
-        LOG.warning("Unable to map %d slugs to condition IDs", len(unresolved))
-    return mapping
-
-
-def fetch_resolved_btc5_markets(max_markets: int, max_pages: int = 260, page_size: int = 500) -> list[MarketWindow]:
-    markets: list[MarketWindow] = []
-    for page in range(max_pages):
-        offset = page * page_size
-        rows = fetch_btc5_markets_page(offset=offset, limit=page_size)
-        if not rows:
-            break
-        for row in rows:
-            market = row_to_market_window(row, source="gamma:resolved_scan")
-            if market is None:
+            if response.status_code >= 400:
+                if attempt == retries - 1:
+                    raise RuntimeError(f"http {response.status_code} for {url} params={params}")
+                time.sleep(2**attempt)
                 continue
-            if market.winner_index is None:
-                continue
-            markets.append(market)
-            if len(markets) >= max_markets:
-                return markets
-        if len(rows) < page_size:
-            break
-    return markets
+            return response.json()
+        raise RuntimeError(f"exhausted retries for {url}")
 
+    def fetch_condition_trades(self, condition_id: str, *, limit: int) -> list[dict[str, Any]]:
+        payload = self.get_json(
+            f"{DATA_API_BASE}/trades",
+            params={"conditionId": condition_id, "limit": int(limit), "takerOnly": "false"},
+        )
+        return payload if isinstance(payload, list) else []
 
-def choose_target_markets(
-    *,
-    btc5_db_path: Path,
-    target_market_count: int,
-    prefer_db_fill_windows: bool,
-) -> tuple[list[MarketWindow], dict[str, Any]]:
-    if prefer_db_fill_windows:
-        fills = load_btc5_filled_windows(btc5_db_path, limit=max(100, target_market_count * 3))
-    else:
-        fills = []
-
-    high_price_fills = [r for r in fills if parse_float(r.get("order_price"), default=0.0) >= 0.90]
-    prioritized = high_price_fills if high_price_fills else fills
-    prioritized = prioritized[:target_market_count]
-    slugs = {
-        str(row.get("slug") or "")
-        for row in prioritized
-        if str(row.get("slug") or "").startswith(BTC5_SLUG_PREFIX)
-    }
-
-    if slugs:
-        mapping = map_slugs_to_markets(slugs)
-        selected = [mapping[s] for s in sorted(slugs) if s in mapping]
-        if selected:
-            return selected, {
-                "source": f"db:{btc5_db_path}",
-                "filled_windows_found": len(fills),
-                "high_price_filled_windows_found": len(high_price_fills),
-                "selected_windows": len(selected),
-            }
-
-    fallback = fetch_resolved_btc5_markets(max_markets=target_market_count)
-    return fallback, {
-        "source": "gamma_api_fallback_resolved_markets",
-        "filled_windows_found": len(fills),
-        "high_price_filled_windows_found": len(high_price_fills),
-        "selected_windows": len(fallback),
-    }
-
-
-def fetch_market_trades(
-    condition_id: str,
-    *,
-    max_rows: int = 0,
-    page_size: int = 200,
-    max_pages_safety: int = 500,
-) -> list[dict[str, Any]]:
-    all_rows: list[dict[str, Any]] = []
-    page = 0
-    while True:
-        if max_rows > 0 and len(all_rows) >= max_rows:
-            break
-        if page >= max_pages_safety:
-            LOG.warning(
-                "Stopping trade pagination for %s at safety page cap=%d",
-                condition_id,
-                max_pages_safety,
-            )
-            break
-        offset = page * page_size
-        try:
-            payload = request_json(
-                f"{DATA_API}/trades",
-                params={"market": condition_id, "limit": page_size, "offset": offset, "takerOnly": "false"},
-            )
-        except RuntimeError as exc:
-            message = str(exc)
-            if "400 Client Error" in message and offset > 0:
-                # Current Data API surface rejects deep offsets (typically beyond ~3000).
-                LOG.info(
-                    "Stopping pagination for %s at offset=%d due to API offset cap",
-                    condition_id,
-                    offset,
-                )
-                break
-            raise
-        if not isinstance(payload, list) or not payload:
-            break
-        if max_rows > 0 and len(all_rows) + len(payload) > max_rows:
-            take = max(0, max_rows - len(all_rows))
-            all_rows.extend(payload[:take])
-            break
-        all_rows.extend(payload)
-        if len(payload) < page_size:
-            break
-        page += 1
-    return all_rows
-
-
-def maybe_trade_pnl_usd(trade: dict[str, Any], won: bool) -> float:
-    # Interpretable PnL proxy for BUY trades only; SELL rows return 0 for this metric.
-    if str(trade.get("side") or "").upper() != "BUY":
-        return 0.0
-    px = parse_float(trade.get("price"), default=0.0)
-    notion = notional_usd(trade)
-    if px <= 0.0 or notion <= 0.0:
-        return 0.0
-    if won:
-        return notion * ((1.0 - px) / px)
-    return -notion
-
-
-def summarize_timing_distribution(
-    smart_wallets: dict[str, SmartWallet],
-    markets: list[MarketWindow],
-    market_trades: dict[str, list[dict[str, Any]]],
-) -> tuple[dict[str, Any], dict[str, int], list[dict[str, Any]]]:
-    per_wallet: dict[str, dict[str, Any]] = {}
-    global_buckets = {f"{lo}-{hi}s": 0 for lo, hi in BUCKETS}
-    global_buckets["out_of_window"] = 0
-    sampled_rows: list[dict[str, Any]] = []
-
-    market_map = {m.condition_id: m for m in markets}
-    for condition_id, trades in market_trades.items():
-        market = market_map.get(condition_id)
-        if market is None:
-            continue
+    @staticmethod
+    def _wallet_match_ratio(expected_wallet: str, trades: list[dict[str, Any]]) -> float:
+        expected = _normalize_wallet(expected_wallet)
+        if not trades or not expected:
+            return 0.0
+        matched = 0
         for trade in trades:
-            wallet = normalize_wallet(trade.get("proxyWallet"))
-            if wallet not in smart_wallets:
+            if _normalize_wallet(trade.get("proxyWallet")) == expected:
+                matched += 1
+        return matched / float(len(trades))
+
+    def fetch_wallet_trades(self, wallet: str, *, limit: int) -> list[dict[str, Any]]:
+        fallback_rows: list[dict[str, Any]] = []
+        for param_key in ("user", "proxyWallet"):
+            payload = self.get_json(
+                f"{DATA_API_BASE}/trades",
+                params={param_key: wallet, "limit": int(limit), "takerOnly": "false"},
+            )
+            rows = payload if isinstance(payload, list) else []
+            if not rows:
                 continue
-            ts = parse_int(trade.get("timestamp"), default=0)
-            offset = ts - market.window_start_ts
-            bucket = bucket_name(offset)
-            global_buckets[bucket] = global_buckets.get(bucket, 0) + 1
-            effective_idx = effective_outcome_index(
-                str(trade.get("side") or ""),
-                parse_int(trade.get("outcomeIndex"), default=0),
-            )
-            won = market.winner_index is not None and effective_idx == market.winner_index
-            direction = (
-                market.outcomes[effective_idx]
-                if 0 <= effective_idx < len(market.outcomes)
-                else f"outcome_{effective_idx}"
-            )
-            notion = round(notional_usd(trade), 6)
-            price = round(parse_float(trade.get("price"), default=0.0), 6)
+            ratio = self._wallet_match_ratio(wallet, rows)
+            if ratio >= 0.6:
+                return rows
+            if not fallback_rows:
+                fallback_rows = rows
+        return fallback_rows
 
-            rec = per_wallet.setdefault(
-                wallet,
-                {
-                    "address": wallet,
-                    "rank": smart_wallets[wallet].rank,
-                    "source": smart_wallets[wallet].source,
-                    "pnl_usd_reference": smart_wallets[wallet].pnl_usd,
-                    "volume_usd_reference": smart_wallets[wallet].volume_usd,
-                    "total_smart_trades_analyzed": 0,
-                    "entry_timing_buckets": {f"{lo}-{hi}s": 0 for lo, hi in BUCKETS} | {"out_of_window": 0},
-                    "entry_timing_notional_usd": {
-                        f"{lo}-{hi}s": 0.0 for lo, hi in BUCKETS
-                    }
-                    | {"out_of_window": 0.0},
-                    "high_price_early_trades_0_120_0p90_0p94": 0,
-                    "high_price_early_wins_0_120_0p90_0p94": 0,
-                },
-            )
-            rec["total_smart_trades_analyzed"] += 1
-            rec["entry_timing_buckets"][bucket] += 1
-            rec["entry_timing_notional_usd"][bucket] = round(
-                rec["entry_timing_notional_usd"][bucket] + notion,
-                6,
-            )
-            if (
-                0 <= offset < 120
-                and 0.90 <= price <= 0.94
-                and str(trade.get("side") or "").upper() == "BUY"
-            ):
-                rec["high_price_early_trades_0_120_0p90_0p94"] += 1
-                rec["high_price_early_wins_0_120_0p90_0p94"] += int(bool(won))
-
-            sampled_rows.append(
-                {
-                    "condition_id": condition_id,
-                    "slug": market.slug,
-                    "wallet": wallet,
-                    "timestamp": ts,
-                    "entry_time_offset_sec": offset,
-                    "bucket": bucket,
-                    "side": str(trade.get("side") or ""),
-                    "direction": direction,
-                    "price": price,
-                    "notional_usd": notion,
-                    "won": bool(won),
-                }
-            )
-    return per_wallet, global_buckets, sampled_rows
-
-
-def compute_early_vs_late_correlation(
-    sampled_rows: list[dict[str, Any]],
-) -> dict[str, Any]:
-    def _group(rows: list[dict[str, Any]]) -> dict[str, Any]:
-        n = len(rows)
-        wins = sum(1 for r in rows if bool(r.get("won")))
-        total_notional = sum(parse_float(r.get("notional_usd"), default=0.0) for r in rows)
-        pnl = 0.0
-        for row in rows:
-            price = parse_float(row.get("price"), default=0.0)
-            notion = parse_float(row.get("notional_usd"), default=0.0)
-            if price <= 0.0 or notion <= 0.0:
-                continue
-            if bool(row.get("won")):
-                pnl += notion * ((1.0 - price) / price)
-            else:
-                pnl -= notion
-        return {
-            "trade_count": n,
-            "wins": wins,
-            "win_rate": round(wins / n, 6) if n else None,
-            "wilson_95_lower": round(wilson_lower_bound(wins, n), 6) if n else None,
-            "total_notional_usd": round(total_notional, 6),
-            "approx_pnl_usd": round(pnl, 6),
+    def fetch_markets_page(
+        self,
+        *,
+        closed: bool,
+        limit: int,
+        offset: int,
+        order: str | None = None,
+        ascending: bool | None = None,
+        active: bool | None = None,
+        slug: str | None = None,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {
+            "closed": str(closed).lower(),
+            "limit": int(limit),
+            "offset": int(offset),
         }
+        if active is not None:
+            params["active"] = str(active).lower()
+        if order:
+            params["order"] = order
+        if ascending is not None:
+            params["ascending"] = str(bool(ascending)).lower()
+        if slug:
+            params["slug"] = slug
+        payload = self.get_json(f"{GAMMA_API_BASE}/markets", params=params)
+        return payload if isinstance(payload, list) else []
 
-    buy_rows = [r for r in sampled_rows if str(r.get("side") or "").upper() == "BUY"]
-    early_price_band = [
-        r
-        for r in buy_rows
-        if 0 <= parse_int(r.get("entry_time_offset_sec"), default=-9999) < 120
-        and 0.90 <= parse_float(r.get("price"), default=0.0) <= 0.94
-    ]
-    late_price_band = [
-        r
-        for r in buy_rows
-        if 180 <= parse_int(r.get("entry_time_offset_sec"), default=-9999) < 300
-        and 0.90 <= parse_float(r.get("price"), default=0.0) <= 0.94
-    ]
-    early_high_price = [
-        r
-        for r in buy_rows
-        if 0 <= parse_int(r.get("entry_time_offset_sec"), default=-9999) < 180
-        and parse_float(r.get("price"), default=0.0) >= 0.90
-    ]
-    late_high_price = [
-        r
-        for r in buy_rows
-        if 180 <= parse_int(r.get("entry_time_offset_sec"), default=-9999) < 300
-        and parse_float(r.get("price"), default=0.0) >= 0.90
-    ]
-    in_window = [
-        r for r in buy_rows if 0 <= parse_int(r.get("entry_time_offset_sec"), default=-9999) < 300
-    ]
-    early_share = (
-        len([r for r in in_window if parse_int(r.get("entry_time_offset_sec"), default=9999) < 180]) / len(in_window)
-        if in_window
-        else 0.0
-    )
-    return {
-        "definition": "BUY trades by smart wallets; outcome judged by effective side vs resolved winner",
-        "early_price_band_0_120s_price_0p90_0p94": _group(early_price_band),
-        "late_price_band_180_300s_price_0p90_0p94": _group(late_price_band),
-        "early_high_price_0_180s_price_gte_0p90": _group(early_high_price),
-        "late_high_price_180_300s_price_gte_0p90": _group(late_high_price),
-        "in_window_buy_trades": len(in_window),
-        "early_share_0_180_over_0_300": round(early_share, 6),
-    }
+    def fetch_market_by_slug(self, slug: str) -> dict[str, Any] | None:
+        page = self.fetch_markets_page(closed=False, active=True, limit=20, offset=0, slug=slug)
+        for row in page:
+            if str(row.get("slug") or "").strip() == slug:
+                return row
+        page = self.fetch_markets_page(closed=True, limit=50, offset=0, order="endDate", ascending=False, slug=slug)
+        for row in page:
+            if str(row.get("slug") or "").strip() == slug:
+                return row
+        return None
+
+    def fetch_market_exact_slug(self, slug: str) -> dict[str, Any] | None:
+        page = self.fetch_markets_page(closed=False, limit=5, offset=0, slug=slug)
+        for row in page:
+            if str(row.get("slug") or "").strip() == slug:
+                return row
+        return None
 
 
-def evaluate_consensus_grid(
-    *,
-    markets: list[MarketWindow],
-    market_trades: dict[str, list[dict[str, Any]]],
-    smart_wallet_set: set[str],
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    observation_windows = [60, 90, 120, 150, 180, 210, 240]
-    min_wallet_grid = [2, 3, 4, 5]
-    min_notional_grid = [100.0, 150.0, 200.0, 300.0, 500.0]
-    grid_results: list[dict[str, Any]] = []
+def _load_top_wallets(wallet_scores_path: Path, *, top_n: int) -> tuple[list[str], dict[str, float]]:
+    wallets: list[str] = []
+    wallet_win_rate_estimate: dict[str, float] = {}
+    seed_seen: set[str] = set()
 
-    market_lookup = {m.condition_id: m for m in markets}
+    for addr in KNOWN_ELITE_WALLETS.values():
+        norm = _normalize_wallet(addr)
+        if norm and norm not in seed_seen:
+            seed_seen.add(norm)
+            wallets.append(norm)
 
-    for obs_secs in observation_windows:
-        for min_wallets in min_wallet_grid:
-            for min_notional in min_notional_grid:
-                signal_count = 0
-                wins = 0
-                copy_prices: list[float] = []
-                per_signal_rows: list[dict[str, Any]] = []
-
-                for condition_id, trades in market_trades.items():
-                    market = market_lookup.get(condition_id)
-                    if market is None or market.winner_index is None:
-                        continue
-                    by_side: dict[int, dict[str, Any]] = {}
-                    for trade in trades:
-                        wallet = normalize_wallet(trade.get("proxyWallet"))
-                        if wallet not in smart_wallet_set:
-                            continue
-                        ts = parse_int(trade.get("timestamp"), default=0)
-                        offset = ts - market.window_start_ts
-                        if not (0 <= offset <= obs_secs):
-                            continue
-                        price = parse_float(trade.get("price"), default=0.0)
-                        if price < 0.90:
-                            continue
-                        eff_idx = effective_outcome_index(
-                            str(trade.get("side") or ""),
-                            parse_int(trade.get("outcomeIndex"), default=0),
-                        )
-                        side_rec = by_side.setdefault(
-                            eff_idx,
-                            {"wallets": set(), "notional": 0.0, "prices": []},
-                        )
-                        side_rec["wallets"].add(wallet)
-                        side_rec["notional"] += notional_usd(trade)
-                        side_rec["prices"].append(price)
-
-                    if not by_side:
-                        continue
-
-                    best_idx, best_side = max(
-                        by_side.items(),
-                        key=lambda item: (item[1]["notional"], len(item[1]["wallets"])),
-                    )
-                    wallet_count = len(best_side["wallets"])
-                    notional = best_side["notional"]
-                    if wallet_count < min_wallets or notional < min_notional:
-                        continue
-
-                    signal_count += 1
-                    won = best_idx == market.winner_index
-                    wins += int(won)
-                    if best_side["prices"]:
-                        copy_prices.extend(best_side["prices"])
-                    per_signal_rows.append(
-                        {
-                            "condition_id": condition_id,
-                            "slug": market.slug,
-                            "winner_index": market.winner_index,
-                            "predicted_index": best_idx,
-                            "won": won,
-                            "smart_wallet_count": wallet_count,
-                            "combined_notional_usd": round(notional, 6),
-                            "min_price": round(min(best_side["prices"]), 6) if best_side["prices"] else None,
-                            "max_price": round(max(best_side["prices"]), 6) if best_side["prices"] else None,
-                        }
-                    )
-
-                if signal_count == 0:
+    if wallet_scores_path.exists():
+        payload = json.loads(wallet_scores_path.read_text(encoding="utf-8"))
+        ranked = payload.get("ranked_wallets")
+        if isinstance(ranked, list):
+            for row in ranked:
+                if not isinstance(row, dict):
                     continue
-                win_rate = wins / signal_count
-                result = {
-                    "observation_window_secs": obs_secs,
-                    "min_wallets": min_wallets,
-                    "min_notional_usd": min_notional,
-                    "signals": signal_count,
-                    "wins": wins,
-                    "win_rate": round(win_rate, 6),
-                    "wilson_95_lower": round(wilson_lower_bound(wins, signal_count), 6),
-                    "copy_price_min": round(min(copy_prices), 6) if copy_prices else None,
-                    "copy_price_max": round(max(copy_prices), 6) if copy_prices else None,
-                    "copy_price_avg": round(sum(copy_prices) / len(copy_prices), 6) if copy_prices else None,
-                    "sample_signals": per_signal_rows[:8],
+                addr = _normalize_wallet(row.get("address"))
+                if not addr or addr in seed_seen:
+                    continue
+                seed_seen.add(addr)
+                wallets.append(addr)
+                win_est = _safe_float(row.get("estimated_win_rate"), default=-1.0)
+                if 0.0 <= win_est <= 1.0:
+                    wallet_win_rate_estimate[addr] = win_est
+                if len(wallets) >= max(top_n * 3, top_n):
+                    break
+        wallet_map = payload.get("wallets")
+        if isinstance(wallet_map, dict):
+            for raw_addr, row in wallet_map.items():
+                if not isinstance(row, dict):
+                    continue
+                addr = _normalize_wallet(raw_addr)
+                if not addr:
+                    continue
+                win_est = _safe_float(row.get("win_rate"), default=-1.0)
+                if 0.0 <= win_est <= 1.0 and addr not in wallet_win_rate_estimate:
+                    wallet_win_rate_estimate[addr] = win_est
+
+    # Keep elites + top-ranked candidates; trim to requested top-N.
+    selected = wallets[: max(1, top_n)]
+    return selected, wallet_win_rate_estimate
+
+
+def _extract_historical_fill_windows(db_path: Path, *, max_rows: int) -> list[dict[str, Any]]:
+    if not db_path.exists():
+        LOG.warning("historical fill DB not found: %s", db_path)
+        return []
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        table = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='window_trades'").fetchone()
+        if table is None:
+            LOG.warning("window_trades table missing in %s", db_path)
+            return []
+        rows = conn.execute(
+            """
+            SELECT window_start_ts, slug, won, order_status
+            FROM window_trades
+            WHERE order_status = 'live_filled'
+              AND COALESCE(won, 0) = 1
+            ORDER BY decision_ts DESC, id DESC
+            LIMIT ?
+            """,
+            (int(max_rows),),
+        ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            ws = _safe_int(row["window_start_ts"], default=0)
+            slug = str(row["slug"] or "").strip()
+            if ws <= 0 and slug:
+                ws = _window_start_from_slug(slug)
+            if ws <= 0:
+                continue
+            out.append(
+                {
+                    "window_start_ts": ws,
+                    "slug": slug or f"{BTC5_PREFIX}{ws}",
+                    "won": 1,
                 }
-                grid_results.append(result)
-
-    grid_results.sort(
-        key=lambda r: (
-            -r["wilson_95_lower"],
-            -r["signals"],
-            -r["win_rate"],
-            r["copy_price_avg"] if r["copy_price_avg"] is not None else 9.99,
-        )
-    )
-    best = grid_results[0] if grid_results else {}
-    return grid_results, best
+            )
+        return out
+    finally:
+        conn.close()
 
 
-def build_verdict(
+def _collect_recent_btc5_markets(
+    api: ApiClient,
     *,
-    early_correlation: dict[str, Any],
-    best_consensus: dict[str, Any],
-) -> dict[str, Any]:
-    early_share = parse_float(early_correlation.get("early_share_0_180_over_0_300"), default=0.0)
-    evidence_n = parse_int(early_correlation.get("in_window_buy_trades"), default=0)
-    signals = parse_int(best_consensus.get("signals"), default=0)
-    wr = parse_float(best_consensus.get("win_rate"), default=0.0)
-    lb = parse_float(best_consensus.get("wilson_95_lower"), default=0.0)
-    copy_price_avg = parse_float(best_consensus.get("copy_price_avg"), default=99.0)
-    actionable = bool(
-        signals >= 8
-        and wr >= 0.85
-        and lb >= 0.70
-        and early_share >= 0.50
-        and copy_price_avg <= 0.96
-    )
-    if actionable:
-        confidence = max(0.0, min(0.99, lb * 0.7 + min(1.0, signals / 20.0) * 0.3))
-    else:
-        confidence = 0.35
-        if evidence_n >= 80:
-            confidence += min(0.35, evidence_n / 500.0)
-        if early_share < 0.30:
-            confidence += 0.20
-        if signals == 0:
-            confidence += 0.05
-        confidence = max(0.0, min(0.95, confidence))
-    if actionable:
-        rationale = (
-            "Smart-wallet consensus meets threshold quality: enough signals, high win rate, "
-            "strong lower confidence bound, and copy prices still below the late-window cliff."
+    now_ts: int,
+    lookback_hours: int,
+    max_markets: int,
+) -> list[MarketWindow]:
+    earliest_ts = now_ts - int(lookback_hours * 3600)
+    out: dict[str, MarketWindow] = {}
+
+    # Pull active markets first (usually newest windows).
+    active_rows = api.fetch_markets_page(closed=False, active=True, limit=500, offset=0)
+    for market in active_rows:
+        slug = str(market.get("slug") or "").strip()
+        condition_id = str(market.get("conditionId") or market.get("condition_id") or "").strip()
+        ws = _window_start_from_slug(slug)
+        if not condition_id or ws <= 0 or ws < earliest_ts:
+            continue
+        out[condition_id] = MarketWindow(condition_id=condition_id, slug=slug, window_start_ts=ws, source="live")
+
+    # Pull recently closed pages until enough windows.
+    offset = 0
+    page_limit = 500
+    for _ in range(8):
+        page = api.fetch_markets_page(
+            closed=True,
+            limit=page_limit,
+            offset=offset,
+            order="endDate",
+            ascending=False,
         )
-    else:
-        rationale = (
-            "Signal quality is insufficient for live copy deployment under current thresholds "
-            "(too few qualifying signals, weak confidence bound, late-dominant entries, or copy "
-            "prices too close to expiry)."
+        if not page:
+            break
+        stop_for_age = False
+        for market in page:
+            slug = str(market.get("slug") or "").strip()
+            if not slug.startswith(BTC5_PREFIX):
+                continue
+            condition_id = str(market.get("conditionId") or market.get("condition_id") or "").strip()
+            if not condition_id:
+                continue
+            ws = _window_start_from_slug(slug)
+            if ws <= 0:
+                continue
+            if ws < earliest_ts:
+                stop_for_age = True
+                continue
+            if condition_id not in out:
+                out[condition_id] = MarketWindow(
+                    condition_id=condition_id,
+                    slug=slug,
+                    window_start_ts=ws,
+                    source="recent_closed",
+                )
+        if stop_for_age and len(out) >= max_markets:
+            break
+        if len(page) < page_limit:
+            break
+        if len(out) >= max_markets * 2:
+            break
+        offset += page_limit
+
+    ordered = sorted(out.values(), key=lambda row: row.window_start_ts, reverse=True)
+    return ordered[:max_markets]
+
+
+def _collect_recent_btc5_markets_from_wallets(
+    api: ApiClient,
+    *,
+    wallets: list[str],
+    now_ts: int,
+    lookback_hours: int,
+    max_markets: int,
+    per_wallet_trade_limit: int,
+) -> list[MarketWindow]:
+    earliest_ts = now_ts - int(lookback_hours * 3600)
+    out: dict[str, MarketWindow] = {}
+    for wallet in wallets:
+        rows = api.fetch_wallet_trades(wallet=wallet, limit=per_wallet_trade_limit)
+        for trade in rows:
+            ts = _normalize_timestamp_seconds(trade.get("timestamp") or trade.get("matchTime"))
+            if ts <= 0 or ts < earliest_ts:
+                continue
+            slug = str(trade.get("slug") or trade.get("eventSlug") or "").strip()
+            condition_id = str(trade.get("conditionId") or "").strip()
+            if not slug.startswith(BTC5_PREFIX) or not condition_id:
+                continue
+            ws = _window_start_from_slug(slug)
+            if ws <= 0 or ws < earliest_ts:
+                continue
+            if condition_id not in out:
+                out[condition_id] = MarketWindow(
+                    condition_id=condition_id,
+                    slug=slug,
+                    window_start_ts=ws,
+                    source="wallet_tape_recent",
+                )
+            if len(out) >= max_markets * 3:
+                break
+        if len(out) >= max_markets * 3:
+            break
+    ordered = sorted(out.values(), key=lambda row: row.window_start_ts, reverse=True)
+    return ordered[:max_markets]
+
+
+def _collect_recent_btc5_markets_from_slug_probe(
+    api: ApiClient,
+    *,
+    now_ts: int,
+    lookback_hours: int,
+    max_markets: int,
+) -> list[MarketWindow]:
+    latest_window = (now_ts // WINDOW_SECONDS) * WINDOW_SECONDS
+    earliest_window = latest_window - int(lookback_hours * 3600)
+    out: list[MarketWindow] = []
+    seen: set[str] = set()
+    for ws in range(latest_window, earliest_window - 1, -WINDOW_SECONDS):
+        slug = f"{BTC5_PREFIX}{ws}"
+        market = api.fetch_market_exact_slug(slug)
+        if not isinstance(market, dict):
+            continue
+        condition_id = str(market.get("conditionId") or market.get("condition_id") or "").strip()
+        if not condition_id or condition_id in seen:
+            continue
+        seen.add(condition_id)
+        out.append(
+            MarketWindow(
+                condition_id=condition_id,
+                slug=slug,
+                window_start_ts=ws,
+                source="slug_probe",
+            )
         )
-    return {
-        "actionable_signal": actionable,
-        "confidence": round(confidence, 6),
-        "binary_question_answer": "minute_1_to_3" if early_share >= 0.5 else "minute_4_to_5",
-        "rationale": rationale,
-        "gates": {
-            "signals_gte_8": signals >= 8,
-            "win_rate_gte_0p85": wr >= 0.85,
-            "wilson_95_lower_gte_0p70": lb >= 0.70,
-            "early_share_gte_0p50": early_share >= 0.50,
-            "copy_price_avg_lte_0p96": copy_price_avg <= 0.96,
-        },
-    }
+        if len(out) >= max_markets:
+            break
+    return out
 
 
-def run_analysis(args: argparse.Namespace) -> dict[str, Any]:
-    wallet_json_candidates = [
-        Path("wallet_analysis.json"),
-        Path("data/smart_wallets_scored.json"),
-        Path("data/smart_wallets.json"),
-        Path("config/smart_wallets.json"),
-    ]
-    if args.wallet_json:
-        wallet_json_candidates.extend(Path(p) for p in args.wallet_json)
+def _enrich_fill_windows_with_condition_ids(
+    api: ApiClient,
+    fill_rows: list[dict[str, Any]],
+    known_markets: list[MarketWindow],
+) -> list[MarketWindow]:
+    by_slug = {row.slug: row for row in known_markets}
+    by_ws = {row.window_start_ts: row for row in known_markets}
+    out: list[MarketWindow] = []
+    for row in fill_rows:
+        slug = str(row.get("slug") or "").strip()
+        ws = _safe_int(row.get("window_start_ts"), default=0)
+        found = by_slug.get(slug) if slug else None
+        if found is None and ws > 0:
+            found = by_ws.get(ws)
+        if found is None and slug:
+            maybe = api.fetch_market_by_slug(slug)
+            if isinstance(maybe, dict):
+                cid = str(maybe.get("conditionId") or maybe.get("condition_id") or "").strip()
+                ws = ws or _window_start_from_slug(str(maybe.get("slug") or slug))
+                if cid and ws > 0:
+                    found = MarketWindow(condition_id=cid, slug=slug, window_start_ts=ws, source="historical_fill")
+        if found is not None:
+            out.append(
+                MarketWindow(
+                    condition_id=found.condition_id,
+                    slug=found.slug,
+                    window_start_ts=found.window_start_ts,
+                    source="historical_fill",
+                )
+            )
+    dedup: dict[str, MarketWindow] = {}
+    for row in out:
+        dedup[row.condition_id] = row
+    return list(dedup.values())
 
-    top_wallets, wallet_source_info = load_top_smart_wallets(
-        top_n=args.top_wallets,
-        wallet_scores_db=Path(args.wallet_scores_db),
-        wallet_json_paths=wallet_json_candidates,
+
+def _compute_verdict(
+    *,
+    bucket_counts: dict[str, int],
+    bucket_avg_price: dict[str, float | None],
+    sample_size: int,
+    active_market_size: int,
+    min_sample_size: int,
+) -> tuple[str, float, int]:
+    total_entries = sum(bucket_counts.values())
+    early = bucket_counts["0-60s"] + bucket_counts["60-120s"] + bucket_counts["120-180s"]
+    late = bucket_counts["180-240s"] + bucket_counts["240-300s"]
+    early_share = (early / float(total_entries)) if total_entries > 0 else 0.0
+
+    weighted_price_numerator = 0.0
+    weighted_price_denominator = 0
+    for label, count in bucket_counts.items():
+        avg_px = bucket_avg_price.get(label)
+        if avg_px is None or count <= 0:
+            continue
+        weighted_price_numerator += avg_px * count
+        weighted_price_denominator += count
+    weighted_avg_price = (
+        weighted_price_numerator / float(weighted_price_denominator)
+        if weighted_price_denominator > 0
+        else 1.0
     )
+
+    min_active_markets = max(5, min_sample_size // 4)
+    actionable = (
+        sample_size >= min_sample_size
+        and active_market_size >= min_active_markets
+        and total_entries >= 20
+        and early_share >= 0.58
+        and weighted_avg_price <= 0.96
+        and early > late
+    )
+    verdict = "ACTIONABLE" if actionable else "NOT_ACTIONABLE"
+
+    # Confidence scales with sample size and signal separation.
+    sample_term = min(1.0, sample_size / 60.0)
+    activity_term = min(1.0, active_market_size / 20.0)
+    entry_term = min(1.0, total_entries / 80.0)
+    timing_term = min(1.0, abs(early_share - 0.5) * 2.0)
+    price_term = 1.0 if weighted_avg_price <= 0.94 else max(0.0, 1.0 - ((weighted_avg_price - 0.94) / 0.08))
+    confidence = 0.30 + 0.22 * sample_term + 0.18 * activity_term + 0.15 * entry_term + 0.10 * timing_term + 0.05 * price_term
+    confidence = max(0.05, min(0.97, confidence))
+
+    if bucket_counts["0-60s"] + bucket_counts["60-120s"] >= int(0.55 * max(1, total_entries)):
+        observation_window = 120
+    elif bucket_counts["0-60s"] + bucket_counts["60-120s"] + bucket_counts["120-180s"] >= int(
+        0.70 * max(1, total_entries)
+    ):
+        observation_window = 180
+    else:
+        observation_window = 240
+    return verdict, round(confidence, 4), observation_window
+
+
+def run(args: argparse.Namespace) -> dict[str, Any]:
+    api = ApiClient(min_interval_seconds=args.min_interval_seconds, timeout_seconds=args.timeout_seconds)
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    top_wallets, wallet_win_estimates = _load_top_wallets(args.wallet_scores, top_n=args.top_wallets)
+    top_wallet_set = set(top_wallets)
     if not top_wallets:
-        raise RuntimeError("Unable to load smart wallets from DB/files/API")
+        raise RuntimeError("no smart-wallet addresses available; cannot run timing analysis")
 
-    smart_wallet_map = {w.address: w for w in top_wallets}
-    smart_wallet_set = set(smart_wallet_map.keys())
-
-    target_markets, market_source_info = choose_target_markets(
-        btc5_db_path=Path(args.btc5_db),
-        target_market_count=args.market_count,
-        prefer_db_fill_windows=not args.skip_db_windows,
+    historical_fill_rows = _extract_historical_fill_windows(args.db_path, max_rows=args.historical_fill_limit)
+    recent_market_pool = _collect_recent_btc5_markets_from_slug_probe(
+        api,
+        now_ts=now_ts,
+        lookback_hours=args.lookback_hours,
+        max_markets=max(args.live_market_sample * 3, args.live_market_sample + 40),
     )
-    if not target_markets:
-        raise RuntimeError("No target BTC5 markets available for timing analysis")
+    wallet_market_pool = _collect_recent_btc5_markets_from_wallets(
+        api,
+        wallets=top_wallets,
+        now_ts=now_ts,
+        lookback_hours=args.lookback_hours,
+        max_markets=max(args.live_market_sample * 3, args.live_market_sample + 40),
+        per_wallet_trade_limit=args.wallet_trade_limit,
+    )
+    if wallet_market_pool:
+        recent_market_pool.extend(wallet_market_pool)
+    gamma_market_pool = _collect_recent_btc5_markets(
+        api,
+        now_ts=now_ts,
+        lookback_hours=args.lookback_hours,
+        max_markets=max(args.live_market_sample * 3, args.live_market_sample + 40),
+    )
+    if gamma_market_pool:
+        for row in gamma_market_pool:
+            recent_market_pool.append(row)
+    dedup_market_pool: dict[str, MarketWindow] = {}
+    for row in recent_market_pool:
+        dedup_market_pool[row.condition_id] = row
+    recent_market_pool = sorted(dedup_market_pool.values(), key=lambda row: row.window_start_ts, reverse=True)
+    historical_markets = _enrich_fill_windows_with_condition_ids(api, historical_fill_rows, recent_market_pool)
 
-    market_trades: dict[str, list[dict[str, Any]]] = {}
-    market_summaries: list[dict[str, Any]] = []
-    for market in target_markets:
-        trades = fetch_market_trades(
-            market.condition_id,
-            max_rows=args.max_trades_per_market,
-            page_size=args.trade_page_size,
-            max_pages_safety=args.max_market_pages,
-        )
-        market_trades[market.condition_id] = trades
-        smart_trade_count = sum(
-            1
-            for t in trades
-            if normalize_wallet(t.get("proxyWallet")) in smart_wallet_set
-        )
-        market_summaries.append(
+    selected_live_markets: list[MarketWindow] = []
+    historical_condition_ids = {row.condition_id for row in historical_markets}
+    for market in recent_market_pool:
+        if market.condition_id in historical_condition_ids:
+            continue
+        selected_live_markets.append(MarketWindow(**{**market.__dict__, "source": "live_sample"}))
+        if len(selected_live_markets) >= args.live_market_sample:
+            break
+
+    analysis_markets = historical_markets + selected_live_markets
+    deduped_markets: dict[str, MarketWindow] = {}
+    for row in analysis_markets:
+        deduped_markets[row.condition_id] = row
+    markets = sorted(deduped_markets.values(), key=lambda row: row.window_start_ts, reverse=True)
+
+    bucket_stats: dict[str, dict[str, float]] = {
+        label: {"count": 0.0, "price_sum": 0.0, "win_sum": 0.0, "win_count": 0.0}
+        for label, _, _ in BUCKETS
+    }
+    sampled_market_rows: list[dict[str, Any]] = []
+    analyzed_market_rows: list[dict[str, Any]] = []
+    smart_trades_total = 0
+
+    for market in markets:
+        trades = api.fetch_condition_trades(market.condition_id, limit=args.trade_limit)
+        smart_trades_market = 0
+        for trade in trades:
+            wallet = _normalize_wallet(trade.get("proxyWallet"))
+            if wallet not in top_wallet_set:
+                continue
+            ts = _normalize_timestamp_seconds(trade.get("timestamp") or trade.get("matchTime"))
+            if ts <= 0:
+                continue
+            offset_seconds = ts - market.window_start_ts
+            bucket = _bucket_label_for_offset(offset_seconds)
+            if bucket is None:
+                continue
+            price = _safe_float(trade.get("price"), default=-1.0)
+            if not (0.0 < price < 1.0):
+                continue
+            stat = bucket_stats[bucket]
+            stat["count"] += 1.0
+            stat["price_sum"] += price
+            win_est = wallet_win_estimates.get(wallet)
+            if win_est is not None and 0.0 <= win_est <= 1.0:
+                stat["win_sum"] += float(win_est)
+                stat["win_count"] += 1.0
+            smart_trades_market += 1
+            smart_trades_total += 1
+
+        analyzed_market_rows.append(
             {
                 "condition_id": market.condition_id,
                 "slug": market.slug,
                 "window_start_ts": market.window_start_ts,
-                "winner_index": market.winner_index,
-                "winner_label": (
-                    market.outcomes[market.winner_index]
-                    if market.winner_index is not None and 0 <= market.winner_index < len(market.outcomes)
-                    else None
-                ),
-                "outcomes": market.outcomes,
-                "outcome_prices": market.outcome_prices,
-                "trade_count": len(trades),
-                "smart_wallet_trade_count": smart_trade_count,
                 "source": market.source,
+                "smart_wallet_trade_count": smart_trades_market,
             }
         )
+        if smart_trades_market > 0:
+            sampled_market_rows.append(analyzed_market_rows[-1])
 
-    per_wallet, global_buckets, sampled_rows = summarize_timing_distribution(
-        smart_wallets=smart_wallet_map,
-        markets=target_markets,
-        market_trades=market_trades,
-    )
-    early_correlation = compute_early_vs_late_correlation(sampled_rows)
-    consensus_grid, best_consensus = evaluate_consensus_grid(
-        markets=target_markets,
-        market_trades=market_trades,
-        smart_wallet_set=smart_wallet_set,
-    )
-    verdict = build_verdict(
-        early_correlation=early_correlation,
-        best_consensus=best_consensus,
-    )
-
-    recommendations: dict[str, Any] = {}
-    if verdict["actionable_signal"] and best_consensus:
-        recommendations = {
-            "optimal_observation_window_secs": best_consensus.get("observation_window_secs"),
-            "minimum_consensus_threshold": {
-                "wallets": best_consensus.get("min_wallets"),
-                "combined_notional_usd": best_consensus.get("min_notional_usd"),
-            },
-            "expected_price_range_at_copy_time": {
-                "min": best_consensus.get("copy_price_min"),
-                "max": best_consensus.get("copy_price_max"),
-                "avg": best_consensus.get("copy_price_avg"),
-            },
+    distribution: dict[str, dict[str, Any]] = {}
+    bucket_counts: dict[str, int] = {}
+    bucket_avg_price: dict[str, float | None] = {}
+    for label, _, _ in BUCKETS:
+        stat = bucket_stats[label]
+        count = int(stat["count"])
+        avg_price = (stat["price_sum"] / stat["count"]) if stat["count"] > 0 else None
+        win_rate = (stat["win_sum"] / stat["win_count"]) if stat["win_count"] > 0 else None
+        bucket_counts[label] = count
+        bucket_avg_price[label] = round(avg_price, 4) if avg_price is not None else None
+        distribution[label] = {
+            "count": count,
+            "avg_price": round(avg_price, 4) if avg_price is not None else None,
+            "win_rate": round(win_rate, 4) if win_rate is not None else None,
         }
 
-    return {
-        "generated_at": now_iso(),
-        "analysis_version": "1.0.0",
-        "analysis_parameters": {
-            "top_wallets": args.top_wallets,
-            "market_count": args.market_count,
-            "max_trades_per_market": args.max_trades_per_market,
-            "trade_page_size": args.trade_page_size,
-            "max_market_pages": args.max_market_pages,
-            "skip_db_windows": bool(args.skip_db_windows),
-        },
-        "data_sources": {
-            "wallet_source": wallet_source_info,
-            "market_source": market_source_info,
-            "db_paths": {
-                "wallet_scores_db": args.wallet_scores_db,
-                "btc5_db": args.btc5_db,
-            },
-        },
-        "top_smart_wallets": [
-            {
-                "address": w.address,
-                "rank": w.rank,
-                "pnl_usd": w.pnl_usd,
-                "volume_usd": w.volume_usd,
-                "source": w.source,
-            }
-            for w in top_wallets
-        ],
-        "markets_analyzed": market_summaries,
-        "per_wallet_entry_timing_distribution": per_wallet,
-        "global_entry_timing_buckets": global_buckets,
-        "early_entry_correlation": early_correlation,
-        "consensus_grid_top_results": consensus_grid[:20],
-        "best_consensus_result": best_consensus,
+    verdict, confidence, observation_window = _compute_verdict(
+        bucket_counts=bucket_counts,
+        bucket_avg_price=bucket_avg_price,
+        sample_size=len(analyzed_market_rows),
+        active_market_size=len(sampled_market_rows),
+        min_sample_size=args.min_sample_size,
+    )
+
+    payload = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "verdict": verdict,
-        "recommendations_if_actionable": recommendations,
-        "notes": [
-            "If local data/btc_5min_maker.db is unavailable, fallback uses recent resolved BTC5 markets from Gamma.",
-            "Trade API market filter uses ?market=<condition_id>; conditionId parameter is not reliable on current API surface.",
-            "Outcome correctness uses effective side (BUY keeps outcomeIndex, SELL flips outcomeIndex).",
-        ],
+        "confidence": confidence,
+        "sample_size": len(analyzed_market_rows),
+        "smart_wallet_entry_distribution": distribution,
+        "optimal_observation_window_sec": observation_window,
+        "min_consensus_wallets": 3,
+        "min_consensus_notional_usd": 200,
+        "metadata": {
+            "total_smart_wallet_trade_entries": smart_trades_total,
+            "historical_fill_windows_requested": args.historical_fill_limit,
+            "historical_fill_windows_used": len(historical_markets),
+            "live_market_sample_requested": args.live_market_sample,
+            "live_market_sample_used": len([r for r in analyzed_market_rows if r["source"] == "live_sample"]),
+            "markets_with_smart_wallet_activity": len(sampled_market_rows),
+            "wallet_source_path": str(args.wallet_scores.resolve()),
+            "db_path": str(args.db_path),
+            "top_wallet_addresses": top_wallets,
+            "markets_analyzed": analyzed_market_rows,
+        },
     }
+    return payload
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Analyze smart-wallet entry timing for BTC5 markets")
-    parser.add_argument(
-        "--wallet-scores-db",
-        default="data/wallet_scores.db",
-        help="Path to wallet_scores.db (default: data/wallet_scores.db)",
-    )
-    parser.add_argument(
-        "--btc5-db",
-        default="data/btc_5min_maker.db",
-        help="Path to btc_5min_maker.db (default: data/btc_5min_maker.db)",
-    )
-    parser.add_argument(
-        "--wallet-json",
-        action="append",
-        default=[],
-        help="Additional wallet JSON artifact path(s). Can be provided multiple times.",
-    )
-    parser.add_argument(
-        "--output",
-        default="reports/smart_wallet_timing_analysis.json",
-        help="Output path (default: reports/smart_wallet_timing_analysis.json)",
-    )
+    parser = argparse.ArgumentParser(description="Analyze smart-wallet BTC5 entry timing.")
+    parser.add_argument("--wallet-scores", type=Path, default=DEFAULT_WALLET_SCORES)
+    parser.add_argument("--db-path", type=Path, default=DEFAULT_DB_PATH)
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
     parser.add_argument("--top-wallets", type=int, default=20)
-    parser.add_argument("--market-count", type=int, default=30)
-    parser.add_argument(
-        "--max-trades-per-market",
-        type=int,
-        default=0,
-        help="0 means no explicit row cap (paginate until API exhaustion)",
-    )
-    parser.add_argument("--trade-page-size", type=int, default=200)
-    parser.add_argument(
-        "--max-market-pages",
-        type=int,
-        default=500,
-        help="Safety cap on paginated trade requests per market",
-    )
-    parser.add_argument(
-        "--skip-db-windows",
-        action="store_true",
-        help="Ignore btc_5min_maker.db and force API fallback market selection.",
-    )
+    parser.add_argument("--historical-fill-limit", type=int, default=8)
+    parser.add_argument("--live-market-sample", type=int, default=30)
+    parser.add_argument("--lookback-hours", type=int, default=24)
+    parser.add_argument("--trade-limit", type=int, default=200)
+    parser.add_argument("--wallet-trade-limit", type=int, default=500)
+    parser.add_argument("--min-sample-size", type=int, default=20)
+    parser.add_argument("--min-interval-seconds", type=float, default=0.12)
+    parser.add_argument("--timeout-seconds", type=float, default=20.0)
     return parser.parse_args()
 
 
-def main() -> None:
+def main() -> int:
     args = parse_args()
-    payload = run_analysis(args)
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
-    LOG.info("Wrote timing analysis report to %s", output_path)
+    payload = run(args)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(
-        json.dumps(
-            {
-                "output": str(output_path),
-                "actionable_signal": payload["verdict"]["actionable_signal"],
-                "confidence": payload["verdict"]["confidence"],
-                "binary_question_answer": payload["verdict"]["binary_question_answer"],
-                "markets_analyzed": len(payload["markets_analyzed"]),
-            },
-            indent=2,
-            sort_keys=True,
-        )
+        f"wrote {args.output} | verdict={payload['verdict']} "
+        f"confidence={payload['confidence']} sample_size={payload['sample_size']}"
     )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

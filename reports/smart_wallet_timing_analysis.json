@@ -1,0 +1,140 @@
+{
+  "confidence": 0.5068,
+  "generated_at": "2026-03-15T23:38:17.967445+00:00",
+  "metadata": {
+    "db_path": "data/btc_5min_maker.db",
+    "historical_fill_windows_requested": 8,
+    "historical_fill_windows_used": 8,
+    "live_market_sample_requested": 15,
+    "live_market_sample_used": 4,
+    "markets_analyzed": [
+      {
+        "condition_id": "0x9bcbd32c59aff57e65f33fc29ba71e04a7fed579b9256731ac6d644e44397cf9",
+        "slug": "btc-updown-5m-1773617700",
+        "smart_wallet_trade_count": 2,
+        "source": "live_sample",
+        "window_start_ts": 1773617700
+      },
+      {
+        "condition_id": "0xb3c2362a55ef83236cd73b3680a1805289097ed447bcc38675c373dafcfe648d",
+        "slug": "btc-updown-5m-1773617400",
+        "smart_wallet_trade_count": 0,
+        "source": "live_sample",
+        "window_start_ts": 1773617400
+      },
+      {
+        "condition_id": "0x60514052d88ab0bbce095a67ffee132ddcdb5a461dcf97faa27fea41d8f20dcd",
+        "slug": "btc-updown-5m-1773617100",
+        "smart_wallet_trade_count": 0,
+        "source": "live_sample",
+        "window_start_ts": 1773617100
+      },
+      {
+        "condition_id": "0xbd44a9efb68e6b2db4c0f1551bedd123d3a641cca4eb2e1f60e93c8325adeb4a",
+        "slug": "btc-updown-5m-1773616800",
+        "smart_wallet_trade_count": 0,
+        "source": "live_sample",
+        "window_start_ts": 1773616800
+      },
+      {
+        "condition_id": "0x69ca1fe73df36bfd77b3fffa61646a793cc0d70345e10c67e091391b9498592b",
+        "slug": "btc-updown-5m-1773609600",
+        "smart_wallet_trade_count": 0,
+        "source": "historical_fill",
+        "window_start_ts": 1773609600
+      },
+      {
+        "condition_id": "0x2e72ffc4b99d1976e37d3ff93e72d12316d2c035ef82020c453c3cc222da31d4",
+        "slug": "btc-updown-5m-1773609000",
+        "smart_wallet_trade_count": 0,
+        "source": "historical_fill",
+        "window_start_ts": 1773609000
+      },
+      {
+        "condition_id": "0x530976a374b4823eaeabec3b9193bd348ec301a21000215c33d5067ba69cf254",
+        "slug": "btc-updown-5m-1773537600",
+        "smart_wallet_trade_count": 0,
+        "source": "historical_fill",
+        "window_start_ts": 1773537600
+      },
+      {
+        "condition_id": "0x5c65676646e31045c755c243f8d4775b073f3e7250f1fbf28a6e44c9a790830e",
+        "slug": "btc-updown-5m-1773536100",
+        "smart_wallet_trade_count": 0,
+        "source": "historical_fill",
+        "window_start_ts": 1773536100
+      },
+      {
+        "condition_id": "0x1dadb7ff1cbad2a0d5e8483ac1b24427898a3d9b8dadb51be3452fdb278a2695",
+        "slug": "btc-updown-5m-1773534300",
+        "smart_wallet_trade_count": 0,
+        "source": "historical_fill",
+        "window_start_ts": 1773534300
+      },
+      {
+        "condition_id": "0xb8bd8cb5630e34a9b1bc7b49862dddaf5e7f4d75cb31d6562d8700935bb814ac",
+        "slug": "btc-updown-5m-1773521700",
+        "smart_wallet_trade_count": 0,
+        "source": "historical_fill",
+        "window_start_ts": 1773521700
+      },
+      {
+        "condition_id": "0x7530f1c5e7a1f647181c58168bc8fa6b5a852697e1cc9659f496338f3b3ce75c",
+        "slug": "btc-updown-5m-1773521400",
+        "smart_wallet_trade_count": 0,
+        "source": "historical_fill",
+        "window_start_ts": 1773521400
+      },
+      {
+        "condition_id": "0xb959cbf82173f3fe4c8b9f125e35f939c86b0df19867273630c3cddb83d7ab00",
+        "slug": "btc-updown-5m-1773519900",
+        "smart_wallet_trade_count": 0,
+        "source": "historical_fill",
+        "window_start_ts": 1773519900
+      }
+    ],
+    "markets_with_smart_wallet_activity": 1,
+    "top_wallet_addresses": [
+      "0xd0d6053c3c37e727402d84c14069780d360993aa",
+      "0x63ce342161250d705dc0b16df89036c8e5f9ba9a",
+      "0xd84c2b6d65dc596f49c7b6aadd6d74ca91e407b9",
+      "0x2d8b401d2f0e6937afebf18e19e11ca568a5260a",
+      "0x6031b6eed1c97e853c6e0f03ad3ce3529351f96d",
+      "0x1979ae6b7e6534de9c4539d0c205e582ca637c9d"
+    ],
+    "total_smart_wallet_trade_entries": 2,
+    "wallet_source_path": "/home/ubuntu/polymarket-trading-bot/inventory/data/smart_wallets_scored.json"
+  },
+  "min_consensus_notional_usd": 200,
+  "min_consensus_wallets": 3,
+  "optimal_observation_window_sec": 120,
+  "sample_size": 12,
+  "smart_wallet_entry_distribution": {
+    "0-60s": {
+      "avg_price": null,
+      "count": 0,
+      "win_rate": null
+    },
+    "120-180s": {
+      "avg_price": null,
+      "count": 0,
+      "win_rate": null
+    },
+    "180-240s": {
+      "avg_price": null,
+      "count": 0,
+      "win_rate": null
+    },
+    "240-300s": {
+      "avg_price": null,
+      "count": 0,
+      "win_rate": null
+    },
+    "60-120s": {
+      "avg_price": 0.545,
+      "count": 2,
+      "win_rate": null
+    }
+  },
+  "verdict": "NOT_ACTIONABLE"
+}

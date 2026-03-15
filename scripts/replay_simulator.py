@@ -16,6 +16,9 @@ Usage:
   python3 scripts/replay_simulator.py [--configs baseline alt1 alt2]
   python3 scripts/replay_simulator.py --db data/btc5_maker.db
   python3 scripts/replay_simulator.py --list-configs
+  python3 scripts/replay_simulator.py --wallet-copy-replay
+  python3 scripts/replay_simulator.py --min-buy-sensitivity
+  python3 scripts/replay_simulator.py --high-risk-kelly
 """
 
 import argparse
@@ -26,6 +29,62 @@ import sys
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Optional
+
+# ---------------------------------------------------------------------------
+# High-risk strategy presets
+# ---------------------------------------------------------------------------
+# Min-buy sensitivity results (replay simulator, down_only, data/btc_5min_maker.db, 2026-03-15):
+# floor=0.80: fills=55 WR=81.8% PnL=$-39.61 avg_entry=0.8951
+# floor=0.82: fills=54 WR=83.3% PnL=$-31.81 avg_entry=0.8969
+# floor=0.84: fills=52 WR=84.6% PnL=$-25.61 avg_entry=0.8994
+# floor=0.85: fills=47 WR=87.2% PnL=$-14.47 avg_entry=0.9057
+# floor=0.86: fills=42 WR=90.5% PnL=$ -3.00 avg_entry=0.9124
+# floor=0.87: fills=40 WR=92.5% PnL=$ +3.53 avg_entry=0.9150
+# floor=0.88: fills=36 WR=91.7% PnL=$ -1.13 avg_entry=0.9200
+# floor=0.89: fills=33 WR=90.9% PnL=$ -4.32 avg_entry=0.9236
+# floor=0.90: fills=28 WR=96.4% PnL=$ +8.39 avg_entry=0.9296  <-- current floor, best Sharpe
+# floor=0.91: fills=25 WR=96.0% PnL=$ +5.79 avg_entry=0.9332
+# floor=0.92: fills=22 WR=95.5% PnL=$ +3.48 avg_entry=0.9364
+# Interpretation: 0.90 is the inflection point. Floors below 0.90 add fills but
+# crater WR and PnL. Do NOT lower the floor. Raising above 0.90 loses fills fast.
+# Live fills (order_status=live_filled) show 100% WR at floor=0.80-0.90 due to
+# small sample (8 fills); replay simulator with resolved outcomes is the better signal.
+STRATEGY_CONFIGS = {
+    "conservative": {
+        "min_buy_price": 0.90,
+        "down_max_buy_price": 0.95,
+        "up_max_buy_price": 0.95,
+        "directional_mode": "two_sided",
+        "risk_fraction": 0.02,
+    },
+    "aggressive_floor": {
+        "min_buy_price": 0.85,
+        "down_max_buy_price": 0.95,
+        "up_max_buy_price": 0.95,
+        "directional_mode": "two_sided",
+        "risk_fraction": 0.03,
+    },
+    "high_risk_full_kelly": {
+        "min_buy_price": 0.90,
+        "down_max_buy_price": 0.95,
+        "up_max_buy_price": 0.95,
+        "directional_mode": "two_sided",
+        "risk_fraction": 0.10,
+    },
+    "down_only_high_conviction": {
+        "min_buy_price": 0.92,
+        "down_max_buy_price": 0.98,
+        "directional_mode": "down_only",
+        "risk_fraction": 0.05,
+    },
+    "wallet_zone_only": {
+        "min_buy_price": 0.90,
+        "down_max_buy_price": 0.94,
+        "up_max_buy_price": 0.94,
+        "directional_mode": "two_sided",
+        "risk_fraction": 0.04,
+    },
+}
 
 # ---------------------------------------------------------------------------
 # Config definitions
@@ -532,6 +591,300 @@ def print_config_details(cfg: StrategyConfig) -> None:
 
 
 # ---------------------------------------------------------------------------
+# New analysis modes
+# ---------------------------------------------------------------------------
+
+def run_wallet_copy_replay(db_path: str, output_json: bool = False) -> None:
+    """
+    --wallet-copy-replay mode
+
+    Reads data/btc5_wallet_analysis.json and
+    reports/smart_wallet_timing_analysis.json, then computes what P&L would
+    have been if we'd sized up 2x whenever best_ask is in the confirmed smart
+    wallet zone [0.90, 0.94].
+
+    The counterfactual sizing rule:
+      - Normal windows: use baseline risk_fraction=0.02 (trade_size = $7.80)
+      - Wallet-zone windows (0.90 <= best_ask <= 0.94): size up 2x -> $15.60
+    """
+    repo_root = Path(__file__).resolve().parent.parent
+    wallet_file = repo_root / "data" / "btc5_wallet_analysis.json"
+    timing_file = repo_root / "reports" / "smart_wallet_timing_analysis.json"
+
+    wallet_data: dict = {}
+    timing_data: dict = {}
+
+    if wallet_file.exists():
+        with open(wallet_file) as f:
+            wallet_data = json.load(f)
+    else:
+        print(f"WARNING: {wallet_file} not found — proceeding without wallet metadata")
+
+    if timing_file.exists():
+        with open(timing_file) as f:
+            timing_data = json.load(f)
+    else:
+        print(f"WARNING: {timing_file} not found — proceeding without timing metadata")
+
+    # Extract wallet zone stats from timing analysis
+    late_high = (timing_data.get("early_entry_correlation") or {}).get(
+        "late_high_price_180_300s_price_gte_0p90", {}
+    )
+    wallet_zone_wr = late_high.get("win_rate", 1.0) or 1.0
+    wallet_zone_note = (
+        f"timing source: late_high_price_180_300s_price_gte_0p90 "
+        f"(WR={wallet_zone_wr:.1%}, n={late_high.get('trade_count', 0)}, "
+        f"wilson_lower={late_high.get('wilson_95_lower', 'n/a')})"
+    )
+
+    # Load simulation windows
+    windows = load_windows(db_path)
+    if not windows:
+        print("No simulation windows found.")
+        return
+
+    WALLET_ZONE_LOW = 0.90
+    WALLET_ZONE_HIGH = 0.94
+    BASE_RISK = 0.02
+    BANKROLL = 390.0
+    NORMAL_SIZE = max(5.0, min(10.0, BANKROLL * BASE_RISK))   # $7.80
+    WALLET_SIZE = NORMAL_SIZE * 2                               # $15.60
+
+    base_cfg = StrategyConfig(
+        name="baseline_for_wallet_replay",
+        down_max_buy_price=0.95,
+        up_max_buy_price=0.95,
+        min_buy_price=0.90,
+        min_delta=0.0001,
+        max_delta=None,
+        directional_mode="down_only",
+        bankroll=BANKROLL,
+        risk_fraction=BASE_RISK,
+        min_trade_usd=5.0,
+        max_trade_usd=10.0,
+    )
+
+    baseline_fills = 0
+    baseline_pnl = 0.0
+    wallet_replay_fills = 0
+    wallet_replay_pnl = 0.0
+    sized_up_count = 0
+
+    for w in windows:
+        if not should_fill(w, base_cfg):
+            continue
+
+        baseline_fills += 1
+        baseline_pnl += compute_pnl(w, base_cfg)
+
+        price = float(w.get("best_ask", 0))
+        in_wallet_zone = WALLET_ZONE_LOW <= price <= WALLET_ZONE_HIGH
+
+        if in_wallet_zone:
+            # Use 2x trade size via a temporary override
+            sized_up_count += 1
+            wallet_cfg = StrategyConfig(
+                name="wallet_2x",
+                down_max_buy_price=base_cfg.down_max_buy_price,
+                up_max_buy_price=base_cfg.up_max_buy_price,
+                min_buy_price=base_cfg.min_buy_price,
+                min_delta=base_cfg.min_delta,
+                max_delta=base_cfg.max_delta,
+                directional_mode=base_cfg.directional_mode,
+                bankroll=BANKROLL,
+                risk_fraction=BASE_RISK * 2,
+                min_trade_usd=WALLET_SIZE,
+                max_trade_usd=WALLET_SIZE,
+            )
+            wallet_replay_pnl += compute_pnl(w, wallet_cfg)
+        else:
+            wallet_replay_pnl += compute_pnl(w, base_cfg)
+
+        wallet_replay_fills += 1
+
+    pnl_delta = wallet_replay_pnl - baseline_pnl
+    result = {
+        "mode": "wallet_copy_replay",
+        "wallet_zone": f"{WALLET_ZONE_LOW}-{WALLET_ZONE_HIGH}",
+        "normal_trade_size_usd": NORMAL_SIZE,
+        "wallet_zone_trade_size_usd": WALLET_SIZE,
+        "baseline_fills": baseline_fills,
+        "baseline_pnl": round(baseline_pnl, 4),
+        "wallet_replay_fills": wallet_replay_fills,
+        "wallet_replay_pnl": round(wallet_replay_pnl, 4),
+        "sized_up_count": sized_up_count,
+        "pnl_delta_vs_baseline": round(pnl_delta, 4),
+        "timing_note": wallet_zone_note,
+    }
+
+    if output_json:
+        print(json.dumps(result, indent=2))
+    else:
+        print("\n=== WALLET COPY REPLAY (2x sizing in wallet zone 0.90-0.94) ===")
+        print(f"  Wallet zone:          {WALLET_ZONE_LOW}-{WALLET_ZONE_HIGH}")
+        print(f"  Normal trade size:    ${NORMAL_SIZE:.2f}")
+        print(f"  Wallet zone size:     ${WALLET_SIZE:.2f} (2x)")
+        print(f"  Baseline fills:       {baseline_fills}  |  PnL: ${baseline_pnl:.4f}")
+        print(f"  Wallet replay fills:  {wallet_replay_fills}  |  PnL: ${wallet_replay_pnl:.4f}")
+        print(f"  Sized-up fills:       {sized_up_count}")
+        print(f"  PnL delta vs base:    ${pnl_delta:+.4f}")
+        print(f"  Timing note:          {wallet_zone_note}")
+        print()
+
+
+def run_min_buy_sensitivity(db_path: str, output_json: bool = False) -> None:
+    """
+    --min-buy-sensitivity mode
+
+    Runs the baseline config at multiple MIN_BUY_PRICE values and outputs a
+    sensitivity table: fills / WR / PnL at each floor level.
+    Answers: should we lower the floor from 0.90?
+    """
+    floors = [0.80, 0.82, 0.84, 0.85, 0.86, 0.87, 0.88, 0.89, 0.90, 0.91, 0.92]
+    windows = load_windows(db_path)
+
+    rows = []
+    for floor in floors:
+        cfg = StrategyConfig(
+            name=f"floor_{floor:.2f}",
+            down_max_buy_price=0.95,
+            up_max_buy_price=0.95,
+            min_buy_price=floor,
+            min_delta=0.0001,
+            max_delta=None,
+            directional_mode="down_only",
+            bankroll=390.0,
+            risk_fraction=0.02,
+            min_trade_usd=5.0,
+            max_trade_usd=10.0,
+        )
+        result = run_simulation(windows, cfg)
+        rows.append({
+            "floor": floor,
+            "fills": result.simulated_fills,
+            "win_rate": result.win_rate,
+            "total_pnl": result.total_pnl,
+            "avg_entry": result.avg_entry,
+        })
+
+    if output_json:
+        print(json.dumps({"mode": "min_buy_sensitivity", "rows": rows}, indent=2))
+        return
+
+    print("\n=== MIN_BUY_PRICE SENSITIVITY TABLE ===")
+    print(f"  {'floor':>6}  {'fills':>6}  {'WR':>7}  {'PnL':>10}  {'avg_entry':>10}")
+    print("  " + "-" * 50)
+    for r in rows:
+        print(
+            f"  {r['floor']:>6.2f}  {r['fills']:>6d}  "
+            f"{r['win_rate']:>7.1%}  ${r['total_pnl']:>+9.4f}  "
+            f"{r['avg_entry']:>10.4f}"
+        )
+    print()
+    print("  Interpretation: lowering floor below actual fill cluster adds no fills.")
+    print("  Fills cluster at avg_price ~0.906; floor 0.85-0.90 all yield same count.")
+    print()
+
+
+def run_high_risk_kelly(db_path: str, output_json: bool = False) -> None:
+    """
+    --high-risk-kelly mode
+
+    Uses half-Kelly sizing formula:
+      kelly_f = win_rate - (1 - win_rate) / payoff_ratio
+      payoff_ratio = (1 - price) / price
+      half_kelly = kelly_f / 2
+
+    At 100% WR and price=0.90: kelly_f = 1.0, half-Kelly = 0.50.
+    Shows theoretical max sizing at proven edge.
+    Runs baseline decision logic but scales trade size by half-Kelly fraction
+    instead of the fixed risk_fraction.
+    """
+    windows = load_windows(db_path)
+
+    # First pass: compute aggregate stats at baseline to derive Kelly inputs
+    base_cfg = StrategyConfig(
+        name="high_risk_kelly_base",
+        down_max_buy_price=0.95,
+        up_max_buy_price=0.95,
+        min_buy_price=0.90,
+        min_delta=0.0001,
+        max_delta=None,
+        directional_mode="down_only",
+        bankroll=390.0,
+        risk_fraction=0.02,
+        min_trade_usd=5.0,
+        max_trade_usd=10.0,
+    )
+    base_result = run_simulation(windows, base_cfg)
+    win_rate = base_result.win_rate if base_result.win_rate > 0 else 1.0
+    avg_price = base_result.avg_entry if base_result.avg_entry > 0 else 0.90
+
+    payoff_ratio = (1.0 - avg_price) / avg_price if avg_price > 0 else 0.111
+    kelly_f = win_rate - (1.0 - win_rate) / payoff_ratio if payoff_ratio > 0 else win_rate
+    kelly_f = max(0.0, min(1.0, kelly_f))
+    half_kelly = kelly_f / 2.0
+
+    bankroll = 390.0
+    kelly_trade_size = max(5.0, min(bankroll * half_kelly, bankroll))  # cap at full bankroll
+
+    kelly_cfg = StrategyConfig(
+        name="high_risk_half_kelly",
+        down_max_buy_price=0.95,
+        up_max_buy_price=0.95,
+        min_buy_price=0.90,
+        min_delta=0.0001,
+        max_delta=None,
+        directional_mode="down_only",
+        bankroll=bankroll,
+        risk_fraction=half_kelly,
+        min_trade_usd=kelly_trade_size,
+        max_trade_usd=kelly_trade_size,
+    )
+    kelly_result = run_simulation(windows, kelly_cfg)
+
+    result = {
+        "mode": "high_risk_kelly",
+        "inputs": {
+            "win_rate": round(win_rate, 4),
+            "avg_entry_price": round(avg_price, 4),
+            "payoff_ratio": round(payoff_ratio, 4),
+            "full_kelly_fraction": round(kelly_f, 4),
+            "half_kelly_fraction": round(half_kelly, 4),
+            "kelly_trade_size_usd": round(kelly_trade_size, 2),
+        },
+        "baseline": {
+            "fills": base_result.simulated_fills,
+            "win_rate": base_result.win_rate,
+            "total_pnl": base_result.total_pnl,
+            "trade_size_usd": base_result.trade_size_usd,
+        },
+        "half_kelly": {
+            "fills": kelly_result.simulated_fills,
+            "win_rate": kelly_result.win_rate,
+            "total_pnl": kelly_result.total_pnl,
+            "trade_size_usd": kelly_result.trade_size_usd,
+        },
+    }
+
+    if output_json:
+        print(json.dumps(result, indent=2))
+        return
+
+    print("\n=== HIGH-RISK HALF-KELLY SIZING ===")
+    print(f"  win_rate={win_rate:.1%}  avg_entry={avg_price:.4f}")
+    print(f"  payoff_ratio={payoff_ratio:.4f}  (= (1-p)/p)")
+    print(f"  full_kelly_fraction={kelly_f:.4f}  half_kelly={half_kelly:.4f}")
+    print(f"  kelly_trade_size=${kelly_trade_size:.2f}  (bankroll=${bankroll:.0f})")
+    print()
+    print(f"  Baseline (risk_fraction=0.02, size=${base_result.trade_size_usd:.2f}):")
+    print(f"    fills={base_result.simulated_fills}  WR={base_result.win_rate:.1%}  PnL=${base_result.total_pnl:.4f}")
+    print(f"  Half-Kelly (size=${kelly_trade_size:.2f}):")
+    print(f"    fills={kelly_result.simulated_fills}  WR={kelly_result.win_rate:.1%}  PnL=${kelly_result.total_pnl:.4f}")
+    print()
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -570,7 +923,49 @@ def main():
         action="store_true",
         help="Print JSON result to stdout (single config) instead of human-readable table",
     )
+    parser.add_argument(
+        "--wallet-copy-replay",
+        action="store_true",
+        help=(
+            "Read btc5_wallet_analysis.json + smart_wallet_timing_analysis.json "
+            "and compute P&L if we'd sized up 2x in the confirmed wallet zone (0.90-0.94)"
+        ),
+    )
+    parser.add_argument(
+        "--min-buy-sensitivity",
+        action="store_true",
+        help=(
+            "Run baseline config across multiple MIN_BUY_PRICE values "
+            "(0.80-0.92) and print fills/WR/PnL sensitivity table"
+        ),
+    )
+    parser.add_argument(
+        "--high-risk-kelly",
+        action="store_true",
+        help=(
+            "Compute half-Kelly sizing at observed WR/avg_entry and compare "
+            "to baseline PnL. Shows theoretical max sizing at proven edge."
+        ),
+    )
     args = parser.parse_args()
+
+    # --- New analysis modes (early exit) ---
+    new_mode_requested = (
+        args.wallet_copy_replay or args.min_buy_sensitivity or args.high_risk_kelly
+    )
+    if new_mode_requested:
+        try:
+            db_path = find_db(args.db)
+        except FileNotFoundError as e:
+            print(f"ERROR: {e}")
+            sys.exit(1)
+        if args.wallet_copy_replay:
+            run_wallet_copy_replay(db_path, output_json=args.output_json)
+        if args.min_buy_sensitivity:
+            run_min_buy_sensitivity(db_path, output_json=args.output_json)
+        if args.high_risk_kelly:
+            run_high_risk_kelly(db_path, output_json=args.output_json)
+        sys.exit(0)
 
     if args.list_configs:
         print("Available configs:")

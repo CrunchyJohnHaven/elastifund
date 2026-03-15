@@ -1,0 +1,249 @@
+{
+  "generated_at": "2026-03-15T23:45:00+00:00",
+  "version": "2.0",
+  "data_sources": {
+    "btc5_wallet_analysis_v1": {
+      "generated_at": "2026-03-15T18:02:08.219605+00:00",
+      "windows_sampled": 5,
+      "total_trades": 94,
+      "unique_wallets": 88,
+      "source_file": "data/btc5_wallet_analysis.json (v1)"
+    },
+    "smart_wallet_timing_analysis_v1": {
+      "generated_at": "2026-03-15T23:30:27.891081+00:00",
+      "analysis_version": "1.0.0",
+      "market_count": 5,
+      "top_wallets": 20,
+      "source_file": "reports/smart_wallet_timing_analysis.json"
+    },
+    "db_paths": {
+      "btc5_db": "data/btc_5min_maker.db",
+      "wallet_scores_db": "data/wallet_scores.db"
+    },
+    "market_source": {
+      "filled_windows_found": 10,
+      "high_price_filled_windows_found": 5,
+      "selected_windows": 5,
+      "source": "db:data/btc_5min_maker.db"
+    },
+    "wallet_source": {
+      "db_rows": 20,
+      "primary_source": "db:data/wallet_scores.db",
+      "source_fallback_used": false
+    }
+  },
+  "top_20_by_volume": [
+    {
+      "wallet": "0x51820afa9b0617753328cc3bce653b594da40120",
+      "trades": 1,
+      "volume_usd": 495.0,
+      "buy_up": 0,
+      "buy_down": 1,
+      "direction_bias": "DOWN",
+      "avg_price": 0.99
+    },
+    {
+      "wallet": "0x577963a13b9cd888cf714d65f810ec9a06dc54ad",
+      "trades": 1,
+      "volume_usd": 199.02,
+      "buy_up": 0,
+      "buy_down": 1,
+      "direction_bias": "DOWN",
+      "avg_price": 0.99
+    },
+    {
+      "wallet": "0xcef2ce204fa846569ba0deedbf0468f05b06ab0c",
+      "trades": 1,
+      "volume_usd": 125.92,
+      "buy_up": 0,
+      "buy_down": 1,
+      "direction_bias": "DOWN",
+      "avg_price": 0.99
+    },
+    {
+      "wallet": "0x7a0e3bc5a6d3210ba76d30fb4374d531307a10b2",
+      "trades": 1,
+      "volume_usd": 124.67,
+      "buy_up": 0,
+      "buy_down": 1,
+      "direction_bias": "DOWN",
+      "avg_price": 0.99
+    },
+    {
+      "wallet": "0x5962bf6c108b6d1ec78707ea49b935b801590dd4",
+      "trades": 1,
+      "volume_usd": 118.8,
+      "buy_up": 0,
+      "buy_down": 1,
+      "direction_bias": "DOWN",
+      "avg_price": 0.99
+    },
+    {
+      "wallet": "0xc49e799988812ba709e96c43280051a541470af7",
+      "trades": 1,
+      "volume_usd": 115.62,
+      "buy_up": 0,
+      "buy_down": 1,
+      "direction_bias": "DOWN",
+      "avg_price": 0.99
+    },
+    {
+      "wallet": "0x0f16a66df16a707334d89704631338ae7a770246",
+      "trades": 1,
+      "volume_usd": 113.42,
+      "buy_up": 0,
+      "buy_down": 1,
+      "direction_bias": "DOWN",
+      "avg_price": 0.99
+    },
+    {
+      "wallet": "0x4272f2468fd3b5743998f76376def1721f134a17",
+      "trades": 1,
+      "volume_usd": 101.2,
+      "buy_up": 0,
+      "buy_down": 1,
+      "direction_bias": "DOWN",
+      "avg_price": 0.99
+    },
+    {
+      "wallet": "0xdb0d2d278f2baeb9effe8064d9b2e7b6cd2bb92c",
+      "trades": 1,
+      "volume_usd": 85.0,
+      "buy_up": 1,
+      "buy_down": 0,
+      "direction_bias": "UP",
+      "avg_price": 0.46
+    },
+    {
+      "wallet": "0xc81ddfdbd2b105e2944df7f858d68e631c5c026d",
+      "trades": 1,
+      "volume_usd": 67.66,
+      "buy_up": 0,
+      "buy_down": 1,
+      "direction_bias": "DOWN",
+      "avg_price": 0.99
+    },
+    {
+      "wallet": "0x2d7608c336944a0642acbcd043390ac0d753144d",
+      "trades": 2,
+      "volume_usd": 59.97,
+      "buy_up": 0,
+      "buy_down": 2,
+      "direction_bias": "DOWN",
+      "avg_price": 0.99
+    },
+    {
+      "wallet": "0xa47fe9ae3f40f50955e6fbb24f7eb2392e6cc8f6",
+      "trades": 2,
+      "volume_usd": 59.4,
+      "buy_up": 0,
+      "buy_down": 2,
+      "direction_bias": "DOWN",
+      "avg_price": 0.55
+    },
+    {
+      "wallet": "0xcdfa73ea9070ddf73ba09a4d729aa7e7bd8ef3e1",
+      "trades": 1,
+      "volume_usd": 54.38,
+      "buy_up": 0,
+      "buy_down": 1,
+      "direction_bias": "DOWN",
+      "avg_price": 0.99
+    },
+    {
+      "wallet": "0x0f36adcb3593cee932a258efec232dc5c4d8f9e8",
+      "trades": 1,
+      "volume_usd": 52.61,
+      "buy_up": 0,
+      "buy_down": 1,
+      "direction_bias": "DOWN",
+      "avg_price": 0.99
+    },
+    {
+      "wallet": "0x4a0fc45b144b8a71d5dc3f70b4c97ad9f678c51a",
+      "trades": 1,
+      "volume_usd": 51.54,
+      "buy_up": 0,
+      "buy_down": 1,
+      "direction_bias": "DOWN",
+      "avg_price": 0.99
+    },
+    {
+      "wallet": "0xcddab011ae54a4a66278d6a8396fa771e825af89",
+      "trades": 1,
+      "volume_usd": 49.5,
+      "buy_up": 0,
+      "buy_down": 1,
+      "direction_bias": "DOWN",
+      "avg_price": 0.99
+    },
+    {
+      "wallet": "0xc1a65ac2f608d940c493fe22f5ed54a7b8687601",
+      "trades": 1,
+      "volume_usd": 48.5,
+      "buy_up": 0,
+      "buy_down": 1,
+      "direction_bias": "DOWN",
+      "avg_price": 0.5
+    },
+    {
+      "wallet": "0x8b971f31ca0633a11febc416521d1eeed9c42ceb",
+      "trades": 1,
+      "volume_usd": 46.13,
+      "buy_up": 0,
+      "buy_down": 1,
+      "direction_bias": "DOWN",
+      "avg_price": 0.99
+    },
+    {
+      "wallet": "0xb9409f3d9c0484c996371e598c195e25e56323f6",
+      "trades": 2,
+      "volume_usd": 39.97,
+      "buy_up": 0,
+      "buy_down": 2,
+      "direction_bias": "DOWN",
+      "avg_price": 0.99
+    },
+    {
+      "wallet": "0x4d7877a77e48071f6d51f9e09acae6ff0760274a",
+      "trades": 1,
+      "volume_usd": 29.8,
+      "buy_up": 0,
+      "buy_down": 1,
+      "direction_bias": "DOWN",
+      "avg_price": 0.99
+    }
+  ],
+  "timing_analysis_summary": {
+    "binary_verdict": "minute_4_to_5",
+    "actionable_as_early_signal": false,
+    "actionable_as_late_confirmation": true,
+    "early_trades_0_180s": 0,
+    "late_trades_180_300s": 407,
+    "late_high_price_trades": 59,
+    "late_high_price_wr": 1.0,
+    "late_high_price_wilson_ci_lower": 0.938869,
+    "late_high_price_notional_usd": 1504.79,
+    "late_high_price_pnl_usd": 92.55
+  },
+  "strategy_implications": {
+    "copy_trade_early": "REJECTED — zero smart wallet trades in first 3 minutes",
+    "copy_trade_late": "VIABLE — 59 trades at 0.90-0.94 in min 3-5, 100% WR, $1504 notional. But: we already capture this via Binance momentum signal. Wallet activity = confirmation, not new signal.",
+    "sizing_up_on_wallet_consensus": "HIGH VALUE — when Binance momentum AND late wallet consensus agree (both at 0.90-0.94), size up 2-3x. Expected: 20-40% more fills in confirmed windows.",
+    "next_research_step": "Build real-time wallet consensus check: at decision time (T-50s), query data-api.polymarket.com/trades?conditionId=X. If 3+ top wallets traded same side at 0.90-0.94 in last 120s, increase position to 2x. Estimate: +$0.50/fill average improvement at current bankroll."
+  },
+  "smart_wallet_addresses": [
+    "0x1f0ebc543b2d411f66947041625c0aa1ce61cf86",
+    "0x0d05acd6baaa8ea1fac50ab74a7679ae6f534518",
+    "0x2a888e676a5acead348923b2289f533c2aad438a",
+    "0x8a181a656f089ad649d4500a67c4a94cc25abc9d",
+    "0xf4fea8cf6030cbcd73502cde708e74ad21d8ebac",
+    "0x70ec235a31eb35f243e2618d6ea3b5b8962bbb5d",
+    "0x674b949283ea2eb33c2cad519a3e2f26b3144f07",
+    "0x542b546f49025e5e1a76350df7b6fb9f0cd3a0eb",
+    "0x203710b74089d218cad7017dede651a123d1efb1",
+    "0xff9568c48f1ea7296a3c1f69a992b3d2127b131c"
+  ],
+  "windows_analyzed": 5,
+  "total_trades_observed": 94
+}
