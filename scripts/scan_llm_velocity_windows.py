@@ -16,8 +16,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import httpx
-
 GAMMA_URL = "https://gamma-api.polymarket.com/markets"
 DEFAULT_WINDOWS = (24.0, 72.0, 168.0)
 DEFAULT_OUTPUT = Path("reports/llm_velocity_window_scan.json")
@@ -315,8 +313,32 @@ def fetch_active_markets(*, limit: int = 600, timeout_seconds: float = 20.0) -> 
     markets: list[dict[str, Any]] = []
     offset = 0
     page_size = 100
-    timeout = httpx.Timeout(timeout_seconds, connect=timeout_seconds)
-    with httpx.Client(timeout=timeout) as client:
+    try:
+        import httpx
+
+        timeout = httpx.Timeout(timeout_seconds, connect=timeout_seconds)
+        with httpx.Client(timeout=timeout) as client:
+            while len(markets) < limit:
+                params = {
+                    "active": "true",
+                    "closed": "false",
+                    "limit": str(min(page_size, limit - len(markets))),
+                    "offset": str(offset),
+                }
+                response = client.get(GAMMA_URL, params=params)
+                response.raise_for_status()
+                payload = response.json()
+                if not isinstance(payload, list) or not payload:
+                    break
+                page_rows = [item for item in payload if isinstance(item, dict)]
+                markets.extend(page_rows)
+                if len(payload) < page_size:
+                    break
+                offset += page_size
+    except ModuleNotFoundError:
+        from urllib.parse import urlencode
+        from urllib.request import urlopen
+
         while len(markets) < limit:
             params = {
                 "active": "true",
@@ -324,9 +346,9 @@ def fetch_active_markets(*, limit: int = 600, timeout_seconds: float = 20.0) -> 
                 "limit": str(min(page_size, limit - len(markets))),
                 "offset": str(offset),
             }
-            response = client.get(GAMMA_URL, params=params)
-            response.raise_for_status()
-            payload = response.json()
+            url = f"{GAMMA_URL}?{urlencode(params)}"
+            with urlopen(url, timeout=timeout_seconds) as response:  # nosec B310 - fixed trusted domain
+                payload = json.loads(response.read().decode("utf-8"))
             if not isinstance(payload, list) or not payload:
                 break
             page_rows = [item for item in payload if isinstance(item, dict)]
