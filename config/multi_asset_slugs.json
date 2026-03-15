@@ -1,0 +1,39 @@
+{
+  "discovered": "2026-03-15",
+  "note": "All three confirmed live via Gamma API on 2026-03-15. Same structure: 5-minute binary UP/DOWN resolved via Chainlink. Same CLOB, same maker rebates.",
+  "assets": {
+    "BTCUSDT": {
+      "slug_pattern": "btc-updown-5m-{window_start_ts}",
+      "asset_slug_prefix": "btc",
+      "binance_symbol": "BTCUSDT",
+      "binance_ws": "wss://stream.binance.com:9443/ws/btcusdt@trade",
+      "binance_ticker_url": "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT",
+      "daily_volume_usd": 120000,
+      "service": "btc-5min-maker.service",
+      "db": "data/btc_5min_maker.db",
+      "status": "live"
+    },
+    "ETHUSDT": {
+      "slug_pattern": "eth-updown-5m-{window_start_ts}",
+      "asset_slug_prefix": "eth",
+      "binance_symbol": "ETHUSDT",
+      "binance_ws": "wss://stream.binance.com:9443/ws/ethusdt@trade",
+      "binance_ticker_url": "https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT",
+      "daily_volume_usd": 26000,
+      "service": "eth-5min-maker.service",
+      "db": "data/eth_5min_maker.db",
+      "status": "paper"
+    },
+    "SOLUSDT": {
+      "slug_pattern": "sol-updown-5m-{window_start_ts}",
+      "asset_slug_prefix": "sol",
+      "binance_symbol": "SOLUSDT",
+      "binance_ws": "wss://stream.binance.com:9443/ws/solusdt@trade",
+      "binance_ticker_url": "https://api.binance.com/api/v3/ticker/price?symbol=SOLUSDT",
+      "daily_volume_usd": 5000,
+      "service": "sol-5min-maker.service",
+      "db": "data/sol_5min_maker.db",
+      "status": "paper"
+    }
+  }
+}

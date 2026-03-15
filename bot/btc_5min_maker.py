@@ -1548,7 +1548,7 @@ class MarketHttpClient:
     async def fetch_binance_window_open_close(self, window_start_ts: int) -> tuple[float, float] | None:
         timeout = aiohttp.ClientTimeout(total=self.cfg.request_timeout_sec)
         params = {
-            "symbol": "BTCUSDT",
+            "symbol": os.environ.get("BTC5_ASSET_BINANCE_SYMBOL", "BTCUSDT"),
             "interval": "5m",
             "startTime": int(window_start_ts) * 1000,
             "limit": 1,

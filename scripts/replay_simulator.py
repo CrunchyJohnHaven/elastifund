@@ -560,12 +560,53 @@ def main():
         action="store_true",
         help="List all available configs and exit",
     )
+    parser.add_argument(
+        "--config-json",
+        default=None,
+        help="JSON dict of StrategyConfig fields to run as a single ad-hoc config",
+    )
+    parser.add_argument(
+        "--output-json",
+        action="store_true",
+        help="Print JSON result to stdout (single config) instead of human-readable table",
+    )
     args = parser.parse_args()
 
     if args.list_configs:
         print("Available configs:")
         for name, cfg in DEFAULT_CONFIGS.items():
             print_config_details(cfg)
+        sys.exit(0)
+
+    # Handle ad-hoc JSON config (for programmatic use by autoresearch_deploy.py).
+    if args.config_json:
+        try:
+            overrides = json.loads(args.config_json)
+        except json.JSONDecodeError as e:
+            print(f"ERROR: invalid --config-json: {e}")
+            sys.exit(1)
+        base = DEFAULT_CONFIGS.get("high_entry_090")
+        if base is None:
+            base = list(DEFAULT_CONFIGS.values())[0]
+        import dataclasses
+        base_dict = dataclasses.asdict(base)
+        base_dict.update({k: v for k, v in overrides.items() if k in base_dict})
+        base_dict["name"] = overrides.get("name", "ad_hoc")
+        adhoc_cfg = StrategyConfig(**base_dict)
+        db_path = find_db(args.db)
+        windows = load_windows(db_path)
+        result = run_simulation(windows, adhoc_cfg)
+        if args.output_json:
+            print(json.dumps({
+                "config_name": result.config_name,
+                "total_fills": result.simulated_fills,
+                "win_rate": result.win_rate,
+                "total_pnl": result.total_pnl,
+                "avg_entry": result.avg_entry,
+                "total_windows": len(windows),
+            }))
+        else:
+            print_table([result])
         sys.exit(0)
 
     # Resolve requested configs
