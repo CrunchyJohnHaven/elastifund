@@ -1,6 +1,6 @@
 {
   "schema_version": "2026-03-11.repo-manifest.v1",
-  "generated_at": "2026-03-12",
+  "generated_at": "2026-03-15",
   "generator": "scripts/render_repo_manifest.py",
   "purpose": "Deterministic machine-readable routing for path ownership, canonical docs, and narrow verification.",
   "entrypoints": {
@@ -68,19 +68,10 @@
       ]
     },
     {
-      "lane": "Personal CFO / treasury control plane",
-      "paths": [
-        "nontrading/finance/",
-        "reports/finance/",
-        "state/",
-        "docs/ops/finance_control_plane.md"
-      ]
-    },
-    {
       "lane": "Governance and messaging docs",
       "paths": [
-        "docs/numbered/00_MISSION_AND_PRINCIPLES.md",
-        "docs/numbered/12_MANAGED_SERVICE_BOUNDARY.md",
+        "00_MISSION_AND_PRINCIPLES.md",
+        "12_MANAGED_SERVICE_BOUNDARY.md",
         "COMMAND_NODE.md",
         "PROJECT_INSTRUCTIONS.md"
       ]
@@ -108,17 +99,6 @@
         "docs/",
         "research/",
         "README.md"
-      ]
-    },
-    {
-      "lane": "Cross-asset cascade lane",
-      "paths": [
-        "infra/cross_asset_artifact_paths.py",
-        "scripts/instance6_rollout_controller.py",
-        "scripts/run_instance6_rollout_finance_dispatch.py",
-        "reports/instance6_rollout_control/",
-        "reports/rollout_control/",
-        "docs/ops/cross_asset_lane.md"
       ]
     }
   ],
@@ -191,8 +171,8 @@
     {
       "path": "build/",
       "owner_lane": "General",
-      "package_role": "static website route stubs, hidden onboarding surfaces, and leaderboard pages",
-      "notes": "keep public messaging aligned with `docs/numbered/11_PUBLIC_MESSAGING.md` and the numbered-doc lane",
+      "package_role": "Unmapped package role",
+      "notes": "",
       "narrow_test_command": "make verify-static",
       "canonical_docs": [
         "docs/REPO_MAP.md",
@@ -243,7 +223,7 @@
       "path": "data/",
       "owner_lane": "General",
       "package_role": "generated runtime artifacts",
-      "notes": "keep disposable and ignored, except the status JSON handoff artifacts under `reports/` that document current machine truth",
+      "notes": "keep disposable and ignored; treat checked-in contracts (`config/remote_cycle_status.json`, `improvement_velocity.json`) as canonical when `reports/` artifacts are unavailable",
       "narrow_test_command": "make verify-static",
       "canonical_docs": [
         "docs/REPO_MAP.md"
@@ -274,7 +254,7 @@
     {
       "path": "deploy/",
       "owner_lane": "General",
-      "package_role": "deployment and infra artifacts",
+      "package_role": "deployment and infra artifacts (systemd services for BTC5, JJ-live, shadow lanes, autoresearch)",
       "notes": "operator-facing",
       "narrow_test_command": "make verify-static",
       "canonical_docs": [
@@ -291,7 +271,7 @@
     {
       "path": "develop/",
       "owner_lane": "Website build guidance",
-      "package_role": "static website route stubs, hidden onboarding surfaces, and leaderboard pages",
+      "package_role": "static website route stubs and leaderboard surfaces",
       "notes": "keep public messaging aligned with `docs/numbered/11_PUBLIC_MESSAGING.md` and the numbered-doc lane",
       "narrow_test_command": "make verify-static",
       "canonical_docs": [
@@ -307,7 +287,7 @@
     {
       "path": "diary/",
       "owner_lane": "General",
-      "package_role": "static website route stubs, hidden onboarding surfaces, and leaderboard pages",
+      "package_role": "static website route stubs and leaderboard surfaces",
       "notes": "keep public messaging aligned with `docs/numbered/11_PUBLIC_MESSAGING.md` and the numbered-doc lane",
       "narrow_test_command": "make verify-static",
       "canonical_docs": [
@@ -356,7 +336,7 @@
     {
       "path": "elastic/",
       "owner_lane": "Website build guidance",
-      "package_role": "static website route stubs, hidden onboarding surfaces, and leaderboard pages",
+      "package_role": "static website route stubs and leaderboard surfaces",
       "notes": "keep public messaging aligned with `docs/numbered/11_PUBLIC_MESSAGING.md` and the numbered-doc lane",
       "narrow_test_command": "make verify-static",
       "canonical_docs": [
@@ -470,7 +450,7 @@
     {
       "path": "leaderboards/",
       "owner_lane": "Website build guidance",
-      "package_role": "static website route stubs, hidden onboarding surfaces, and leaderboard pages",
+      "package_role": "static website route stubs and leaderboard surfaces",
       "notes": "keep public messaging aligned with `docs/numbered/11_PUBLIC_MESSAGING.md` and the numbered-doc lane",
       "narrow_test_command": "make verify-static",
       "canonical_docs": [
@@ -503,7 +483,7 @@
       "path": "logs/",
       "owner_lane": "General",
       "package_role": "generated runtime artifacts",
-      "notes": "keep disposable and ignored, except the status JSON handoff artifacts under `reports/` that document current machine truth",
+      "notes": "keep disposable and ignored; treat checked-in contracts (`config/remote_cycle_status.json`, `improvement_velocity.json`) as canonical when `reports/` artifacts are unavailable",
       "narrow_test_command": "make verify-static",
       "canonical_docs": [
         "docs/REPO_MAP.md"
@@ -518,7 +498,7 @@
     {
       "path": "manage/",
       "owner_lane": "General",
-      "package_role": "static website route stubs, hidden onboarding surfaces, and leaderboard pages",
+      "package_role": "static website route stubs and leaderboard surfaces",
       "notes": "keep public messaging aligned with `docs/numbered/11_PUBLIC_MESSAGING.md` and the numbered-doc lane",
       "narrow_test_command": "make verify-static",
       "canonical_docs": [
@@ -534,8 +514,8 @@
     {
       "path": "nontrading/",
       "owner_lane": "Non-trading revenue lanes (JJ-N)",
-      "package_role": "non-trading revenue automation plus finance control-plane code",
-      "notes": "separate lane from live trading; `nontrading/engines/` holds the five-engine Phase 0 stubs and `nontrading/finance/` holds personal-CFO logic",
+      "package_role": "non-trading revenue automation",
+      "notes": "separate lane from live trading; `nontrading/engines/` holds the five-engine Phase 0 stubs",
       "narrow_test_command": "make test-nontrading",
       "canonical_docs": [
         "docs/REPO_MAP.md",
@@ -584,7 +564,7 @@
       "path": "reports/",
       "owner_lane": "General",
       "package_role": "generated runtime artifacts",
-      "notes": "keep disposable and ignored, except the status JSON handoff artifacts under `reports/` that document current machine truth",
+      "notes": "keep disposable and ignored; treat checked-in contracts (`config/remote_cycle_status.json`, `improvement_velocity.json`) as canonical when `reports/` artifacts are unavailable",
       "narrow_test_command": "make verify-static",
       "canonical_docs": [
         "reports/manifest_latest.json",
@@ -616,7 +596,7 @@
     {
       "path": "roadmap/",
       "owner_lane": "General",
-      "package_role": "static website route stubs, hidden onboarding surfaces, and leaderboard pages",
+      "package_role": "static website route stubs and leaderboard surfaces",
       "notes": "keep public messaging aligned with `docs/numbered/11_PUBLIC_MESSAGING.md` and the numbered-doc lane",
       "narrow_test_command": "make verify-static",
       "canonical_docs": [
@@ -632,7 +612,7 @@
     {
       "path": "scripts/",
       "owner_lane": "General",
-      "package_role": "reusable repo automation",
+      "package_role": "reusable repo automation (`compare_shadow_vs_live.py` for shadow-vs-BTC5 head-to-head)",
       "notes": "add repeatable workflows here",
       "narrow_test_command": "make hygiene",
       "canonical_docs": [
@@ -712,9 +692,9 @@
     },
     {
       "path": "state/",
-      "owner_lane": "Personal CFO / treasury control plane",
+      "owner_lane": "General",
       "package_role": "generated runtime artifacts",
-      "notes": "keep disposable and ignored, except the status JSON handoff artifacts under `reports/` that document current machine truth",
+      "notes": "keep disposable and ignored; treat checked-in contracts (`config/remote_cycle_status.json`, `improvement_velocity.json`) as canonical when `reports/` artifacts are unavailable",
       "narrow_test_command": "make verify-static",
       "canonical_docs": [
         "docs/ops/finance_control_plane.md",

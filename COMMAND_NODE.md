@@ -29,6 +29,16 @@ If you only pass one root document into Deep Research, use this one.
 
 When handing Elastifund to Deep Research, attach this file plus these machine-truth artifacts:
 
+Canonical runtime contract (checked into git):
+
+- `config/remote_cycle_status.json`
+- `improvement_velocity.json`
+- `FAST_TRADE_EDGE_ANALYSIS.md`
+- `research/edge_backlog_ranked.md`
+- `docs/NON_TRADING_STATUS.md`
+
+Runtime-local artifacts (generated on operator machines; may be absent in a clone):
+
 - `reports/runtime_truth_latest.json`
 - `reports/public_runtime_snapshot.json`
 - `reports/remote_cycle_status.json`
@@ -36,8 +46,6 @@ When handing Elastifund to Deep Research, attach this file plus these machine-tr
 - `reports/root_test_status.json`
 - `reports/state_improvement_latest.json`
 - `reports/arb_empirical_snapshot.json`
-- `research/edge_backlog_ranked.md`
-- `docs/NON_TRADING_STATUS.md`
 
 Prompt shape to use:
 
@@ -310,7 +318,7 @@ Preferred framing:
 If no other instruction is given, this is the order that maximizes money-making improvement velocity:
 
 1. **MONITOR: Confirm BTC5 fills during active trading hours.** DISPATCH_100 deployed 2026-03-14 16:05 UTC. All 4 blockers fixed (signature, delta, UP shadow, lt049 skip). Zero `invalid signature` errors since fix. Remaining skips are legitimate market conditions. Check `journalctl -u btc-5min-maker --since "1 hour ago" | grep order_placed` after 18:00 UTC Mon-Fri.
-2. **Scale BTC5 to $10/trade once fills confirmed.** Historical evidence is strong: 47 BTC closed trades, all winners, +$140 net on $247 deposit. Already configured in capital_stage.env. Wait for 3+ live fills before declaring success.
+2. **HOLD BTC5 at $5/trade. Do not scale yet.** Promotion gate currently fails; keep data collection running until `reports/btc5_promotion_gate.json` reports `overall_gate=true` across a >=7-day window.
 3. **Fix test failures in `test_btc_5min_maker_process_window_core.py`.** Guardrail changes broke test expectations. Repair tests to match new live config (delta 0.0040, buy prices 0.52/0.53, lt049 skip disabled).
 4. **Download fresh wallet export CSV.** Last export 2026-03-12 (62+ hours stale). Blocks stage gate progression. Export from https://polymarket.com/portfolio.
 5. **Build the minimum JJ-N live-launch package for Website Growth Audit.** Best path to first non-trading dollar. Blocking: verified sending domain, curated leads, explicit approval.
@@ -321,6 +329,18 @@ If no other instruction is given, this is the order that maximizes money-making 
 
 Use these files as the canonical supporting evidence:
 
+Checked-in artifacts:
+
+- `config/remote_cycle_status.json`
+- `improvement_velocity.json`
+- `FAST_TRADE_EDGE_ANALYSIS.md`
+- `config/runtime_profiles/maker_velocity_all_in.json`
+- `research/edge_backlog_ranked.md`
+- `docs/NON_TRADING_STATUS.md`
+- `nontrading/offers/website_growth_audit.py`
+
+Runtime-local artifacts (optional attachments when present):
+
 - `reports/runtime_truth_latest.json`
 - `reports/public_runtime_snapshot.json`
 - `reports/remote_cycle_status.json`
@@ -329,11 +349,6 @@ Use these files as the canonical supporting evidence:
 - `reports/root_test_status.json`
 - `reports/state_improvement_latest.json`
 - `reports/arb_empirical_snapshot.json`
-- `jj_state.json`
-- `config/runtime_profiles/maker_velocity_all_in.json`
-- `research/edge_backlog_ranked.md`
-- `docs/NON_TRADING_STATUS.md`
-- `nontrading/offers/website_growth_audit.py`
 
 For repo navigation:
 

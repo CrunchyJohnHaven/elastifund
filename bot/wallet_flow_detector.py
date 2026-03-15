@@ -48,7 +48,7 @@ import requests
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass, asdict, field
-from typing import Any, Optional, Dict, List
+from typing import Any, Optional, Dict, List, Iterable
 from zoneinfo import ZoneInfo
 
 logging.basicConfig(
@@ -60,8 +60,53 @@ logger = logging.getLogger("WalletFlow")
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _csv_env(name: str) -> list[str]:
+    raw = os.environ.get(name, "")
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
 DATA_API = "https://data-api.polymarket.com"
 GAMMA_API = "https://gamma-api.polymarket.com"
+WALLET_FLOW_ENABLED = _bool_env("WALLET_FLOW_ENABLED", True)
+WALLET_FLOW_TOP_K = max(1, _int_env("WALLET_FLOW_TOP_K", 10))
+WALLET_FLOW_MIN_CONSENSUS = max(1, _int_env("WALLET_FLOW_MIN_CONSENSUS", 3))
+WALLET_FLOW_POLL_INTERVAL_SEC = max(5, _int_env("WALLET_FLOW_POLL_INTERVAL_SEC", 15))
+WALLET_FLOW_LOOKBACK_SEC = max(60, _int_env("WALLET_FLOW_LOOKBACK_SEC", 300))
+WALLET_FLOW_KELLY_FRACTION = _float_env("WALLET_FLOW_KELLY_FRACTION", 0.0625)
+WALLET_FLOW_PAPER_MODE = _bool_env("WALLET_FLOW_PAPER_MODE", False)
+WALLET_FLOW_SIGNAL_LOG_FILE = Path(
+    os.environ.get("WALLET_FLOW_SIGNAL_LOG_FILE", "data/wallet_flow_signals.log")
+)
+WALLET_FLOW_ACTIVE_CONDITION_IDS = _csv_env("WALLET_FLOW_ACTIVE_CONDITION_IDS")
 
 # Minimum criteria for a "smart wallet" (MVP thresholds, will tighten later)
 MIN_TRADES = 5                 # Minimum trades to qualify
@@ -69,8 +114,8 @@ MIN_UNIQUE_MARKETS = 3         # Must trade in multiple distinct markets
 MIN_TOTAL_VOLUME = 50.0        # At least $50 total traded
 
 # Consensus signal parameters
-MIN_SMART_WALLETS_AGREE = 3    # At least N smart wallets on same side
-CONSENSUS_WINDOW_MINUTES = 30  # Within this time window
+MIN_SMART_WALLETS_AGREE = WALLET_FLOW_MIN_CONSENSUS  # At least N smart wallets on same side
+CONSENSUS_WINDOW_MINUTES = max(1, int(WALLET_FLOW_LOOKBACK_SEC / 60))  # Within this time window
 MIN_TOTAL_SIZE_USD = 15.0      # Combined smart wallet size must exceed this
 
 # Markets to monitor (fast-resolving crypto)
@@ -85,11 +130,16 @@ PER_WALLET_FETCH_LIMIT = 200   # Per-wallet trade history depth
 TOP_WALLETS_TO_PROFILE = 100   # Profile this many top wallets individually
 
 # Polling interval
-POLL_INTERVAL_SECONDS = 15     # How often to check for new trades
+POLL_INTERVAL_SECONDS = WALLET_FLOW_POLL_INTERVAL_SEC
 
 # Storage
 DB_FILE = Path(os.environ.get("JJ_WALLET_FLOW_DB_FILE", "data/wallet_scores.db"))
-SCORES_FILE = Path(os.environ.get("JJ_WALLET_FLOW_SCORES_FILE", "data/smart_wallets.json"))
+SCORES_FILE = Path(
+    os.environ.get(
+        "WALLET_FLOW_SCORED_WALLETS_FILE",
+        os.environ.get("JJ_WALLET_FLOW_SCORES_FILE", "data/smart_wallets_scored.json"),
+    )
+)
 BOOTSTRAP_MAX_AGE_HOURS = 24
 
 
@@ -122,6 +172,7 @@ class WalletFlowSignal:
     """Output signal from the flow detector."""
     market_id: str              # conditionId
     market_title: str
+    slug: str
     direction: str              # "outcome_0" or "outcome_1"
     outcome_name: str           # Human-readable: "Up", "Down", etc.
     confidence: float           # 0.0 - 1.0
@@ -139,6 +190,7 @@ class WalletFlowSignal:
     wallet_window_start_ts: Optional[str] = None
     wallet_window_minutes: Optional[int] = None
     wallet_conflict_resolution: Optional[Dict[str, Any]] = None
+    agreeing_wallets: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -341,18 +393,62 @@ def _load_scores_payload(scores_path: Optional[Path] = None) -> Dict[str, Any]:
     return payload
 
 
+def _extract_wallet_map(payload: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """
+    Support both legacy and ranked-list payload shapes.
+
+    Accepted formats:
+      - {"wallets": {"0xabc": {...}}}
+      - {"wallets": [{"address": "0xabc", ...}, ...]}
+      - {"ranked_wallets": [{"wallet": "0xabc", ...}, ...]}
+    """
+    candidate = payload.get("wallets")
+    if isinstance(candidate, dict):
+        out: Dict[str, Dict[str, Any]] = {}
+        for addr, info in candidate.items():
+            if not isinstance(info, dict):
+                continue
+            out[str(addr)] = dict(info)
+        return out
+
+    rows: Iterable[Any] = []
+    if isinstance(candidate, list):
+        rows = candidate
+    elif isinstance(payload.get("ranked_wallets"), list):
+        rows = payload.get("ranked_wallets", [])
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        addr = str(
+            item.get("address")
+            or item.get("wallet")
+            or item.get("proxyWallet")
+            or ""
+        ).strip()
+        if not addr:
+            continue
+        out[addr] = dict(item)
+    return out
+
+
 def load_smart_wallets(scores_path: Optional[Path] = None) -> tuple[dict, Optional[str]]:
     """Load smart wallets from JSON for scanning and status reporting."""
     payload = _load_scores_payload(scores_path)
-    raw_wallets = payload.get("wallets", {})
-    if not isinstance(raw_wallets, dict):
-        raise ValueError("wallets payload must be a JSON object")
+    raw_wallets = _extract_wallet_map(payload)
 
     smart = {}
     for addr, info in raw_wallets.items():
         if not isinstance(info, dict):
             continue
         filtered_info = {"address": addr}
+        if "activity_score" not in info and info.get("smart_score") is not None:
+            info = dict(info)
+            info["activity_score"] = info.get("smart_score")
+        if "total_volume" not in info and info.get("volume_usd") is not None:
+            info = dict(info)
+            info["total_volume"] = info.get("volume_usd")
         for key, value in info.items():
             if key in WalletScore.__dataclass_fields__:
                 filtered_info[key] = value
@@ -868,29 +964,256 @@ def ensure_bootstrap_artifacts(
 # ---------------------------------------------------------------------------
 # Flow Monitor — Real-time trade flow monitoring
 # ---------------------------------------------------------------------------
+_paper_signal_last_seen: Dict[str, int] = {}
+
+
+def _to_epoch_seconds(value: Any) -> int:
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        parsed = _parse_timestamp(value)
+        if parsed is not None:
+            return int(parsed.timestamp())
+    return int(time.time())
+
+
+def _signal_to_dispatch_payload(signal: WalletFlowSignal, *, top_k: int) -> Dict[str, Any]:
+    payload = asdict(signal)
+    payload["timestamp_iso"] = payload.get("timestamp")
+    payload["timestamp"] = _to_epoch_seconds(payload.get("timestamp"))
+    payload["source"] = "wallet_flow"
+    payload["side"] = "BUY"
+    payload["outcome"] = signal.outcome_name
+    payload["wallet_count"] = int(signal.smart_wallets_count)
+    payload["top_k"] = int(top_k)
+    return payload
+
+
+def _append_paper_signal_log(signal_payload: Dict[str, Any]) -> None:
+    signature = ":".join(
+        [
+            str(signal_payload.get("market_id", "")),
+            str(signal_payload.get("direction", "")),
+            str(signal_payload.get("wallet_count", 0)),
+        ]
+    )
+    now_ts = int(time.time())
+    last = _paper_signal_last_seen.get(signature, 0)
+    if now_ts - last < max(5, POLL_INTERVAL_SECONDS):
+        return
+    _paper_signal_last_seen[signature] = now_ts
+
+    WALLET_FLOW_SIGNAL_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    paper_entry = {
+        "timestamp": now_ts,
+        "market_id": signal_payload.get("market_id"),
+        "slug": signal_payload.get("slug", ""),
+        "direction": signal_payload.get("direction"),
+        "outcome": signal_payload.get("outcome"),
+        "confidence": signal_payload.get("confidence"),
+        "wallet_count": signal_payload.get("wallet_count"),
+        "top_k": signal_payload.get("top_k"),
+        "wallets": signal_payload.get("agreeing_wallets", []),
+    }
+    with open(WALLET_FLOW_SIGNAL_LOG_FILE, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(paper_entry, sort_keys=True) + "\n")
+
+
+class ConsensusDetector:
+    """Detect wallet-side convergence and emit WalletFlowSignal objects."""
+
+    def __init__(
+        self,
+        *,
+        min_consensus: int = MIN_SMART_WALLETS_AGREE,
+        min_total_size_usd: float = MIN_TOTAL_SIZE_USD,
+        lookback_seconds: int = WALLET_FLOW_LOOKBACK_SEC,
+        top_k: int = WALLET_FLOW_TOP_K,
+    ) -> None:
+        self.min_consensus = max(1, int(min_consensus))
+        self.min_total_size_usd = max(0.0, float(min_total_size_usd))
+        self.lookback_seconds = max(60, int(lookback_seconds))
+        self.top_k = max(1, int(top_k))
+
+    def detect(self, recent_trades: list, smart_wallets: dict) -> list[WalletFlowSignal]:
+        market_sides: Dict[tuple[str, int], list] = {}
+        market_all_sides: Dict[str, Dict[int, list]] = {}
+
+        for t in recent_trades:
+            wallet = t.get("proxyWallet", "")
+            if wallet not in smart_wallets:
+                continue
+
+            cid = str(t.get("conditionId", "")).strip()
+            if not cid:
+                continue
+            effective = t.get("_effective_outcome")
+            if effective is None:
+                effective = get_effective_outcome(
+                    t.get("side", ""),
+                    t.get("outcomeIndex", 0),
+                )
+
+            key = (cid, int(effective))
+            market_sides.setdefault(key, []).append(t)
+            market_all_sides.setdefault(cid, {}).setdefault(int(effective), []).append(t)
+
+        signals: list[WalletFlowSignal] = []
+        now = int(time.time())
+
+        for (cid, effective_outcome), trades in market_sides.items():
+            unique_wallets = {str(t.get("proxyWallet", "")).strip() for t in trades if t.get("proxyWallet")}
+            if len(unique_wallets) < self.min_consensus:
+                continue
+
+            total_size = sum(float(t.get("size", 0) or 0) for t in trades)
+            if total_size < self.min_total_size_usd:
+                continue
+
+            scores_list = [
+                smart_wallets[w].activity_score
+                for w in unique_wallets
+                if w in smart_wallets
+            ]
+            avg_score = sum(scores_list) / len(scores_list) if scores_list else 0.0
+            earliest_ts = min(int(t.get("timestamp", 0) or 0) for t in trades)
+            signal_age = max(0, now - earliest_ts)
+
+            wallet_factor = min(0.3, (len(unique_wallets) - 2) * 0.1)
+            quality_factor = min(0.2, (avg_score / 100) * 0.2)
+            size_factor = min(0.15, (total_size / 100) * 0.15)
+            base_confidence = min(0.95, 0.35 + wallet_factor + quality_factor + size_factor)
+
+            opposite_outcome = 1 - int(effective_outcome)
+            opposing_trades = market_all_sides.get(cid, {}).get(opposite_outcome, [])
+            opposing_wallets = {
+                t.get("proxyWallet", "")
+                for t in opposing_trades
+                if t.get("proxyWallet", "")
+            }
+            opposing_size = sum(float(t.get("size", 0) or 0) for t in opposing_trades)
+
+            combined_size = max(1e-6, total_size + opposing_size)
+            consensus_share = max(0.0, min(1.0, total_size / combined_size))
+            opposition_penalty = min(0.20, (1.0 - consensus_share) * 0.35)
+
+            max_age_seconds = max(1, self.lookback_seconds)
+            freshness_factor = max(0.40, 1.0 - (signal_age / (max_age_seconds * 1.25)))
+            confidence = min(0.95, max(0.01, (base_confidence * freshness_factor) - opposition_penalty))
+
+            title = trades[0].get("title", "Unknown Market")
+            outcome_name = trades[0].get("outcome", f"Outcome {effective_outcome}")
+            direction = f"outcome_{effective_outcome}"
+            slug = str(trades[0].get("slug", "") or "")
+            window_start_ts, window_minutes = _parse_window_metadata_from_title(
+                title,
+                reference_ts=earliest_ts,
+            )
+            agreeing_wallets = sorted(unique_wallets)
+
+            signal = WalletFlowSignal(
+                market_id=cid,
+                market_title=title,
+                slug=slug,
+                direction=direction,
+                outcome_name=outcome_name,
+                confidence=confidence,
+                smart_wallets_count=len(unique_wallets),
+                total_smart_size=total_size,
+                avg_smart_score=avg_score,
+                signal_age_seconds=signal_age,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                wallet_consensus_wallets=len(unique_wallets),
+                wallet_consensus_notional_usd=round(total_size, 4),
+                wallet_consensus_share=round(consensus_share, 4),
+                wallet_opposition_wallets=len(opposing_wallets),
+                wallet_opposition_notional_usd=round(opposing_size, 4),
+                wallet_signal_age_seconds=round(float(signal_age), 4),
+                wallet_window_start_ts=window_start_ts,
+                wallet_window_minutes=window_minutes,
+                agreeing_wallets=agreeing_wallets,
+            )
+            signals.append(signal)
+
+            logger.info(
+                f"CONSENSUS SIGNAL: {outcome_name} ({direction}) on {title[:50]}\n"
+                f"  Wallets: {len(unique_wallets)} | Size: ${total_size:.2f} | "
+                f"Opposition: {len(opposing_wallets)} wallets ${opposing_size:.2f} | "
+                f"Confidence: {confidence:.2f} | Avg Score: {avg_score:.0f} | "
+                f"Age: {signal_age}s | Share: {consensus_share:.2f}"
+            )
+
+        return signals
+
+
 class FlowMonitor:
     """Monitors real-time trade flow for smart wallet activity."""
 
-    def __init__(self, smart_wallets: dict):
-        """
-        Args:
-            smart_wallets: {address: WalletScore} dict of tracked wallets
-        """
-        self.smart_wallets = smart_wallets
-        self.last_seen_timestamp = int(time.time()) - 300  # Start 5 min ago
+    def __init__(
+        self,
+        smart_wallets: dict,
+        *,
+        top_k: int = WALLET_FLOW_TOP_K,
+        lookback_seconds: int = WALLET_FLOW_LOOKBACK_SEC,
+        active_condition_ids: Optional[List[str]] = None,
+    ):
+        ranked_wallets = sorted(
+            smart_wallets.items(),
+            key=lambda item: float(getattr(item[1], "activity_score", 0.0)),
+            reverse=True,
+        )
+        selected = ranked_wallets[: max(1, int(top_k))]
+        self.smart_wallets = dict(selected)
+        self.top_k = max(1, int(top_k))
+        self.lookback_seconds = max(60, int(lookback_seconds))
+        self.active_condition_ids = [
+            cid.strip() for cid in (active_condition_ids or WALLET_FLOW_ACTIVE_CONDITION_IDS) if cid.strip()
+        ]
+        self.last_seen_timestamp = int(time.time()) - self.lookback_seconds
         self._recent_trades = []  # Rolling window of recent smart trades
+        self.consensus_detector = ConsensusDetector(
+            min_consensus=MIN_SMART_WALLETS_AGREE,
+            min_total_size_usd=MIN_TOTAL_SIZE_USD,
+            lookback_seconds=self.lookback_seconds,
+            top_k=self.top_k,
+        )
 
-    def poll_trades(self) -> list:
-        """Fetch new trades since last poll. Returns list of smart wallet trades."""
-        try:
+    def _fetch_trades(self) -> list[dict]:
+        if not self.active_condition_ids:
             resp = requests.get(
                 f"{DATA_API}/trades",
                 params={"limit": 100},
                 timeout=10,
             )
             if resp.status_code != 200:
+                logger.warning("wallet-flow poll status=%s", resp.status_code)
                 return []
-            trades = resp.json()
+            payload = resp.json()
+            return payload if isinstance(payload, list) else []
+
+        merged: list[dict] = []
+        for condition_id in self.active_condition_ids:
+            resp = requests.get(
+                f"{DATA_API}/trades",
+                params={"conditionId": condition_id, "limit": 100},
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                logger.warning(
+                    "wallet-flow condition poll status=%s condition=%s",
+                    resp.status_code,
+                    condition_id,
+                )
+                continue
+            payload = resp.json()
+            if isinstance(payload, list):
+                merged.extend(payload)
+        return merged
+
+    def poll_trades(self) -> list:
+        """Fetch new trades since last poll. Returns list of smart wallet trades."""
+        try:
+            trades = self._fetch_trades()
         except Exception as e:
             logger.error(f"Poll failed: {e}")
             return []
@@ -906,18 +1229,17 @@ class FlowMonitor:
 
             wallet = t.get("proxyWallet", "")
             if wallet in self.smart_wallets:
-                # Enrich with effective outcome
                 side = t.get("side", "")
                 outcome_index = t.get("outcomeIndex", 0)
                 t["_effective_outcome"] = get_effective_outcome(side, outcome_index)
                 t["_is_crypto_fast"] = is_crypto_fast_market(t.get("title", ""))
+                if not t["_is_crypto_fast"]:
+                    continue
                 smart_trades.append(t)
                 self._recent_trades.append(t)
 
         self.last_seen_timestamp = max_ts
-
-        # Trim rolling window to CONSENSUS_WINDOW_MINUTES
-        cutoff = int(time.time()) - (CONSENSUS_WINDOW_MINUTES * 60)
+        cutoff = int(time.time()) - self.lookback_seconds
         self._recent_trades = [
             t for t in self._recent_trades
             if int(t.get("timestamp", 0) or 0) > cutoff
@@ -939,121 +1261,7 @@ class FlowMonitor:
         return smart_trades
 
     def get_consensus_signals(self) -> list:
-        """
-        Check for wallet consensus in the rolling window.
-
-        Groups trades by (conditionId, effective_outcome) — which is which
-        outcome of the market smart wallets are betting on.
-
-        Returns list of WalletFlowSignal for markets where N+ smart wallets
-        agree on the same effective outcome.
-        """
-        market_sides = {}  # {(conditionId, effective_outcome): [trades]}
-        market_all_sides: Dict[str, Dict[int, list]] = {}
-
-        for t in self._recent_trades:
-            wallet = t.get("proxyWallet", "")
-            if wallet not in self.smart_wallets:
-                continue
-
-            cid = t.get("conditionId", "")
-            effective = t.get("_effective_outcome")
-            if effective is None:
-                effective = get_effective_outcome(
-                    t.get("side", ""),
-                    t.get("outcomeIndex", 0)
-                )
-
-            key = (cid, effective)
-            if key not in market_sides:
-                market_sides[key] = []
-            market_sides[key].append(t)
-            market_all_sides.setdefault(cid, {}).setdefault(effective, []).append(t)
-
-        # Check for consensus
-        signals = []
-        now = int(time.time())
-
-        for (cid, effective_outcome), trades in market_sides.items():
-            # Count unique smart wallets
-            unique_wallets = set(t["proxyWallet"] for t in trades)
-            if len(unique_wallets) < MIN_SMART_WALLETS_AGREE:
-                continue
-
-            # Calculate aggregate metrics
-            total_size = sum(float(t.get("size", 0) or 0) for t in trades)
-            if total_size < MIN_TOTAL_SIZE_USD:
-                continue
-
-            # Average activity score of agreeing wallets
-            scores_list = []
-            for w in unique_wallets:
-                if w in self.smart_wallets:
-                    scores_list.append(self.smart_wallets[w].activity_score)
-            avg_score = sum(scores_list) / len(scores_list) if scores_list else 0
-
-            # Signal age (how old is the earliest trade in this consensus)
-            earliest_ts = min(int(t.get("timestamp", 0) or 0) for t in trades)
-            signal_age = now - earliest_ts
-
-            # Confidence based on number of wallets and their quality
-            wallet_factor = min(0.3, (len(unique_wallets) - 2) * 0.1)
-            quality_factor = min(0.2, (avg_score / 100) * 0.2)
-            size_factor = min(0.15, (total_size / 100) * 0.15)
-            base_confidence = min(0.95, 0.35 + wallet_factor + quality_factor + size_factor)
-
-            opposite_outcome = 1 - int(effective_outcome)
-            opposing_trades = market_all_sides.get(cid, {}).get(opposite_outcome, [])
-            opposing_wallets = {t.get("proxyWallet", "") for t in opposing_trades if t.get("proxyWallet", "")}
-            opposing_size = sum(float(t.get("size", 0) or 0) for t in opposing_trades)
-
-            combined_size = max(1e-6, total_size + opposing_size)
-            consensus_share = max(0.0, min(1.0, total_size / combined_size))
-            opposition_penalty = min(0.20, (1.0 - consensus_share) * 0.35)
-
-            max_age_seconds = max(1, CONSENSUS_WINDOW_MINUTES * 60)
-            freshness_factor = max(0.40, 1.0 - (signal_age / (max_age_seconds * 1.25)))
-            confidence = min(0.95, max(0.01, (base_confidence * freshness_factor) - opposition_penalty))
-
-            title = trades[0].get("title", "Unknown Market")
-            outcome_name = trades[0].get("outcome", f"Outcome {effective_outcome}")
-            direction = f"outcome_{effective_outcome}"
-            window_start_ts, window_minutes = _parse_window_metadata_from_title(
-                title,
-                reference_ts=earliest_ts,
-            )
-
-            signal = WalletFlowSignal(
-                market_id=cid,
-                market_title=title,
-                direction=direction,
-                outcome_name=outcome_name,
-                confidence=confidence,
-                smart_wallets_count=len(unique_wallets),
-                total_smart_size=total_size,
-                avg_smart_score=avg_score,
-                signal_age_seconds=signal_age,
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                wallet_consensus_wallets=len(unique_wallets),
-                wallet_consensus_notional_usd=round(total_size, 4),
-                wallet_consensus_share=round(consensus_share, 4),
-                wallet_opposition_wallets=len(opposing_wallets),
-                wallet_opposition_notional_usd=round(opposing_size, 4),
-                wallet_signal_age_seconds=round(float(signal_age), 4),
-                wallet_window_start_ts=window_start_ts,
-                wallet_window_minutes=window_minutes,
-            )
-            signals.append(signal)
-
-            logger.info(
-                f"CONSENSUS SIGNAL: {outcome_name} ({direction}) on {title[:50]}\n"
-                f"  Wallets: {len(unique_wallets)} | Size: ${total_size:.2f} | "
-                f"Opposition: {len(opposing_wallets)} wallets ${opposing_size:.2f} | "
-                f"Confidence: {confidence:.2f} | Avg Score: {avg_score:.0f} | "
-                f"Age: {signal_age}s | Share: {consensus_share:.2f}"
-            )
-
-        return signals
+        return self.consensus_detector.detect(self._recent_trades, self.smart_wallets)
 
 
 # ---------------------------------------------------------------------------
@@ -1074,6 +1282,8 @@ def scan_for_signals() -> list:
     accumulates across multiple scan calls.
     """
     global _persistent_monitor, _monitor_initialized_at
+    if not WALLET_FLOW_ENABLED:
+        return []
 
     status = get_bootstrap_status()
     if not status.ready:
@@ -1098,9 +1308,17 @@ def scan_for_signals() -> list:
     # Create or refresh monitor (refresh every 30 min to pick up new wallets)
     now = time.time()
     if _persistent_monitor is None or (now - _monitor_initialized_at) > 1800:
-        _persistent_monitor = FlowMonitor(smart)
+        _persistent_monitor = FlowMonitor(
+            smart,
+            top_k=WALLET_FLOW_TOP_K,
+            lookback_seconds=WALLET_FLOW_LOOKBACK_SEC,
+        )
         _monitor_initialized_at = now
-        logger.info(f"Initialized FlowMonitor with {len(smart)} smart wallets")
+        logger.info(
+            "Initialized FlowMonitor with top_k=%d (loaded=%d)",
+            WALLET_FLOW_TOP_K,
+            len(smart),
+        )
 
     # Fetch recent trades and check for consensus
     _persistent_monitor.poll_trades()
@@ -1109,9 +1327,17 @@ def scan_for_signals() -> list:
     out: list[Dict[str, Any]] = []
     for signal in signals:
         if isinstance(signal, WalletFlowSignal):
-            out.append(asdict(signal))
+            out.append(_signal_to_dispatch_payload(signal, top_k=_persistent_monitor.top_k))
         elif isinstance(signal, dict):
-            out.append(signal)
+            out.append(dict(signal))
+    if WALLET_FLOW_PAPER_MODE and out:
+        for signal_payload in out:
+            _append_paper_signal_log(signal_payload)
+        logger.info(
+            "Wallet flow paper mode active: logged %d consensus signals to %s",
+            len(out),
+            WALLET_FLOW_SIGNAL_LOG_FILE,
+        )
     return out
 
 
@@ -1124,6 +1350,13 @@ def get_signals_for_engine() -> list:
     market_price, estimated_prob, edge, confidence, reasoning, source, etc.
     """
     raw_signals = _resolve_conflicting_market_signals(scan_for_signals())
+    if WALLET_FLOW_PAPER_MODE:
+        if raw_signals:
+            logger.info(
+                "Wallet flow paper mode suppressing %d engine signals (log-only)",
+                len(raw_signals),
+            )
+        return []
     engine_signals = []
 
     for sig in raw_signals:
@@ -1174,6 +1407,7 @@ def get_signals_for_engine() -> list:
             "category": "crypto",
             "resolution_hours": 0.25,  # Fast markets (15 min default)
             "velocity_score": edge * 365 * 24 / 0.25,  # Annualized edge / lockup
+            "kelly_fraction": WALLET_FLOW_KELLY_FRACTION,
         }
 
         consensus_wallets = sig.get("wallet_consensus_wallets")
@@ -1314,12 +1548,12 @@ def main():
         if status.scores_exists:
             try:
                 data = _load_scores_payload()
-                wallets = data.get("wallets", {})
-                if isinstance(wallets, dict) and wallets:
+                wallets = _extract_wallet_map(data)
+                if wallets:
                     print()
                     sorted_wallets = sorted(
                         wallets.items(),
-                        key=lambda x: x[1].get("activity_score", 0),
+                        key=lambda x: x[1].get("activity_score", x[1].get("smart_score", 0)),
                         reverse=True,
                     )
                     for i, (addr, info) in enumerate(sorted_wallets[:args.top]):

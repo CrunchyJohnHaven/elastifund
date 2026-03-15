@@ -5624,30 +5624,43 @@ class JJLive:
                         )
                         continue
 
+                    if not order_id:
+                        logger.warning(
+                            "SUM-VIOL order acknowledged without id: event=%s leg=%s result=%s",
+                            signal.get("event_id", ""),
+                            market_id,
+                            result,
+                        )
+                        continue
+
                     trade_record["order_id"] = order_id
-                    trade_id = self.db.log_trade(trade_record)
                     self._record_trade_telemetry(
-                        {**trade_record, "trade_id": trade_id, "order_size": shares},
+                        {**trade_record, "order_size": shares},
                         fill_status="posted",
-                        execution_stage="live_sum_violation",
+                        execution_stage="live_sum_violation_posted",
                     )
-                    self.multi_sim.simulate_trade(leg_signal, trade_id)
-                    self.state.record_trade(
-                        market_id=market_id,
-                        question=leg_signal["question"],
-                        direction=direction,
-                        price=price,
-                        size_usd=size_usd,
-                        edge=leg_signal["edge"],
-                        confidence=leg_signal["confidence"],
-                        order_id=order_id,
-                        source=trade_record.get("source", ""),
-                        source_combo=trade_record.get("source_combo", ""),
-                        source_components=trade_record.get("source_components", []),
-                        source_count=int(_safe_float(trade_record.get("source_count", 0), 0)),
-                        signal_sources=list(trade_record.get("signal_sources") or []),
-                        signal_metadata=dict(trade_record.get("signal_metadata") or {}),
-                    )
+                    if self.fill_tracker is not None:
+                        self.fill_tracker.record_order(
+                            order_id=order_id,
+                            market_id=market_id,
+                            token_id=token_id,
+                            question=leg_signal["question"],
+                            category=category,
+                            side="BUY",
+                            direction=direction,
+                            price=order_price,
+                            size=shares,
+                            size_usd=size_usd,
+                            order_type="maker",
+                            metadata={
+                                "trade_record": dict(trade_record),
+                                "signal_context": {
+                                    "edge": leg_signal.get("edge", 0.0),
+                                    "market_price": leg_signal.get("market_price", order_price),
+                                    "direction": leg_signal.get("direction", direction),
+                                },
+                            },
+                        )
                     basket_successes += 1
                     orders_placed += 1
                 except Exception as e:
