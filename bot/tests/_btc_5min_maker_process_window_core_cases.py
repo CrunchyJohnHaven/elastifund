@@ -723,6 +723,7 @@ async def test_process_window_suppresses_weaker_direction_when_one_sided_regime_
         regime_weaker_direction_quote_ticks=0,
         enable_recent_regime_one_sided_guardrail=True,
         regime_one_sided_min_pnl_gap_usd=30.0,
+        direction_suppression_min_price_exempt=1.0,
     )
     bot = BTC5MinMakerBot(cfg)
 
