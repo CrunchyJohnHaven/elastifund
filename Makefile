@@ -1,15 +1,23 @@
 PYTHON ?= python3
 
-.PHONY: help bootstrap doctor onboard quickstart preflight hygiene test verify test-root test-polymarket test-nontrading smoke-nontrading btc5-autoresearch-local btc5-autoresearch-local-autopush btc5-arr-report btc5-hypothesis-lab btc5-regime-policy-lab btc5-hypothesis-frontier deploy-write-manifest deploy-dry-run api-specs clean
+.PHONY: help bootstrap bootstrap-lite bootstrap-runtime doctor onboard quickstart preflight hygiene verify-static verify-fastpath test-select test-fixture-ownership test-research-sim test-platform test verify test-root test-polymarket test-nontrading smoke-nontrading btc5-autoresearch-local btc5-autoresearch-local-autopush btc5-arr-report btc5-hypothesis-lab btc5-regime-policy-lab btc5-hypothesis-frontier deploy-write-manifest deploy-dry-run api-specs clean
 
 help:
 	@printf '%s\n' \
 		'bootstrap        Install root development dependencies' \
+		'bootstrap-lite   Install lightweight docs/static dependencies' \
+		'bootstrap-runtime Install runtime dependencies without test extras' \
 		'doctor           Run local setup diagnostics' \
 		'onboard          Generate .env and runtime defaults for a fresh clone' \
 		'quickstart       Prepare .env and launch the local Docker stack' \
 		'preflight        Run Elastifund env preflight checks' \
 		'hygiene          Run repo hygiene checks' \
+		'verify-static    Run docs/static verification checks' \
+		'verify-fastpath  Run verify-static + manifest freshness checks' \
+		'test-select      Print suggested local test commands for current diff' \
+		'test-fixture-ownership Run fixture ownership contract tests' \
+		'test-research-sim Run research/simulation regression slice' \
+		'test-platform    Run hub/platform regression slice' \
 		'test             Run the root regression suite' \
 		'verify           Run hygiene + root tests + polymarket-bot tests' \
 		'test-root        Run the repo-root pytest matrix' \
@@ -31,6 +39,14 @@ bootstrap:
 	$(PYTHON) -m pip install --upgrade pip
 	$(PYTHON) -m pip install -r requirements-dev.txt
 
+bootstrap-lite:
+	$(PYTHON) -m pip install --upgrade pip
+	$(PYTHON) -m pip install -r requirements-lite.txt
+
+bootstrap-runtime:
+	$(PYTHON) -m pip install --upgrade pip
+	$(PYTHON) -m pip install -r requirements.txt -r hub/requirements.txt
+
 doctor:
 	$(PYTHON) scripts/doctor.py
 
@@ -45,6 +61,27 @@ preflight:
 
 hygiene:
 	$(PYTHON) scripts/check_repo_hygiene.py
+
+verify-static:
+	$(PYTHON) scripts/check_repo_hygiene.py
+	$(PYTHON) -m pytest -q tests/test_select_test_targets.py tests/test_reports_layout_contract.py tests/test_reports_top_level_symlink_collapse.py tests/test_reports_top_level_symlink_prune.py tests/test_reports_symlink_collapse.py
+
+verify-fastpath:
+	$(PYTHON) scripts/check_repo_hygiene.py
+	$(PYTHON) scripts/render_repo_manifest.py --check
+	$(PYTHON) -m pytest -q tests/test_select_test_targets.py tests/test_reports_layout_contract.py tests/test_reports_top_level_symlink_collapse.py tests/test_reports_top_level_symlink_prune.py tests/test_reports_symlink_collapse.py
+
+test-select:
+	$(PYTHON) scripts/select_test_targets.py --from-git-status --format commands
+
+test-fixture-ownership:
+	$(PYTHON) -m pytest tests/test_fixture_ownership_contract.py -q
+
+test-research-sim:
+	$(PYTHON) -m pytest tests/test_backtest.py tests/test_kalshi_weather_simulator.py tests/test_queue_fill_model.py -q
+
+test-platform:
+	$(PYTHON) -m pytest hub/tests -q
 
 test:
 	$(PYTHON) scripts/run_root_tests.py
