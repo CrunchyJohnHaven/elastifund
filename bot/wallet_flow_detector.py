@@ -45,10 +45,11 @@ import sqlite3
 import logging
 import argparse
 import requests
+from collections import Counter
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass, asdict, field
-from typing import Any, Optional, Dict, List
+from typing import Any, Optional, Dict, List, Mapping
 from zoneinfo import ZoneInfo
 
 logging.basicConfig(
@@ -57,11 +58,62 @@ logging.basicConfig(
 )
 logger = logging.getLogger("WalletFlow")
 
+
+def _env_bool(name: str, default: bool) -> bool:
+    """Parse an environment variable into a strict bool."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    """Parse an integer env var with fallback."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    """Parse a float env var with fallback."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 DATA_API = "https://data-api.polymarket.com"
 GAMMA_API = "https://gamma-api.polymarket.com"
+
+# Runtime feature switches and tuning knobs
+WALLET_FLOW_ENABLED = _env_bool("WALLET_FLOW_ENABLED", True)
+WALLET_FLOW_TOP_K = max(1, _env_int("WALLET_FLOW_TOP_K", 10))
+WALLET_FLOW_MIN_CONSENSUS = max(2, _env_int("WALLET_FLOW_MIN_CONSENSUS", 3))
+WALLET_FLOW_POLL_INTERVAL_SEC = max(10, _env_int("WALLET_FLOW_POLL_INTERVAL_SEC", 15))
+# Keep the legacy 30-minute default for backward compatibility;
+# dispatch can tighten to 300s via env override.
+WALLET_FLOW_LOOKBACK_SEC = max(60, _env_int("WALLET_FLOW_LOOKBACK_SEC", 1800))
+WALLET_FLOW_KELLY_FRACTION = max(0.0, _env_float("WALLET_FLOW_KELLY_FRACTION", 0.0625))
+WALLET_FLOW_SIGNAL_LOG_FILE = Path(
+    os.environ.get("WALLET_FLOW_SIGNAL_LOG_FILE", "data/wallet_flow_signals.log")
+)
+WALLET_FLOW_SCORED_FILE = Path(
+    os.environ.get("WALLET_FLOW_SCORED_FILE", "data/smart_wallets_scored.json")
+)
+WALLET_FLOW_MARKET_IDS = tuple(
+    item.strip()
+    for item in os.environ.get("WALLET_FLOW_MARKET_IDS", "").split(",")
+    if item.strip()
+)
 
 # Minimum criteria for a "smart wallet" (MVP thresholds, will tighten later)
 MIN_TRADES = 5                 # Minimum trades to qualify
@@ -69,8 +121,8 @@ MIN_UNIQUE_MARKETS = 3         # Must trade in multiple distinct markets
 MIN_TOTAL_VOLUME = 50.0        # At least $50 total traded
 
 # Consensus signal parameters
-MIN_SMART_WALLETS_AGREE = 3    # At least N smart wallets on same side
-CONSENSUS_WINDOW_MINUTES = 30  # Within this time window
+MIN_SMART_WALLETS_AGREE = WALLET_FLOW_MIN_CONSENSUS
+CONSENSUS_WINDOW_MINUTES = max(1, WALLET_FLOW_LOOKBACK_SEC // 60)
 MIN_TOTAL_SIZE_USD = 15.0      # Combined smart wallet size must exceed this
 
 # Markets to monitor (fast-resolving crypto)
@@ -85,7 +137,7 @@ PER_WALLET_FETCH_LIMIT = 200   # Per-wallet trade history depth
 TOP_WALLETS_TO_PROFILE = 100   # Profile this many top wallets individually
 
 # Polling interval
-POLL_INTERVAL_SECONDS = 15     # How often to check for new trades
+POLL_INTERVAL_SECONDS = WALLET_FLOW_POLL_INTERVAL_SEC
 
 # Storage
 DB_FILE = Path(os.environ.get("JJ_WALLET_FLOW_DB_FILE", "data/wallet_scores.db"))
@@ -122,6 +174,12 @@ class WalletFlowSignal:
     """Output signal from the flow detector."""
     market_id: str              # conditionId
     market_title: str
+    slug: str
+    side: str                   # BUY or SELL
+    outcome: str                # Human-readable: Up / Down / Yes / No
+    source: str                 # wallet_flow
+    wallet_count: int           # agreeing wallets in top-K
+    top_k: int                  # configured top-K cohort size
     direction: str              # "outcome_0" or "outcome_1"
     outcome_name: str           # Human-readable: "Up", "Down", etc.
     confidence: float           # 0.0 - 1.0
@@ -445,6 +503,188 @@ def _format_bootstrap_status(status: BootstrapStatus) -> str:
     return "\n".join(lines)
 
 
+def _extract_wallet_records_from_payload(payload: Any) -> list[dict[str, Any]]:
+    """Normalize many scored-wallet JSON shapes into a list of records."""
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, Mapping)]
+
+    if not isinstance(payload, Mapping):
+        return []
+
+    wallets = payload.get("wallets", payload.get("data"))
+    if isinstance(wallets, list):
+        return [row for row in wallets if isinstance(row, Mapping)]
+
+    if isinstance(wallets, Mapping):
+        rows: list[dict[str, Any]] = []
+        for address, info in wallets.items():
+            if isinstance(info, Mapping):
+                row = dict(info)
+                row.setdefault("address", str(address))
+            else:
+                row = {"address": str(address), "smart_score": info}
+            rows.append(row)
+        return rows
+
+    if "address" in payload and isinstance(payload.get("address"), str):
+        return [dict(payload)]
+    return []
+
+
+def _wallet_score_value(entry: Mapping[str, Any]) -> float:
+    """Return the best available score value from a wallet record."""
+    for key in ("smart_score", "activity_score", "score"):
+        value = entry.get(key)
+        if value is None:
+            continue
+        try:
+            score = float(value)
+            return score * 100.0 if 0.0 <= score <= 1.0 else score
+        except (TypeError, ValueError):
+            continue
+    return 0.0
+
+
+def load_scored_wallets(
+    scores_path: Optional[Path] = None,
+    top_k: Optional[int] = None,
+) -> tuple[dict[str, WalletScore], Optional[str]]:
+    """
+    Load scored smart wallets from data/smart_wallets_scored.json style payloads.
+
+    Supported formats:
+      - {"wallets": [{"address": "...", "smart_score": 0.82}, ...]}
+      - {"wallets": {"0xabc": {"smart_score": 0.82}, ...}}
+      - [{"address": "...", "activity_score": 74.2}, ...]
+    """
+    target = Path(scores_path or WALLET_FLOW_SCORED_FILE)
+    if not target.exists():
+        raise FileNotFoundError(str(target))
+
+    with open(target) as f:
+        payload = json.load(f)
+
+    records = _extract_wallet_records_from_payload(payload)
+    ranked = sorted(records, key=_wallet_score_value, reverse=True)
+    limit = max(1, int(top_k)) if top_k is not None else None
+    if limit is not None:
+        ranked = ranked[:limit]
+
+    smart: dict[str, WalletScore] = {}
+    for row in ranked:
+        address = str(
+            row.get("address")
+            or row.get("wallet")
+            or row.get("proxyWallet")
+            or ""
+        ).strip()
+        if not address:
+            continue
+        score = _wallet_score_value(row)
+        smart[address] = WalletScore(
+            address=address,
+            total_trades=int(float(row.get("total_trades", 0) or 0)),
+            crypto_trades=int(float(row.get("crypto_trades", 0) or 0)),
+            unique_markets=int(float(row.get("unique_markets", 0) or 0)),
+            total_volume=float(row.get("total_volume", row.get("volume", 0.0)) or 0.0),
+            avg_size=float(row.get("avg_size", 0.0) or 0.0),
+            win_rate=float(row.get("win_rate", 0.0) or 0.0),
+            activity_score=score,
+            is_smart=True,
+            last_active=str(row.get("last_active", row.get("last_trade_at", "")) or ""),
+        )
+
+    if isinstance(payload, Mapping):
+        last_updated = payload.get("updated_at")
+        if isinstance(last_updated, str):
+            return smart, last_updated
+    return smart, _file_updated_at(target)
+
+
+def load_configured_smart_wallets(
+    *,
+    top_k: Optional[int] = None,
+) -> tuple[dict[str, WalletScore], Optional[str], str]:
+    """
+    Prefer scored-wallet JSON (Instance 4 output), then fall back to legacy JSON.
+    """
+    try:
+        scored, updated_at = load_scored_wallets(top_k=top_k or WALLET_FLOW_TOP_K)
+        if scored:
+            return scored, updated_at, "smart_wallets_scored"
+    except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError):
+        pass
+
+    legacy, updated_at = load_smart_wallets()
+    return legacy, updated_at, "smart_wallets_legacy"
+
+
+def _append_paper_signal_log(signals: list[dict[str, Any]]) -> None:
+    """Append wallet-flow signal JSON lines for paper-mode validation."""
+    if not signals:
+        return
+    WALLET_FLOW_SIGNAL_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(WALLET_FLOW_SIGNAL_LOG_FILE, "a") as fh:
+        for signal in signals:
+            fh.write(json.dumps(signal, sort_keys=True) + "\n")
+
+
+def _discover_active_fast_market_ids(limit: int = 100) -> list[str]:
+    """Fetch active fast-market conditionIds for conditionId-targeted polling."""
+    try:
+        resp = requests.get(
+            f"{GAMMA_API}/markets",
+            params={"active": "true", "closed": "false", "limit": min(limit, 500)},
+            timeout=12,
+        )
+        if resp.status_code != 200:
+            return []
+        markets = resp.json()
+    except Exception:
+        return []
+
+    market_ids: list[str] = []
+    for market in markets if isinstance(markets, list) else []:
+        if not isinstance(market, Mapping):
+            continue
+        title = str(
+            market.get("question")
+            or market.get("title")
+            or market.get("slug")
+            or ""
+        )
+        if not is_crypto_fast_market(title):
+            continue
+        condition_id = str(market.get("conditionId") or "").strip()
+        if condition_id:
+            market_ids.append(condition_id)
+    # Keep deterministic order and uniqueness.
+    return list(dict.fromkeys(market_ids))
+
+
+def _normalize_wallet_signal_output(payload: dict[str, Any]) -> dict[str, Any]:
+    """Ensure wallet-flow payload includes required consensus fields."""
+    normalized = dict(payload)
+
+    normalized.setdefault("source", "wallet_flow")
+    normalized.setdefault("slug", str(normalized.get("event_slug") or ""))
+    normalized.setdefault("outcome", str(normalized.get("outcome_name") or ""))
+    normalized.setdefault("wallet_count", int(normalized.get("smart_wallets_count", 0) or 0))
+    normalized.setdefault("top_k", int(normalized.get("top_k", WALLET_FLOW_TOP_K) or WALLET_FLOW_TOP_K))
+    normalized.setdefault("side", str(normalized.get("side") or "BUY").upper())
+
+    timestamp = normalized.get("timestamp")
+    if isinstance(timestamp, str):
+        parsed = _parse_timestamp(timestamp)
+        normalized["timestamp"] = int(parsed.timestamp()) if parsed else int(time.time())
+    elif isinstance(timestamp, (float, int)):
+        normalized["timestamp"] = int(timestamp)
+    else:
+        normalized["timestamp"] = int(time.time())
+
+    return normalized
+
+
 # ---------------------------------------------------------------------------
 # Wallet Scorer — Builds and maintains smart wallet database
 # ---------------------------------------------------------------------------
@@ -468,6 +708,14 @@ class WalletScorer:
             self.conn.close()
         except Exception:
             pass
+
+    @staticmethod
+    def load_scored_wallets(
+        scores_path: Optional[Path] = None,
+        top_k: Optional[int] = None,
+    ) -> tuple[dict[str, WalletScore], Optional[str]]:
+        """Load pre-ranked wallets from smart_wallets_scored.json."""
+        return load_scored_wallets(scores_path=scores_path, top_k=top_k)
 
     def _create_tables(self):
         self.conn.executescript("""
@@ -868,164 +1116,129 @@ def ensure_bootstrap_artifacts(
 # ---------------------------------------------------------------------------
 # Flow Monitor — Real-time trade flow monitoring
 # ---------------------------------------------------------------------------
-class FlowMonitor:
-    """Monitors real-time trade flow for smart wallet activity."""
+class ConsensusDetector:
+    """Detect smart-wallet consensus from a rolling trade window."""
 
-    def __init__(self, smart_wallets: dict):
+    def __init__(
+        self,
+        smart_wallets: Mapping[str, WalletScore],
+        *,
+        top_k: int = WALLET_FLOW_TOP_K,
+        min_consensus: int = WALLET_FLOW_MIN_CONSENSUS,
+        lookback_sec: int = WALLET_FLOW_LOOKBACK_SEC,
+        min_total_size_usd: float = MIN_TOTAL_SIZE_USD,
+    ) -> None:
+        ranked = sorted(
+            smart_wallets.items(),
+            key=lambda item: float(item[1].activity_score),
+            reverse=True,
+        )
+        effective_top_k = max(1, min(int(top_k), len(ranked))) if ranked else max(1, int(top_k))
+        self.top_k = effective_top_k
+        self.smart_wallets: dict[str, WalletScore] = dict(ranked[:effective_top_k])
+        self.min_consensus = max(2, int(min_consensus))
+        self.lookback_sec = max(60, int(lookback_sec))
+        self.min_total_size_usd = float(min_total_size_usd)
+
+    def detect(self, recent_trades: list[dict[str, Any]]) -> list[WalletFlowSignal]:
         """
-        Args:
-            smart_wallets: {address: WalletScore} dict of tracked wallets
+        Return consensus events where N of top-K wallets align within lookback.
         """
-        self.smart_wallets = smart_wallets
-        self.last_seen_timestamp = int(time.time()) - 300  # Start 5 min ago
-        self._recent_trades = []  # Rolling window of recent smart trades
-
-    def poll_trades(self) -> list:
-        """Fetch new trades since last poll. Returns list of smart wallet trades."""
-        try:
-            resp = requests.get(
-                f"{DATA_API}/trades",
-                params={"limit": 100},
-                timeout=10,
-            )
-            if resp.status_code != 200:
-                return []
-            trades = resp.json()
-        except Exception as e:
-            logger.error(f"Poll failed: {e}")
-            return []
-
-        smart_trades = []
-        max_ts = self.last_seen_timestamp
-
-        for t in trades:
-            ts = int(t.get("timestamp", 0) or 0)
-            if ts <= self.last_seen_timestamp:
-                continue
-            max_ts = max(max_ts, ts)
-
-            wallet = t.get("proxyWallet", "")
-            if wallet in self.smart_wallets:
-                # Enrich with effective outcome
-                side = t.get("side", "")
-                outcome_index = t.get("outcomeIndex", 0)
-                t["_effective_outcome"] = get_effective_outcome(side, outcome_index)
-                t["_is_crypto_fast"] = is_crypto_fast_market(t.get("title", ""))
-                smart_trades.append(t)
-                self._recent_trades.append(t)
-
-        self.last_seen_timestamp = max_ts
-
-        # Trim rolling window to CONSENSUS_WINDOW_MINUTES
-        cutoff = int(time.time()) - (CONSENSUS_WINDOW_MINUTES * 60)
-        self._recent_trades = [
-            t for t in self._recent_trades
-            if int(t.get("timestamp", 0) or 0) > cutoff
+        now = int(time.time())
+        cutoff = now - self.lookback_sec
+        window = [
+            trade
+            for trade in recent_trades
+            if int(trade.get("timestamp", 0) or 0) > cutoff
         ]
 
-        if smart_trades:
-            for t in smart_trades:
-                w = t["proxyWallet"][:12]
-                title = t.get("title", "")[:50]
-                side = t.get("side", "?")
-                outcome = t.get("outcome", "?")
-                size = float(t.get("size", 0) or 0)
-                score = self.smart_wallets.get(t["proxyWallet"])
-                score_str = f"score={score.activity_score:.0f}" if score else ""
-                logger.info(
-                    f"  SMART: {w}... {side} {outcome} ${size:.2f} | {title} [{score_str}]"
-                )
+        market_sides: dict[tuple[str, int], list[dict[str, Any]]] = {}
+        market_all_sides: Dict[str, Dict[int, list[dict[str, Any]]]] = {}
 
-        return smart_trades
-
-    def get_consensus_signals(self) -> list:
-        """
-        Check for wallet consensus in the rolling window.
-
-        Groups trades by (conditionId, effective_outcome) — which is which
-        outcome of the market smart wallets are betting on.
-
-        Returns list of WalletFlowSignal for markets where N+ smart wallets
-        agree on the same effective outcome.
-        """
-        market_sides = {}  # {(conditionId, effective_outcome): [trades]}
-        market_all_sides: Dict[str, Dict[int, list]] = {}
-
-        for t in self._recent_trades:
-            wallet = t.get("proxyWallet", "")
+        for trade in window:
+            wallet = str(trade.get("proxyWallet", "") or "")
             if wallet not in self.smart_wallets:
                 continue
-
-            cid = t.get("conditionId", "")
-            effective = t.get("_effective_outcome")
+            market_id = str(trade.get("conditionId", "") or "")
+            if not market_id:
+                continue
+            effective = trade.get("_effective_outcome")
             if effective is None:
                 effective = get_effective_outcome(
-                    t.get("side", ""),
-                    t.get("outcomeIndex", 0)
+                    trade.get("side", ""),
+                    trade.get("outcomeIndex", 0),
                 )
-
-            key = (cid, effective)
-            if key not in market_sides:
-                market_sides[key] = []
-            market_sides[key].append(t)
-            market_all_sides.setdefault(cid, {}).setdefault(effective, []).append(t)
-
-        # Check for consensus
-        signals = []
-        now = int(time.time())
-
-        for (cid, effective_outcome), trades in market_sides.items():
-            # Count unique smart wallets
-            unique_wallets = set(t["proxyWallet"] for t in trades)
-            if len(unique_wallets) < MIN_SMART_WALLETS_AGREE:
+            try:
+                effective_int = int(effective)
+            except (TypeError, ValueError):
                 continue
 
-            # Calculate aggregate metrics
+            key = (market_id, effective_int)
+            market_sides.setdefault(key, []).append(trade)
+            market_all_sides.setdefault(market_id, {}).setdefault(effective_int, []).append(trade)
+
+        signals: list[WalletFlowSignal] = []
+        for (market_id, effective_outcome), trades in market_sides.items():
+            unique_wallets = {str(t.get("proxyWallet", "") or "") for t in trades}
+            unique_wallets.discard("")
+            if len(unique_wallets) < self.min_consensus:
+                continue
+
             total_size = sum(float(t.get("size", 0) or 0) for t in trades)
-            if total_size < MIN_TOTAL_SIZE_USD:
+            if total_size < self.min_total_size_usd:
                 continue
 
-            # Average activity score of agreeing wallets
-            scores_list = []
-            for w in unique_wallets:
-                if w in self.smart_wallets:
-                    scores_list.append(self.smart_wallets[w].activity_score)
-            avg_score = sum(scores_list) / len(scores_list) if scores_list else 0
-
-            # Signal age (how old is the earliest trade in this consensus)
+            score_values = [
+                float(self.smart_wallets[w].activity_score)
+                for w in unique_wallets
+                if w in self.smart_wallets
+            ]
+            avg_score = sum(score_values) / len(score_values) if score_values else 0.0
             earliest_ts = min(int(t.get("timestamp", 0) or 0) for t in trades)
-            signal_age = now - earliest_ts
+            signal_age = max(0, now - earliest_ts)
 
-            # Confidence based on number of wallets and their quality
-            wallet_factor = min(0.3, (len(unique_wallets) - 2) * 0.1)
-            quality_factor = min(0.2, (avg_score / 100) * 0.2)
-            size_factor = min(0.15, (total_size / 100) * 0.15)
-            base_confidence = min(0.95, 0.35 + wallet_factor + quality_factor + size_factor)
-
+            base_consensus = len(unique_wallets) / max(1, self.top_k)
             opposite_outcome = 1 - int(effective_outcome)
-            opposing_trades = market_all_sides.get(cid, {}).get(opposite_outcome, [])
-            opposing_wallets = {t.get("proxyWallet", "") for t in opposing_trades if t.get("proxyWallet", "")}
+            opposing_trades = market_all_sides.get(market_id, {}).get(opposite_outcome, [])
+            opposing_wallets = {
+                str(t.get("proxyWallet", "") or "")
+                for t in opposing_trades
+                if str(t.get("proxyWallet", "") or "")
+            }
             opposing_size = sum(float(t.get("size", 0) or 0) for t in opposing_trades)
 
             combined_size = max(1e-6, total_size + opposing_size)
             consensus_share = max(0.0, min(1.0, total_size / combined_size))
             opposition_penalty = min(0.20, (1.0 - consensus_share) * 0.35)
+            freshness_factor = max(0.40, 1.0 - (signal_age / (self.lookback_sec * 1.25)))
+            confidence = min(
+                0.95,
+                max(0.01, (base_consensus * freshness_factor) - opposition_penalty),
+            )
 
-            max_age_seconds = max(1, CONSENSUS_WINDOW_MINUTES * 60)
-            freshness_factor = max(0.40, 1.0 - (signal_age / (max_age_seconds * 1.25)))
-            confidence = min(0.95, max(0.01, (base_confidence * freshness_factor) - opposition_penalty))
-
-            title = trades[0].get("title", "Unknown Market")
-            outcome_name = trades[0].get("outcome", f"Outcome {effective_outcome}")
+            title = str(trades[0].get("title", "Unknown Market") or "Unknown Market")
+            slug = str(trades[0].get("slug", trades[0].get("eventSlug", "")) or "")
+            outcome_name = str(
+                trades[0].get("outcome", f"Outcome {effective_outcome}")
+                or f"Outcome {effective_outcome}"
+            )
             direction = f"outcome_{effective_outcome}"
+            side_counts = Counter(str(t.get("side", "BUY") or "BUY").upper() for t in trades)
+            dominant_side = side_counts.most_common(1)[0][0] if side_counts else "BUY"
             window_start_ts, window_minutes = _parse_window_metadata_from_title(
                 title,
                 reference_ts=earliest_ts,
             )
 
             signal = WalletFlowSignal(
-                market_id=cid,
+                market_id=market_id,
                 market_title=title,
+                slug=slug,
+                side=dominant_side if dominant_side in {"BUY", "SELL"} else "BUY",
+                outcome=outcome_name,
+                source="wallet_flow",
+                wallet_count=len(unique_wallets),
+                top_k=self.top_k,
                 direction=direction,
                 outcome_name=outcome_name,
                 confidence=confidence,
@@ -1047,13 +1260,125 @@ class FlowMonitor:
 
             logger.info(
                 f"CONSENSUS SIGNAL: {outcome_name} ({direction}) on {title[:50]}\n"
-                f"  Wallets: {len(unique_wallets)} | Size: ${total_size:.2f} | "
+                f"  Wallets: {len(unique_wallets)}/{self.top_k} | Size: ${total_size:.2f} | "
                 f"Opposition: {len(opposing_wallets)} wallets ${opposing_size:.2f} | "
                 f"Confidence: {confidence:.2f} | Avg Score: {avg_score:.0f} | "
                 f"Age: {signal_age}s | Share: {consensus_share:.2f}"
             )
 
         return signals
+
+
+class FlowMonitor:
+    """Monitors real-time trade flow for smart wallet activity."""
+
+    def __init__(
+        self,
+        smart_wallets: dict[str, WalletScore],
+        *,
+        market_ids: Optional[list[str]] = None,
+        top_k: int = WALLET_FLOW_TOP_K,
+        min_consensus: int = WALLET_FLOW_MIN_CONSENSUS,
+        lookback_sec: int = WALLET_FLOW_LOOKBACK_SEC,
+        poll_interval_sec: int = WALLET_FLOW_POLL_INTERVAL_SEC,
+        http_get: Any = requests.get,
+    ) -> None:
+        self.consensus_detector = ConsensusDetector(
+            smart_wallets,
+            top_k=top_k,
+            min_consensus=min_consensus,
+            lookback_sec=lookback_sec,
+            min_total_size_usd=MIN_TOTAL_SIZE_USD,
+        )
+        self.smart_wallets = self.consensus_detector.smart_wallets
+        self.top_k = self.consensus_detector.top_k
+        self.min_consensus = self.consensus_detector.min_consensus
+        self.lookback_sec = self.consensus_detector.lookback_sec
+        self.poll_interval_sec = max(10, int(poll_interval_sec))
+        self.market_ids = [str(m).strip() for m in (market_ids or []) if str(m).strip()]
+        self.http_get = http_get
+        self.last_seen_timestamp = int(time.time()) - min(300, self.lookback_sec)
+        self._recent_trades: list[dict[str, Any]] = []
+
+    def _poll_single_market(self, market_id: Optional[str] = None) -> list[dict[str, Any]]:
+        """Fetch latest trades from data API, optionally scoped to conditionId."""
+        params: dict[str, Any] = {"limit": 100}
+        if market_id:
+            params["conditionId"] = market_id
+        try:
+            resp = self.http_get(
+                f"{DATA_API}/trades",
+                params=params,
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                return []
+            payload = resp.json()
+            if isinstance(payload, list):
+                return payload
+        except Exception as exc:
+            logger.error(f"Poll failed for market={market_id or 'ALL'}: {exc}")
+        return []
+
+    def poll_trades(self) -> list[dict[str, Any]]:
+        """
+        Fetch new trades since last poll.
+
+        If market_ids are known, poll conditionId-targeted endpoints to reduce
+        noise and rate-limit exposure; otherwise fall back to global recent feed.
+        """
+        fetched: list[dict[str, Any]] = []
+        if self.market_ids:
+            for market_id in self.market_ids:
+                fetched.extend(self._poll_single_market(market_id))
+        else:
+            fetched = self._poll_single_market(None)
+
+        smart_trades: list[dict[str, Any]] = []
+        max_ts = self.last_seen_timestamp
+        for trade in fetched:
+            ts = int(trade.get("timestamp", 0) or 0)
+            if ts <= self.last_seen_timestamp:
+                continue
+            max_ts = max(max_ts, ts)
+            wallet = str(trade.get("proxyWallet", "") or "")
+            if wallet not in self.smart_wallets:
+                continue
+
+            trade["_effective_outcome"] = get_effective_outcome(
+                trade.get("side", ""),
+                trade.get("outcomeIndex", 0),
+            )
+            trade["_is_crypto_fast"] = is_crypto_fast_market(str(trade.get("title", "") or ""))
+            smart_trades.append(trade)
+            self._recent_trades.append(trade)
+
+        self.last_seen_timestamp = max_ts
+
+        cutoff = int(time.time()) - self.lookback_sec
+        self._recent_trades = [
+            trade
+            for trade in self._recent_trades
+            if int(trade.get("timestamp", 0) or 0) > cutoff
+        ]
+
+        for trade in smart_trades:
+            wallet = str(trade.get("proxyWallet", "") or "")[:12]
+            title = str(trade.get("title", "") or "")[:50]
+            side = str(trade.get("side", "?") or "?")
+            outcome = str(trade.get("outcome", "?") or "?")
+            size = float(trade.get("size", 0) or 0)
+            wallet_score = self.smart_wallets.get(str(trade.get("proxyWallet", "") or ""))
+            score_str = f"score={wallet_score.activity_score:.0f}" if wallet_score else ""
+            logger.info(
+                f"  SMART: {wallet}... {side} {outcome} ${size:.2f} | {title} [{score_str}]"
+            )
+
+        return smart_trades
+
+    def get_consensus_signals(self) -> list[WalletFlowSignal]:
+        """Detect consensus signals in the rolling trade window."""
+        return self.consensus_detector.detect(self._recent_trades)
 
 
 # ---------------------------------------------------------------------------
@@ -1075,8 +1400,12 @@ def scan_for_signals() -> list:
     """
     global _persistent_monitor, _monitor_initialized_at
 
+    if not WALLET_FLOW_ENABLED:
+        return []
+
     status = get_bootstrap_status()
-    if not status.ready:
+    scored_available = WALLET_FLOW_SCORED_FILE.exists()
+    if not scored_available and not status.ready:
         _persistent_monitor = None
         logger.warning(
             "Wallet flow bootstrap not ready: %s",
@@ -1085,7 +1414,7 @@ def scan_for_signals() -> list:
         return []
 
     try:
-        smart, _ = load_smart_wallets()
+        smart, _, source_name = load_configured_smart_wallets(top_k=WALLET_FLOW_TOP_K)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         _persistent_monitor = None
         logger.warning(f"Failed to load smart wallets for scan: {exc}")
@@ -1098,9 +1427,22 @@ def scan_for_signals() -> list:
     # Create or refresh monitor (refresh every 30 min to pick up new wallets)
     now = time.time()
     if _persistent_monitor is None or (now - _monitor_initialized_at) > 1800:
-        _persistent_monitor = FlowMonitor(smart)
+        market_ids = list(WALLET_FLOW_MARKET_IDS) or _discover_active_fast_market_ids(limit=150)
+        _persistent_monitor = FlowMonitor(
+            smart,
+            market_ids=market_ids,
+            top_k=WALLET_FLOW_TOP_K,
+            min_consensus=WALLET_FLOW_MIN_CONSENSUS,
+            lookback_sec=WALLET_FLOW_LOOKBACK_SEC,
+            poll_interval_sec=WALLET_FLOW_POLL_INTERVAL_SEC,
+        )
         _monitor_initialized_at = now
-        logger.info(f"Initialized FlowMonitor with {len(smart)} smart wallets")
+        logger.info(
+            "Initialized FlowMonitor with %s smart wallets (source=%s, market_ids=%s)",
+            len(smart),
+            source_name,
+            len(market_ids),
+        )
 
     # Fetch recent trades and check for consensus
     _persistent_monitor.poll_trades()
@@ -1109,9 +1451,12 @@ def scan_for_signals() -> list:
     out: list[Dict[str, Any]] = []
     for signal in signals:
         if isinstance(signal, WalletFlowSignal):
-            out.append(asdict(signal))
+            out.append(_normalize_wallet_signal_output(asdict(signal)))
         elif isinstance(signal, dict):
-            out.append(signal)
+            out.append(_normalize_wallet_signal_output(signal))
+
+    # Paper mode artifact for validation before live execution integration.
+    _append_paper_signal_log(out)
     return out
 
 
@@ -1174,6 +1519,7 @@ def get_signals_for_engine() -> list:
             "category": "crypto",
             "resolution_hours": 0.25,  # Fast markets (15 min default)
             "velocity_score": edge * 365 * 24 / 0.25,  # Annualized edge / lockup
+            "kelly_fraction": WALLET_FLOW_KELLY_FRACTION,
         }
 
         consensus_wallets = sig.get("wallet_consensus_wallets")
