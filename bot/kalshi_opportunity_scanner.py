@@ -22,6 +22,13 @@ OUTPUT_PATH = Path("data/kalshi_opportunities.json")
 
 LOGGER = logging.getLogger("kalshi.opportunity_scanner")
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except Exception:
+    pass
+
 LLM_EDGE_CATEGORY_MAP = {
     "politics": "politics",
     "elections": "politics",
@@ -343,6 +350,35 @@ def fetch_event_markets(event_ticker: str, config: ScanConfig) -> list[dict[str,
     return [market for market in markets if isinstance(market, dict)]
 
 
+def _extract_balance_candidate(payload: Any) -> Optional[float]:
+    if isinstance(payload, dict):
+        for key in (
+            "balance",
+            "available_balance",
+            "cash_balance",
+            "usd_balance",
+            "portfolio_value",
+        ):
+            value = _safe_float(payload.get(key))
+            if value is not None:
+                # Normalize cent-like integer balances if returned as 10000.
+                if value > 1000.0:
+                    return round(value / 100.0, 2)
+                return round(value, 2)
+        for value in payload.values():
+            nested = _extract_balance_candidate(value)
+            if nested is not None:
+                return nested
+    if hasattr(payload, "to_dict"):
+        try:
+            return _extract_balance_candidate(payload.to_dict())
+        except Exception:
+            return None
+    if hasattr(payload, "__dict__"):
+        return _extract_balance_candidate(vars(payload))
+    return None
+
+
 def _build_balance_probe() -> dict[str, Any]:
     api_key = str(os.environ.get("KALSHI_API_KEY_ID") or "").strip()
     key_path = str(os.environ.get("KALSHI_RSA_KEY_PATH") or "").strip()
@@ -350,6 +386,54 @@ def _build_balance_probe() -> dict[str, Any]:
         return {
             "status": "skipped_no_credentials",
             "details": "KALSHI_API_KEY_ID/KALSHI_RSA_KEY_PATH not configured in this environment.",
+            "balance_usd": None,
+        }
+    if not Path(key_path).exists():
+        return {
+            "status": "skipped_missing_keyfile",
+            "details": f"Configured KALSHI_RSA_KEY_PATH does not exist: {key_path}",
+            "balance_usd": None,
+        }
+    try:
+        from kalshi_python import Configuration as KalshiConfig, KalshiClient
+        from kalshi_python.api import PortfolioApi
+    except Exception:
+        return {
+            "status": "skipped_missing_sdk",
+            "details": "kalshi_python not installed in this environment; authenticated balance probe unavailable.",
+            "balance_usd": None,
+        }
+
+    try:
+        config = KalshiConfig()
+        client = KalshiClient(configuration=config)
+        client.set_kalshi_auth(api_key, key_path)
+        portfolio_api = PortfolioApi(client)
+        response = None
+        for method_name in (
+            "get_balance",
+            "get_portfolio_balance",
+            "get_positions",
+        ):
+            if hasattr(portfolio_api, method_name):
+                response = getattr(portfolio_api, method_name)()
+                break
+        if response is None:
+            return {
+                "status": "probe_method_unavailable",
+                "details": "No supported balance endpoint found on kalshi_python PortfolioApi.",
+                "balance_usd": None,
+            }
+        balance = _extract_balance_candidate(response)
+        return {
+            "status": "ok" if balance is not None else "probe_inconclusive",
+            "details": "Authenticated balance probe executed.",
+            "balance_usd": balance,
+        }
+    except Exception as exc:
+        return {
+            "status": "probe_failed",
+            "details": f"Authenticated balance probe failed: {exc}",
             "balance_usd": None,
         }
     return {
