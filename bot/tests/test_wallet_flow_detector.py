@@ -160,8 +160,11 @@ def test_scan_for_signals_writes_paper_log(
     tmp_path: Path,
 ) -> None:
     log_path = tmp_path / "wallet_flow_signals.log"
+    scored_path = tmp_path / "smart_wallets_scored.json"
+    scored_path.write_text("{}")
     monkeypatch.setattr(detector, "WALLET_FLOW_ENABLED", True)
     monkeypatch.setattr(detector, "WALLET_FLOW_SIGNAL_LOG_FILE", log_path)
+    monkeypatch.setattr(detector, "WALLET_FLOW_SCORED_FILE", scored_path)
     monkeypatch.setattr(detector, "_persistent_monitor", None)
     monkeypatch.setattr(detector, "_monitor_initialized_at", 0.0)
     monkeypatch.setattr(
