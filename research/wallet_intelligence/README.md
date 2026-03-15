@@ -7,6 +7,7 @@ then generates testable trading hypotheses from their observed behavior.
 
 | Phase | Module | Input | Output |
 |-------|--------|-------|--------|
+| 0. Seed list bootstrap | `smart_wallet_seed_builder.py` | Leaderboard + seed wallets + co-occurrence trades | `smart_wallets_scored.json` |
 | 1. Discovery & Ranking | `wallet_pnl_tracker.py` | Polymarket Data API + Gamma API | `wallet_leaderboard.json` |
 | 2. Behavioral Fingerprinting | `behavioral_fingerprint.py` | Phase 1 DB + Binance klines | `wallet_fingerprints.json` |
 | 3. Hypothesis Generation | `hypothesis_generator.py` | Phases 1-2 outputs + kill list | `wallet_hypotheses.json` |
@@ -15,6 +16,9 @@ then generates testable trading hypotheses from their observed behavior.
 ## Quick Start
 
 ```bash
+# Phase 0: Build wallet seed list for wallet-flow consensus monitoring
+python research/wallet_intelligence/smart_wallet_seed_builder.py --top-n 50
+
 # Phase 1: Discover wallets and compute PnL (takes ~10-30 min depending on market count)
 python research/wallet_intelligence/wallet_pnl_tracker.py --full --max-markets 100
 
