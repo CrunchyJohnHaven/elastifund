@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from scripts.scan_llm_velocity_windows import (
+    classify_market_category,
     evaluate_market,
     evaluate_windows,
     parse_horizons,
@@ -143,3 +144,11 @@ def test_evaluate_windows_returns_none_when_all_windows_empty():
     )
     assert report["recommended_window"] is None
     assert report["recommendation_reason"] == "no_eligible_markets"
+
+
+def test_classification_overrides_sports_even_with_non_sports_category_field():
+    category = classify_market_category(
+        "Will Ukraine qualify for the 2026 FIFA World Cup?",
+        category_field="geopolitical",
+    )
+    assert category == "sports"

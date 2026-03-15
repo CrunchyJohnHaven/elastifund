@@ -42,6 +42,8 @@ _WORD_KEYWORDS: dict[str, tuple[str, ...]] = {
         "nhl",
         "mls",
         "soccer",
+        "fifa",
+        "world cup",
         "football",
         "basketball",
         "tennis",
@@ -137,11 +139,20 @@ def _keyword_match(text: str, keyword: str) -> bool:
 
 
 def classify_market_category(question: str, category_field: Any) -> str:
+    question_lower = question.lower()
+    # Hard overrides first to prevent category-field drift from leaking
+    # low-edge lanes (sports/crypto/financial_speculation) into LLM execution.
+    if any(_keyword_match(question_lower, marker) for marker in _WORD_KEYWORDS["sports"]):
+        return "sports"
+    if any(_keyword_match(question_lower, marker) for marker in _WORD_KEYWORDS["crypto"]):
+        return "crypto"
+    if any(_keyword_match(question_lower, marker) for marker in _WORD_KEYWORDS["financial_speculation"]):
+        return "financial_speculation"
+
     normalized = str(category_field or "").strip().lower().replace(" ", "_")
     if normalized:
         return normalized
 
-    question_lower = question.lower()
     scores: dict[str, int] = {}
     for category, keywords in _WORD_KEYWORDS.items():
         scores[category] = sum(1 for keyword in keywords if _keyword_match(question_lower, keyword))
