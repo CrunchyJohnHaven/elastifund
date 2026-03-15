@@ -44,6 +44,14 @@ class _DummyNotifier:
         return True
 
 
+class _DummyFillTracker:
+    def __init__(self):
+        self.orders = []
+
+    def record_order(self, **kwargs):
+        self.orders.append(kwargs)
+
+
 class _CaptureOrderArgs:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
@@ -75,6 +83,7 @@ class TestJJLiveSumViolationExecution(unittest.TestCase):
         live.db = _DummyDB()
         live.multi_sim = _DummyMultiSim()
         live.notifier = _DummyNotifier()
+        live.fill_tracker = _DummyFillTracker()
 
         signal = {
             "signal_id": "sumv-1",
@@ -189,8 +198,16 @@ class TestJJLiveSumViolationExecution(unittest.TestCase):
         self.assertEqual(orders_placed, 3)
         self.assertEqual(action_map["sumv-1"], "traded")
         self.assertEqual([order["size"] for order in live.clob.orders], [16.67, 16.13, 16.13])
-        self.assertEqual(len(live.db.trades), 3)
-        self.assertEqual(len(live.state.recorded), 3)
+        self.assertEqual(len(live.db.trades), 0)
+        self.assertEqual(len(live.state.recorded), 0)
+        self.assertEqual(len(live.fill_tracker.orders), 3)
+        self.assertEqual(
+            [order["order_id"] for order in live.fill_tracker.orders],
+            ["live-1", "live-2", "live-3"],
+        )
+        first_metadata = live.fill_tracker.orders[0]["metadata"]
+        self.assertIn("trade_record", first_metadata)
+        self.assertIn("signal_context", first_metadata)
 
 
 if __name__ == "__main__":
