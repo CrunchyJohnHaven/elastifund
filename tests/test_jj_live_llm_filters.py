@@ -25,7 +25,7 @@ def test_apply_llm_market_filters_uses_slug_to_block_dedicated_btc5_markets():
     allowed, reason, _category, _normalized_resolution = jj_live.apply_llm_market_filters(
         "Will this market resolve YES?",
         resolution_hours=0.25,
-        slug="btc-up-or-down-march-15-12-35-5m",
+        slug="btc-updown-5m-march-15-12-35",
     )
     assert allowed is False
     assert reason == "btc5_dedicated"
