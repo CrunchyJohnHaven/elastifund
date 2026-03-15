@@ -150,3 +150,55 @@ def test_reconcile_open_orders_cancels_stale_unfilled_orders(tmp_path: Path) -> 
     ).fetchone()
     assert dict(status) == {"status": "cancelled", "cancel_reason": "stale_order"}
     tracker.close()
+
+
+def test_pending_notional_for_market_filters_direction(tmp_path: Path) -> None:
+    tracker = FillTracker(
+        db_path=tmp_path / "jj_trades.db",
+        report_path=tmp_path / "fill_rate_report.md",
+    )
+    tracker.record_order(
+        order_id="ord-yes",
+        market_id="mkt-1",
+        token_id="tok-1",
+        question="Will it happen?",
+        category="crypto",
+        side="BUY",
+        direction="buy_yes",
+        price=0.50,
+        size=2.0,
+        size_usd=1.00,
+        order_type="maker",
+    )
+    tracker.record_order(
+        order_id="ord-no",
+        market_id="mkt-1",
+        token_id="tok-2",
+        question="Will it happen?",
+        category="crypto",
+        side="BUY",
+        direction="buy_no",
+        price=0.40,
+        size=2.0,
+        size_usd=0.80,
+        order_type="maker",
+    )
+    tracker.record_order(
+        order_id="ord-other",
+        market_id="mkt-2",
+        token_id="tok-3",
+        question="Other market",
+        category="crypto",
+        side="BUY",
+        direction="buy_yes",
+        price=0.45,
+        size=2.0,
+        size_usd=0.90,
+        order_type="maker",
+    )
+
+    assert tracker.pending_notional_for_market("mkt-1") == 1.8
+    assert tracker.pending_notional_for_market("mkt-1", "buy_yes") == 1.0
+    assert tracker.pending_notional_for_market("mkt-1", "buy_no") == 0.8
+    assert tracker.pending_notional_for_market("mkt-missing") == 0.0
+    tracker.close()
