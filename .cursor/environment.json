@@ -1,5 +1,5 @@
 {
-  "name": "Elastifund Python test environment",
+  "name": "Elastifund Python 3.12 dev tooling",
   "agentCanUpdateSnapshot": true,
   "install": "python3 -m pip install --upgrade pip && python3 -m pip install -r requirements-dev.txt"
 }
