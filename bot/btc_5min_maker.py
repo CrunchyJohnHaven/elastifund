@@ -1559,9 +1559,11 @@ class CLOBExecutor:
         signed = client.create_order(OrderArgs(**kwargs))
         try:
             resp = client.post_order(signed, OrderType.GTC, post_only=True)
-        except TypeError:
-            # Older client versions may not expose post_only.
-            resp = client.post_order(signed, OrderType.GTC)
+        except TypeError as exc:
+            raise RuntimeError(
+                "py_clob_client.post_order must support post_only=True for maker-only execution; "
+                "upgrade the client dependency"
+            ) from exc
 
         if isinstance(resp, dict):
             order_id = str(resp.get("orderID") or resp.get("id") or "").strip() or None
