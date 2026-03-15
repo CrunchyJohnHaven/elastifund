@@ -2911,8 +2911,9 @@ class BTC5MinMakerBot:
                 pass
 
         # Directional mode override from autoresearch (e.g., "down_only").
+        # "two_sided" means no restriction — skip the filter entirely.
         ar_dir_mode = autoresearch_overrides.get("BTC5_DIRECTIONAL_MODE")
-        if ar_dir_mode:
+        if ar_dir_mode and ar_dir_mode != "two_sided":
             allowed_dir = ar_dir_mode.replace("_only", "").strip().upper()
             if allowed_dir and direction != allowed_dir:
                 row = {
