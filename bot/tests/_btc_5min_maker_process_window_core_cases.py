@@ -1093,6 +1093,138 @@ async def test_process_window_skips_delta_too_large(
     assert "skip_reason=delta_above_max" in json.loads(row["decision_reason_tags"])
 
 
+async def test_process_window_wallet_copy_dark_mode_without_feed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=True,
+        db_path=tmp_path / "btc5.db",
+        min_delta=0.001,
+        max_buy_price=0.95,
+        min_buy_price=0.45,
+        tick_size=0.01,
+        enable_wallet_copy=True,
+        paper_fill_probability=1.0,
+    )
+    bot = BTC5MinMakerBot(cfg)
+    bot.smart_wallet_feed = None
+
+    async def fake_resolve(http, through_window_start: int) -> None:
+        return None
+
+    async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
+        # abs(delta)=0.0001, below min_delta and should stay skipped without a feed.
+        return 100.0, 100.01
+
+    monkeypatch.setattr(bot, "_resolve_unsettled", fake_resolve)
+    monkeypatch.setattr(bot, "_get_open_and_current_price", fake_prices)
+
+    window_start_ts = current_window_start(time.time()) - (2 * 300)
+    result = await bot._process_window(window_start_ts=window_start_ts, http=_DummyHTTP())
+
+    assert result["status"] == "skip_delta_too_small"
+    assert result["wallet_copy"] is False
+    assert result["wallet_count"] == 0
+    assert result["wallet_notional"] == pytest.approx(0.0)
+
+    with bot.db._connect() as conn:
+        row = conn.execute(
+            """
+            SELECT order_status, wallet_copy, wallet_count, wallet_notional
+            FROM window_trades
+            WHERE window_start_ts = ?
+            """,
+            (window_start_ts,),
+        ).fetchone()
+    assert row["order_status"] == "skip_delta_too_small"
+    assert row["wallet_copy"] == 0
+    assert row["wallet_count"] == 0
+    assert row["wallet_notional"] == pytest.approx(0.0)
+
+
+async def test_process_window_wallet_copy_overrides_direction_and_persists_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=True,
+        db_path=tmp_path / "btc5.db",
+        min_delta=0.001,
+        max_buy_price=0.95,
+        up_max_buy_price=0.95,
+        down_max_buy_price=0.95,
+        min_buy_price=0.45,
+        tick_size=0.01,
+        enable_wallet_copy=True,
+        wallet_copy_override_delta=0.0005,
+        wallet_copy_min_wallets=3,
+        wallet_copy_min_notional=200.0,
+        paper_fill_probability=1.0,
+    )
+    bot = BTC5MinMakerBot(cfg)
+
+    class _Consensus:
+        direction = "UP"
+        smart_wallet_count = 4
+        combined_notional_usd = 250.0
+
+        def strong(self) -> bool:
+            return True
+
+    class _MockWalletFeed:
+        def __init__(self) -> None:
+            self.started: list[tuple[str, int]] = []
+
+        async def start_background_watch(self, condition_id: str, window_start_ts: int) -> None:
+            self.started.append((condition_id, window_start_ts))
+
+        async def get_cached_consensus(self, window_start_ts: int) -> _Consensus:
+            return _Consensus()
+
+    class _WalletHTTP(_DummyHTTP):
+        async def fetch_market_by_slug(self, slug: str) -> dict:
+            payload = await super().fetch_market_by_slug(slug)
+            payload["conditionId"] = "cond-123"
+            return payload
+
+    async def fake_resolve(http, through_window_start: int) -> None:
+        return None
+
+    async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
+        # abs(delta)=0.0001, so base direction is None and wallet copy should override.
+        return 100.0, 100.01
+
+    monkeypatch.setattr(bot, "_resolve_unsettled", fake_resolve)
+    monkeypatch.setattr(bot, "_get_open_and_current_price", fake_prices)
+    bot.smart_wallet_feed = _MockWalletFeed()
+
+    window_start_ts = current_window_start(time.time()) - (2 * 300)
+    result = await bot._process_window(window_start_ts=window_start_ts, http=_WalletHTTP())
+
+    assert result["status"] == "paper_filled"
+    assert result["direction"] == "UP"
+    assert result["wallet_copy"] is True
+    assert result["wallet_count"] == 4
+    assert result["wallet_notional"] == pytest.approx(250.0)
+    assert bot.smart_wallet_feed.started
+
+    with bot.db._connect() as conn:
+        row = conn.execute(
+            """
+            SELECT direction, order_status, wallet_copy, wallet_count, wallet_notional
+            FROM window_trades
+            WHERE window_start_ts = ?
+            """,
+            (window_start_ts,),
+        ).fetchone()
+    assert row["direction"] == "UP"
+    assert row["order_status"] == "paper_filled"
+    assert row["wallet_copy"] == 1
+    assert row["wallet_count"] == 4
+    assert row["wallet_notional"] == pytest.approx(250.0)
+
+
 async def test_process_window_respects_directional_price_cap(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
