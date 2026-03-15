@@ -19,7 +19,7 @@ This is the canonical map for navigating Elastifund quickly, especially in LLM-d
 
 If a new doc overlaps one of the files above or the numbered-doc lane, consolidate instead of creating another source of truth.
 The repo root should stay narrow: session entrypoints, public repo standards, and a small number of compatibility files only.
-For live status, prefer `jj_state.json`, `reports/remote_cycle_status.json`, `reports/remote_service_status.json`, and `research/edge_backlog_ranked.md` over stale prose. Existing JSON handoff artifacts remain the runtime contract.
+For live status, prefer checked-in runtime contracts (`config/remote_cycle_status.json`, `improvement_velocity.json`) and `research/edge_backlog_ranked.md` over stale prose. Runtime-local artifacts under `reports/` can be used when available, but may be absent in a clean clone.
 
 ## Directory Map
 
@@ -45,7 +45,7 @@ For live status, prefer `jj_state.json`, `reports/remote_cycle_status.json`, `re
 | `research/` | prompts, dispatches, findings, postmortems | investigative output |
 | `deploy/` | deployment and infra artifacts (systemd services for BTC5, JJ-live, shadow lanes, autoresearch) | operator-facing |
 | `scripts/` | reusable repo automation (`compare_shadow_vs_live.py` for shadow-vs-BTC5 head-to-head) | add repeatable workflows here |
-| `data/`, `logs/`, `reports/`, `state/` | generated runtime artifacts | keep disposable and ignored, except the status JSON handoff artifacts under `reports/` that document current machine truth |
+| `data/`, `logs/`, `reports/`, `state/` | generated runtime artifacts | keep disposable and ignored; treat checked-in contracts (`config/remote_cycle_status.json`, `improvement_velocity.json`) as canonical when `reports/` artifacts are unavailable |
 
 ### Wallet Sync
 

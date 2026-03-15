@@ -2,8 +2,8 @@
   "capital_sources": [
     {
       "account": "Polymarket",
-      "amount_usd": 250.0,
-      "source": "jj_state.json"
+      "amount_usd": 458.13,
+      "source": "wallet_reconciliation_2026-03-14"
     },
     {
       "account": "Kalshi",
@@ -44,18 +44,16 @@
     ]
   },
   "deployment_finish": {
-    "status": "blocked",
+    "status": "monitoring",
     "eta": "TBD",
     "blockers": [
-      "jj-live is intentionally stopped while structural alpha integration is completed.",
-      "No capital is currently deployed and the current cycle has no closed trades for calibration.",
-      "A-6 and B-1 killed 2026-03-13. No longer blocking."
+      "BTC5 promotion gate currently fails (hold at $5/trade).",
+      "Need sustained fill evidence and >7 days of data before any size increase."
     ],
     "exit_criteria": [
-      "Resume jj-live in shadow or micro-live mode without triggering kill rails.",
-      "A-6 and B-1 killed 2026-03-13. No further evidence passes needed.",
-      "Scale BTC5 to $10/trade after confirming fills are flowing.",
-      "Record the first closed trades needed for calibration and promotion decisions."
+      "Keep BTC5 at $5/trade until reports/btc5_promotion_gate.json shows overall_gate=true.",
+      "Require >=7 days of evidence with stable fill quality before proposing any scale-up.",
+      "Continue wallet-vs-local reconciliation so runtime contracts stay truthful."
     ]
   }
 }

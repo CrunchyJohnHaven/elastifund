@@ -1,5 +1,5 @@
 # Elastifund — Project Instructions
-**Version:** 3.10.0 | **Updated:** 2026-03-13 | **Owner:** John Bradley
+**Version:** 3.10.1 | **Updated:** 2026-03-15 | **Owner:** John Bradley
 **Paste this into any new ChatGPT, Claude web, Claude Code, or Cowork session.**
 **Canonical filename:** `PROJECT_INSTRUCTIONS.md`. Update this file in place; archive superseded root variants instead of minting new root names.
 **For one root-level Deep Research handoff, prefer `COMMAND_NODE.md`; this file is the operator-policy surface.**
@@ -22,13 +22,13 @@ For everything else — writing code, running tests, deploying to VPS, researchi
 
 **Elastifund** is an open, self-improving agentic operating system for real economic work. AI persona: **JJ**. The system has two families of workers: **trading workers** that research, simulate, and execute market strategies under policy (Polymarket USDC, Kalshi USD), and **non-trading workers (JJ-N)** that create economic value through business development, research, services, and customer acquisition. 20% of net profits fund veteran suicide prevention. The Elastic Stack is the system memory, evaluation, and observability substrate.
 
-**Status (machine truth reconciled on March 9, 2026):** Bot remains deployed to the Dublin VPS. `reports/public_runtime_snapshot.json` and `reports/runtime_truth_latest.json` are the canonical runtime handoff. `reports/runtime_truth_latest.json` generated at `2026-03-09T16:19:45Z` shows `jj-live.service` now `stopped`, so service-state drift is cleared and the only intended live lane is the dedicated BTC 5-minute maker. Current local runtime accounting still shows `565` cycles, `5` trade-db trades, `4` local open positions, and `0` local closed trades, while the remote Polymarket wallet shows `28` open positions and `9` closed positions; that accounting split remains a first-class problem. The remote BTC 5-minute maker database now shows `51` rows, `32` `live_filled`, positive cumulative filled outcomes, and a current guardrail recommendation of `max_abs_delta=0.00015`, `UP max=0.51`, `DOWN max=0.51`. A-6 and B-1 are formally KILLED as of 2026-03-13 (zero density after 5-day kill-watch; engineering capacity reallocated to BTC5 optimization and Kalshi). Latest root verification artifact is passing (`1140 passed in 25.88s; 25 passed in 4.47s`). JJ-N verification is green in this worktree (`64` package tests, `49` repo-root tests), `nontrading/main.py` runs `RevenuePipeline`, and startup hard-blocks live providers when sender domain/auth is placeholder or unverified.
+**Status (wallet-reconciled on March 14, 2026):** Reconciliation is complete (`POLY_DATA_API_ADDRESS` fix) and wallet-authoritative capital is now consistent in `COMMAND_NODE.md` ($458.13 Polymarket, +$207.31 realized net). A-6 and B-1 remain formally KILLED (2026-03-13). BTC5 is still the only intended live sleeve, but promotion remains blocked: hold at $5/trade until the gate passes (`reports/btc5_promotion_gate.json` with `overall_gate=true` over a >=7-day window). Treat checked-in contracts (`config/remote_cycle_status.json`, `improvement_velocity.json`) as canonical when runtime-local `reports/` artifacts are absent.
 
 **Primary goal: Make the first dollar.** Fast feedback loops. Trading: markets that resolve within hours, not months. Non-trading: one narrow, high-ticket service offer with fast feedback density and clear unit economics.
 
 **Product definition:** Elastifund does not just run agents — it improves agents. Improvement is the product. Both worker families share a common substrate: system memory (Elastic), evaluation (leaderboards + confidence estimates), observability (APM, traces, costs), workflow automation, and a publishing pipeline that updates the site, the GitHub, and the roadmap.
 
-**JJ-N status (repo truth, March 9, 2026):** The first wedge is still the Website Growth Audit plus recurring monitor, and it exists in code with templates, sequence, dashboard asset, and a runnable `RevenuePipeline`. Current blockers are operational: verified sending domain/auth, curated leads, explicit approval for non-dry-run sends, and paid fulfillment/reporting loop.
+**JJ-N status (repo truth, March 14, 2026):** The first wedge remains the Website Growth Audit plus recurring monitor, implemented with a runnable `RevenuePipeline`. Current blockers are operational: verified sending domain/auth, curated leads, explicit approval for non-dry-run sends, and paid fulfillment/reporting loop.
 
 ---
 
@@ -42,32 +42,30 @@ For everything else — writing code, running tests, deploying to VPS, researchi
 Polymarket proxy wallet: [redacted from repo; stored in runtime config]
 Kalshi API Key ID: [stored in .env — see .env.example]
 
-## 2A. Canonical March 9 Machine Snapshot
+## 2A. Canonical March 14 Machine Snapshot
 
 > **WARNING — ALWAYS VERIFY AGAINST LIVE WALLET.** Local artifacts (`reports/runtime_truth_latest.json`, `FAST_TRADE_EDGE_ANALYSIS.md`) have historically drifted from actual wallet state. When wallet data contradicts local artifacts, the wallet wins.
 
 | Metric | Value |
 |---|---|
-| **Trading status** | **LIVE** — placing and resolving real trades across weather, geopolitical, central bank, and crypto markets |
-| Portfolio value | **$333.18** Polymarket + **$100** Kalshi = **$433 total** (verified from live wallet March 9, 2026) |
-| Available capital | $286.86 |
-| BTC5 maker performance | 56 live fills, **+$91.79** cumulative P&L, avg +$1.64/fill. DOWN direction dominant (41 fills, +$72.40) |
-| Past-day P&L | +$1.91 |
-| Open positions | 26+ across multiple market categories |
-| Closed/resolved trades | 36+ (wallet-verified) |
+| **Trading status** | **LIVE (bounded)** — BTC5 maker sleeve active, hold at $5/trade until gate clears |
+| Portfolio value | **$458.13** Polymarket + **$100** Kalshi = **~$558.13 total** (wallet-verified March 14, 2026) |
+| Available capital | $373.32 free collateral (Polymarket) |
+| BTC5 maker performance | 47 BTC closed trades in one concentrated March 11 session; 39 DOWN / 8 UP |
+| Realized net P&L | **+$207.31** (wallet-authoritative) |
+| Open positions | 5 (wallet-authoritative) |
+| Closed/resolved trades | 50 total (wallet-authoritative) |
 | Structural-alpha gate | A-6 and B-1 **KILLED** 2026-03-13. Zero density after 5-day kill-watch. Engineering capacity reallocated. |
 | Verification status | **1,397 tests passing** across all surfaces |
 | Dispatch inventory | `11` `DISPATCH_*` work-orders; `95` markdown files in `research/dispatches/` |
-| Known issue | Local ledger drift: local trade-db reports fewer positions than wallet actually shows. Reconciliation pipeline in progress |
+| Known issue | Promotion gate failed; keep BTC5 at $5/trade while collecting additional data |
 
-March 9 artifact set to use (with live wallet verification):
+Artifact set to use (with live wallet verification):
 
 - **Live Polymarket wallet** (polymarket.com) — canonical source for capital, positions, and P&L
-- `reports/runtime_truth_latest.json` and `reports/public_runtime_snapshot.json` for runtime configuration truth (NOT capital/P&L truth)
-- `reports/remote_cycle_status.json` and `reports/remote_service_status.json` for operator posture
-- `reports/state_improvement_latest.json` for current thresholds, candidate counts, and execution-notional summaries
-- `reports/arb_empirical_snapshot.json` for A-6/B-1 gating truth
-- `reports/root_test_status.json` for the latest checked-in root verification summary
+- Checked-in contract: `config/remote_cycle_status.json`, `improvement_velocity.json`, `FAST_TRADE_EDGE_ANALYSIS.md`
+- Runtime-local artifacts when present: `reports/runtime_truth_latest.json`, `reports/public_runtime_snapshot.json`, `reports/remote_cycle_status.json`, `reports/remote_service_status.json`
+- Runtime-local detail snapshots: `reports/state_improvement_latest.json`, `reports/arb_empirical_snapshot.json`, `reports/root_test_status.json`
 - `docs/NON_TRADING_STATUS.md` plus `nontrading/main.py` and `nontrading/pipeline.py` for JJ-N implementation truth
 
 ---
@@ -295,8 +293,8 @@ Private investor and legal materials are intentionally kept outside this repo in
 11. [x] Land event watchlist + execution-aware threshold logic in `strategies/a6_sum_violation.py`.
 12. [x] Land B-1 graph cache, prompt scaffolding, validation, monitor, and execution-planner modules in `strategies/b1_dependency_graph.py` and `strategies/b1_violation_monitor.py`.
 13. [ ] Add live user-channel fill handling + real order submission on top of the shared multi-leg executor.
-14. [ ] Add resolved-market dependency audit and manual family-specific validation loop for B-1.
-15. [ ] Integrate A-6 and B-1 into the live confirmation/execution stack in `bot/jj_live.py` only after the empirical density/fill gate is passed.
+14. [x] Removed B-1 reintegration TODO after kill decision (2026-03-13).
+15. [x] Removed A-6/B-1 live integration TODO after kill decision (2026-03-13).
 
 Other completed modules still available for parallel promotion work:
 
@@ -306,7 +304,7 @@ Other completed modules still available for parallel promotion work:
 - Validation coverage in `tests/test_kalshi_weather_arb.py` and `bot/tests/test_ensemble_estimator.py`
 
 ### P1 — Near-Term Execution Order
-1. **BTC5 guardrail optimization:** Widen guardrails for current volatility regime, scale to $10/trade after fill confirmation.
+1. **BTC5 guardrail optimization:** Widen guardrails for current volatility regime and hold at $5/trade until promotion gate evidence passes.
 2. **Kalshi integration:** Build settlement reconciliation and city-specific calibration (Miami subtropical bias fix).
 3. **Runtime truth reconciliation:** Close the local-ledger vs wallet drift gap.
 4. **JJ-N launch package:** Verified sending domain, curated leads, and first live outreach for Website Growth Audit.

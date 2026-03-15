@@ -84,6 +84,7 @@ class TestJJLiveSumViolationExecution(unittest.TestCase):
         live.multi_sim = _DummyMultiSim()
         live.notifier = _DummyNotifier()
         live.fill_tracker = _DummyFillTracker()
+        live.fill_tracker = _DummyFillTracker()
 
         signal = {
             "signal_id": "sumv-1",
@@ -144,6 +145,7 @@ class TestJJLiveSumViolationExecution(unittest.TestCase):
         live.db = _DummyDB()
         live.multi_sim = _DummyMultiSim()
         live.notifier = _DummyNotifier()
+        live.fill_tracker = _DummyFillTracker()
 
         signal = {
             "signal_id": "sumv-1",
