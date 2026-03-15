@@ -815,6 +815,12 @@ class MakerConfig:
     regime_one_sided_min_pnl_gap_usd: float = float(
         os.environ.get("BTC5_REGIME_ONE_SIDED_MIN_PNL_GAP_USD", "30.0")
     )
+    direction_suppression_min_price_exempt: float = float(
+        os.environ.get("BTC5_DIRECTION_SUPPRESSION_MIN_PRICE_EXEMPT", "0.90")
+    )
+    loss_cluster_min_price_exempt: float = float(
+        os.environ.get("BTC5_LOSS_CLUSTER_MIN_PRICE_EXEMPT", "0.90")
+    )
     min_buy_price: float = float(os.environ.get("BTC5_MIN_BUY_PRICE", "0.90"))
     tick_size: float = float(os.environ.get("BTC5_TICK_SIZE", "0.01"))
     entry_seconds_before_close: int = int(os.environ.get("BTC5_ENTRY_SECONDS_BEFORE_CLOSE", "10"))
@@ -867,6 +873,14 @@ class MakerConfig:
             self.stage2_daily_loss_limit_usd = float(self.daily_loss_limit_usd)
         if self.stage3_daily_loss_limit_usd is None:
             self.stage3_daily_loss_limit_usd = float(self.daily_loss_limit_usd)
+        self.direction_suppression_min_price_exempt = max(
+            0.0,
+            min(1.0, float(self.direction_suppression_min_price_exempt)),
+        )
+        self.loss_cluster_min_price_exempt = max(
+            0.0,
+            min(1.0, float(self.loss_cluster_min_price_exempt)),
+        )
 
     @property
     def effective_max_trade_usd(self) -> float:
@@ -1736,19 +1750,31 @@ class BTC5MinMakerBot:
 
         suppressed_direction = str((recent_regime or {}).get("suppressed_direction") or "").strip().upper()
         if suppressed_direction and str(direction or "").strip().upper() == suppressed_direction:
-            return {
-                "edge_tier": "suppressed",
-                "loss_cluster_suppressed": True,
-                "order_price_bucket": order_price_bucket,
-                "delta_bucket": delta_bucket,
-                "session_bucket": session_bucket,
-                "sizing_reason_tags": _unique_tags(
+            direction_suppression_min_price_exempt = max(
+                0.0,
+                float(self.cfg.direction_suppression_min_price_exempt),
+            )
+            if order_price >= direction_suppression_min_price_exempt - 1e-9:
+                tags = _unique_tags(
                     *tags,
-                    "recent_regime_one_sided_guardrail",
+                    "recent_regime_one_sided_guardrail_bypassed_high_price",
                     f"suppressed_direction={suppressed_direction}",
-                    "edge_tier=suppressed",
-                ),
-            }
+                    f"direction_suppression_min_price_exempt={direction_suppression_min_price_exempt:.2f}",
+                )
+            else:
+                return {
+                    "edge_tier": "suppressed",
+                    "loss_cluster_suppressed": True,
+                    "order_price_bucket": order_price_bucket,
+                    "delta_bucket": delta_bucket,
+                    "session_bucket": session_bucket,
+                    "sizing_reason_tags": _unique_tags(
+                        *tags,
+                        "recent_regime_one_sided_guardrail",
+                        f"suppressed_direction={suppressed_direction}",
+                        "edge_tier=suppressed",
+                    ),
+                }
 
         loss_cluster = self._loss_cluster_match(
             window_start_ts=window_start_ts,
@@ -1757,21 +1783,33 @@ class BTC5MinMakerBot:
             delta=delta,
         )
         if loss_cluster is not None:
-            return {
-                "edge_tier": "suppressed",
-                "loss_cluster_suppressed": True,
-                "order_price_bucket": order_price_bucket,
-                "delta_bucket": delta_bucket,
-                "session_bucket": session_bucket,
-                "sizing_reason_tags": _unique_tags(
+            loss_cluster_min_price_exempt = max(0.0, float(self.cfg.loss_cluster_min_price_exempt))
+            if order_price >= loss_cluster_min_price_exempt - 1e-9:
+                tags = _unique_tags(
                     *tags,
-                    "observed_loss_cluster_guardrail",
+                    "observed_loss_cluster_guardrail_bypassed_high_price",
                     f"loss_cluster_session={loss_cluster['session_name']}",
                     f"loss_cluster_price_bucket={loss_cluster['price_bucket']}",
                     f"loss_cluster_delta_bucket={loss_cluster['delta_bucket']}",
-                    "edge_tier=suppressed",
-                ),
-            }
+                    f"loss_cluster_min_price_exempt={loss_cluster_min_price_exempt:.2f}",
+                )
+            else:
+                return {
+                    "edge_tier": "suppressed",
+                    "loss_cluster_suppressed": True,
+                    "order_price_bucket": order_price_bucket,
+                    "delta_bucket": delta_bucket,
+                    "session_bucket": session_bucket,
+                    "sizing_reason_tags": _unique_tags(
+                        *tags,
+                        "observed_loss_cluster_guardrail",
+                        f"loss_cluster_session={loss_cluster['session_name']}",
+                        f"loss_cluster_price_bucket={loss_cluster['price_bucket']}",
+                        f"loss_cluster_delta_bucket={loss_cluster['delta_bucket']}",
+                        "edge_tier=suppressed",
+                    ),
+                }
+
 
         if probe_mode:
             return {
@@ -2633,46 +2671,6 @@ class BTC5MinMakerBot:
             favored = recent_regime.get("favored_direction") or "n/a"
             weaker = recent_regime.get("weaker_direction") or "n/a"
             regime_reason = f"recent_regime favored={favored} weaker={weaker} directional_mode={directional_mode}"
-        if suppressed_direction and direction == suppressed_direction:
-            edge_tier = "suppressed"
-            loss_cluster_suppressed = True
-            sizing_reason_tags = _unique_tags(
-                *sizing_reason_tags,
-                f"direction={direction}",
-                f"delta_bucket={_btc5_delta_bucket(delta)}",
-                "recent_regime_one_sided_guardrail",
-                f"suppressed_direction={suppressed_direction}",
-                "edge_tier=suppressed",
-            )
-            row = {
-                "window_start_ts": window_start_ts,
-                "window_end_ts": window_end_ts,
-                "slug": slug,
-                "direction": direction,
-                "open_price": open_price,
-                "current_price": current_price,
-                "delta": delta,
-                "token_id": token_id,
-                "order_status": "skip_direction_suppressed",
-                "reason": _join_reasons(
-                    probe_reason,
-                    session_reason,
-                    regime_reason,
-                    _reason_tag("suppressed_direction", suppressed_direction),
-                ),
-            }
-            _persist(row)
-            return _result(
-                {
-                    "window_start_ts": window_start_ts,
-                    "status": row["order_status"],
-                    "direction": direction,
-                    "delta": delta,
-                    "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
-                    "regime_triggered": bool(recent_regime and recent_regime.get("triggered")),
-                }
-            )
-
         book = await http.fetch_book(token_id)
         if not book:
             row = {
@@ -2737,6 +2735,61 @@ class BTC5MinMakerBot:
                 }
             )
 
+        if suppressed_direction and direction == suppressed_direction:
+            direction_suppression_min_price_exempt = max(0.0, float(self.cfg.direction_suppression_min_price_exempt))
+            if best_ask < direction_suppression_min_price_exempt - 1e-9:
+                edge_tier = "suppressed"
+                loss_cluster_suppressed = True
+                sizing_reason_tags = _unique_tags(
+                    *sizing_reason_tags,
+                    f"direction={direction}",
+                    f"delta_bucket={_btc5_delta_bucket(delta)}",
+                    "recent_regime_one_sided_guardrail",
+                    f"suppressed_direction={suppressed_direction}",
+                    "edge_tier=suppressed",
+                )
+                row = {
+                    "window_start_ts": window_start_ts,
+                    "window_end_ts": window_end_ts,
+                    "slug": slug,
+                    "direction": direction,
+                    "open_price": open_price,
+                    "current_price": current_price,
+                    "delta": delta,
+                    "token_id": token_id,
+                    "best_bid": best_bid,
+                    "best_ask": best_ask,
+                    "order_status": "skip_direction_suppressed",
+                    "reason": _join_reasons(
+                        probe_reason,
+                        session_reason,
+                        regime_reason,
+                        _reason_tag("suppressed_direction", suppressed_direction),
+                        _reason_tag(
+                            "direction_suppression_min_price_exempt",
+                            f"{direction_suppression_min_price_exempt:.2f}",
+                        ),
+                    ),
+                }
+                _persist(row)
+                return _result(
+                    {
+                        "window_start_ts": window_start_ts,
+                        "status": row["order_status"],
+                        "direction": direction,
+                        "delta": delta,
+                        "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
+                        "regime_triggered": bool(recent_regime and recent_regime.get("triggered")),
+                    }
+                )
+            regime_reason = _join_reasons(
+                regime_reason,
+                (
+                    "recent_regime_suppression_bypassed_high_price"
+                    f" ask={best_ask:.2f} threshold={direction_suppression_min_price_exempt:.2f}"
+                ),
+            )
+
         quote_ticks = effective_quote_ticks(
             self.cfg,
             direction,
@@ -2748,12 +2801,13 @@ class BTC5MinMakerBot:
         if recent_regime and recent_regime.get("triggered"):
             favored = recent_regime.get("favored_direction") or "n/a"
             weaker = recent_regime.get("weaker_direction") or "n/a"
-            regime_reason = (
+            regime_quote_reason = (
                 f"recent_regime favored={favored} weaker={weaker} "
                 f"{direction}_quote_ticks={quote_ticks}"
             )
             if recent_regime.get("one_sided_triggered"):
-                regime_reason = f"{regime_reason} suppressed_direction={suppressed_direction}"
+                regime_quote_reason = f"{regime_quote_reason} suppressed_direction={suppressed_direction}"
+            regime_reason = _join_reasons(regime_reason, regime_quote_reason)
         mode_max_buy_price = effective_max_buy_price(self.cfg, direction, session_override=session_override)
         if probe_mode and direction == "UP":
             mode_max_buy_price = min(mode_max_buy_price, float(probe_mode["up_max_buy_price"]))
