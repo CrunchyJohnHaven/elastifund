@@ -6435,7 +6435,7 @@ class JJLive:
                         skipped_category += 1
                     elif filter_reason == "velocity":
                         skipped_too_slow += 1
-                    elif filter_reason == "resolution":
+                    elif filter_reason == "unknown_resolution":
                         skipped_no_resolution += 1
 
                 # Extract YES price — handle multiple formats
@@ -6745,6 +6745,7 @@ class JJLive:
                 signal_allowed, filter_reason, category, res_hours = apply_llm_market_filters(
                     question,
                     resolution_hours=mdata_lookup.get("resolution_hours"),
+                    slug=mdata_lookup.get("slug", ""),
                 )
                 if not signal_allowed:
                     logger.info(
