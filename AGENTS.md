@@ -48,7 +48,7 @@ If two agents need the same file, stop parallelizing. Path ownership beats merge
 - Use one shared root virtualenv. Do not editable-install `polymarket-bot/` into it.
 - Treat `bot/`, `execution/`, `strategies/`, and `infra/` as live-trading-sensitive paths. Behavior changes there need tests and evidence.
 - Treat `data/`, `logs/`, and `state/` as runtime artifact directories, not source-of-truth docs.
-- For live posture and cycle truth, prefer `jj_state.json`, `reports/remote_cycle_status.json`, `reports/remote_service_status.json`, and `research/edge_backlog_ranked.md` over stale prose.
+- For live posture and cycle truth, prefer checked-in contracts (`config/remote_cycle_status.json`, `improvement_velocity.json`) plus `research/edge_backlog_ranked.md`; use `reports/*` artifacts only when they are available from a runtime machine.
 - Existing JSON handoff artifacts are the runtime status contract. Do not invent new runtime APIs just to pass state between lanes.
 - Keep new durable docs under `docs/` or `research/`, not the repo root, except for the approved numbered governance set `00_MISSION_AND_PRINCIPLES.md` through `12_MANAGED_SERVICE_BOUNDARY.md`.
 - Keep the repo root narrow: entrypoints, the approved numbered governance set, public repo standards, and compatibility files only.

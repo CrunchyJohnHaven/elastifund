@@ -123,7 +123,7 @@ This is the autoresearch-style improvement log. Each entry represents a validate
 - **BTC5 guardrail fixes deployed 2026-03-14.** Three simultaneous blockers diagnosed and fixed: delta widened from 0.00075 to 0.0040, UP direction enabled (was shadow-only), min_buy_price lowered to 0.42. Remaining skips are legitimate market-quality gates.
 - **Directional edge is still strongest in the DOWN lane, with price-bucket behavior currently the main structural discriminator.**
 - **A-6 and B-1 structural alpha lanes killed 2026-03-13.** Zero evidence after 5-day kill-watch. Full rationale in `research/what_doesnt_work_diary_v1.md`.
-- **Capital accounting delta remains non-zero.** Wallet shows $390.90 vs $250 tracked base. Known drift, not a loss — reconciliation in progress.
+- **Wallet reconciliation completed on 2026-03-14.** Root cause was wrong wallet address for data API queries; wallet-authoritative value is now tracked as $458.13 Polymarket with +$207.31 realized net P&L.
 - **Maker-only execution enforced.** 100% post-only orders. Zero taker fees. Maker rebates on every fill. This single change (Dispatch #75) eliminated the fee drag that killed earlier strategies.
 - **Six signal sources wired into the live loop.** LLM probability estimation, smart wallet flow detection, LMSR Bayesian pricing, cross-platform arbitrage, VPIN/OFI microstructure, and semantic lead-lag. Each can be independently enabled or disabled per runtime profile.
 - **Automated kill rules operational.** Semantic decay, toxicity survival, cost stress polynomial, and calibration enforcement — all running in production. Strategies that fail these die automatically.
@@ -132,8 +132,8 @@ This is the autoresearch-style improvement log. Each entry represents a validate
 
 **Known issues being worked:**
 
-- Launch-contract drift still blocks live promotion: `agent_run_mode=live`, `execution_mode=shadow`, `allow_order_submission=false`, `launch_posture=blocked`.
-- Capital accounting delta: wallet $390.90 vs $250 tracked base (+$140.90). Reconciliation in progress.
+- Launch-contract drift still needs cleanup: profile semantics and operator docs can disagree (`execution_mode=shadow` while live order submission is enabled).
+- BTC5 promotion gate currently fails: hold at $5/trade until `reports/btc5_promotion_gate.json` reports `overall_gate=true` over a >=7-day window.
 - `FAST_TRADE_EDGE_ANALYSIS.md` still says "REJECT ALL" (~5 days stale) while BTC5 has real live fills. The edge scan pipeline is decoupled from actual execution.
 - 50 test failures in `test_btc_5min_maker_process_window_core.py` from recent guardrail changes. All other test surfaces green.
 - BTC5 guardrail fixes deployed 2026-03-14. Awaiting fill validation during US trading hours.
