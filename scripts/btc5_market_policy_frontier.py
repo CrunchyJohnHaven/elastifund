@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from infra.fast_json import dump_path_atomic, write_text_atomic
 from scripts.btc5_policy_benchmark import (
     DEFAULT_MARKET_LATEST_JSON,
     DEFAULT_MARKET_POLICY_HANDOFF,
@@ -337,7 +338,7 @@ def _write_markdown(path: Path, payload: dict[str, Any]) -> None:
         "",
         "Benchmark progress only, not realized P&L.",
     ]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_text_atomic(path, "\n".join(lines) + "\n", encoding="utf-8")
 
 
 def main() -> int:
@@ -355,7 +356,7 @@ def main() -> int:
     )
     latest_json = report_dir / "latest.json"
     latest_md = report_dir / "latest.md"
-    latest_json.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    dump_path_atomic(latest_json, payload, indent=2, sort_keys=True, trailing_newline=True)
     _write_markdown(latest_md, payload)
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0

@@ -463,6 +463,25 @@ def _build_runtime_profile(
     )
 
 
+_SECTION_CONFIG_TYPES: dict[str, type[Any]] = {
+    "mode": RuntimeModeConfig,
+    "feature_flags": FeatureFlagsConfig,
+    "risk_limits": RiskLimitsConfig,
+    "market_filters": MarketFiltersConfig,
+    "signal_thresholds": SignalThresholdsConfig,
+    "combinatorial_thresholds": CombinatorialThresholdsConfig,
+    "microstructure_thresholds": MicrostructureThresholdsConfig,
+}
+
+
+def _revalidate_profile_sections(profile: RuntimeProfile) -> RuntimeProfile:
+    """Re-run section validators after mutable env overrides are applied."""
+    for section, section_type in _SECTION_CONFIG_TYPES.items():
+        section_payload = asdict(getattr(profile, section))
+        setattr(profile, section, section_type(**section_payload))
+    return profile
+
+
 def _set_override(profile: RuntimeProfile, section: str, key: str, env_var: str, raw_value: str, value: Any) -> None:
     target_section = getattr(profile, section)
     setattr(target_section, key, value)
@@ -506,7 +525,7 @@ def _apply_env_overrides(profile: RuntimeProfile, env: Mapping[str, str]) -> Run
             ),
         )
 
-    return profile
+    return _revalidate_profile_sections(profile)
 
 
 def load_runtime_profile(

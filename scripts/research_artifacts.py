@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from infra.fast_json import dump_path_atomic
+from infra.fast_json import dump_path_atomic, write_text_atomic
 
 
 def utc_now() -> datetime:
@@ -30,8 +30,7 @@ def write_json_and_markdown(
     markdown: str,
 ) -> None:
     write_json_payload(json_path, payload)
-    markdown_path.parent.mkdir(parents=True, exist_ok=True)
-    markdown_path.write_text(markdown)
+    write_text_atomic(markdown_path, markdown)
 
 
 def write_versioned_cycle_reports(
@@ -52,5 +51,5 @@ def write_versioned_cycle_reports(
     payload_with_artifacts = dict(payload, artifacts=artifacts)
     write_json_payload(cycle_json, payload_with_artifacts)
     write_json_payload(latest_json, payload_with_artifacts)
-    latest_md.write_text(markdown)
+    write_text_atomic(latest_md, markdown)
     return artifacts
