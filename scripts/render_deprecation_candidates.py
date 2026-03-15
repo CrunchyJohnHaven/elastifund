@@ -52,26 +52,13 @@ def render_markdown(catalog: dict) -> str:
     scope_paths = catalog["reference_scope_paths"]
     external_scope_paths = catalog["external_scope_paths"]
 
-    ready_candidates: list[tuple[str, int]] = []
     for item in catalog["candidates"]:
         script = item["path"]
         script_pat = _escape(script)
         total_count, _ = _run_rg(script_pat, scope_paths)
         ext_count, _ = _run_rg(script_pat, external_scope_paths)
-        if ext_count == 0:
-            ready_candidates.append((script, total_count))
         lines.append(f"| `{script}` | {total_count} | {ext_count} | {item['why_not_removed']} |")
 
-    lines.append("")
-    lines.append("## Ready Candidates")
-    lines.append("")
-    if ready_candidates:
-        lines.append("| Script | Total refs |")
-        lines.append("|---|---:|")
-        for script, total_count in ready_candidates:
-            lines.append(f"| `{script}` | {total_count} |")
-    else:
-        lines.append("None yet.")
     lines.append("")
     lines.append("## Completed In This Wave")
     lines.append("")

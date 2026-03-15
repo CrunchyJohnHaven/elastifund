@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Elastifund / Trading | BTC5 sleeve proof separated from blocked fund claims</title>
+  <meta name="description" content="The trading board separates the dedicated BTC5 sleeve, blocked fund-level realized ARR, and the current public forecast so the public story stays exciting and claim-safe.">
+  <link rel="stylesheet" href="/site.css">
+  <script src="/site.js" defer></script>
+</head>
+<body data-page="trading">
+  <div class="page-wrap">
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="/">
+          <span class="brand-mark"></span>
+          <span class="brand-text">
+            <span class="brand-name">Elastifund</span>
+            <span class="brand-subtitle">Trading proof separated by claim surface</span>
+          </span>
+        </a>
+        <nav class="header-nav" aria-label="Primary">
+          <a class="nav-link" data-page="home" href="/">Home</a>
+          <a class="nav-link" data-page="live" href="/live/">Live</a>
+          <a class="nav-link" data-page="elastic" href="/elastic/">Elastic</a>
+          <a class="nav-link" data-page="develop" href="/develop/">Develop</a>
+          <a class="nav-link" data-page="trading" href="/leaderboards/trading/">Trading</a>
+          <a class="nav-link" data-page="worker" href="/leaderboards/worker/">Worker</a>
+        </nav>
+        <div class="header-actions">
+          <span class="status-pill" data-role="status-pill">runtime syncing</span>
+          <a class="header-link" href="https://github.com/CrunchyJohnHaven/elastifund" target="_blank" rel="noopener">GitHub</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="route-hero">
+        <div class="container route-hero-grid">
+          <div>
+            <span class="eyebrow">Trading evidence</span>
+            <h1>The system is not inert. The dedicated BTC5 sleeve is live even while the broad fund claim stays blocked.</h1>
+            <p class="route-copy">
+              This page treats three surfaces differently on purpose: the fund-level realized ARR claim, the BTC5 sleeve-only realized run rate, and the current public forecast. That separation is what makes the story credible.
+            </p>
+            <p class="route-note">
+              The broader runtime remains <strong data-fill="launch_posture"></strong>, but the public-safe sleeve surface now has <strong data-fill="btc5_live_rows"></strong> live-filled rows, <strong data-fill="btc5_live_pnl"></strong> live-filled P&amp;L, and a latest selected forecast of <strong data-fill="forecast_arr"></strong> with <strong data-fill="forecast_confidence"></strong> confidence.
+            </p>
+            <div class="badge-row">
+              <span class="tag neutral freshness-badge" data-freshness-badge="snapshot">snapshot freshness</span>
+              <span class="tag neutral freshness-badge" data-freshness-badge="btc5">btc5 freshness</span>
+              <span class="tag neutral freshness-badge" data-freshness-badge="forecast">forecast freshness</span>
+            </div>
+            <div class="cta-row">
+              <a class="button button-primary" href="/live/">Open /live/</a>
+              <a class="button button-secondary" href="/develop/">Run the repo in safe mode</a>
+            </div>
+          </div>
+
+          <aside class="proof-card">
+            <div class="proof-card-header">
+              <div>
+                <div class="panel-kicker">Current proof split</div>
+                <h3>Fund blocked, sleeve visible</h3>
+              </div>
+              <span class="tag warn" data-fill="fund_claim_status"></span>
+            </div>
+            <p class="card-copy"><span data-fill="fund_claim_reason_short"></span></p>
+            <div class="proof-stat-grid">
+              <div class="proof-stat">
+                <div class="proof-stat-label">Sleeve P&amp;L</div>
+                <div class="proof-stat-value" data-fill="btc5_live_pnl"></div>
+                <div class="proof-stat-note"><span data-fill="btc5_live_rows"></span> live-filled rows</div>
+              </div>
+              <div class="proof-stat">
+                <div class="proof-stat-label">Allowed realized metric</div>
+                <div class="proof-stat-value" data-fill="btc5_run_rate"></div>
+                <div class="proof-stat-note">Sleeve-only annualized run rate</div>
+              </div>
+              <div class="proof-stat">
+                <div class="proof-stat-label">Selected forecast</div>
+                <div class="proof-stat-value" data-fill="forecast_arr"></div>
+                <div class="proof-stat-note"><span data-fill="deploy_recommendation"></span> / <span data-fill="forecast_confidence"></span></div>
+              </div>
+              <div class="proof-stat">
+                <div class="proof-stat-label">Velocity</div>
+                <div class="proof-stat-value" data-fill="velocity_gain"></div>
+                <div class="proof-stat-note"><span data-fill="velocity_cycles"></span> cycles in <span data-fill="velocity_window_hours"></span> hours</div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">Claim surfaces</div>
+            <h2>Three labels, three different trust levels.</h2>
+          </div>
+          <div class="surface-grid">
+            <article class="surface-card">
+              <div class="tag bad">Fund realized ARR</div>
+              <h3><span data-fill="current_system_arr"></span></h3>
+              <p class="surface-copy">Blocked. <span data-fill="fund_claim_reason"></span></p>
+            </article>
+            <article class="surface-card">
+              <div class="tag good">Sleeve-only realized run rate</div>
+              <h3><span data-fill="btc5_run_rate"></span></h3>
+              <p class="surface-copy">Annualized from <span data-fill="btc5_window_fills"></span> live fills and <span data-fill="btc5_window_pnl"></span> across <span data-fill="btc5_window_hours"></span> hours. This is the allowed realized proof surface.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag warn">Public forecast</div>
+              <h3><span data-fill="forecast_arr"></span></h3>
+              <p class="surface-copy">Simulated forecast from <span data-fill="forecast_source"></span>. Confidence reasons: <span data-fill="forecast_confidence_reasons"></span>.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag neutral">Timebound velocity</div>
+              <h3><span data-fill="velocity_gain"></span></h3>
+              <p class="surface-copy"><span data-fill="velocity_fill_growth"></span> and <span data-fill="velocity_per_day"></span> forecast gain per day in the latest tracked window.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">BTC5 sleeve</div>
+            <h2>The dedicated live sleeve is where the public trading story gets its energy.</h2>
+          </div>
+          <div class="evidence-grid">
+            <article class="evidence-card">
+              <div class="evidence-label">Best price bucket</div>
+              <div class="evidence-value" data-fill="btc5_best_bucket"></div>
+              <p class="evidence-sub"><span data-fill="btc5_best_bucket_pnl"></span> cumulative live-filled P&amp;L in that bucket.</p>
+            </article>
+            <article class="evidence-card">
+              <div class="evidence-label">Best direction</div>
+              <div class="evidence-value" data-fill="btc5_best_direction"></div>
+              <p class="evidence-sub"><span data-fill="btc5_best_direction_pnl"></span> cumulative live-filled P&amp;L.</p>
+            </article>
+            <article class="evidence-card">
+              <div class="evidence-label">Guardrails</div>
+              <div class="evidence-value evidence-value-small" data-fill="btc5_guardrails"></div>
+              <p class="evidence-sub">Current recommendation from the latest checked-in probe.</p>
+            </article>
+            <article class="evidence-card">
+              <div class="evidence-label">Latest order status</div>
+              <div class="evidence-value evidence-value-small" data-fill="btc5_latest_order_status"></div>
+              <p class="evidence-sub"><span data-fill="btc5_source_label"></span> at <span data-fill="btc5_latest_fill"></span>.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">Wider runtime</div>
+            <h2>The rest of the trading stack is still held to harder gates.</h2>
+          </div>
+          <div class="table-wrap">
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Surface</th>
+                    <th>Current state</th>
+                    <th>Why it matters</th>
+                    <th>Next gate</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>
+                      <div class="cell-title">Broad runtime</div>
+                      <div class="cell-meta">Fund-level realized claim</div>
+                    </td>
+                    <td><span data-fill="launch_posture"></span></td>
+                    <td><span data-fill="fund_claim_reason_short"></span></td>
+                    <td>Close ledger and wallet reconciliation before any stronger ARR claim.</td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <div class="cell-title">Wallet-flow posture</div>
+                      <div class="cell-meta">Fast-market candidate lane</div>
+                    </td>
+                    <td><span data-fill="fast_verdict"></span></td>
+                    <td><span data-fill="opportunity_summary"></span></td>
+                    <td>Convert opportunity density and forecast strength into more resolved evidence.</td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <div class="cell-title">Guaranteed Dollar Scanner (A-6)</div>
+                      <div class="cell-meta">Structural alpha gate</div>
+                    </td>
+                    <td><span data-fill="a6_summary"></span></td>
+                    <td>Structural evidence still does not meet the public gate.</td>
+                    <td>Maker-fill proxy and settlement evidence.</td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <div class="cell-title">Templated Dependency Engine (B-1)</div>
+                      <div class="cell-meta">Deterministic template lane</div>
+                    </td>
+                    <td><span data-fill="b1_summary"></span></td>
+                    <td>No deterministic pair density worth promoting yet.</td>
+                    <td>More pair density, validation, and false-positive control.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container">
+        <div class="footer-panel">
+          <div>
+            <div class="footer-kicker">Trading route</div>
+            <h3>Dedicated sleeve proof in front. Blocked fund claim kept explicit.</h3>
+            <p class="footer-meta">Wallet surface: <span data-fill="wallet_open_positions"></span> open / <span data-fill="wallet_closed_positions"></span> closed / <span data-fill="wallet_realized_pnl"></span> realized.</p>
+          </div>
+          <div class="footer-links">
+            <a href="/live/">Live</a>
+            <a href="/">Home</a>
+            <a href="/develop/">Develop</a>
+            <a href="/leaderboards/">Leaderboards</a>
+            <a href="/leaderboards/worker/">Worker</a>
+          </div>
+          <div class="footer-meta">
+            <div>Snapshot: <span data-fill="generated_utc"></span>.</div>
+            <div>Fund claim: <span data-fill="fund_claim_status"></span>.</div>
+            <div>&copy; <span data-fill="year"></span> Elastifund.</div>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

@@ -50,7 +50,7 @@ SESSION_FILTERS: tuple[tuple[str, tuple[int, ...]], ...] = (
     ("midday_et", (12, 13)),
     ("late_et", (14, 15, 16)),
 )
-FRONTIER_SIZE_TARGETS = (10.0, 20.0, 50.0, 100.0, 300.0)
+FRONTIER_SIZE_TARGETS = (10.0, 20.0, 50.0, 100.0, 200.0)
 PROMOTION_FILL_RETENTION_FLOOR = 0.85
 PROMOTION_REALISM_FLOOR = 0.85
 CANDIDATE_CLASS_PRIORITY = {
@@ -408,8 +408,36 @@ def rank_hypothesis_pool(
     max_candidates: int,
     min_live_fills: int,
 ) -> list[HypothesisSpec]:
+    # v2: Load evidence weights and kill list for informed ranking
+    evidence_weights: dict[str, Any] = {}
+    kill_list: dict[str, Any] = {}
+    try:
+        from scripts.btc5_autoresearch_v2 import (
+            build_evidence_weights,
+            evidence_weight_for_hypothesis,
+            is_hypothesis_killed,
+            load_evidence_cache,
+            load_kill_list,
+            save_evidence_cache,
+        )
+        kill_list = load_kill_list()
+        evidence_weights = build_evidence_weights(rows)
+        save_evidence_cache(evidence_weights)
+    except ImportError:
+        pass
+
     ranked: list[tuple[tuple[float, float, int, float], HypothesisSpec]] = []
+    killed_count = 0
     for spec in specs:
+        # v2: Skip killed hypotheses
+        if kill_list and evidence_weights:
+            try:
+                if is_hypothesis_killed(kill_list, spec.name):
+                    killed_count += 1
+                    continue
+            except Exception:
+                pass
+
         history = summarize_hypothesis_history(rows, spec)
         if int(history.get("replay_live_filled_rows") or 0) < min_live_fills:
             continue
@@ -454,6 +482,20 @@ def rank_hypothesis_pool(
             focus_weight *= 1.1
         if spec.max_abs_delta is not None and spec.max_abs_delta <= 0.00005 and spec.session_name != "any":
             focus_weight *= 1.15
+
+        # v2: Apply evidence-informed weights from prior fill performance
+        if evidence_weights:
+            try:
+                ev_weight = evidence_weight_for_hypothesis(
+                    evidence_weights,
+                    direction=spec.direction,
+                    session_name=spec.session_name,
+                    max_abs_delta=spec.max_abs_delta,
+                )
+                focus_weight *= ev_weight
+            except Exception:
+                pass
+
         exploration_score *= focus_weight
         key = (
             exploration_score,
@@ -739,29 +781,6 @@ def _high_conviction_score(item: dict[str, Any]) -> float:
     return round(score, 4)
 
 
-def _frontier_selection_score(item: dict[str, Any]) -> float:
-    class_priority = max(0, _candidate_class_priority(item))
-    execution_realism_score = min(1.0, max(0.0, _safe_float(item.get("execution_realism_score"), 0.0)))
-    fill_retention = min(1.0, max(0.0, _safe_float(item.get("fill_retention_vs_active"), 0.0)))
-    generalization_ratio = _normalized_generalization(item.get("generalization_ratio"))
-    evidence_weight = _evidence_weight(str(item.get("evidence_band") or "exploratory"))
-    frontier_bias_score = min(10.0, max(0.0, _safe_float(item.get("frontier_bias_score"), 0.0)))
-    arr_signal = min(
-        5.0,
-        max(-5.0, _safe_float(item.get("p05_arr_improvement_vs_active_pct"), 0.0) / 25.0),
-    )
-    return round(
-        (class_priority * 100.0)
-        + (execution_realism_score * 25.0)
-        + (fill_retention * 20.0)
-        + (generalization_ratio * 10.0)
-        + (evidence_weight * 5.0)
-        + frontier_bias_score
-        + arr_signal,
-        4,
-    )
-
-
 def _execution_realism_score(*, fill_retention: float, generalization_ratio: float, evidence_band: str) -> float:
     evidence_weight = _evidence_weight(evidence_band)
     return min(
@@ -865,9 +884,8 @@ def _best_candidate_by_class(candidates: list[dict[str, Any]], candidate_class: 
     eligible.sort(
         key=lambda item: (
             _candidate_class_priority(item),
-            _safe_float(item.get("frontier_selection_score"), 0.0),
+            _safe_float(item.get("ranking_score"), 0.0),
             _safe_float(item.get("execution_realism_score"), 0.0),
-            _safe_float(item.get("fill_retention_vs_active"), 0.0),
             _safe_float(item.get("validation_p05_arr_pct"), 0.0),
             -_safe_float(item.get("total_loss_usd"), 0.0),
             str(item.get("name") or item.get("filter_name") or ""),
@@ -914,7 +932,6 @@ def _hold_current_candidate(active_candidate: dict[str, Any]) -> dict[str, Any]:
             "promotion_gate": "active_profile_baseline",
         }
     )
-    payload["frontier_selection_score"] = _frontier_selection_score(payload)
     return payload
 
 
@@ -979,8 +996,6 @@ def _follow_up_candidates_with_tradeoffs(
             "validation_median_arr_pct": _safe_float(summary.get("validation_median_arr_pct"), 0.0),
             "validation_p05_arr_pct": _safe_float(summary.get("validation_p05_arr_pct"), 0.0),
             "validation_replay_pnl_usd": _safe_float(summary.get("validation_replay_pnl_usd"), 0.0),
-            "validation_profit_probability": _safe_float(summary.get("validation_profit_probability"), 0.0),
-            "validation_p95_drawdown_usd": _safe_float(summary.get("validation_p95_drawdown_usd"), 0.0),
             "arr_improvement_vs_active_pct": round(
                 _safe_float(summary.get("validation_median_arr_pct"), 0.0) - active_arr,
                 4,
@@ -1003,16 +1018,12 @@ def _follow_up_candidates_with_tradeoffs(
         payload["frontier_focus_tags"] = _frontier_focus_tags(payload)
         payload["frontier_bias_score"] = _frontier_bias_score(payload)
         payload["high_conviction_score"] = _high_conviction_score(payload)
-        classified = _apply_candidate_classification(payload)
-        classified["frontier_selection_score"] = _frontier_selection_score(classified)
-        items.append(classified)
+        items.append(_apply_candidate_classification(payload))
     items.sort(
         key=lambda item: (
             -_candidate_class_priority(item),
-            -_safe_float(item.get("execution_realism_score"), 0.0),
-            -_safe_float(item.get("fill_retention_vs_active"), 0.0),
-            -_safe_float(item.get("frontier_selection_score"), 0.0),
             -_safe_float(item.get("ranking_score"), 0.0),
+            -_safe_float(item.get("execution_realism_score"), 0.0),
             str(item.get("name") or ""),
         )
     )
@@ -1028,9 +1039,7 @@ def _best_live_followups(follow_ups: list[dict[str, Any]]) -> list[dict[str, Any
     candidates.sort(
         key=lambda item: (
             -_candidate_class_priority(item),
-            -_safe_float(item.get("frontier_selection_score"), 0.0),
             -_safe_float(item.get("execution_realism_score"), 0.0),
-            -_safe_float(item.get("fill_retention_vs_active"), 0.0),
             -_safe_float(item.get("ranking_score"), 0.0),
             str(item.get("name") or ""),
         )
@@ -1048,9 +1057,7 @@ def _best_one_sided_followups(follow_ups: list[dict[str, Any]]) -> list[dict[str
     candidates.sort(
         key=lambda item: (
             -_candidate_class_priority(item),
-            -_safe_float(item.get("frontier_selection_score"), 0.0),
             -_safe_float(item.get("execution_realism_score"), 0.0),
-            -_safe_float(item.get("fill_retention_vs_active"), 0.0),
             -_safe_float(item.get("ranking_score"), 0.0),
             str(item.get("name") or ""),
         )
@@ -1063,7 +1070,6 @@ def _high_conviction_followups(follow_ups: list[dict[str, Any]]) -> list[dict[st
     ranked.sort(
         key=lambda item: (
             -_candidate_class_priority(item),
-            -_safe_float(item.get("frontier_selection_score"), 0.0),
             -_safe_float(item.get("high_conviction_score"), 0.0),
             -_safe_float(item.get("execution_realism_score"), 0.0),
             -_safe_float(item.get("ranking_score"), 0.0),
@@ -1093,8 +1099,6 @@ def _candidate_from_profile_result(
             "validation_median_arr_pct": 0.0,
             "validation_p05_arr_pct": 0.0,
             "validation_replay_pnl_usd": 0.0,
-            "validation_profit_probability": 0.0,
-            "validation_p95_drawdown_usd": 0.0,
         }
     hypothesis = dict(evaluated.get("hypothesis") or {})
     summary = dict(evaluated.get("summary") or {})
@@ -1130,8 +1134,6 @@ def _candidate_from_profile_result(
         "validation_median_arr_pct": _safe_float(summary.get("validation_median_arr_pct"), 0.0),
         "validation_p05_arr_pct": _safe_float(summary.get("validation_p05_arr_pct"), 0.0),
         "validation_replay_pnl_usd": _safe_float(summary.get("validation_replay_pnl_usd"), 0.0),
-        "validation_profit_probability": _safe_float(summary.get("validation_profit_probability"), 0.0),
-        "validation_p95_drawdown_usd": _safe_float(summary.get("validation_p95_drawdown_usd"), 0.0),
     }
 
 
@@ -1961,7 +1963,6 @@ def main() -> int:
         enriched_priced_rows,
         top[0] if top else None,
     )
-    best_cluster_suppressor = dict(loss_clusters[0]) if loss_clusters else None
     candidate_class_breakdown = _class_breakdown(all_follow_ups + loss_clusters + [hold_current_candidate])
     summary = {
         "generated_at": _now_utc().isoformat(),
@@ -1994,11 +1995,9 @@ def main() -> int:
             "down_max_buy_price": active_candidate["down_max_buy_price"],
         },
         "best_candidate": deployment_candidate,
-        "best_validated_candidate": dict(deployment_candidate),
         "best_ranked_candidate": ranked_best_candidate,
         "best_promote_ready_candidate": best_promote_ready_candidate,
         "best_probe_only_candidate": best_probe_only_candidate,
-        "best_cluster_suppressor": best_cluster_suppressor,
         "hold_current_candidate": hold_current_candidate,
         "deployment_recommendation": "promote" if best_promote_ready_candidate is not None else "hold_current",
         "candidate_class_breakdown": candidate_class_breakdown,

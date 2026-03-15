@@ -143,7 +143,7 @@ def _load_env_defaults(env_path: Path) -> None:
             continue
         key, value = line.split("=", 1)
         key = key.strip()
-        if key not in {"POLY_SAFE_ADDRESS", "POLYMARKET_FUNDER"} or key in os.environ:
+        if key not in {"POLY_SAFE_ADDRESS", "POLYMARKET_FUNDER", "POLY_DATA_API_ADDRESS"} or key in os.environ:
             continue
         os.environ[key] = value.strip().strip('"').strip("'")
 

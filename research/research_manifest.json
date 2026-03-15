@@ -1,0 +1,77 @@
+{
+  "version": "2026-03-11",
+  "purpose": "Machine-readable index for active versus historical research surfaces.",
+  "categories": {
+    "active_dispatches": [
+      "research/dispatches/DISPATCH_097_competitive_inventory_benchmark_blueprint.md",
+      "research/dispatches/DISPATCH_098_JJN_PARALLEL_INSTANCE_PLAN.md",
+      "research/dispatches/DISPATCH_099_CLAUDE_CODE_btc_truth_surface_sync.md",
+      "research/dispatches/DISPATCH_100_BTC5_VELOCITY_PARALLEL_PLAN.md",
+      "research/dispatches/DISPATCH_101_DEEP_RESEARCH_INGESTION_20260311.md",
+      "research/dispatches/DISPATCH_102_BTC5_truth_plumbing_and_execution_confidence.md"
+    ],
+    "current_assessment": [
+      "research/edge_backlog_ranked.md",
+      "research/jj_assessment_dispatch.md",
+      "research/btc5_arr_summary.md",
+      "research/btc5_hypothesis_frontier_summary.md",
+      "research/high_frequency_substrate_phase2_blueprint_2026-03-11.md"
+    ],
+    "backlog_ranking": [
+      "research/edge_backlog_ranked.md",
+      "research/dispatches/"
+    ],
+    "autopsies": [
+      "research/what_doesnt_work_diary_v1.md"
+    ],
+    "imported_research": [
+      "research/imports/",
+      "research/deep_research_packets/"
+    ],
+    "unexecuted_prompt_lane": [
+      "research/UNEXECUTED_DEEP_RESEARCH_PROMPTS/"
+    ],
+    "history_pointers": [
+      "research/history/README.md",
+      "research/history/2026_q1_velocity_cleanup_wave1/README.md"
+    ]
+  },
+  "dispatch_id_collision_resolutions": [
+    {
+      "old": "research/dispatches/DISPATCH_083_combinatorial_research_ingest.md",
+      "canonical": "research/dispatches/DISPATCH_084_combinatorial_research_ingest.md"
+    },
+    {
+      "old": "research/dispatches/DISPATCH_083_structural_arb_reprioritization.md",
+      "canonical": "research/dispatches/DISPATCH_085_structural_arb_reprioritization.md"
+    },
+    {
+      "old": "research/dispatches/DISPATCH_099_BTC5_truth_plumbing_and_execution_confidence.md",
+      "canonical": "research/dispatches/DISPATCH_102_BTC5_truth_plumbing_and_execution_confidence.md"
+    }
+  ],
+  "filename_aliases": [
+    {
+      "legacy": "research/DEEP_RESEARCH_PROMPT_100_STRATEGIES.md",
+      "canonical": "research/deep_research_prompt_100_strategies_full.md"
+    },
+    {
+      "legacy": "research/LatencyEdgeResearch.md",
+      "canonical": "research/latency_edge_research.md"
+    },
+    {
+      "legacy": "research/RTDS_MAKER_EDGE_IMPLEMENTATION.md",
+      "canonical": "research/rtds_maker_edge_implementation_full.md"
+    }
+  ],
+  "checks": [
+    {
+      "name": "dispatch_id_uniqueness",
+      "command": "python3 research/check_dispatch_ids.py"
+    },
+    {
+      "name": "pointer_stub_integrity",
+      "command": "python3 research/check_pointer_stubs.py"
+    }
+  ]
+}

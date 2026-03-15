@@ -1,0 +1,68 @@
+{
+  "index_patterns": ["elastifund-orderbook*"],
+  "priority": 500,
+  "template": {
+    "settings": {
+      "index.mode": "logsdb",
+      "index.mapping.synthetic_source_keep": "arrays",
+      "index.codec": "best_compression",
+      "index.sort.field": ["host.name", "@timestamp"],
+      "index.sort.order": ["desc", "desc"],
+      "index.sort.mode": ["min", "min"],
+      "index.sort.missing": ["_first", "_first"],
+      "index.mapping.ignore_malformed": true,
+      "index.mapping.ignore_above": 8191,
+      "index.mapping.total_fields.ignore_dynamic_beyond_limit": true,
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "refresh_interval": "5s"
+    },
+    "mappings": {
+      "dynamic": true,
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "timestamp": { "type": "date" },
+        "ecs": {
+          "properties": {
+            "version": { "type": "keyword" }
+          }
+        },
+        "event": {
+          "properties": {
+            "kind": { "type": "keyword" },
+            "category": { "type": "keyword" },
+            "type": { "type": "keyword" },
+            "action": { "type": "keyword" },
+            "dataset": { "type": "keyword" },
+            "duration": { "type": "long" }
+          }
+        },
+        "service": {
+          "properties": {
+            "name": { "type": "keyword" },
+            "type": { "type": "keyword" }
+          }
+        },
+        "host": {
+          "properties": {
+            "name": { "type": "keyword" },
+            "ip": { "type": "ip", "synthetic_source_keep": "none" }
+          }
+        },
+        "finance": {
+          "properties": {
+            "ticker": { "type": "keyword" }
+          }
+        },
+        "market_id": { "type": "keyword" },
+        "best_bid": { "type": "double" },
+        "best_ask": { "type": "double" },
+        "spread_bps": { "type": "double" },
+        "depth_5lvl_bid": { "type": "double" },
+        "depth_5lvl_ask": { "type": "double" },
+        "vpin": { "type": "double" },
+        "ofi": { "type": "double" }
+      }
+    }
+  }
+}

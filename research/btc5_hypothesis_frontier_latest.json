@@ -1,0 +1,20 @@
+{
+  "cycles_total": 7,
+  "evidence_counts": {
+    "candidate": 1,
+    "exploratory": 4,
+    "validated": 2
+  },
+  "frontier_median_arr_pct": 10924714.9511,
+  "frontier_p05_arr_pct": 4265134.2825,
+  "latest_direction": "DOWN",
+  "latest_evidence_band": "exploratory",
+  "latest_finished_at": "2026-03-10T12:44:55.402965+00:00",
+  "latest_generalization_ratio": 42.99,
+  "latest_hypothesis_name": "hyp_down_d0.00015_up0.50_down0.51_hour_et_11",
+  "latest_session_name": "hour_et_11",
+  "latest_validation_live_filled_rows": 5,
+  "latest_validation_median_arr_pct": 9625734.3372,
+  "latest_validation_p05_arr_pct": 2311433.6608,
+  "metric_name": "validation_p05_arr_pct"
+}

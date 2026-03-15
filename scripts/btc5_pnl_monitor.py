@@ -247,11 +247,11 @@ def main() -> None:
 
     conn.close()
 
-    # Exit code: 2 for CRITICAL, 0 for WARNING or clean.
-    # systemd treats any non-zero exit as failure, so only CRITICAL
-    # (actionable drawdown breach) should produce a non-zero exit.
+    # Exit code: 2 for CRITICAL, 1 for WARNING, 0 for clean
     if any(a["level"] == "CRITICAL" for a in alerts):
         sys.exit(2)
+    if alerts:
+        sys.exit(1)
     sys.exit(0)
 
 

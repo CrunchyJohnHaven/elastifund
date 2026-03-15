@@ -7,29 +7,25 @@ This file tracks wrappers that could be deprecated in a future wave after refere
 ## Reference-Proof Command
 
 ```bash
-rg -n "scripts/deploy\.sh|scripts/deploy_ws\.sh|scripts/btc5_status\.sh" docs tests deploy scripts Makefile README.md AGENTS.md PROJECT_INSTRUCTIONS.md
+rg -n "scripts/deploy\.sh|scripts/deploy_ws\.sh|scripts/btc5_status\.sh|scripts/install_bridge_cron\.sh|scripts/install_jj_health_cron\.sh|scripts/vps_setup\.sh" docs tests deploy scripts Makefile README.md AGENTS.md PROJECT_INSTRUCTIONS.md
 ```
 
 ## Current Blockers
 
 | Script | Reference count | External refs | Why not removed now |
 |---|---:|---:|---|
-| `scripts/deploy.sh` | 25 | 10 | Active in docs, tests, and scripts; compatibility deploy lane still used |
+| `scripts/deploy.sh` | 22 | 7 | Active in docs, tests, and scripts; compatibility deploy lane still used |
 | `scripts/deploy_ws.sh` | 12 | 3 | Referenced by ops docs and script surfaces |
 | `scripts/btc5_status.sh` | 9 | 2 | Referenced by BTC5 rollout/deploy flows |
-
-## Ready Candidates
-
-None yet.
+| `scripts/install_bridge_cron.sh` | 4 | 0 | Active operational helper |
+| `scripts/install_jj_health_cron.sh` | 3 | 0 | Canonical install path for health-monitor cron |
+| `scripts/vps_setup.sh` | 5 | 0 | Manual bootstrap helper still discoverable |
 
 ## Completed In This Wave
 
 | Script | Action | Proof |
 |---|---|---|
 | `scripts/install_flywheel_cron.sh` | Deleted | Had zero external references before deletion. |
-| `scripts/install_bridge_cron.sh` | Deleted | Had zero external references outside scripts metadata before deletion. |
-| `scripts/vps_setup.sh` | Deleted | Had zero external references outside scripts metadata before deletion. |
-| `scripts/install_jj_health_cron.sh` | Deleted | Had zero external references outside scripts metadata before deletion. |
 
 ## Exit Criteria For Future Deletion
 

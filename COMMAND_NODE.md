@@ -1,322 +1,370 @@
 # COMMAND NODE - Deep Research Handoff
 
-| Metadata | Value |
-|---|---|
-| Canonical file | `COMMAND_NODE.md` |
-| Role | Root **Operator Packet** for deep research and execution handoff |
-| Audience | Existing operators and coding/research agents |
-| Last updated | 2026-03-12 |
-| Primary rule | Wallet truth for capital and realized cash movement; machine artifacts for runtime truth |
-
-Use this when you want one root-level document to hand to Deep Research, ChatGPT, Claude, Cowork, or any coding agent.
-
-## Root Cross-Reference (Canonical)
-
-| Need | Canonical file |
-|---|---|
-| Start Here | `docs/FORK_AND_RUN.md` |
-| Operator packet | `COMMAND_NODE.md` |
-| Operator policy | `PROJECT_INSTRUCTIONS.md` |
-| Machine workflow guardrails | `AGENTS.md` |
-| Contribution rules | `CONTRIBUTING.md` |
+**Version:** 3.3.0
+**Updated:** 2026-03-14
+**Canonical filename:** `COMMAND_NODE.md`  
+**Use this when:** you want one root-level document to hand to Deep Research, ChatGPT, Claude, Cowork, or any coding agent.  
+**Primary rule:** if prose and machine artifacts disagree, machine artifacts win.
 
 ---
 
 ## 1. Purpose
 
-This is the single root handoff for improving Elastifund's money-making velocity across all three operator surfaces:
+This is the single root handoff for improving Elastifund's money-making velocity across both worker families:
 
-- Trading workers: prediction-market research, execution, calibration, and post-trade attribution
-- Non-trading workers (JJ-N): revenue operations, service delivery, and customer acquisition
-- Finance control plane: subscriptions, treasury, tool spend, experiment budgets, and capital allocation
+- Trading workers: prediction-market research, execution, and calibration.
+- Non-trading workers (JJ-N): revenue operations, service delivery, and customer acquisition.
 
 Current optimization target:
 
-1. Make runtime truth coherent enough that live trading decisions, postmortems, and public claims refer to the same reality.
-2. Separate genuine edge from attribution noise by grounding research in the attached Polymarket history export plus fresh live market data.
-3. Increase expected 30-day value and expected information gain without widening policy risk.
-4. Keep the repo-root handoff packet current enough that a new research session can start cold.
+1. Reach the first repeatable dollar faster.
+2. Increase information gain per cycle.
+3. Remove system-truth drift so strategy decisions are based on the same reality everywhere.
 
 If you only pass one root document into Deep Research, use this one.
 
 ---
 
-## 2. Attach This Packet
+## 2. How To Use This Packet
 
-When handing Elastifund to Deep Research, attach this file plus these artifacts:
+When handing Elastifund to Deep Research, attach this file plus these machine-truth artifacts:
 
-- wallet-export summary notes and handoff packet
-- `research/high_frequency_substrate_phase2_blueprint_2026-03-11.md`
-- `docs/ops/high_frequency_substrate_task_manifest_20260311.md`
+Canonical runtime contract (checked into git):
+
+- `config/remote_cycle_status.json`
 - `improvement_velocity.json`
+- `FAST_TRADE_EDGE_ANALYSIS.md`
+- `research/edge_backlog_ranked.md`
+- `docs/NON_TRADING_STATUS.md`
+
+Runtime-local artifacts (generated on operator machines; may be absent in a clone):
+
 - `reports/runtime_truth_latest.json`
 - `reports/public_runtime_snapshot.json`
 - `reports/remote_cycle_status.json`
 - `reports/remote_service_status.json`
 - `reports/root_test_status.json`
-- `reports/finance/model_budget_plan.json`
-- `reports/btc5_autoresearch/latest.json`
-- `reports/autoprompting/latest.json`
-- `reports/autoprompting/human_queue/latest.json`
-- `reports/autoprompting/telegram/latest.json`
-- `reports/autoprompting/telegram/escalation_matrix.json`
-- `reports/autoprompting/operator_summary/latest.json`
-- `reports/signal_source_audit.json`
-- `reports/strategy_scale_comparison.json`
-- `reports/pipeline_refresh_20260311T092035Z.json`
-- `research/edge_backlog_ranked.md`
-- `docs/NON_TRADING_STATUS.md`
+- `reports/state_improvement_latest.json`
+- `reports/arb_empirical_snapshot.json`
 
-Off-repo source truth used for this March 11 packet:
+Prompt shape to use:
 
-- attached wallet export: `<WALLET_EXPORT_PATH>/Polymarket-History-2026-03-11.csv`
-
-Do not commit the raw wallet export. Summaries derived from it belong in the root handoff docs, not the repo history.
-
-Autoprompt continuity note for Instance 6:
-
-- `scripts/run_autoprompt_human_queue_cycle.py` writes low-noise escalation and queue artifacts under `reports/autoprompting/`.
-- Telegram remains action-required only; informational updates stay in artifacts.
+> Use `COMMAND_NODE.md` as the root handoff. Treat the attached JSON artifacts as canonical machine truth. Design the shortest path to higher money-making velocity across both trading and non-trading, with explicit rollout gates, metric contracts, and file-level implementation guidance.
 
 ---
 
-## 3. Truth Precedence
+## 3. System Objective
 
-Use this precedence order when facts conflict:
+Elastifund is a self-improving operating system for real economic work.
 
-1. **Live wallet and attached wallet export** for capital, positions, and realized cash movement.
-2. **`reports/runtime_truth_latest.json` and `reports/public_runtime_snapshot.json`** for launch posture, runtime mode, wallet reconciliation status, and BTC5 probe truth.
-3. **Fresh live market pulls** for current opportunity structure:
-   - `reports/pipeline_refresh_20260311T092035Z.json`
-   - direct Gamma active-market pulls performed on March 11, 2026
-4. **`improvement_velocity.json`** for the sanitized public metric contract.
-5. **`jj_state.json`** only as a local runtime seed. Do not use it as wallet or P&L truth.
+- Trading lane: find, validate, and execute prediction-market edge under policy.
+- Non-trading lane: build a narrow, measurable revenue loop that can reach cash flow before broad automation.
+- Shared substrate: memory, telemetry, evaluation, and operator-readable evidence.
+
+Primary operating principle:
+
+`research -> implement -> test -> record -> publish -> repeat`
+
+Mission constraint:
+
+20% of net trading profits are reserved for veteran suicide prevention.
 
 ---
 
-## 4. March 11 Machine Truth
+## 4. Canonical Machine Truth (March 14, 2026)
 
-### 4A. Attached Polymarket History Export
+> **RECONCILIATION COMPLETED 2026-03-14 15:26 UTC.**
+> Root cause of all prior drift identified and fixed: `.env` had `POLY_SAFE_ADDRESS` set to EOA signer (`0x28C5AedA...`), but Polymarket data API keys positions by proxy wallet (`0xb2fef31c...`). Every prior reconciliation queried the wrong address and got zero results. New `POLY_DATA_API_ADDRESS` env var added; reconciliation now returns correct data. See `reports/reconciliation_20260314.md` for full details.
 
-The attached export covers **2026-03-07 07:03:53 ET** through **2026-03-11 04:54:19 ET**.
+### Live Wallet Truth (verified 2026-03-14 15:25 UTC via Polymarket data API)
+
+| Area | Current truth | Source |
+|---|---|---|
+| Polymarket wallet value | $458.13 total | data-api.polymarket.com/positions (proxy wallet), March 14 |
+| Free collateral | $373.32 | CLOB balance query |
+| Reserved (pending orders) | $84.81 | Wallet total minus free collateral |
+| Open positions | 5 positions, $63.10 cost, $66.41 mark-to-market | data API (proxy wallet) |
+| Closed positions | 50 total (47 BTC, 3 ETH) | data API (proxy wallet) |
+| Realized net P&L | **+$207.31** (wallet $458.13 - deposit $247.51 - unrealized $3.31) | Wallet economics |
+| Unrealized P&L (open) | +$3.31 | Mark-to-market on 5 open positions |
+| Kalshi | $100 USD | Unchanged |
+| Total capital | ~$558.13 | Polymarket $458.13 + Kalshi $100 |
+
+### BTC Sleeve Performance (47 closed trades, all March 11)
 
 | Metric | Value |
 |---|---|
-| Rows | **479** |
-| Distinct markets | **193** |
-| Buy notional | **1277.301646 USDC** |
-| Redeem cash flow | **1327.617592 USDC** |
-| Maker rebates | **1.240900 USDC** |
-| Net trading cash flow excluding deposits | **+51.556846 USDC** |
-| Buy-side mix | **245** `DOWN/NO` buys for **1099.821865 USDC** vs **39** `UP/YES` buys for **177.479781 USDC** |
-| BTC contribution | **445** rows, **+76.867593 USDC** net |
-| ETH contribution | **16** rows, **+33.974196 USDC** net |
-| SOL contribution | **3** rows, **-12.361643 USDC** net |
+| Closed trades | 47 (39 DOWN, 8 UP) |
+| Win rate | 100% (all positions resolved with positive cashflow) |
+| Gross BTC cashflow | $786.33 |
+| DOWN direction cashflow | $663.99 (39 trades) |
+| UP direction cashflow | $122.35 (8 trades) |
+| Trading window | March 11, ~3:10 AM - 8:05 AM ET (single session) |
 
-Overnight ET window for **Wednesday, March 11, 2026**:
+### Open Position Book (5 positions)
 
-| Metric | Value |
-|---|---|
-| Rows after 12:00 AM ET | **98** |
-| Buy notional | **475.935792 USDC** |
-| Redeem cash flow | **476.263141 USDC** |
-| Net cash flow | **+0.327349 USDC** |
-| Zero-value redeem rows | **20** |
-| Closed-like markets | **17** markets, **+243.289167 USDC** net |
-| Openish / unresolved markets | **20** markets, **-242.961818 USDC** net |
+| Outcome | Market | Cost | Mark | Unrealized |
+|---|---|---|---|---|
+| Yes | Weinstein sentenced to no prison time? | $28.04 | $26.47 | -$1.57 |
+| No | Akhannouch out as Morocco PM by Dec 31 | $5.12 | $7.95 | +$2.84 |
+| No | Wizards worst NBA record? | $20.00 | $22.12 | +$2.12 |
+| Yes | US strikes Yemen by Mar 31 | $4.95 | $5.19 | +$0.25 |
+| Yes | Russia no key rate change (April) | $5.00 | $4.67 | -$0.33 |
 
-Highest-net overnight winners from the export:
+### Local Artifact Status (post-reconciliation)
 
-- `Bitcoin Up or Down - March 11, 3:10AM-3:15AM ET`: **+25.1328 USDC**
-- `Bitcoin Up or Down - March 11, 3:15AM-3:20AM ET`: **+24.15 USDC**
-- `Ethereum Up or Down - March 11, 2:55AM-3:00AM ET`: **+15.930596 USDC**
+| Area | Status | Notes |
+|---|---|---|
+| Reconciliation script | Fixed | Now queries proxy wallet via `POLY_DATA_API_ADDRESS` |
+| Runtime truth JSON | Updated | `reports/runtime_truth_latest.json` patched with wallet data |
+| Local jj_trades.db | Still empty | 0 rows; trades went through BTC5 maker path, not jj_live |
+| BTC5 local DB | 302 rows, ALL skips, 0 live fills | skip_delta_too_large: 164 (54%), skip_shadow_only: 56 (19%), skip_toxic: 42 (14%). Last entry: 2026-03-13 18:24 UTC. |
+| BTC5 VPS DB | 553+ rows, signature fix deployed | DISPATCH_100: funder address fixed. Delta cap 0.0040, UP live, lt049 skip disabled. VPS service running but local sync stale. |
+| Pipeline verdict | REJECT ALL (stale) | 5+ days old; decoupled from actual fills |
+| Wallet export CSV | 48h+ stale | Last: 2026-03-13 (data through 2026-03-12); partially useful |
 
-Largest unresolved overnight exposures:
-
-- `Bitcoin Up or Down - March 11, 2:50AM-2:55AM ET`: **-24.15 USDC**
-- `Solana Up or Down - March 11, 2:20AM-2:25AM ET`: **-12.361643 USDC**
-- `Bitcoin Up or Down - March 11, 12:40AM-12:45AM ET`: **-12.079 USDC**
-
-Interpretation:
-
-- The export does **not** support a simple "overnight blowup" narrative.
-- Realized winners exist, and they are concentrated in BTC and ETH short-duration markets.
-- The real problem is attribution and unresolved inventory: closed-like markets were net positive, but that gain was offset by openish exposures plus export quirks like zero-value redeems.
-
-### 4B. Current Runtime / Public Truth
-
-Latest checked-in runtime/public contract generated at **2026-03-11T09:22:17Z**:
+### Unchanged Status
 
 | Area | Current truth | Why it matters |
 |---|---|---|
-| Launch posture | **blocked** | The system is not in a clean promote-ready live posture. |
-| Effective runtime profile | **`shadow_fast_flow`** | Effective mode does not match the intended live marketing story. |
-| Execution mode | **`shadow`** | Runtime is not in clean live-submit mode. |
-| Wallet reconciliation status | **reconciled** | Local and remote now both show **50 closed** and **9 open** positions. |
-| Current wallet value | **$490.3064** total, **$363.2486** free collateral | This is the current capital truth surface. |
-| Capital accounting delta | **-157.3178 USD** | Position counts are fixed, but capital accounting is still incoherent. |
-| BTC5 live sleeve | **175** live-filled rows, **-$24.9467** live-filled P&L | The public BTC5 sleeve is no longer cleanly positive. |
-| Recent BTC5 realized window | trailing **12** live fills: **-$2.5441** | Short-window realized performance is currently negative. |
-| Strongest BTC5 structure | **DOWN +$10.4017** overall; **0.50 bucket +$39.1564** | Directional structure still exists, but it is narrower and noisier than earlier docs implied. |
-| Selected forecast posture | **shadow_only / high confidence** | Forecast engine is not promoting capital expansion. |
-| Verification summary | **1641 passed, 5 warnings in 37.10s; 25 passed, 1 warning in 4.56s** | The worktree is test-green even though launch truth is not. |
+| Structural alpha A-6 | **KILLED** 2026-03-13; `0` executable constructions below `0.95` after 5-day watch | Zero density in 563 neg-risk events. Engineering capacity reallocated to BTC5 optimization. |
+| Structural alpha B-1 | **KILLED** 2026-03-13; `0` deterministic template pairs after 5-day watch | Zero density in 1,000+ markets. Engineering capacity reallocated to Kalshi integration. |
+| BTC 5-minute maker (VPS) | `553+` total rows, signature fix deployed 2026-03-14 16:05 UTC | DISPATCH_100: 4th blocker found (invalid signature from wrong funder address). All 4 blockers now fixed. Remaining skips are legitimate market conditions. Fills expected during active BTC trading hours. |
+| JJ-N repo truth | `RevenuePipeline` builds; tests green | Implemented but not revenue-live. |
+| First non-trading wedge | Website Growth Audit, $500-$2500, 5-day delivery | Best path to first non-trading dollars. |
 
-The one-next-cycle instruction from runtime truth is explicit:
+Strategy catalog truth from `research/edge_backlog_ranked.md`:
 
-> Repair launch-contract mismatches in service/mode/posture/order-submission fields, rerun `python3 scripts/write_remote_cycle_status.py`, then retry when `launch_posture=clear`.
+- `7` deployed or ready
+- `6` building
+- `0` structural-alpha lanes (A-6/B-1 killed 2026-03-13, moved to rejected)
+- `1` re-evaluating
+- `12` rejected (includes A-6 and B-1 killed 2026-03-13)
+- `8` pre-rejected
+- `97` research-pipeline items
+- `131` total tracked
 
-Interpretation:
+---
 
-- The old March 9 bottleneck was "local ledger vs wallet count drift."
-- The March 11 bottleneck is "launch-contract mismatch plus capital attribution drift."
-- Strategy research that ignores the launch contract will misdiagnose the failure mode.
+## 5. Runtime Truth Status (Post-Reconciliation)
 
-### 4C. Fresh Live Market Data
+### Root cause identified and fixed (2026-03-14)
 
-Fresh broad-universe pull from **2026-03-11T09:59:42Z** (`reports/pipeline_refresh_20260311T095942Z.json`):
+The entire runtime truth drift was caused by a single configuration bug: `.env` set `POLY_SAFE_ADDRESS` and `POLYMARKET_FUNDER` to the EOA signer address (`0x28C5AedA...`), but the Polymarket data API returns positions keyed by the proxy wallet address (`0xb2fef31cf185b75d0c9c77bd1f8fe9fd576f69a5`). Every reconciliation attempt queried the wrong address and returned zero results, making the system believe the wallet was empty while it held $390.90 and had 55 historical positions.
 
-| Metric | Value |
+**Fix:** New `POLY_DATA_API_ADDRESS` env var added to both local and VPS `.env`. `default_user_address()` in `bot/position_merger.py` checks this first. Reconciliation script `_load_env_defaults()` also updated.
+
+### Remaining drift items
+
+1. **Local jj_trades.db still empty** — Trades were placed through the BTC5 maker path (`data/btc_5min_maker.db`), not `jj_live.py`. The main trade ledger has 0 rows. Structural issue: two separate code paths write to two separate databases.
+
+2. **Profile-vs-effective drift** — The checked-in `maker_velocity_live` profile and the effective runtime may still diverge. Verify by comparing profile JSON against VPS runtime state.
+
+3. **Pipeline verdict stale** — `FAST_TRADE_EDGE_ANALYSIS.md` says REJECT ALL (5+ days old). Pipeline and execution layer are fully decoupled.
+
+4. **Wallet export CSV stale** — Last export 2026-03-12 (62+ hours). Blocks stage gate progression.
+
+5. **Wallet polling loop** — `bot/wallet_poller.py` exists as a daemon design. If running, keeps local ledger in sync. VPS status needs verification.
+
+---
+
+## 6. What Is Actually Implemented
+
+### Trading lane
+
+| Path | Current role |
 |---|---|
-| Open events pulled | **500** |
-| Open markets pulled | **7014** |
-| Broad category mix | Politics **2860**, Sports **3048**, Economic **390**, Crypto **111**, Weather **10**, Other **595** |
-| Fresh broad recommendation | **REJECT ALL** |
+| `bot/jj_live.py` | Main live loop, signal routing, sizing, risk gates, and order flow. |
+| `bot/edge_scan_report.py` | Candidate scan, restart-readiness reporting, and structural-lane summary. |
+| `bot/wallet_flow_detector.py` | Wallet scoring, bootstrap readiness, and fast-flow signal generation. |
+| `bot/lmsr_engine.py` | Bayesian/LMSR microstructure signal generation for fast markets. |
+| `bot/cross_platform_arb.py` | Polymarket/Kalshi title matching and arb opportunity detection. |
+| `signals/sum_violation/guaranteed_dollar.py` | A-6 guaranteed-dollar ranking for neg-risk events. |
+| `bot/b1_template_engine.py` | Narrow deterministic template matching for B-1 dependency families. |
+| `scripts/write_remote_cycle_status.py` | Canonical remote-status and drift-report generator. |
+| `config/runtime_profiles/maker_velocity_all_in.json` | Selected runtime profile defaults; do not confuse with effective runtime truth. |
+| `research/edge_backlog_ranked.md` | Canonical strategy inventory and status counts. |
 
-Fresh repaired fast-market registry / direct Gamma multi-plan pull for crypto markets resolving within 24 hours:
+### What appears active in practice
 
-| Metric | Count |
+- Remote evidence suggests a maker-velocity BTC 5-minute lane has real filled trades.
+- The selected profile keeps `wallet_flow` and `lmsr` on.
+- The checked-in selected profile keeps `llm`, `cross_platform_arb`, `a6`, and `b1` off.
+- Local runtime state still contains LLM-sourced positions that do not match the selected fast-flow thesis.
+
+### Non-trading lane
+
+| Path | Current role |
 |---|---|
-| Eligible fast crypto markets | **650** |
-| Total discovered fast-crypto candidates | **790** |
-| BTC rows | **175** |
-| ETH rows | **171** |
-| SOL rows | **152** |
-| XRP rows | **152** |
-| Candle rows | **547** |
-| Threshold rows | **30** |
-| Range rows | **20** |
+| `nontrading/main.py` | CLI entrypoint; builds runtime and runs `RevenuePipeline`. |
+| `nontrading/pipeline.py` | The five-engine JJ-N loop: Account Intelligence -> Outreach -> Interaction -> Proposal -> Learning. |
+| `nontrading/offers/website_growth_audit.py` | The first concrete service offer and pricing envelope. |
+| `nontrading/approval.py` | Approval gating for safe outbound behavior. |
+| `nontrading/compliance.py` | Compliance checks and sending-domain constraints. |
+| `docs/NON_TRADING_STATUS.md` | Current repo-truth status for JJ-N. |
+| `nontrading/digital_products/` | Separate deterministic niche-discovery lane. |
 
-Highest-volume active threshold/range markets from the March 11 pull:
+### What is revenue-ready vs not revenue-live
 
-- `Will the price of Bitcoin be above $64,000 on March 11?`  
-  Volume **585,413.929**, liquidity **37,049.214**, price **0.9975 / 0.0025**
-- `Will the price of Ethereum be between $2,200 and $2,300 on March 11?`  
-  Volume **731,662.263**, liquidity **24,793.000**, price **0.006 / 0.994**
-- `Will the price of Bitcoin be above $68,000 on March 11?`  
-  Volume **265,261.758**, liquidity **34,349.088**, price **0.915 / 0.085**
-- `Will the price of Bitcoin be between $68,000 and $70,000 on March 11?`  
-  Volume **124,164.617**, liquidity **29,374.292**, price **0.535 / 0.465**
+Implemented now:
 
-Live short-duration candle examples from the same pull:
+- Runnable `RevenuePipeline`
+- Safety-gated send path
+- Website Growth Audit offer
+- CRM/store/telemetry foundation
+- Deterministic smoke path and green JJ-N tests
 
-- `Bitcoin Up or Down - March 11, 1:55PM-2:00PM ET`  
-  Liquidity **23,527.632**, price **0.505 / 0.495**
-- `Solana Up or Down - March 11, 12:30PM-12:45PM ET`  
-  Liquidity **12,920.514**, price **0.5 / 0.5**
-- `XRP Up or Down - March 11, 7PM ET`  
-  Liquidity **13,218.868**, price **0.5 / 0.5**
+Still blocking revenue launch:
 
-Registry status after repair:
-
-- `python3 scripts/run_pm_fast_market_registry.py --no-quotes --json-only` now produces `eligible_count=650`.
-- A separate direct Gamma validation pull matched the repaired registry exactly: `650` eligible rows, with BTC/ETH/SOL/XRP all present and threshold/range lanes restored.
-- `improvement_velocity.json` now exposes `registry_health` so the next cycle can flag "Gamma reachable but registry empty" as a broken state instead of silently accepting it.
+- Verified sending domain and DNS auth
+- Curated leads
+- Explicit approval for live sends
+- Paid fulfillment/reporting loop
+- Recurring KPI loop for qualified leads, replies, calls, proposals, and collected revenue
 
 ---
 
-## 5. What Changed Since The Old Narrative
+## 7. What Deep Research Should Optimize For
 
-These are the material corrections Deep Research should internalize:
+### Trading
 
-1. **Position-count drift is no longer the primary problem.** Counts now reconcile at **50 closed / 9 open**.
-2. **The public BTC5 sleeve is no longer the clean +$85 proof surface.** The latest public contract shows **175 live-filled rows and -$24.95 P&L**.
-3. **The attached wallet export is still positive at the transaction-cash-flow level.** That means the live story is "mixed realized wins plus unresolved/open exposures," not "everything is losing."
-4. **The launch contract is broken.** Runtime says `agent_run_mode=live`, `execution_mode=shadow`, `allow_order_submission=false`, and `launch_posture=blocked`.
-5. **Market discovery tooling is partially stale.** Broad market pulls work; the fast-market registry does not.
+1. Unify runtime truth
+   Design the shortest path to one authoritative surface for positions, closed trades, realized PnL, and active mode.
 
-Conclusion:
+2. Decide the real trading thesis
+   Determine whether the canonical near-term lane is:
+   - sub-1h crypto maker velocity
+   - <=24h mixed-market maker velocity
+   - or a split system with separate evidence contracts
 
-The highest-value research problem is no longer "invent another strategy first." It is "make launch truth, execution truth, and wallet truth line up well enough to know which existing lane is actually working."
+3. Explain candidate scarcity
+   Why do current candidate counts stay at zero even while filled BTC maker trades exist? Is the scan stale, mis-scoped, or measuring the wrong market universe?
+
+4. Upgrade promotion rules
+   Specify promotion, demotion, and kill criteria for:
+   - wallet flow
+   - LMSR
+   - cross-platform arb
+   - ~~A-6~~ (KILLED 2026-03-13)
+   - ~~B-1~~ (KILLED 2026-03-13)
+
+5. Turn filled-trade evidence into decision-quality evidence
+   Recommend the minimum closed-trade and fill-quality contract needed before changing capital, thresholds, or automation level.
+
+6. Clarify Kalshi's role
+   Decide whether Kalshi should be:
+   - a pure hedge/arb venue
+   - a separate candidate source
+   - or deprioritized until Polymarket truth is stable
+
+### Non-trading
+
+1. Reach first cash fast
+   Use the Website Growth Audit as the default wedge unless research finds a clearly better lane on time-to-first-dollar and automation fraction.
+
+2. Build a measurable go-to-market loop
+   Define the best outbound channel, lead source, qualification rubric, pricing motion, and follow-up sequence.
+
+3. Productize the recurring monitor
+   Turn the one-off audit into a recurring service with clean deliverables and retention logic.
+
+4. Keep risk low
+   Maintain compliance-first approvals and avoid expanding autonomy until the funnel is instrumented.
+
+5. Share evaluation logic
+   Specify a common metric contract so trading and non-trading can be ranked by improvement velocity and dollars learned per calendar day.
 
 ---
 
-## 6. Ranked Research Priorities
+## 8. Required Output From Deep Research
 
-1. **Repair launch-contract truth.**  
-   Make `agent_run_mode`, `execution_mode`, `allow_order_submission`, service target, and public posture agree.
+Deep Research should return:
 
-2. **Reconcile wallet-export cash flow against BTC5 probe attribution.**  
-   Explain why the March 7-11 export is **+51.56 USDC** while the checked-in BTC5 public sleeve is **-24.95 USD**.
+1. A ranked backlog (`P0`, `P1`, `P2`) mapped to exact repo paths.
+2. A 7-day execution plan with daily checkpoints.
+3. A metric contract with formulas, artifact names, and source-of-truth file paths.
+4. An experiment matrix for wallet flow, LMSR, BTC maker fills, cross-platform arb, and JJ-N outreach.
+5. Promotion, demotion, and kill rules for each active lane.
+6. A runtime-truth reconciliation plan before any wider live rollout.
+7. A first-dollar plan for JJ-N using the Website Growth Audit unless a better wedge clearly wins on evidence.
+8. Guardrails and rollback criteria for any recommendation that could spend real money or send real outbound messages.
 
-3. **Audit the current BTC5 directional structure.**  
-   DOWN still leads overall, but the latest negative drag is concentrated in the **0.49** bucket. Verify whether the live edge survives after excluding that bucket or respecifying quote limits.
+Preferred framing:
 
-4. **Compare threshold/range crypto markets against 5-minute candles.**  
-   The active live universe now contains more than candles. Research should test whether daily threshold/range contracts offer better fill quality or cleaner attribution than 5-minute candle markets.
-
-5. **Fix the fast-market registry.**  
-   The current registry runner failing with `eligible_count=0` is itself a research blocker because it obscures the live opportunity set.
-
-6. **Kill or park structural-alpha lanes on schedule.**  
-   A-6 and B-1 remain blocked and should not keep consuming attention without fresh evidence before **March 14, 2026**.
-
-7. **Keep JJ-N and finance visible but secondary.**  
-   They remain part of the system objective, but the immediate trading bottleneck is truth plumbing, not non-trading implementation.
+- maximize expected dollars learned per day
+- maximize time-to-first-repeatable-dollar
+- minimize truth drift
+- minimize irreversible risk
 
 ---
 
-## 7. Relevant Implementation Surfaces
+## 9. Constraints
 
-Trading and truth surfaces:
+- Do not invent new runtime APIs when existing JSON artifacts already carry state.
+- Treat `bot/`, `execution/`, `strategies/`, `signals/`, and `infra/` as live-trading-sensitive paths.
+- A-6 and B-1 are KILLED as of 2026-03-13. Do not invest further engineering effort in either lane.
+- Distinguish clearly between:
+  - local trade-db truth
+  - remote wallet truth
+  - profile defaults
+  - effective runtime truth
+- Any recommendation that changes real-money behavior must include guardrails, downgrade logic, and verification steps.
+- Prefer implementation plans that end in scripts, tests, and machine-readable artifacts, not only prose.
 
-- `bot/jj_live.py`
-- `bot/btc_5min_maker.py`
-- `bot/wallet_reconciliation.py`
-- `scripts/write_remote_cycle_status.py`
-- `scripts/render_public_metrics.py`
-- `scripts/run_pm_fast_market_registry.py`
+---
+
+## 10. Recommended Immediate Priorities
+
+If no other instruction is given, this is the order that maximizes money-making improvement velocity:
+
+1. **MONITOR: Confirm BTC5 fills during active trading hours.** DISPATCH_100 deployed 2026-03-14 16:05 UTC. All 4 blockers fixed (signature, delta, UP shadow, lt049 skip). Zero `invalid signature` errors since fix. Remaining skips are legitimate market conditions. Check `journalctl -u btc-5min-maker --since "1 hour ago" | grep order_placed` after 18:00 UTC Mon-Fri.
+2. **HOLD BTC5 at $5/trade. Do not scale yet.** Promotion gate currently fails; keep data collection running until `reports/btc5_promotion_gate.json` reports `overall_gate=true` across a >=7-day window.
+3. **Fix test failures in `test_btc_5min_maker_process_window_core.py`.** Guardrail changes broke test expectations. Repair tests to match new live config (delta 0.0040, buy prices 0.52/0.53, lt049 skip disabled).
+4. **Download fresh wallet export CSV.** Last export 2026-03-12 (62+ hours stale). Blocks stage gate progression. Export from https://polymarket.com/portfolio.
+5. **Build the minimum JJ-N live-launch package for Website Growth Audit.** Best path to first non-trading dollar. Blocking: verified sending domain, curated leads, explicit approval.
+
+---
+
+## 11. Source Index
+
+Use these files as the canonical supporting evidence:
+
+Checked-in artifacts:
+
+- `config/remote_cycle_status.json`
+- `improvement_velocity.json`
+- `FAST_TRADE_EDGE_ANALYSIS.md`
+- `config/runtime_profiles/maker_velocity_all_in.json`
+- `research/edge_backlog_ranked.md`
+- `docs/NON_TRADING_STATUS.md`
+- `nontrading/offers/website_growth_audit.py`
+
+Runtime-local artifacts (optional attachments when present):
+
 - `reports/runtime_truth_latest.json`
 - `reports/public_runtime_snapshot.json`
-- `reports/pipeline_refresh_20260311T092035Z.json`
+- `reports/remote_cycle_status.json`
+- `reports/remote_service_status.json`
+- `reports/runtime_mode_reconciliation_20260309T154637Z.md`
+- `reports/root_test_status.json`
+- `reports/state_improvement_latest.json`
+- `reports/arb_empirical_snapshot.json`
 
-Research and ranking surfaces:
+For repo navigation:
 
-- wallet-export summary and handoff packet
-- `research/high_frequency_substrate_phase2_blueprint_2026-03-11.md`
-- `docs/ops/high_frequency_substrate_task_manifest_20260311.md`
-- `improvement_velocity.json`
-- `research/edge_backlog_ranked.md`
-- `reports/btc5_autoresearch/latest.json`
-- `reports/signal_source_audit.json`
-- `reports/strategy_scale_comparison.json`
-
-Non-trading and finance surfaces:
-
-- `nontrading/main.py`
-- `nontrading/pipeline.py`
-- `docs/NON_TRADING_STATUS.md`
-- `docs/ops/finance_control_plane.md`
+- `README.md`
+- `AGENTS.md`
+- `docs/REPO_MAP.md`
+- `PROJECT_INSTRUCTIONS.md`
 
 ---
 
-## 8. Prompt Shape To Use
+## 12. Bottom Line
 
-Use this prompt shape for the next Deep Research pass:
+The best single root document to hand to Deep Research is `COMMAND_NODE.md`.
 
-> Use `COMMAND_NODE.md`, `research/high_frequency_substrate_phase2_blueprint_2026-03-11.md`, and `docs/ops/high_frequency_substrate_task_manifest_20260311.md` as the root handoff. Treat the attached Polymarket wallet export summary as capital and realized-cash-flow truth, and treat `reports/runtime_truth_latest.json`, `reports/public_runtime_snapshot.json`, and the March 11 live market pull as canonical runtime and market-state context. Diagnose the smallest set of changes that would make runtime truth, wallet truth, and strategy attribution coherent enough to improve the trading system with confidence. Give explicit rollout gates, evidence requirements, and file-level implementation targets.
+The highest-value research target is not just "find more edges." It is:
 
----
-
-## 9. Short Bottom Line
-
-Elastifund did not fail because "there is no live data" or because "the wallet only lost money overnight."
-
-It failed at the truth layer:
-
-- the wallet export says there is real realized cash movement and it is net positive over March 7-11,
-- the BTC5 public sleeve is currently negative,
-- position counts are reconciled again,
-- capital attribution is still not,
-- and the runtime is still blocked by a live-vs-shadow launch mismatch.
-
-That is the system-improvement problem to solve next.
+1. make runtime truth coherent,
+2. turn the active maker-velocity evidence into trustworthy promotion criteria,
+3. launch one narrow non-trading revenue loop that can reach cash quickly and teach the system something useful.

@@ -1,0 +1,16 @@
+{
+  "cycle_key_prefix": "runtime",
+  "control_db_url": "sqlite:///data/flywheel_control.db",
+  "artifact_dir": "reports/flywheel",
+  "strategies": [
+    {
+      "bot_db": "/tmp/flywheel_bridge_smoke.db",
+      "strategy_key": "wallet-flow",
+      "version_label": "wf-live",
+      "lane": "fast_flow",
+      "environment": "paper",
+      "capital_cap_usd": 25.0,
+      "lookback_days": 7
+    }
+  ]
+}

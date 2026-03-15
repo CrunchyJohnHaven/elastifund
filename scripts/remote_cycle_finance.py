@@ -41,7 +41,14 @@ def load_finance_gate_status(root: Path) -> dict[str, Any]:
             "",
         )
     ).strip().lower()
-    stage_cap = int_or_none(capital_expansion_policy.get("stage_cap"))
+    stage_cap = int_or_none(
+        first_nonempty(
+            capital_expansion_policy.get("stage_cap"),
+            finance_gate.get("stage_cap"),
+            payload.get("stage_cap"),
+            None,
+        )
+    )
     treasury_gate_pass = bool_or_none(last_execute.get("finance_gate_pass"))
     if treasury_gate_pass is None:
         treasury_gate_pass = bool_or_none(payload.get("finance_gate_pass"))
@@ -54,6 +61,16 @@ def load_finance_gate_status(root: Path) -> dict[str, Any]:
         and stage_cap is not None
         and stage_cap >= 1
     )
+    explicit_hold_flag = bool_or_none(
+        first_nonempty(
+            capital_expansion_policy.get("capital_expansion_only_hold"),
+            finance_gate.get("capital_expansion_only_hold"),
+            payload.get("capital_expansion_only_hold"),
+            None,
+        )
+    )
+    if explicit_hold_flag is True:
+        capital_expansion_only_hold = True
     hold_live_treasury = bool_or_none(capital_expansion_policy.get("hold_live_treasury"))
     if capital_expansion_only_hold or hold_live_treasury is True:
         treasury_gate_pass = False
@@ -102,6 +119,7 @@ def load_finance_gate_status(root: Path) -> dict[str, Any]:
 def build_finance_gate_status(*, root: Path) -> dict[str, Any]:
     action_queue_path = root / "reports" / "finance" / "action_queue.json"
     latest_path = root / "reports" / "finance" / "latest.json"
+    canonical_status = load_finance_gate_status(root)
     queue_payload = load_json(action_queue_path, default={})
     latest_payload = load_json(latest_path, default={})
     actions = queue_payload.get("actions") if isinstance(queue_payload, dict) else []
@@ -127,9 +145,28 @@ def build_finance_gate_status(*, root: Path) -> dict[str, Any]:
     ready_for_live_treasury = (
         bool(rollout_gates.get("ready_for_live_treasury")) if isinstance(rollout_gates, dict) else None
     )
+    allocation_contract = latest_payload.get("allocation_contract") if isinstance(latest_payload, dict) else {}
+    if not isinstance(allocation_contract, dict):
+        allocation_contract = {}
+    baseline_live_trading_pass = bool_or_none(
+        first_nonempty(
+            latest_payload.get("baseline_live_trading_pass"),
+            latest_payload.get("finance_gate_pass"),
+            canonical_status.get("finance_gate_pass"),
+            None,
+        )
+    )
+    if baseline_live_trading_pass is None:
+        baseline_state = str(allocation_contract.get("baseline_allocation_state") or "").strip().lower()
+        if baseline_state == "baseline_allowed":
+            baseline_live_trading_pass = True
+        elif baseline_state == "baseline_blocked":
+            baseline_live_trading_pass = False
 
     block_reasons = dedupe_preserve_order(policy_hold_reasons + rollout_reasons)
-    if block_reasons:
+    if baseline_live_trading_pass is True:
+        status = "pass"
+    elif block_reasons:
         status = "hold"
     elif ready_for_live_treasury is True:
         status = "pass"
@@ -146,6 +183,14 @@ def build_finance_gate_status(*, root: Path) -> dict[str, Any]:
             if status == "hold" and block_reasons
             else ("pass" if status == "pass" else "unknown")
         ),
+        "finance_gate_pass": (
+            baseline_live_trading_pass
+            if baseline_live_trading_pass is not None
+            else canonical_status.get("finance_gate_pass")
+        ),
+        "baseline_live_trading_pass": baseline_live_trading_pass,
+        "treasury_gate_pass": canonical_status.get("treasury_gate_pass"),
+        "capital_expansion_only_hold": canonical_status.get("capital_expansion_only_hold"),
         "block_reasons": block_reasons,
         "source_artifacts": [
             "reports/finance/action_queue.json",

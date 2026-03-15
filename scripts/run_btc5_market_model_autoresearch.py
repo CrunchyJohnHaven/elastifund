@@ -7,6 +7,7 @@ import argparse
 import ast
 import copy
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -34,6 +35,7 @@ from benchmarks.btc5_market.v1.benchmark import (
 )
 from scripts.btc5_policy_benchmark import write_market_policy_handoff
 from scripts.render_btc5_market_model_progress import load_records, render_progress
+from infra.fast_json import dump_path_atomic, write_text_atomic
 
 DEFAULT_LEDGER = ROOT / "reports" / "autoresearch" / "btc5_market" / "results.jsonl"
 DEFAULT_PACKET_DIR = ROOT / "reports" / "autoresearch" / "btc5_market" / "packets"
@@ -255,8 +257,7 @@ def _load_json(path: Path) -> dict[str, Any] | None:
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    dump_path_atomic(path, payload, indent=2, sort_keys=True, trailing_newline=True)
 
 
 def _load_ledger(path: Path) -> list[dict[str, Any]]:
@@ -279,6 +280,11 @@ def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, sort_keys=True) + "\n")
+        handle.flush()
+        try:
+            os.fsync(handle.fileno())
+        except OSError:
+            pass
 
 
 def _candidate_hash(path: Path) -> str:
@@ -639,15 +645,38 @@ def _normalized_surface(raw_surface: dict[str, Any], *, manifest: dict[str, Any]
     return surface
 
 
-def _replace_mutation_surface(source: str, surface: dict[str, Any]) -> str:
+def _mutation_surface_search_replace(source: str, surface: dict[str, Any]) -> dict[str, str]:
     parsed = ast.parse(source)
     assignment = _find_assignment_node(parsed, "MUTATION_SURFACE")
     if assignment is None:
         raise ValueError("MUTATION_SURFACE assignment not found")
-    replacement = "MUTATION_SURFACE = " + pformat(surface, width=100, sort_dicts=False)
+    replacement = "MUTATION_SURFACE = " + pformat(surface, width=100, sort_dicts=False) + "\n"
     lines = source.splitlines()
-    updated = lines[: assignment.lineno - 1] + replacement.splitlines() + lines[assignment.end_lineno :]
-    return "\n".join(updated) + "\n"
+    search = "\n".join(lines[assignment.lineno - 1 : assignment.end_lineno]) + "\n"
+    return {
+        "search": search,
+        "replace": replacement,
+    }
+
+
+def _apply_search_replace_edits(source: str, edits: list[dict[str, str]]) -> str:
+    updated = source
+    for edit in edits:
+        search = str(edit.get("search") or "")
+        replace = str(edit.get("replace") or "")
+        if not search:
+            raise ValueError("SEARCH/REPLACE edit is missing search text")
+        if search not in updated:
+            raise ValueError("SEARCH block not found in mutation surface")
+        updated = updated.replace(search, replace, 1)
+    if not updated.endswith("\n"):
+        updated += "\n"
+    return updated
+
+
+def _replace_mutation_surface(source: str, surface: dict[str, Any]) -> str:
+    edit = _mutation_surface_search_replace(source, surface)
+    return _apply_search_replace_edits(source, [edit])
 
 
 def _model_stem(name: str) -> str:
@@ -903,6 +932,7 @@ def _generate_mutation_candidate(
     selected_surface: dict[str, Any] | None = None
     selected_source: str | None = None
     selected_hash: str | None = None
+    selected_patch: list[dict[str, str]] | None = None
 
     for strategy in mutation_sequence:
         candidate_surface = _apply_strategy(
@@ -912,7 +942,8 @@ def _generate_mutation_candidate(
             strategy=strategy,
             selection=selection,
         )
-        candidate_source = _replace_mutation_surface(source, candidate_surface)
+        candidate_edit = _mutation_surface_search_replace(source, candidate_surface)
+        candidate_source = _apply_search_replace_edits(source, [candidate_edit])
         candidate_hash = _source_hash(candidate_source)
         if candidate_hash == _source_hash(source):
             continue
@@ -922,9 +953,10 @@ def _generate_mutation_candidate(
         selected_surface = candidate_surface
         selected_source = candidate_source
         selected_hash = candidate_hash
+        selected_patch = [candidate_edit]
         break
 
-    if selected_surface is None or selected_source is None or selected_hash is None:
+    if selected_surface is None or selected_source is None or selected_hash is None or selected_patch is None:
         jitter_seed = experiment_id + int(selection.get("consecutive_discards") or 0)
         fallback_strategy = mutation_sequence[0] if mutation_sequence else "ranked_hierarchy"
         jitter_surface = _mutation_jitter(
@@ -937,10 +969,12 @@ def _generate_mutation_candidate(
             ),
             seed=jitter_seed,
         )
+        jitter_edit = _mutation_surface_search_replace(source, jitter_surface)
         selected_strategy = f"{fallback_strategy}_jitter"
         selected_surface = jitter_surface
-        selected_source = _replace_mutation_surface(source, jitter_surface)
+        selected_source = _apply_search_replace_edits(source, [jitter_edit])
         selected_hash = _source_hash(selected_source)
+        selected_patch = [jitter_edit]
 
     proposal_id = f"btc5-market-proposal-{experiment_id:04d}-{generated_at.replace(':', '').replace('-', '')}"
     mutation_summary = _proposal_summary_text(
@@ -960,6 +994,7 @@ def _generate_mutation_candidate(
         "candidate_model_name": selected_surface["model_name"],
         "candidate_model_version": selected_surface["model_version"],
         "candidate_source": selected_source,
+        "candidate_patch": selected_patch,
         "candidate_hash": selected_hash,
         "surface": selected_surface,
         "warmup_priors": priors,
@@ -1073,8 +1108,7 @@ def _write_latest_markdown(path: Path, summary: dict[str, Any]) -> None:
         "",
         "Benchmark progress is benchmark evidence, not realized P&L.",
     ]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_text_atomic(path, "\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _write_crash_markdown(path: Path, packet: dict[str, Any], error: Exception) -> None:
@@ -1091,8 +1125,7 @@ def _write_crash_markdown(path: Path, packet: dict[str, Any], error: Exception) 
         f"- Error type: `{type(error).__name__}`",
         f"- Error: {error}",
     ]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_text_atomic(path, "\n".join(lines) + "\n", encoding="utf-8")
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -1162,7 +1195,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             proposal_context=proposal_context,
         )
         proposal_candidate_path.parent.mkdir(parents=True, exist_ok=True)
-        proposal_candidate_path.write_text(proposal["candidate_source"], encoding="utf-8")
+        write_text_atomic(proposal_candidate_path, proposal["candidate_source"], encoding="utf-8")
         proposal_record = {
             "proposal_id": proposal["proposal_id"],
             "parent_champion_id": proposal.get("parent_champion_id"),
@@ -1173,6 +1206,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             "mutation_type": proposal["mutation_type"],
             "candidate_model_name": proposal["candidate_model_name"],
             "candidate_model_version": proposal["candidate_model_version"],
+            "candidate_patch": proposal.get("candidate_patch") or [],
             "candidate_hash": proposal["candidate_hash"],
             "generated_at": generated_at,
             "selection": proposal["selection"],
@@ -1189,7 +1223,14 @@ def main(argv: Sequence[str] | None = None) -> None:
         with tempfile.TemporaryDirectory(prefix=f"btc5_market_proposal_{experiment_id:04d}_") as temp_dir:
             temp_candidate = Path(temp_dir) / candidate_path.name
             shutil.copy2(candidate_path, temp_candidate)
-            temp_candidate.write_text(proposal["candidate_source"], encoding="utf-8")
+            temp_source = temp_candidate.read_text(encoding="utf-8")
+            patched_temp_source = _apply_search_replace_edits(
+                temp_source,
+                list(proposal.get("candidate_patch") or []),
+            )
+            if patched_temp_source != proposal["candidate_source"]:
+                raise ValueError("SEARCH/REPLACE mutation did not reproduce candidate_source")
+            write_text_atomic(temp_candidate, patched_temp_source, encoding="utf-8")
             packet = run_benchmark(
                 manifest_path,
                 candidate_path=temp_candidate,
@@ -1206,7 +1247,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             keep_epsilon=float(args.keep_epsilon),
         )
         if keep and status == "keep":
-            shutil.copy2(proposal_candidate_path, candidate_path)
+            incumbent_source = candidate_path.read_text(encoding="utf-8")
+            patched_incumbent = _apply_search_replace_edits(
+                incumbent_source,
+                list(proposal.get("candidate_patch") or []),
+            )
+            write_text_atomic(candidate_path, patched_incumbent, encoding="utf-8")
 
         mutable_surface_sha256_after = _candidate_hash(candidate_path)
         champion_after_id = experiment_id if keep and status == "keep" else previous_champion_id
@@ -1287,7 +1333,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         champion_after_id = previous_champion_id
         packet_json.parent.mkdir(parents=True, exist_ok=True)
         packet_md.parent.mkdir(parents=True, exist_ok=True)
-        packet_json.write_text(json.dumps(packet, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        dump_path_atomic(packet_json, packet, indent=2, sort_keys=True, trailing_newline=True)
         _write_crash_markdown(packet_md, packet, exc)
         loss = None
 
@@ -1395,8 +1441,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "latest_proposal": proposal_record,
         "latest_experiment": ledger_row,
     }
-    latest_json_path.parent.mkdir(parents=True, exist_ok=True)
-    latest_json_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    dump_path_atomic(latest_json_path, summary, indent=2, sort_keys=True, trailing_newline=True)
     policy_handoff = write_market_policy_handoff(
         market_latest_path=latest_json_path,
         output_path=policy_handoff_path,
@@ -1415,7 +1460,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "evaluation_source": ((policy_handoff.get("policy_benchmark") or {}).get("evaluation_source")),
         "market_epoch_active": policy_handoff.get("market_epoch_active"),
     }
-    latest_json_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    dump_path_atomic(latest_json_path, summary, indent=2, sort_keys=True, trailing_newline=True)
     _write_latest_markdown(latest_md_path, summary)
 
     if instance_output is not None:

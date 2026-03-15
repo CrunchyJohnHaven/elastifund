@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Elastifund / Leaderboards | Public evidence boards</title>
+  <meta name="description" content="Entry route for Elastifund public evidence boards. Choose the trading board or the worker board.">
+  <link rel="stylesheet" href="/site.css">
+  <script src="/site.js" defer></script>
+</head>
+<body data-page="leaderboards">
+  <div class="page-wrap">
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="/">
+          <span class="brand-mark"></span>
+          <span class="brand-text">
+            <span class="brand-name">Elastifund</span>
+            <span class="brand-subtitle">Public evidence leaderboards</span>
+          </span>
+        </a>
+        <nav class="header-nav" aria-label="Primary">
+          <a class="nav-link" data-page="home" href="/">Home</a>
+          <a class="nav-link" data-page="live" href="/live/">Live</a>
+          <a class="nav-link" data-page="elastic" href="/elastic/">Elastic</a>
+          <a class="nav-link" data-page="develop" href="/develop/">Develop</a>
+          <a class="nav-link" data-page="trading" href="/leaderboards/trading/">Trading</a>
+          <a class="nav-link" data-page="worker" href="/leaderboards/worker/">Worker</a>
+        </nav>
+        <div class="header-actions">
+          <span class="status-pill" data-role="status-pill">runtime syncing</span>
+          <a class="header-link" href="https://github.com/CrunchyJohnHaven/elastifund" target="_blank" rel="noopener">GitHub</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="route-hero">
+        <div class="container route-hero-grid">
+          <div>
+            <span class="eyebrow">Leaderboards</span>
+            <h1>Choose the public evidence board you want to inspect.</h1>
+            <p class="route-copy">
+              Trading and worker lanes are intentionally separated. This route is a lightweight index so contributors can reach either board without searching folder paths.
+            </p>
+            <div class="badge-row">
+              <span class="tag good">Route status: active index</span>
+            </div>
+            <div class="cta-row">
+              <a class="button button-primary" href="/leaderboards/trading/">Open trading board</a>
+              <a class="button button-secondary" href="/leaderboards/worker/">Open worker board</a>
+            </div>
+          </div>
+          <aside class="status-panel">
+            <div class="status-panel-header">
+              <div>
+                <div class="panel-kicker">Current posture</div>
+                <h3><span data-fill="runtime_split_summary"></span></h3>
+              </div>
+              <span class="tag warn"><span data-fill="launch_posture"></span></span>
+            </div>
+            <dl class="info-list">
+              <div class="info-row">
+                <dt>Trading board</dt>
+                <dd>Live proof and trading artifacts</dd>
+              </div>
+              <div class="info-row">
+                <dt>Worker board</dt>
+                <dd>JJ-N readiness and worker status</dd>
+              </div>
+              <div class="info-row">
+                <dt>Snapshot</dt>
+                <dd data-fill="generated_utc"></dd>
+              </div>
+            </dl>
+          </aside>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container">
+        <div class="footer-panel">
+          <div>
+            <div class="footer-kicker">Leaderboards route</div>
+            <h3>One index for two evidence lanes.</h3>
+            <p class="footer-meta">Trading and worker surfaces remain separate by design.</p>
+          </div>
+          <div class="footer-links">
+            <a href="/leaderboards/trading/">Trading</a>
+            <a href="/leaderboards/worker/">Worker</a>
+            <a href="/live/">Live</a>
+            <a href="/develop/">Develop</a>
+          </div>
+          <div class="footer-meta">
+            <div>&copy; <span data-fill="year"></span> Elastifund.</div>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

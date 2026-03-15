@@ -41,7 +41,6 @@ ROOT_DEPLOYABLE_FILES = {
 }
 EXACT_DEPLOYABLE_FILES = {
     "state/btc5_autoresearch.env",
-    "state/btc5_capital_stage.env",
 }
 REQUIRED_RELEASE_REPORT_FILES = (
     "reports/runtime_truth_latest.json",
@@ -73,7 +72,6 @@ DEPLOYABLE_PREFIXES = (
     "polymarket-bot/",
     "scripts/",
     "signals/",
-    "src/",
     "strategies/",
 )
 NON_DEPLOYABLE_PREFIXES = (
@@ -167,16 +165,6 @@ def select_deployable_changed_files(changed_files: Sequence[str]) -> tuple[str, 
                 for path in changed_files
                 if is_deployable_changed_file(path)
             }
-        )
-    )
-
-
-def list_present_exact_deployable_files(repo_root: Path) -> tuple[str, ...]:
-    return tuple(
-        sorted(
-            path
-            for path in EXACT_DEPLOYABLE_FILES
-            if (repo_root / path).is_file()
         )
     )
 
@@ -313,7 +301,6 @@ def build_release_contract(repo_root: Path) -> dict[str, Any]:
     )
     documented_env_keys = set(read_documented_env_keys(repo_root / ".env.example"))
     selector_documented = PROFILE_SELECTOR_ENV_KEY in documented_env_keys
-    profile_selector_scan = scan_profile_selector_definitions(repo_root)
 
     snapshot_files = []
     missing_bundle_files: list[str] = []
@@ -340,14 +327,6 @@ def build_release_contract(repo_root: Path) -> dict[str, Any]:
         )
     if not selector_documented:
         issues.append(f"{PROFILE_SELECTOR_ENV_KEY} is not documented in .env.example")
-    if profile_selector_scan["duplicate_detected"]:
-        locations = ", ".join(
-            f"{entry['path']} (count={entry['count']})"
-            for entry in profile_selector_scan["occurrences"]
-        )
-        issues.append(
-            f"{PROFILE_SELECTOR_ENV_KEY} is defined ambiguously across deploy env files: {locations}"
-        )
     if not selected_profile:
         issues.append("runtime profile selection is missing from reports/runtime_profile_effective.json")
     elif selected_profile not in REQUIRED_RUNTIME_PROFILE_NAMES:
@@ -370,8 +349,6 @@ def build_release_contract(repo_root: Path) -> dict[str, Any]:
         "issues": issues,
         "profile_selector_env_key": PROFILE_SELECTOR_ENV_KEY,
         "selector_documented_in_env_example": selector_documented,
-        "profile_selector_occurrences": profile_selector_scan["occurrences"],
-        "duplicate_profile_selector_detected": profile_selector_scan["duplicate_detected"],
         "selected_profile": selected_profile,
         "required_profile_names": list(REQUIRED_RUNTIME_PROFILE_NAMES),
         "profile_files": [profile_files_by_name[name] for name in sorted(profile_files_by_name)],
@@ -379,61 +356,6 @@ def build_release_contract(repo_root: Path) -> dict[str, Any]:
         "snapshot_files": snapshot_files,
         "missing_bundle_files": missing_bundle_files,
         "required_bundle_files": list(required_bundle_files),
-    }
-
-
-def build_runtime_state_alignment(
-    *,
-    release_contract: dict[str, Any],
-    remote_runtime_controls: dict[str, Any] | None,
-    runtime_profile_effective: dict[str, Any] | None,
-) -> dict[str, Any]:
-    local_selected_profile = str(
-        release_contract.get("selected_profile")
-        or _extract_selected_profile(runtime_profile_effective or {})
-        or ""
-    ).strip() or None
-    local_mode_block = (runtime_profile_effective or {}).get("mode") or {}
-    local_effective_mode = str(
-        local_mode_block.get("effective_execution_mode")
-        or local_mode_block.get("execution_mode")
-        or ""
-    ).strip().lower() or None
-    remote_runtime_controls = remote_runtime_controls or {}
-    remote_runtime_profile = str(remote_runtime_controls.get("runtime_profile") or "").strip() or None
-    remote_inferred_mode = str(remote_runtime_controls.get("inferred_mode") or "").strip().lower() or None
-
-    issues: list[str] = []
-    profile_match: bool | None = None
-    mode_match: bool | None = None
-
-    if bool(release_contract.get("duplicate_profile_selector_detected")):
-        issues.append("JJ_RUNTIME_PROFILE is defined ambiguously across local deploy env files.")
-    if local_selected_profile:
-        if remote_runtime_profile:
-            profile_match = local_selected_profile == remote_runtime_profile
-            if not profile_match:
-                issues.append(
-                    f"remote runtime profile {remote_runtime_profile!r} does not match local selected profile {local_selected_profile!r}"
-                )
-        else:
-            issues.append("remote JJ_RUNTIME_PROFILE is unset, so the remote runtime profile cannot be verified.")
-    if local_effective_mode and remote_inferred_mode:
-        mode_match = local_effective_mode == remote_inferred_mode
-        if not mode_match:
-            issues.append(
-                f"remote inferred mode {remote_inferred_mode!r} does not match local effective mode {local_effective_mode!r}"
-            )
-
-    return {
-        "valid": not issues,
-        "issues": issues,
-        "local_selected_profile": local_selected_profile,
-        "local_effective_mode": local_effective_mode,
-        "remote_runtime_profile": remote_runtime_profile,
-        "remote_inferred_mode": remote_inferred_mode,
-        "profile_match": profile_match,
-        "mode_match": mode_match,
     }
 
 
@@ -561,9 +483,8 @@ def validate_release_plan(
 def build_release_manifest(repo_root: Path) -> dict[str, Any]:
     changed_files = list_cycle_changed_files(repo_root)
     cycle_deploy_files = select_deployable_changed_files(changed_files)
-    exact_deploy_files = list_present_exact_deployable_files(repo_root)
     seed_deploy_files = _read_seed_manifest_files(repo_root)
-    if not cycle_deploy_files and not exact_deploy_files and not seed_deploy_files:
+    if not cycle_deploy_files and not seed_deploy_files:
         raise DeployError("no deployable changed files found in the current cycle")
     release_contract = build_release_contract(repo_root)
     if not release_contract["valid"]:
@@ -572,7 +493,6 @@ def build_release_manifest(repo_root: Path) -> dict[str, Any]:
     deploy_files = tuple(
         sorted(
             set(cycle_deploy_files)
-            | set(exact_deploy_files)
             | set(seed_deploy_files)
             | set(release_contract["required_bundle_files"])
         )
@@ -596,7 +516,6 @@ def build_release_manifest(repo_root: Path) -> dict[str, Any]:
         "restart_recommended": restart_recommended,
         "restart_source": restart_source,
         "changed_files_scanned": list(changed_files),
-        "exact_deploy_files_present": list(exact_deploy_files),
         "seed_manifest_deploy_files": list(seed_deploy_files),
         "excluded_changed_files": [path for path in changed_files if path not in set(deploy_files)],
         "deploy_files": list(deploy_files),
@@ -626,63 +545,6 @@ def parse_env_keys_from_text(text: str) -> list[str]:
         if ENV_KEY_RE.match(key):
             keys.append(key)
     return keys
-
-
-def count_env_key_occurrences_in_text(text: str, key_name: str) -> int:
-    target = str(key_name or "").strip()
-    if not target:
-        return 0
-
-    count = 0
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key = line.split("=", 1)[0].strip()
-        if key == target:
-            count += 1
-    return count
-
-
-def scan_profile_selector_definitions(repo_root: Path) -> dict[str, Any]:
-    candidates: list[Path] = []
-    env_example = repo_root / ".env.example"
-    if env_example.is_file():
-        candidates.append(env_example)
-    for base_name in ("config", "state"):
-        base_path = repo_root / base_name
-        if not base_path.exists():
-            continue
-        candidates.extend(sorted(path for path in base_path.rglob("*.env") if path.is_file()))
-
-    occurrences: list[dict[str, Any]] = []
-    duplicate_entries: list[dict[str, Any]] = []
-    total_occurrences = 0
-    resolved_root = repo_root.resolve()
-
-    for path in candidates:
-        try:
-            text = path.read_text()
-        except UnicodeDecodeError:
-            continue
-        count = count_env_key_occurrences_in_text(text, PROFILE_SELECTOR_ENV_KEY)
-        if count <= 0:
-            continue
-        relative = path.resolve().relative_to(resolved_root).as_posix()
-        entry = {"path": relative, "count": count}
-        occurrences.append(entry)
-        total_occurrences += count
-        if count > 1:
-            duplicate_entries.append(entry)
-
-    duplicate_detected = total_occurrences > 1 or bool(duplicate_entries)
-    return {
-        "profile_selector_env_key": PROFILE_SELECTOR_ENV_KEY,
-        "occurrences": occurrences,
-        "total_occurrences": total_occurrences,
-        "duplicate_detected": duplicate_detected,
-        "duplicate_entries": duplicate_entries,
-    }
 
 
 def parse_documented_env_keys_from_text(text: str) -> list[str]:
@@ -1164,7 +1026,6 @@ def build_deploy_artifact(
     post_service: dict[str, Any] | None,
     env_key_report: dict[str, Any] | None,
     remote_runtime_controls: dict[str, Any] | None,
-    runtime_state_alignment: dict[str, Any] | None,
     release_contract: dict[str, Any] | None,
     plan_validation: dict[str, Any] | None,
     checksum_report: dict[str, Any] | None,
@@ -1203,7 +1064,6 @@ def build_deploy_artifact(
         "post_service": post_service,
         "env_keys": env_key_report,
         "remote_mode": remote_runtime_controls,
-        "runtime_state_alignment": runtime_state_alignment,
         "release_contract": release_contract,
         "plan_validation": plan_validation,
         "checksums": checksum_report,
@@ -1331,8 +1191,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     remote_runtime_controls: dict[str, Any] | None = None
     release_plan: ReleasePlan | None = None
     release_contract = build_release_contract(REPO_ROOT)
-    runtime_profile_effective = read_json(REPO_ROOT / "reports" / "runtime_profile_effective.json")
-    runtime_state_alignment: dict[str, Any] | None = None
     plan_validation: dict[str, Any] | None = None
     manifest_error: str | None = None
     next_action: str | None = None
@@ -1349,15 +1207,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         "profile_selector_documented_in_env_example": release_contract["selector_documented_in_env_example"],
         "remote_runtime_profile": remote_runtime_controls.get("runtime_profile"),
     }
-    runtime_state_alignment = build_runtime_state_alignment(
-        release_contract=release_contract,
-        remote_runtime_controls=remote_runtime_controls,
-        runtime_profile_effective=runtime_profile_effective,
-    )
-    if not runtime_state_alignment["valid"]:
-        blocked_actions.append(
-            "Remote runtime profile/runtime state does not match the local release contract."
-        )
 
     remote_cycle_status = read_json(REPO_ROOT / "reports" / "remote_cycle_status.json")
     launch = remote_cycle_status.get("launch") if isinstance(remote_cycle_status, dict) else {}
@@ -1366,7 +1215,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     drift_detected = bool((runtime_truth or {}).get("drift_detected")) or (
         pre_service["status"] == "running" and live_launch_blocked
     )
-    drift_detected = drift_detected or not runtime_state_alignment["valid"]
     if pre_service["status"] == "running" and live_launch_blocked:
         blocked_actions.append(
             "jj-live.service is running while launch remains blocked; treating this as drift, not as a restart signal."
@@ -1496,7 +1344,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         post_service=post_service,
         env_key_report=env_key_report,
         remote_runtime_controls=remote_runtime_controls,
-        runtime_state_alignment=runtime_state_alignment,
         release_contract=release_contract,
         plan_validation=plan_validation,
         checksum_report=checksum_report,

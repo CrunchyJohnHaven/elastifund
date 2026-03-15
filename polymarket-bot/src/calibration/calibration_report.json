@@ -1,0 +1,102 @@
+{
+  "timestamp": "2026-03-06T22:08:07.203821Z",
+  "overall_brier_raw": 0.15608976781002637,
+  "overall_brier_calibrated": 0.13287013898558758,
+  "overall_improvement": 0.023219628824438787,
+  "weighted_brier_raw": 0.1560897678100264,
+  "weighted_brier_calibrated": 0.13287013898558764,
+  "total_samples": 758,
+  "categories": {
+    "unknown": {
+      "category": "unknown",
+      "sample_count": 322,
+      "brier_score_raw": 0.16518864596273292,
+      "brier_score_calibrated": 0.13259958088411714,
+      "brier_improvement": 0.03258906507861578,
+      "win_rate_yes": 0.5714285714285714,
+      "win_rate_no": 0.8372093023255814,
+      "avg_edge_yes": 0.1662648474946176,
+      "avg_edge_no": 0.30869140187675864,
+      "platt_a": 0.7253720018665124,
+      "platt_b": -0.7860809571883266
+    },
+    "politics": {
+      "category": "politics",
+      "sample_count": 218,
+      "brier_score_raw": 0.14928394495412844,
+      "brier_score_calibrated": 0.13028517232255607,
+      "brier_improvement": 0.018998772631572375,
+      "win_rate_yes": 0.49230769230769234,
+      "win_rate_no": 0.9215686274509803,
+      "avg_edge_yes": 0.09458774693116061,
+      "avg_edge_no": 0.3912507293976122,
+      "platt_a": 0.869859128288218,
+      "platt_b": -0.6295339706113259
+    },
+    "fed_rates": {
+      "category": "fed_rates",
+      "sample_count": 15,
+      "brier_score_raw": 0.13722666666666666,
+      "brier_score_calibrated": 0.12483165274621752,
+      "brier_improvement": 0.012395013920449144,
+      "win_rate_yes": 0.5,
+      "win_rate_no": 0.9230769230769231,
+      "avg_edge_yes": 0.04129725517505001,
+      "avg_edge_no": 0.24681082264518395,
+      "platt_a": 0.62,
+      "platt_b": -0.42
+    },
+    "sports": {
+      "category": "sports",
+      "sample_count": 120,
+      "brier_score_raw": 0.11784333333333334,
+      "brier_score_calibrated": 0.12068286965187122,
+      "brier_improvement": -0.0028395363185378802,
+      "win_rate_yes": 0.7142857142857143,
+      "win_rate_no": 0.8495575221238938,
+      "avg_edge_yes": 0.12338591119690505,
+      "avg_edge_no": 0.4000597591721375,
+      "platt_a": 0.9362750505257669,
+      "platt_b": -0.6904519700307845
+    },
+    "crypto": {
+      "category": "crypto",
+      "sample_count": 57,
+      "brier_score_raw": 0.2411543859649123,
+      "brier_score_calibrated": 0.19741374538573012,
+      "brier_improvement": 0.04374064057918217,
+      "win_rate_yes": 0.3125,
+      "win_rate_no": 0.7560975609756098,
+      "avg_edge_yes": 0.057928720256175875,
+      "avg_edge_no": 0.23262446136932538,
+      "platt_a": 0.5462562723457076,
+      "platt_b": -0.47651433181553443
+    },
+    "geopolitical": {
+      "category": "geopolitical",
+      "sample_count": 12,
+      "brier_score_raw": 0.1108,
+      "brier_score_calibrated": 0.06518960151612616,
+      "brier_improvement": 0.04561039848387384,
+      "win_rate_yes": 0.5,
+      "win_rate_no": 0.9166666666666666,
+      "avg_edge_yes": 0.0,
+      "avg_edge_no": 0.33098791219709417,
+      "platt_a": 0.828529708128325,
+      "platt_b": -0.9359707997753418
+    },
+    "weather": {
+      "category": "weather",
+      "sample_count": 14,
+      "brier_score_raw": 0.0933142857142857,
+      "brier_score_calibrated": 0.08764677753389412,
+      "brier_improvement": 0.005667508180391578,
+      "win_rate_yes": 0.3333333333333333,
+      "win_rate_no": 1.0,
+      "avg_edge_yes": 0.10039477203780674,
+      "avg_edge_no": 0.28249432054755713,
+      "platt_a": 0.5,
+      "platt_b": -0.3
+    }
+  }
+}

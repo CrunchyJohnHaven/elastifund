@@ -6,10 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
+from statistics import pstdev
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +48,7 @@ from scripts.research_artifacts import (  # noqa: E402
 )
 from scripts.research_cli import add_mode_argument  # noqa: E402
 from scripts.research_runtime import cap_for_mode, load_json_dict, normalize_mode  # noqa: E402
+from infra.fast_json import write_text_atomic  # noqa: E402
 
 
 DEFAULT_DB_PATH = Path("data/btc_5min_maker.db")
@@ -57,6 +61,9 @@ DEFAULT_REGIME_POLICY_SUMMARY = Path("reports/btc5_regime_policy_lab/summary.jso
 DEFAULT_CURRENT_PROBE_LATEST = Path("reports/btc5_autoresearch_current_probe/latest.json")
 DEFAULT_RUNTIME_TRUTH = Path("reports/runtime_truth_latest.json")
 DEFAULT_FRONTIER_LATEST = Path("reports/btc5_market_policy_frontier/latest.json")
+DEFAULT_SEMANTIC_DEDUP_INDEX = Path("reports/btc5_autoresearch/semantic_dedup_index.json")
+DEFAULT_AUTORESEARCH_CYCLES_JSONL = Path("reports/autoresearch_cycles.jsonl")
+DEFAULT_FILL_FEEDBACK_STATE = Path("state/btc5_autoresearch_feedback_state.json")
 LIVE_STAGE_MAX_TRADE_USD = {1: 10.0, 2: 20.0, 3: 50.0}
 SHADOW_TRADE_SIZES_USD = (100.0, 300.0)
 PROBE_STALE_HOURS = 6.0
@@ -83,6 +90,18 @@ def _load_env_file(path: Path) -> dict[str, str]:
 
 def _load_json(path: Path) -> dict[str, Any] | None:
     return load_json_dict(path)
+
+
+def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(payload, sort_keys=True) + "\n"
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(line)
+        handle.flush()
+        try:
+            os.fsync(handle.fileno())
+        except OSError:
+            pass
 
 
 def _parse_iso_timestamp(raw: Any) -> datetime | None:
@@ -1530,6 +1549,92 @@ def _selected_runtime_contract(
     }
 
 
+def _package_freeze_contract(
+    *,
+    selected_active_runtime_package: dict[str, Any],
+    selected_best_runtime_package: dict[str, Any],
+    best_live_package: dict[str, Any],
+    best_raw_package: dict[str, Any],
+    runtime_package_selection: dict[str, Any],
+    selected_deploy_recommendation: str,
+) -> dict[str, Any]:
+    def _profile_name(runtime_package: dict[str, Any] | None) -> str | None:
+        if not isinstance(runtime_package, dict):
+            return None
+        profile = runtime_package.get("profile")
+        if not isinstance(profile, dict):
+            return None
+        name = str(profile.get("name") or "").strip()
+        return name or None
+
+    canonical_live_package = (
+        dict(selected_active_runtime_package)
+        if isinstance(selected_active_runtime_package, dict)
+        else {}
+    )
+    canonical_signature = _package_signature(canonical_live_package)
+
+    comparator_candidates = [
+        ("best_live_package", best_live_package),
+        ("best_raw_research_package", best_raw_package),
+        ("selected_best_runtime_package", {"runtime_package": selected_best_runtime_package}),
+    ]
+    shadow_runtime_package: dict[str, Any] = {}
+    shadow_source = "none"
+    for source_name, record in comparator_candidates:
+        runtime_package = (
+            record.get("runtime_package")
+            if isinstance(record, dict) and isinstance(record.get("runtime_package"), dict)
+            else {}
+        )
+        if not runtime_package:
+            continue
+        if _package_signature(runtime_package) == canonical_signature:
+            continue
+        shadow_runtime_package = dict(runtime_package)
+        shadow_source = source_name
+        break
+
+    canonical_profile_name = _profile_name(canonical_live_package)
+    shadow_profile_name = _profile_name(shadow_runtime_package)
+    shadow_reason_tags: list[str] = []
+    if shadow_runtime_package:
+        shadow_reason_tags.append("same_cycle_live_package_frozen")
+        if shadow_source == "best_live_package":
+            shadow_reason_tags.append("fresh_same_stream_evidence_required")
+        if shadow_runtime_package.get("session_policy"):
+            shadow_reason_tags.append("session_conditioned_override_shadow_only")
+        if str(selected_deploy_recommendation or "").strip().lower() != "promote":
+            shadow_reason_tags.append("selected_deploy_recommendation_not_promote")
+
+    return {
+        "canonical_live_package": {
+            "policy_id": canonical_profile_name,
+            "package_hash": runtime_package_hash(canonical_live_package) if canonical_live_package else None,
+            "runtime_package": canonical_live_package if canonical_live_package else None,
+            "status": "live_current" if canonical_live_package else "missing",
+            "selection_source": runtime_package_selection.get("source_artifact")
+            or runtime_package_selection.get("source"),
+        },
+        "shadow_comparator_package": {
+            "policy_id": shadow_profile_name,
+            "package_hash": runtime_package_hash(shadow_runtime_package) if shadow_runtime_package else None,
+            "runtime_package": shadow_runtime_package if shadow_runtime_package else None,
+            "status": "shadow_only" if shadow_runtime_package else "none",
+            "source": shadow_source,
+            "reason_tags": shadow_reason_tags,
+        },
+        "package_consistency_status": (
+            "aligned_one_live_one_shadow"
+            if canonical_live_package and (
+                not shadow_runtime_package
+                or _package_signature(shadow_runtime_package) != canonical_signature
+            )
+            else "missing_canonical_live_package"
+        ),
+    }
+
+
 def _merged_strategy_env(base_env: Path, override_env: Path) -> dict[str, str]:
     merged = _load_env_file(base_env)
     merged.update(_load_env_file(override_env))
@@ -2037,6 +2142,95 @@ def _candidate_identity(candidate: dict[str, Any] | None) -> tuple[Any, ...]:
     )
 
 
+def _semantic_candidate_hash(candidate: dict[str, Any] | None) -> str:
+    if not isinstance(candidate, dict):
+        return ""
+    signature_payload = {
+        "candidate_family": str(candidate.get("candidate_family") or ""),
+        "identity": _candidate_identity(candidate),
+        "runtime_session_policy": _runtime_session_policy_from_overrides(candidate.get("session_overrides"))
+        or list(candidate.get("recommended_session_policy") or []),
+    }
+    return sha256(repr(signature_payload).encode("utf-8")).hexdigest()
+
+
+def _load_semantic_dedup_index(path: Path) -> dict[str, Any]:
+    payload = _load_json(path)
+    if not isinstance(payload, dict):
+        return {"version": 1, "seen": {}}
+    seen = payload.get("seen") if isinstance(payload.get("seen"), dict) else {}
+    return {"version": 1, "seen": seen}
+
+
+def _save_semantic_dedup_index(path: Path, payload: dict[str, Any]) -> None:
+    write_text_atomic(path, json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _dedupe_candidate_evaluations(
+    candidates: list[tuple[str, dict[str, Any] | None]],
+    *,
+    dedup_index: dict[str, Any] | None,
+    now: datetime | None = None,
+) -> tuple[list[tuple[str, dict[str, Any] | None]], list[dict[str, Any]], list[str]]:
+    seen_index = (dedup_index or {}).get("seen")
+    historical_seen = seen_index if isinstance(seen_index, dict) else {}
+    cycle_seen: set[str] = set()
+    kept: list[tuple[str, dict[str, Any] | None]] = []
+    skipped: list[dict[str, Any]] = []
+    kept_hashes: list[str] = []
+    generated_at = (now or _now_utc()).isoformat()
+
+    for source, candidate in candidates:
+        if candidate is None:
+            continue
+        semantic_hash = _semantic_candidate_hash(candidate)
+        if not semantic_hash:
+            kept.append((source, candidate))
+            continue
+        if semantic_hash in cycle_seen:
+            skipped.append(
+                {
+                    "source": source,
+                    "semantic_hash": semantic_hash,
+                    "reason": "duplicate_in_cycle",
+                }
+            )
+            continue
+        if source != "active_profile" and semantic_hash in historical_seen:
+            skipped.append(
+                {
+                    "source": source,
+                    "semantic_hash": semantic_hash,
+                    "reason": "duplicate_in_dedup_index",
+                    "first_seen_at": historical_seen.get(semantic_hash, {}).get("first_seen_at"),
+                }
+            )
+            continue
+
+        cycle_seen.add(semantic_hash)
+        kept_hashes.append(semantic_hash)
+        kept.append((source, candidate))
+        existing = historical_seen.get(semantic_hash)
+        if not isinstance(existing, dict):
+            historical_seen[semantic_hash] = {
+                "first_seen_at": generated_at,
+                "last_seen_at": generated_at,
+                "sources": [source],
+                "count": 1,
+            }
+        else:
+            sources = [str(item) for item in (existing.get("sources") or []) if str(item)]
+            if source not in sources:
+                sources.append(source)
+            historical_seen[semantic_hash] = {
+                "first_seen_at": existing.get("first_seen_at") or generated_at,
+                "last_seen_at": generated_at,
+                "sources": sources,
+                "count": int(_safe_float(existing.get("count"), 0.0) or 0) + 1,
+            }
+    return kept, skipped, kept_hashes
+
+
 def _runtime_package(
     *,
     profile: dict[str, Any] | None,
@@ -2456,9 +2650,15 @@ def _select_best_target(
     min_fill_retention_ratio: float,
 ) -> tuple[dict[str, Any] | None, dict[str, Any], list[dict[str, Any]]]:
     evaluated: list[dict[str, Any]] = []
+    seen_semantic_hashes: set[str] = set()
     for source_name, candidate in candidates:
         if candidate is None:
             continue
+        semantic_hash = _semantic_candidate_hash(candidate)
+        if semantic_hash and semantic_hash in seen_semantic_hashes:
+            continue
+        if semantic_hash:
+            seen_semantic_hashes.add(semantic_hash)
         decision = _promotion_decision(
             best=candidate,
             current=current,
@@ -2474,6 +2674,7 @@ def _select_best_target(
         evaluated.append(
             {
                 "source": source_name,
+                "semantic_hash": semantic_hash or None,
                 "candidate": candidate,
                 "decision": decision,
             }
@@ -3050,8 +3251,8 @@ def render_strategy_env(target: dict[str, Any], metadata: dict[str, Any]) -> str
 
 def _write_override_env(path: Path, *, best_target: dict[str, Any], decision: dict[str, Any]) -> None:
     existing_values = _load_env_file(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
+    write_text_atomic(
+        path,
         render_strategy_env(
             best_target,
             {
@@ -3060,7 +3261,8 @@ def _write_override_env(path: Path, *, best_target: dict[str, Any], decision: di
                 "current_min_buy_price": existing_values.get("BTC5_MIN_BUY_PRICE")
                 or os.environ.get("BTC5_MIN_BUY_PRICE"),
             },
-        )
+        ),
+        encoding="utf-8",
     )
 
 
@@ -3119,6 +3321,277 @@ def _write_reports(report_dir: Path, payload: dict[str, Any]) -> dict[str, str]:
     )
 
 
+def _load_jsonl_rows(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            rows.append(parsed)
+    return rows
+
+
+def _load_fill_feedback_state(path: Path) -> dict[str, Any]:
+    payload = _load_json(path)
+    if not isinstance(payload, dict):
+        return {
+            "last_cycle_completed_at": None,
+            "last_window_start_ts": 0,
+            "last_updated_at": None,
+        }
+    return {
+        "last_cycle_completed_at": payload.get("last_cycle_completed_at"),
+        "last_window_start_ts": int(_safe_float(payload.get("last_window_start_ts"), 0.0) or 0),
+        "last_updated_at": payload.get("last_updated_at"),
+    }
+
+
+def _db_table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return {str(row[1]) for row in rows if len(row) >= 2}
+
+
+def _db_window_rows_since(db_path: Path, state: dict[str, Any]) -> tuple[list[dict[str, Any]], int, dict[str, Any]]:
+    if not db_path.exists():
+        return [], 0, {"status": "db_missing", "db_path": str(db_path)}
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        table_exists = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='window_trades'"
+        ).fetchone()
+        if table_exists is None:
+            return [], 0, {"status": "table_missing", "table": "window_trades"}
+
+        columns = _db_table_columns(conn, "window_trades")
+        if "order_status" not in columns:
+            return [], 0, {"status": "order_status_missing", "columns": sorted(columns)}
+
+        since_window_ts = int(_safe_float(state.get("last_window_start_ts"), 0.0) or 0)
+        since_updated_at = str(state.get("last_updated_at") or "").strip()
+        time_filters: list[str] = []
+        params: list[Any] = []
+        if since_window_ts > 0 and "window_start_ts" in columns:
+            time_filters.append("window_start_ts > ?")
+            params.append(since_window_ts)
+        if since_updated_at:
+            if "updated_at" in columns:
+                time_filters.append("updated_at > ?")
+                params.append(since_updated_at)
+            elif "created_at" in columns:
+                time_filters.append("created_at > ?")
+                params.append(since_updated_at)
+
+        where_sql = "1=1"
+        if time_filters:
+            where_sql = "(" + " OR ".join(time_filters) + ")"
+
+        selected_columns = [
+            column
+            for column in ("window_start_ts", "updated_at", "created_at", "order_status", "direction", "won", "pnl_usd")
+            if column in columns
+        ]
+        if not selected_columns:
+            return [], 0, {"status": "no_usable_columns", "columns": sorted(columns)}
+        select_sql = ", ".join(selected_columns)
+
+        fill_query = (
+            f"SELECT {select_sql} FROM window_trades "
+            f"WHERE order_status = 'live_filled' AND {where_sql} "
+            "ORDER BY COALESCE(window_start_ts, 0) ASC"
+        )
+        fill_rows = [dict(row) for row in conn.execute(fill_query, params).fetchall()]
+
+        total_query = f"SELECT COUNT(1) AS row_count FROM window_trades WHERE {where_sql}"
+        total_row = conn.execute(total_query, params).fetchone()
+        total_rows = int(total_row["row_count"]) if total_row is not None else 0
+
+        diagnostics = {
+            "status": "ok",
+            "db_path": str(db_path),
+            "filters_applied": time_filters,
+            "since_window_start_ts": since_window_ts,
+            "since_updated_at": since_updated_at or None,
+            "selected_columns": selected_columns,
+        }
+        return fill_rows, total_rows, diagnostics
+    finally:
+        conn.close()
+
+
+def _prediction_metrics_from_candidate(
+    *,
+    best_candidate: dict[str, Any] | None,
+    selected_frontier_item: dict[str, Any] | None,
+    decision: dict[str, Any],
+) -> dict[str, float | None]:
+    candidate = best_candidate if isinstance(best_candidate, dict) else {}
+    frontier = selected_frontier_item if isinstance(selected_frontier_item, dict) else {}
+    historical = candidate.get("historical") if isinstance(candidate.get("historical"), dict) else {}
+    monte_carlo = candidate.get("monte_carlo") if isinstance(candidate.get("monte_carlo"), dict) else {}
+
+    replay_rows = int(_safe_float(historical.get("replay_live_filled_rows"), 0.0) or 0)
+    replay_pnl = _safe_float(historical.get("replay_live_filled_pnl_usd"), None)
+    predicted_pnl_per_fill = (float(replay_pnl) / float(replay_rows)) if replay_rows > 0 and replay_pnl is not None else None
+
+    predicted_fill_rate = _safe_float(
+        frontier.get("fill_retention_ratio"),
+        _safe_float(decision.get("fill_retention_ratio"), None),
+    )
+    predicted_direction_accuracy = _safe_float(monte_carlo.get("profit_probability"), None)
+    return {
+        "fill_rate": float(predicted_fill_rate) if predicted_fill_rate is not None else None,
+        "direction_accuracy": float(predicted_direction_accuracy) if predicted_direction_accuracy is not None else None,
+        "pnl_per_fill": round(float(predicted_pnl_per_fill), 6) if predicted_pnl_per_fill is not None else None,
+    }
+
+
+def _actual_metrics_from_fill_rows(fill_rows: list[dict[str, Any]], *, total_rows: int) -> dict[str, float | int | None]:
+    fills = len(fill_rows)
+    pnl_values = [_safe_float(row.get("pnl_usd"), 0.0) for row in fill_rows]
+    wins = 0
+    resolved = 0
+    for row in fill_rows:
+        won = row.get("won")
+        if isinstance(won, bool):
+            resolved += 1
+            wins += int(won)
+            continue
+        pnl = _safe_float(row.get("pnl_usd"), None)
+        if pnl is None:
+            continue
+        resolved += 1
+        wins += int(pnl > 0.0)
+    fill_rate = (fills / float(total_rows)) if total_rows > 0 else None
+    direction_accuracy = (wins / float(resolved)) if resolved > 0 else None
+    pnl_per_fill = (sum(pnl_values) / float(fills)) if fills > 0 else None
+    return {
+        "fills": fills,
+        "resolved_fills": resolved,
+        "total_rows_considered": int(total_rows),
+        "fill_rate": round(float(fill_rate), 6) if fill_rate is not None else None,
+        "direction_accuracy": round(float(direction_accuracy), 6) if direction_accuracy is not None else None,
+        "pnl_per_fill": round(float(pnl_per_fill), 6) if pnl_per_fill is not None else None,
+        "pnl_usd_total": round(float(sum(pnl_values)), 6),
+    }
+
+
+def _delta_series(rows: list[dict[str, Any]], metric_name: str) -> list[float]:
+    values: list[float] = []
+    for row in rows:
+        fill_feedback = row.get("fill_feedback")
+        if not isinstance(fill_feedback, dict):
+            continue
+        metric_deltas = fill_feedback.get("metric_deltas")
+        if not isinstance(metric_deltas, dict):
+            continue
+        value = _safe_float(metric_deltas.get(metric_name), None)
+        if value is None:
+            continue
+        values.append(float(value))
+    return values
+
+
+def _metric_sigma(delta_history: list[float], default_sigma: float) -> float:
+    if len(delta_history) >= 2:
+        sigma = pstdev(delta_history)
+        if sigma > 0.0:
+            return float(sigma)
+    return float(default_sigma)
+
+
+def _fill_feedback_summary(
+    *,
+    db_path: Path,
+    feedback_state_path: Path,
+    cycles_jsonl_path: Path,
+    best_candidate: dict[str, Any] | None,
+    selected_frontier_item: dict[str, Any] | None,
+    decision: dict[str, Any],
+    generated_at: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    state = _load_fill_feedback_state(feedback_state_path)
+    fill_rows, total_rows, diagnostics = _db_window_rows_since(db_path, state)
+    actual = _actual_metrics_from_fill_rows(fill_rows, total_rows=total_rows)
+    predicted = _prediction_metrics_from_candidate(
+        best_candidate=best_candidate,
+        selected_frontier_item=selected_frontier_item,
+        decision=decision,
+    )
+
+    metric_deltas: dict[str, float | None] = {}
+    for key in ("fill_rate", "direction_accuracy", "pnl_per_fill"):
+        actual_value = _safe_float(actual.get(key), None)
+        predicted_value = _safe_float(predicted.get(key), None)
+        if actual_value is None or predicted_value is None:
+            metric_deltas[key] = None
+            continue
+        metric_deltas[key] = round(float(actual_value) - float(predicted_value), 6)
+
+    history_rows = _load_jsonl_rows(cycles_jsonl_path)
+    sigma_defaults = {"fill_rate": 0.03, "direction_accuracy": 0.05, "pnl_per_fill": 0.35}
+    sigma_summary: dict[str, float] = {}
+    adjustment_flags: list[dict[str, Any]] = []
+    for metric_name, default_sigma in sigma_defaults.items():
+        delta = _safe_float(metric_deltas.get(metric_name), None)
+        if delta is None:
+            sigma_summary[metric_name] = float(default_sigma)
+            continue
+        series = _delta_series(history_rows, metric_name)[-48:]
+        sigma = _metric_sigma(series, default_sigma)
+        sigma_summary[metric_name] = round(float(sigma), 6)
+        if abs(float(delta)) > (2.0 * sigma):
+            direction = "upward" if float(delta) > 0 else "downward"
+            adjustment_flags.append(
+                {
+                    "metric": metric_name,
+                    "delta": round(float(delta), 6),
+                    "sigma": round(float(sigma), 6),
+                    "threshold": round(float(2.0 * sigma), 6),
+                    "direction": direction,
+                    "reason": f"{metric_name}_diverges_beyond_2sigma",
+                }
+            )
+
+    latest_window_start_ts = max(int(_safe_float(row.get("window_start_ts"), 0.0) or 0) for row in fill_rows) if fill_rows else int(
+        _safe_float(state.get("last_window_start_ts"), 0.0) or 0
+    )
+    latest_updated_raw = state.get("last_updated_at")
+    latest_updated_ts = _parse_iso_timestamp(latest_updated_raw)
+    for row in fill_rows:
+        for raw in (row.get("updated_at"), row.get("created_at")):
+            parsed = _parse_iso_timestamp(raw)
+            if parsed is None:
+                continue
+            if latest_updated_ts is None or parsed > latest_updated_ts:
+                latest_updated_ts = parsed
+
+    feedback_summary = {
+        "generated_at": generated_at,
+        "actual_metrics": actual,
+        "predicted_metrics": predicted,
+        "metric_deltas": metric_deltas,
+        "metric_sigma": sigma_summary,
+        "parameter_adjustment_flags": adjustment_flags,
+        "needs_parameter_adjustment": bool(adjustment_flags),
+        "db_diagnostics": diagnostics,
+        "state_before": state,
+    }
+    state_after = {
+        "last_cycle_completed_at": generated_at,
+        "last_window_start_ts": int(latest_window_start_ts),
+        "last_updated_at": latest_updated_ts.isoformat() if latest_updated_ts is not None else latest_updated_raw,
+    }
+    return feedback_summary, state_after
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     add_mode_argument(
@@ -3163,6 +3636,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--frontier-latest", type=Path, default=DEFAULT_FRONTIER_LATEST)
     parser.add_argument("--market-policy-handoff", type=Path, default=DEFAULT_MARKET_POLICY_HANDOFF)
     parser.add_argument("--market-latest-json", type=Path, default=DEFAULT_MARKET_LATEST_JSON)
+    parser.add_argument("--semantic-dedup-index", type=Path, default=DEFAULT_SEMANTIC_DEDUP_INDEX)
+    parser.add_argument("--cycles-jsonl", type=Path, default=DEFAULT_AUTORESEARCH_CYCLES_JSONL)
+    parser.add_argument("--fill-feedback-state", type=Path, default=DEFAULT_FILL_FEEDBACK_STATE)
     return parser.parse_args()
 
 
@@ -3259,15 +3735,31 @@ def main() -> int:
         metadata=regime_policy_summary.get("best_candidate"),
     )
     hypothesis_best_candidate = _build_hypothesis_candidate(hypothesis_summary)
+    semantic_dedup_index = _load_semantic_dedup_index(args.semantic_dedup_index)
+    candidate_pool = [
+        ("active_profile", current_candidate),
+        ("global_best_candidate", global_best_candidate),
+        ("regime_best_candidate", regime_best_candidate),
+        ("hypothesis_best_candidate", hypothesis_best_candidate),
+    ]
+    deduped_candidate_pool, dedup_skipped_candidates, dedup_kept_hashes = _dedupe_candidate_evaluations(
+        candidate_pool,
+        dedup_index=semantic_dedup_index,
+        now=_now_utc(),
+    )
+    if not deduped_candidate_pool and current_candidate is not None:
+        deduped_candidate_pool = [("active_profile", current_candidate)]
+        dedup_skipped_candidates.append(
+            {
+                "source": "fallback",
+                "reason": "all_candidates_deduped_using_active_profile_fallback",
+            }
+        )
+    deduped_source_candidates = {source: candidate for source, candidate in deduped_candidate_pool}
     drag_context = _execution_drag_context(rows)
     best_live_package_record, best_raw_package_record, ranked_packages, execution_drag_summary = _rank_candidate_packages(
         active_candidate=current_candidate,
-        candidates=[
-            ("active_profile", current_candidate),
-            ("global_best_candidate", global_best_candidate),
-            ("regime_best_candidate", regime_best_candidate),
-            ("hypothesis_best_candidate", hypothesis_best_candidate),
-        ],
+        candidates=deduped_candidate_pool,
         drag_context=drag_context,
         min_fill_retention_ratio=float(args.min_fill_retention_ratio),
     )
@@ -3275,9 +3767,9 @@ def main() -> int:
     best_candidate, decision, evaluated_targets = _select_best_target(
         candidates=[
             ("best_live_package", best_live_candidate),
-            ("global_best_candidate", global_best_candidate),
-            ("regime_best_candidate", regime_best_candidate),
-            ("hypothesis_best_candidate", hypothesis_best_candidate),
+            ("global_best_candidate", deduped_source_candidates.get("global_best_candidate")),
+            ("regime_best_candidate", deduped_source_candidates.get("regime_best_candidate")),
+            ("hypothesis_best_candidate", deduped_source_candidates.get("hypothesis_best_candidate")),
         ],
         current=current_candidate,
         min_median_arr_improvement_pct=float(args.min_median_arr_improvement_pct),
@@ -3519,6 +4011,12 @@ def main() -> int:
         },
         "ranked_runtime_packages": ranked_packages,
         "package_ranking": package_ranking,
+        "semantic_dedup": {
+            "index_path": str(args.semantic_dedup_index),
+            "kept_candidate_hashes": dedup_kept_hashes,
+            "skipped_candidates": dedup_skipped_candidates,
+            "kept_candidates": [source for source, _ in deduped_candidate_pool],
+        },
         "package_class": package_class_summary.get("package_class"),
         "package_candidate_class": package_class_summary.get("candidate_class"),
         "package_class_reason": package_class_summary.get("class_reason"),
@@ -3659,6 +4157,42 @@ def main() -> int:
     )
     payload.update(selected_runtime_contract)
     current_probe_payload.update(selected_runtime_contract)
+    package_freeze = _package_freeze_contract(
+        selected_active_runtime_package=selected_active_runtime_package,
+        selected_best_runtime_package=selected_best_runtime_package,
+        best_live_package=payload.get("best_live_package") if isinstance(payload.get("best_live_package"), dict) else {},
+        best_raw_package=payload.get("best_raw_research_package") if isinstance(payload.get("best_raw_research_package"), dict) else {},
+        runtime_package_selection=payload["runtime_package_selection"],
+        selected_deploy_recommendation=selected_deploy_recommendation,
+    )
+    payload["package_freeze"] = package_freeze
+    payload["canonical_live_package"] = package_freeze["canonical_live_package"]
+    payload["shadow_comparator_package"] = package_freeze["shadow_comparator_package"]
+    current_probe_payload["package_freeze"] = package_freeze
+    current_probe_payload["canonical_live_package"] = package_freeze["canonical_live_package"]
+    current_probe_payload["shadow_comparator_package"] = package_freeze["shadow_comparator_package"]
+    best_live_package_payload = (
+        payload.get("best_live_package") if isinstance(payload.get("best_live_package"), dict) else {}
+    )
+    current_probe_best_live_package = (
+        current_probe_payload.get("best_live_package")
+        if isinstance(current_probe_payload.get("best_live_package"), dict)
+        else {}
+    )
+    best_live_signature = _package_signature(best_live_package_payload.get("runtime_package"))
+    canonical_signature = _package_signature(package_freeze["canonical_live_package"].get("runtime_package"))
+    best_live_deployment_mode = "shadow_only" if best_live_signature != canonical_signature else "live_current"
+    shadow_only_reason_tags = (
+        list(package_freeze["shadow_comparator_package"].get("reason_tags") or [])
+        if best_live_deployment_mode == "shadow_only"
+        else []
+    )
+    if best_live_package_payload:
+        best_live_package_payload["deployment_mode"] = best_live_deployment_mode
+        best_live_package_payload["shadow_only_reason_tags"] = shadow_only_reason_tags
+    if current_probe_best_live_package:
+        current_probe_best_live_package["deployment_mode"] = best_live_deployment_mode
+        current_probe_best_live_package["shadow_only_reason_tags"] = shadow_only_reason_tags
     payload["capital_scale_recommendation"] = _capital_scale_recommendation(
         deploy_recommendation=selected_deploy_recommendation,
         package_confidence_label=selected_package_confidence_label,
@@ -3677,6 +4211,47 @@ def main() -> int:
         latest_live_fill_age_hours=latest_live_fill_age_hours,
         size_aware_deployment=selected_size_aware_deployment,
     )
+    fill_feedback_summary: dict[str, Any]
+    fill_feedback_state_after: dict[str, Any]
+    try:
+        fill_feedback_summary, fill_feedback_state_after = _fill_feedback_summary(
+            db_path=args.db_path,
+            feedback_state_path=args.fill_feedback_state,
+            cycles_jsonl_path=args.cycles_jsonl,
+            best_candidate=best_candidate,
+            selected_frontier_item=selected_frontier_item,
+            decision=decision,
+            generated_at=str(payload.get("generated_at") or _now_utc().isoformat()),
+        )
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        fill_feedback_summary = {
+            "generated_at": str(payload.get("generated_at") or _now_utc().isoformat()),
+            "actual_metrics": {},
+            "predicted_metrics": {},
+            "metric_deltas": {},
+            "metric_sigma": {},
+            "parameter_adjustment_flags": [],
+            "needs_parameter_adjustment": False,
+            "db_diagnostics": {"status": "feedback_error", "error": str(exc)},
+        }
+        fill_feedback_state_after = _load_fill_feedback_state(args.fill_feedback_state)
+    payload["fill_feedback"] = fill_feedback_summary
+    current_probe_payload["fill_feedback"] = fill_feedback_summary
+    payload["fill_feedback_artifacts"] = {
+        "cycles_jsonl": str(args.cycles_jsonl),
+        "feedback_state_json": str(args.fill_feedback_state),
+    }
+
+    cycle_feedback_record = {
+        "generated_at": str(payload.get("generated_at") or _now_utc().isoformat()),
+        "decision_action": str(((payload.get("decision") or {}).get("action")) or "hold"),
+        "selected_source": str(((payload.get("decision") or {}).get("selected_source")) or "unknown"),
+        "fill_feedback": fill_feedback_summary,
+        "semantic_dedup": payload.get("semantic_dedup") or {},
+    }
+    _append_jsonl(args.cycles_jsonl, cycle_feedback_record)
+    write_text_atomic(args.fill_feedback_state, json.dumps(fill_feedback_state_after, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _save_semantic_dedup_index(args.semantic_dedup_index, semantic_dedup_index)
 
     artifacts = _write_reports(args.report_dir, payload)
     payload["artifacts"] = artifacts

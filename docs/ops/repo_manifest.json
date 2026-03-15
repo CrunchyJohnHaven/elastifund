@@ -1,0 +1,963 @@
+{
+  "schema_version": "2026-03-11.repo-manifest.v1",
+  "generated_at": "2026-03-12",
+  "generator": "scripts/render_repo_manifest.py",
+  "purpose": "Deterministic machine-readable routing for path ownership, canonical docs, and narrow verification.",
+  "entrypoints": {
+    "start_here": "docs/FORK_AND_RUN.md",
+    "operator_packet": "COMMAND_NODE.md",
+    "operator_policy": "PROJECT_INSTRUCTIONS.md",
+    "machine_entrypoint": "AGENTS.md",
+    "repo_map": "docs/REPO_MAP.md",
+    "contributor_rules": "CONTRIBUTING.md"
+  },
+  "source_docs": [
+    "AGENTS.md",
+    "docs/REPO_MAP.md",
+    "tests/README.md",
+    "nontrading/PACKAGE_MAP.md"
+  ],
+  "machine_contract_artifacts": [
+    "reports/runtime_truth_latest.json",
+    "reports/remote_cycle_status.json",
+    "reports/remote_service_status.json",
+    "reports/finance/latest.json",
+    "reports/finance/subscription_audit.json",
+    "reports/finance/allocation_plan.json",
+    "reports/finance/action_queue.json",
+    "reports/agent_workflow_mining/summary.json",
+    "reports/manifest_latest.json"
+  ],
+  "refresh_commands": {
+    "render": "make repo-manifest-refresh",
+    "check": "make repo-manifest-check"
+  },
+  "task_routing": [
+    {
+      "lane": "Live trading logic",
+      "paths": [
+        "bot/",
+        "execution/",
+        "strategies/",
+        "signals/",
+        "infra/"
+      ]
+    },
+    {
+      "lane": "Research pipeline and validation",
+      "paths": [
+        "src/",
+        "backtest/",
+        "simulator/",
+        "edge-backlog/"
+      ]
+    },
+    {
+      "lane": "APIs, persistence, and orchestration",
+      "paths": [
+        "hub/",
+        "data_layer/",
+        "orchestration/"
+      ]
+    },
+    {
+      "lane": "Non-trading revenue lanes (JJ-N)",
+      "paths": [
+        "nontrading/",
+        "inventory/"
+      ]
+    },
+    {
+      "lane": "Personal CFO / treasury control plane",
+      "paths": [
+        "nontrading/finance/",
+        "reports/finance/",
+        "state/",
+        "docs/ops/finance_control_plane.md"
+      ]
+    },
+    {
+      "lane": "Governance and messaging docs",
+      "paths": [
+        "docs/numbered/00_MISSION_AND_PRINCIPLES.md",
+        "docs/numbered/12_MANAGED_SERVICE_BOUNDARY.md",
+        "COMMAND_NODE.md",
+        "PROJECT_INSTRUCTIONS.md"
+      ]
+    },
+    {
+      "lane": "Vision and strategic docs",
+      "paths": [
+        "research/elastic_vision_document.md",
+        "research/platform_vision_document.md"
+      ]
+    },
+    {
+      "lane": "Website build guidance",
+      "paths": [
+        "REPLIT_NEXT_BUILD.md",
+        "REPLIT_WEBSITE_CURRENT.pdf",
+        "develop/",
+        "elastic/",
+        "leaderboards/"
+      ]
+    },
+    {
+      "lane": "Documentation and publishing",
+      "paths": [
+        "docs/",
+        "research/",
+        "README.md"
+      ]
+    },
+    {
+      "lane": "Cross-asset cascade lane",
+      "paths": [
+        "infra/cross_asset_artifact_paths.py",
+        "scripts/instance6_rollout_controller.py",
+        "scripts/run_instance6_rollout_finance_dispatch.py",
+        "reports/instance6_rollout_control/",
+        "reports/rollout_control/",
+        "docs/ops/cross_asset_lane.md"
+      ]
+    }
+  ],
+  "subsystems": [
+    {
+      "path": "agent/",
+      "owner_lane": "General",
+      "package_role": "Unmapped package role",
+      "notes": "",
+      "narrow_test_command": "make test",
+      "canonical_docs": [
+        "AGENTS.md",
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "archive/",
+      "owner_lane": "General",
+      "package_role": "superseded material",
+      "notes": "not current guidance",
+      "narrow_test_command": "make verify-static",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": true,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "backtest/",
+      "owner_lane": "Research pipeline and validation",
+      "package_role": "historical validation and benchmark data",
+      "notes": "research lane",
+      "narrow_test_command": "pytest -q backtest/tests",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": "Historical data, snapshots, and broad test surfaces can inflate context and runtime costs."
+    },
+    {
+      "path": "benchmarks/",
+      "owner_lane": "General",
+      "package_role": "Unmapped package role",
+      "notes": "",
+      "narrow_test_command": "make test",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "build/",
+      "owner_lane": "General",
+      "package_role": "static website route stubs, hidden onboarding surfaces, and leaderboard pages",
+      "notes": "keep public messaging aligned with `docs/numbered/11_PUBLIC_MESSAGING.md` and the numbered-doc lane",
+      "narrow_test_command": "make verify-static",
+      "canonical_docs": [
+        "docs/REPO_MAP.md",
+        "REPLIT_NEXT_BUILD.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "bot/",
+      "owner_lane": "Live trading logic",
+      "package_role": "live trading loop, ensembles, scanners, execution routing",
+      "notes": "highest-risk path; pair changes with tests",
+      "narrow_test_command": "pytest -q bot/tests",
+      "canonical_docs": [
+        "docs/REPO_MAP.md",
+        "COMMAND_NODE.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": "Live-trading-sensitive runtime path; changes require focused tests and evidence."
+    },
+    {
+      "path": "config/",
+      "owner_lane": "General",
+      "package_role": "Unmapped package role",
+      "notes": "",
+      "narrow_test_command": "make test",
+      "canonical_docs": [
+        "PROJECT_INSTRUCTIONS.md",
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "data/",
+      "owner_lane": "General",
+      "package_role": "generated runtime artifacts",
+      "notes": "keep disposable and ignored, except the status JSON handoff artifacts under `reports/` that document current machine truth",
+      "narrow_test_command": "make verify-static",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": true,
+        "runtime_only": true
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "data_layer/",
+      "owner_lane": "APIs, persistence, and orchestration",
+      "package_role": "schema, CRUD, migrations, CLI",
+      "notes": "shared persistence surface",
+      "narrow_test_command": "pytest -q data_layer/tests",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "deploy/",
+      "owner_lane": "General",
+      "package_role": "deployment and infra artifacts",
+      "notes": "operator-facing",
+      "narrow_test_command": "make verify-static",
+      "canonical_docs": [
+        "docs/REPO_MAP.md",
+        "PROJECT_INSTRUCTIONS.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "develop/",
+      "owner_lane": "Website build guidance",
+      "package_role": "static website route stubs, hidden onboarding surfaces, and leaderboard pages",
+      "notes": "keep public messaging aligned with `docs/numbered/11_PUBLIC_MESSAGING.md` and the numbered-doc lane",
+      "narrow_test_command": "make verify-static",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "diary/",
+      "owner_lane": "General",
+      "package_role": "static website route stubs, hidden onboarding surfaces, and leaderboard pages",
+      "notes": "keep public messaging aligned with `docs/numbered/11_PUBLIC_MESSAGING.md` and the numbered-doc lane",
+      "narrow_test_command": "make verify-static",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "docs/",
+      "owner_lane": "Documentation and publishing",
+      "package_role": "durable docs, ADRs, API notes, onboarding, templates",
+      "notes": "prefer new docs here",
+      "narrow_test_command": "make verify-static",
+      "canonical_docs": [
+        "docs/REPO_MAP.md",
+        "docs/FORK_AND_RUN.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "edge-backlog/",
+      "owner_lane": "Research pipeline and validation",
+      "package_role": "ranked strategy backlog package and tests",
+      "notes": "editable package in root env",
+      "narrow_test_command": "pytest -q edge-backlog/tests",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "elastic/",
+      "owner_lane": "Website build guidance",
+      "package_role": "static website route stubs, hidden onboarding surfaces, and leaderboard pages",
+      "notes": "keep public messaging aligned with `docs/numbered/11_PUBLIC_MESSAGING.md` and the numbered-doc lane",
+      "narrow_test_command": "make verify-static",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "execution/",
+      "owner_lane": "Live trading logic",
+      "package_role": "multi-leg execution contracts and rollback logic",
+      "notes": "keep maker-only rules explicit",
+      "narrow_test_command": "make test",
+      "canonical_docs": [
+        "docs/REPO_MAP.md",
+        "COMMAND_NODE.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "flywheel/",
+      "owner_lane": "General",
+      "package_role": "Unmapped package role",
+      "notes": "",
+      "narrow_test_command": "make test",
+      "canonical_docs": [
+        "docs/REPO_MAP.md",
+        "COMMAND_NODE.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "hub/",
+      "owner_lane": "APIs, persistence, and orchestration",
+      "package_role": "API and Elastic-backed coordination layer",
+      "notes": "shared service boundary",
+      "narrow_test_command": "pytest -q hub/tests",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "infra/",
+      "owner_lane": "Live trading logic",
+      "package_role": "transport, shared clients, infrastructure primitives",
+      "notes": "prefer reuse over duplication",
+      "narrow_test_command": "make test",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "inventory/",
+      "owner_lane": "Non-trading revenue lanes (JJ-N)",
+      "package_role": "methodology-first benchmark catalog and evidence",
+      "notes": "no fake leaderboard claims",
+      "narrow_test_command": "pytest -q tests/test_inventory_service.py",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "kalshi/",
+      "owner_lane": "General",
+      "package_role": "Unmapped package role",
+      "notes": "",
+      "narrow_test_command": "make test",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "leaderboards/",
+      "owner_lane": "Website build guidance",
+      "package_role": "static website route stubs, hidden onboarding surfaces, and leaderboard pages",
+      "notes": "keep public messaging aligned with `docs/numbered/11_PUBLIC_MESSAGING.md` and the numbered-doc lane",
+      "narrow_test_command": "make verify-static",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "live/",
+      "owner_lane": "General",
+      "package_role": "Unmapped package role",
+      "notes": "",
+      "narrow_test_command": "make verify-static",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "logs/",
+      "owner_lane": "General",
+      "package_role": "generated runtime artifacts",
+      "notes": "keep disposable and ignored, except the status JSON handoff artifacts under `reports/` that document current machine truth",
+      "narrow_test_command": "make verify-static",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": true,
+        "runtime_only": true
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "manage/",
+      "owner_lane": "General",
+      "package_role": "static website route stubs, hidden onboarding surfaces, and leaderboard pages",
+      "notes": "keep public messaging aligned with `docs/numbered/11_PUBLIC_MESSAGING.md` and the numbered-doc lane",
+      "narrow_test_command": "make verify-static",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "nontrading/",
+      "owner_lane": "Non-trading revenue lanes (JJ-N)",
+      "package_role": "non-trading revenue automation plus finance control-plane code",
+      "notes": "separate lane from live trading; `nontrading/engines/` holds the five-engine Phase 0 stubs and `nontrading/finance/` holds personal-CFO logic",
+      "narrow_test_command": "make test-nontrading",
+      "canonical_docs": [
+        "docs/REPO_MAP.md",
+        "docs/ops/finance_control_plane.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": "Finance and treasury-sensitive path; respect autonomy caps and destination policy."
+    },
+    {
+      "path": "orchestration/",
+      "owner_lane": "APIs, persistence, and orchestration",
+      "package_role": "flywheel/control-plane workflow logic",
+      "notes": "glue between systems",
+      "narrow_test_command": "pytest -q orchestration/tests",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "polymarket-bot/",
+      "owner_lane": "General",
+      "package_role": "standalone trading bot subproject",
+      "notes": "own packaging and tests",
+      "narrow_test_command": "make test-polymarket",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": "Standalone subproject with separate suite; skip by default unless paths changed."
+    },
+    {
+      "path": "reports/",
+      "owner_lane": "General",
+      "package_role": "generated runtime artifacts",
+      "notes": "keep disposable and ignored, except the status JSON handoff artifacts under `reports/` that document current machine truth",
+      "narrow_test_command": "make verify-static",
+      "canonical_docs": [
+        "reports/manifest_latest.json",
+        "docs/ops/llm_context_manifest.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": true,
+        "runtime_only": false
+      },
+      "heavy_module_warning": "Runtime artifacts and snapshots should stay generated and compact."
+    },
+    {
+      "path": "research/",
+      "owner_lane": "Documentation and publishing",
+      "package_role": "prompts, dispatches, findings, postmortems",
+      "notes": "investigative output",
+      "narrow_test_command": "make verify-static",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": "Large narrative files can bloat LLM context; prefer narrow source loading."
+    },
+    {
+      "path": "roadmap/",
+      "owner_lane": "General",
+      "package_role": "static website route stubs, hidden onboarding surfaces, and leaderboard pages",
+      "notes": "keep public messaging aligned with `docs/numbered/11_PUBLIC_MESSAGING.md` and the numbered-doc lane",
+      "narrow_test_command": "make verify-static",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "scripts/",
+      "owner_lane": "General",
+      "package_role": "reusable repo automation",
+      "notes": "add repeatable workflows here",
+      "narrow_test_command": "make hygiene",
+      "canonical_docs": [
+        "scripts/README.md",
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "shared/",
+      "owner_lane": "General",
+      "package_role": "Unmapped package role",
+      "notes": "",
+      "narrow_test_command": "make test",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "signals/",
+      "owner_lane": "Live trading logic",
+      "package_role": "reusable signal-family helpers",
+      "notes": "often shared by `bot/` and `strategies/`",
+      "narrow_test_command": "make test",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "simulator/",
+      "owner_lane": "Research pipeline and validation",
+      "package_role": "fill, sizing, and sensitivity simulation",
+      "notes": "research lane",
+      "narrow_test_command": "pytest -q simulator/tests",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": "Simulation parameter sweeps can be compute-heavy; keep targeted commands narrow."
+    },
+    {
+      "path": "src/",
+      "owner_lane": "Research pipeline and validation",
+      "package_role": "edge-discovery and control-plane research code",
+      "notes": "research/control lane",
+      "narrow_test_command": "make test",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "state/",
+      "owner_lane": "Personal CFO / treasury control plane",
+      "package_role": "generated runtime artifacts",
+      "notes": "keep disposable and ignored, except the status JSON handoff artifacts under `reports/` that document current machine truth",
+      "narrow_test_command": "make verify-static",
+      "canonical_docs": [
+        "docs/ops/finance_control_plane.md",
+        "AGENTS.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": true
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "strategies/",
+      "owner_lane": "Live trading logic",
+      "package_role": "strategy-specific orchestration",
+      "notes": "promotion needs evidence",
+      "narrow_test_command": "make test",
+      "canonical_docs": [
+        "docs/REPO_MAP.md",
+        "COMMAND_NODE.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "tests/",
+      "owner_lane": "General",
+      "package_role": "Unmapped package role",
+      "notes": "",
+      "narrow_test_command": "make test",
+      "canonical_docs": [
+        "tests/README.md",
+        "CONTRIBUTING.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    },
+    {
+      "path": "tweets/",
+      "owner_lane": "General",
+      "package_role": "Unmapped package role",
+      "notes": "",
+      "narrow_test_command": "make verify-static",
+      "canonical_docs": [
+        "docs/REPO_MAP.md"
+      ],
+      "flags": {
+        "archive": false,
+        "generated": false,
+        "runtime_only": false
+      },
+      "heavy_module_warning": ""
+    }
+  ],
+  "tests_narrow_entrypoints": [
+    {
+      "subsystem": "Root nontrading integration",
+      "command": "`pytest -q tests/nontrading`"
+    },
+    {
+      "subsystem": "Finance control-plane contract",
+      "command": "`pytest -q tests/nontrading/test_finance_control_plane.py`"
+    },
+    {
+      "subsystem": "Nontrading smoke wrapper",
+      "command": "`pytest -q tests/test_nontrading_smoke.py`"
+    },
+    {
+      "subsystem": "Fixture ownership contract",
+      "command": "`pytest -q tests/test_fixture_ownership_contract.py`"
+    },
+    {
+      "subsystem": "Trading execution surface (root suite)",
+      "command": "`pytest -q tests/test_*execution*.py`"
+    },
+    {
+      "subsystem": "Runtime/posture reporting (build/gates)",
+      "command": "`pytest -q tests/test_remote_cycle_status_build_and_gates.py`"
+    },
+    {
+      "subsystem": "Runtime/posture reporting (write/metrics)",
+      "command": "`pytest -q tests/test_remote_cycle_status_write_metrics_and_snapshot.py`"
+    },
+    {
+      "subsystem": "Runtime/posture reporting (write/contracts)",
+      "command": "`pytest -q tests/test_remote_cycle_status_write_runtime_contracts.py`"
+    },
+    {
+      "subsystem": "Runtime/posture reporting (render/bridge)",
+      "command": "`pytest -q tests/test_remote_cycle_status_render_bridge.py`"
+    },
+    {
+      "subsystem": "BTC 5m maker suite (primitives)",
+      "command": "`pytest -q bot/tests/test_btc_5min_maker_primitives.py`"
+    },
+    {
+      "subsystem": "BTC 5m maker suite (process core)",
+      "command": "`pytest -q bot/tests/test_btc_5min_maker_process_window_core.py`"
+    },
+    {
+      "subsystem": "BTC 5m maker suite (process guardrails)",
+      "command": "`pytest -q bot/tests/test_btc_5min_maker_process_window_guardrails.py`"
+    },
+    {
+      "subsystem": "BTC 5m maker suite (reporting)",
+      "command": "`pytest -q bot/tests/test_btc_5min_maker_reporting.py`"
+    },
+    {
+      "subsystem": "Scale comparison (core)",
+      "command": "`pytest -q backtest/tests/test_scale_comparison_core.py`"
+    },
+    {
+      "subsystem": "Scale comparison (wallet flow)",
+      "command": "`pytest -q backtest/tests/test_scale_comparison_wallet_flow.py`"
+    },
+    {
+      "subsystem": "Scale comparison (signal enrichment)",
+      "command": "`pytest -q backtest/tests/test_scale_comparison_signal_enrichment.py`"
+    },
+    {
+      "subsystem": "Script wrappers with test hooks",
+      "command": "`pytest -q tests/test_*script*.py`"
+    },
+    {
+      "subsystem": "JJ live coupled tests (opt-in)",
+      "command": "`ELASTIFUND_ENABLE_JJ_LIVE_SUITE=1 pytest -q tests/test_jj_live_combinatorial.py tests/test_jj_live_sum_violation.py`"
+    },
+    {
+      "subsystem": "Unit marker shard",
+      "command": "`make test-unit`"
+    },
+    {
+      "subsystem": "Integration marker shard",
+      "command": "`make test-integration`"
+    },
+    {
+      "subsystem": "Contract marker shard",
+      "command": "`make test-contract`"
+    },
+    {
+      "subsystem": "Full verification matrix (main/nightly/manual parity)",
+      "command": "`make verify-full-matrix`"
+    }
+  ],
+  "nontrading_package_map_rows": [
+    {
+      "path": "nontrading/main.py",
+      "role": "Revenue lane CLI runner",
+      "operator_entrypoint": "`python -m nontrading`",
+      "status": "Canonical"
+    },
+    {
+      "path": "nontrading/pipeline.py",
+      "role": "Five-stage revenue pipeline orchestration",
+      "operator_entrypoint": "imported by `nontrading/main.py`",
+      "status": "Canonical"
+    },
+    {
+      "path": "nontrading/finance/main.py",
+      "role": "Finance control-plane CLI",
+      "operator_entrypoint": "`python -m nontrading.finance`",
+      "status": "Canonical"
+    },
+    {
+      "path": "nontrading/revenue_audit/",
+      "role": "Checkout, webhook, and fulfillment contracts",
+      "operator_entrypoint": "package API + scripts",
+      "status": "Canonical"
+    },
+    {
+      "path": "nontrading/offers/",
+      "role": "Offer definitions (price, delivery, terms)",
+      "operator_entrypoint": "imported by pipeline/revenue_audit",
+      "status": "Canonical"
+    },
+    {
+      "path": "nontrading/campaigns/",
+      "role": "Campaign sequencing and template selection",
+      "operator_entrypoint": "imported by pipeline",
+      "status": "Canonical"
+    },
+    {
+      "path": "nontrading/email/",
+      "role": "Rendering, provider adapters, and sending abstractions",
+      "operator_entrypoint": "imported by pipeline",
+      "status": "Canonical"
+    },
+    {
+      "path": "nontrading/digital_products/main.py",
+      "role": "Digital-products discovery CLI",
+      "operator_entrypoint": "`python -m nontrading.digital_products`",
+      "status": "Canonical"
+    },
+    {
+      "path": "nontrading/digital_products/",
+      "role": "Niche discovery + optional CRM sync",
+      "operator_entrypoint": "package API + CLI",
+      "status": "Canonical"
+    },
+    {
+      "path": "nontrading/importers/csv_import.py",
+      "role": "Lead import utility",
+      "operator_entrypoint": "`python -m nontrading.importers.csv_import`",
+      "status": "Canonical"
+    },
+    {
+      "path": "nontrading/approval.py",
+      "role": "Unified approval gate implementation",
+      "operator_entrypoint": "imported across lane",
+      "status": "Canonical"
+    },
+    {
+      "path": "nontrading/approval_gate.py",
+      "role": "Re-export shim for legacy imports",
+      "operator_entrypoint": "none",
+      "status": "Compatibility shim"
+    },
+    {
+      "path": "nontrading/engines/",
+      "role": "Stage-level engine implementations",
+      "operator_entrypoint": "imported by pipeline and tests",
+      "status": "Canonical (with compatibility methods)"
+    },
+    {
+      "path": "nontrading/arr_lab.py",
+      "role": "ARR and recurring-monitor reporting helpers",
+      "operator_entrypoint": "scripts/report generation",
+      "status": "Canonical reporting"
+    },
+    {
+      "path": "nontrading/first_dollar.py",
+      "role": "First-dollar readiness and scoreboard helpers",
+      "operator_entrypoint": "scripts/report generation",
+      "status": "Canonical reporting"
+    }
+  ]
+}

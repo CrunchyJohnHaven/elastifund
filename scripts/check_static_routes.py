@@ -13,7 +13,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 TARGET_ROUTE_FILES = {
     "/": ROOT / "index.html",
-    "/build/": ROOT / "build" / "index.html",
     "/develop/": ROOT / "develop" / "index.html",
     "/elastic/": ROOT / "elastic" / "index.html",
     "/live/": ROOT / "live" / "index.html",

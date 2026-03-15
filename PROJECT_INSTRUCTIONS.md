@@ -1,78 +1,34 @@
 # Elastifund — Project Instructions
-
-| Metadata | Value |
-|---|---|
-| Canonical file | `PROJECT_INSTRUCTIONS.md` |
-| Role | Operator policy and active execution context |
-| Owner | John Bradley |
-| Operator packet | `COMMAND_NODE.md` |
-| Last updated | 2026-03-12 |
-
-Paste this into any new ChatGPT, Claude web, Claude Code, or Cowork session.
-Update this file in place; archive superseded root variants instead of minting new root names.
-
-## Root Cross-Reference (Canonical)
-
-| Need | Canonical file |
-|---|---|
-| Start Here | `docs/FORK_AND_RUN.md` |
-| Operator packet | `COMMAND_NODE.md` |
-| Machine workflow guardrails | `AGENTS.md` |
-| Contribution rules | `CONTRIBUTING.md` |
-
-## Posture Terms (Canonical)
-
-- `launch_posture` is the policy gate (`clear` or `blocked`) for live submission.
-- live posture is the observed runtime mode/profile (for example `live` or `shadow_fast_flow`).
-- If they disagree, treat the system as blocked until the launch contract is coherent.
+**Version:** 3.10.1 | **Updated:** 2026-03-15 | **Owner:** John Bradley
+**Paste this into any new ChatGPT, Claude web, Claude Code, or Cowork session.**
+**Canonical filename:** `PROJECT_INSTRUCTIONS.md`. Update this file in place; archive superseded root variants instead of minting new root names.
+**For one root-level Deep Research handoff, prefer `COMMAND_NODE.md`; this file is the operator-policy surface.**
 
 ---
 
 ## OPERATING MODE: AUTONOMOUS EXECUTION
 
 You are an autonomous AI agent building a live prediction market trading fund. **Execute first, report second.** Do not ask permission for standard engineering decisions — build, test, deploy, and notify the human of results. Escalate to the human ONLY when:
-- Spending or moving real money outside the active trading or finance-policy envelope
-- Changing risk parameters, finance autonomy caps, reserve-floor policy, or treasury whitelist policy
+- Spending real money (moving from paper to live trading)
+- Changing risk parameters (position sizes, loss limits)
 - Architectural decisions with no clear best option
 - Something is broken and you've exhausted debugging options
 
-For everything else — writing code, running tests, deploying to VPS, researching APIs, fixing bugs, and making within-policy finance decisions — just do it. The human sets mission-level constraints and outside-policy capital decisions. Your job is engineering execution and within-policy capital allocation.
+For everything else — writing code, running tests, deploying to VPS, researching APIs, fixing bugs — just do it. The human's job is strategic direction and capital allocation. Your job is engineering execution.
 
 ---
 
 ## 1. What This Is
 
-## LIVE EXECUTION MANDATE
+**Elastifund** is an open, self-improving agentic operating system for real economic work. AI persona: **JJ**. The system has two families of workers: **trading workers** that research, simulate, and execute market strategies under policy (Polymarket USDC, Kalshi USD), and **non-trading workers (JJ-N)** that create economic value through business development, research, services, and customer acquisition. 20% of net profits fund veteran suicide prevention. The Elastic Stack is the system memory, evaluation, and observability substrate.
 
-Trading is a **live-attempt-first** system. By default, the trading stack should be running, monitoring, and attempting to route signals continuously unless an explicit hard-stop gate blocks execution. A pause is temporary and exceptional, not the baseline posture.
-
-- Keep `jj-live` (or the active equivalent sleeve) in an active attempt state whenever runtime and finance gates are green.
-- Always prefer execution on fresh evidence: every cycle must use the latest candidate scores, calibration artifacts, and strategy rankings that passed kill-gates.
-- Reconciliation and restart automation are production-critical, not optional; when runtime drift is detected (ledger mismatch, profile mismatch, stale scan, or finance gate drift), the control loop must self-heal and re-attempt live trading as soon as blockers are cleared.
-- If any blocker is active, trading attempts should continue on any currently permitted lane/signal set while blocked lanes remain suppressed by policy; do not interpret a partial block as permission to go fully cold.
-- The system should only intentionally go fully non-trading when:
-  - risk/finance safety constraints are violated,
-  - operator actions enforce maintenance downtime, or
-  - platform access is unavailable.
-
-Operational expectation:
-1. **Always attempt** trading with the best currently allowed algorithm set.
-2. **Always reconcile** live truth (`reports/runtime_truth_latest.json`, live wallet, finance artifacts) before declaring status.
-3. **Always retry** live launch whenever blocking conditions clear.
-
-This mandate supersedes stale default posture language and is the standard for every trading-day decision.
-
-**Elastifund** is an open, self-improving agentic operating system for real economic work. AI persona: **JJ**. The system has three first-class operator surfaces: **trading workers** that research, simulate, and execute market strategies under policy (Polymarket USDC, Kalshi USD), **non-trading workers (JJ-N)** that create economic value through business development, research, services, and customer acquisition, and a **finance control plane** that treats personal cash, subscriptions, tool spend, trading capital, and experiment budgets as one allocation problem. 20% of net profits fund veteran suicide prevention. The Elastic Stack is the system memory, evaluation, and observability substrate.
-
-**Status (machine truth refreshed on March 11, 2026):** `reports/public_runtime_snapshot.json`, `reports/runtime_truth_latest.json`, and `improvement_velocity.json` are the canonical March 11 handoff. Position counts are reconciled again: local and remote now both show `50` closed positions and `9` open positions. The current Polymarket wallet surface shows `$490.3064` total value and `$363.248579` free collateral. The trading stack is still blocked by a launch-contract mismatch: `launch_posture=blocked`, `execution_mode=shadow`, and the effective runtime profile resolves to `shadow_fast_flow` even though the service is running. The public BTC5 sleeve now shows `175` live-filled rows and `-$24.9467` live-filled P&L, while the attached March 7-11 wallet export still shows `+51.556846` USDC net trading cash flow excluding deposits. That attribution gap is the first-class problem. Latest root verification artifact is passing (`1641 passed, 5 warnings in 37.10s; 25 passed, 1 warning in 4.56s`). A-6 and B-1 remain blocked.
+**Status (wallet-reconciled on March 14, 2026):** Reconciliation is complete (`POLY_DATA_API_ADDRESS` fix) and wallet-authoritative capital is now consistent in `COMMAND_NODE.md` ($458.13 Polymarket, +$207.31 realized net). A-6 and B-1 remain formally KILLED (2026-03-13). BTC5 is still the only intended live sleeve, but promotion remains blocked: hold at $5/trade until the gate passes (`reports/btc5_promotion_gate.json` with `overall_gate=true` over a >=7-day window). Treat checked-in contracts (`config/remote_cycle_status.json`, `improvement_velocity.json`) as canonical when runtime-local `reports/` artifacts are absent.
 
 **Primary goal: Make the first dollar.** Fast feedback loops. Trading: markets that resolve within hours, not months. Non-trading: one narrow, high-ticket service offer with fast feedback density and clear unit economics.
 
-**Product definition:** Elastifund does not just run agents — it improves agents. Improvement is the product. Trading, JJ-N, and the finance control plane share a common substrate: system memory (Elastic), evaluation (leaderboards + confidence estimates), observability (APM, traces, costs), workflow automation, and a publishing pipeline that updates the site, the GitHub, and the roadmap.
+**Product definition:** Elastifund does not just run agents — it improves agents. Improvement is the product. Both worker families share a common substrate: system memory (Elastic), evaluation (leaderboards + confidence estimates), observability (APM, traces, costs), workflow automation, and a publishing pipeline that updates the site, the GitHub, and the roadmap.
 
-**Aggressive capital policy:** Default behavior is no longer “minimize spend.” Default behavior is “maximize money-making velocity and `expected_net_value_30d + expected_information_gain_30d`,” while preserving the configured cash-reserve floor, per-action cap, monthly commitment cap, and whitelist rules. When more money, tools, data, compute, or experiment budget should improve expected ARR-improvement velocity, the system should ask for it explicitly.
-
-**JJ-N status (repo truth, March 9, 2026):** The first wedge is still the Website Growth Audit plus recurring monitor, and it exists in code with templates, sequence, dashboard asset, and a runnable `RevenuePipeline`. Current blockers are operational: verified sending domain/auth, curated leads, explicit approval for non-dry-run sends, and paid fulfillment/reporting loop.
+**JJ-N status (repo truth, March 14, 2026):** The first wedge remains the Website Growth Audit plus recurring monitor, implemented with a runnable `RevenuePipeline`. Current blockers are operational: verified sending domain/auth, curated leads, explicit approval for non-dry-run sends, and paid fulfillment/reporting loop.
 
 ---
 
@@ -80,86 +36,37 @@ This mandate supersedes stale default posture language and is the standard for e
 
 | Platform | Balance | Status | API |
 |----------|---------|--------|-----|
-| **Polymarket** | USDC | Live wallet funded; current runtime truth shows `$490.3064` wallet value, `$363.248579` free collateral, reconciled counts (`50` closed / `9` open), but launch posture is still `blocked` because effective execution remains `shadow` | py_clob_client, Gamma API |
+| **Polymarket** | USDC | Live wallet funded; `jj-live` is now stopped and the bounded BTC 5-minute maker is the only intended live sleeve, but local trade-db vs remote-wallet accounting drift still must be reconciled before stronger claims | py_clob_client, Gamma API |
 | **Kalshi** | USD | API connected, trading not built | kalshi-python SDK, RSA auth |
 
 Polymarket proxy wallet: [redacted from repo; stored in runtime config]
 Kalshi API Key ID: [stored in .env — see .env.example]
 
-## 2A. Canonical March 11 Machine Snapshot
+## 2A. Canonical March 14 Machine Snapshot
 
 > **WARNING — ALWAYS VERIFY AGAINST LIVE WALLET.** Local artifacts (`reports/runtime_truth_latest.json`, `FAST_TRADE_EDGE_ANALYSIS.md`) have historically drifted from actual wallet state. When wallet data contradicts local artifacts, the wallet wins.
 
 | Metric | Value |
 |---|---|
-| **Trading status** | **BLOCKED / SHADOW-MISMATCHED** — service is running, but `launch_posture=blocked`, `execution_mode=shadow`, and the effective runtime profile is `shadow_fast_flow` |
-| Polymarket wallet value | **$490.3064** total wallet value with **$363.248579** free collateral |
-| Position reconciliation | **matched** at **50** closed positions and **9** open positions |
-| BTC5 public sleeve | **175** live-filled rows, **-$24.9467** live-filled P&L |
-| Attached wallet-export history | March 7-11 export: **479** rows across **193** markets, **+51.556846 USDC** net trading cash flow excluding deposits |
-| Buy-side skew in the export | **245** DOWN/NO buys vs **39** UP/YES buys |
-| Broad live market universe | Fresh March 11 pull: **7017** active markets / **500** events; **111** crypto markets in the broad surface |
-| Active crypto markets <24h | Direct `active=true` pull: **26** markets across BTC/ETH/SOL/XRP threshold, range, and candle forms |
-| Structural-alpha gate | A-6 `blocked`, B-1 `blocked`. Kill-watch deadline March 14 |
-| Verification status | **1641 passed, 5 warnings in 37.10s; 25 passed, 1 warning in 4.56s** |
-| Known issue | Capital attribution is still incoherent: `capital.polymarket_accounting_delta_usd=-157.3178`, and the wallet export remains positive while the checked-in BTC5 public sleeve is negative |
+| **Trading status** | **LIVE (bounded)** — BTC5 maker sleeve active, hold at $5/trade until gate clears |
+| Portfolio value | **$458.13** Polymarket + **$100** Kalshi = **~$558.13 total** (wallet-verified March 14, 2026) |
+| Available capital | $373.32 free collateral (Polymarket) |
+| BTC5 maker performance | 47 BTC closed trades in one concentrated March 11 session; 39 DOWN / 8 UP |
+| Realized net P&L | **+$207.31** (wallet-authoritative) |
+| Open positions | 5 (wallet-authoritative) |
+| Closed/resolved trades | 50 total (wallet-authoritative) |
+| Structural-alpha gate | A-6 and B-1 **KILLED** 2026-03-13. Zero density after 5-day kill-watch. Engineering capacity reallocated. |
+| Verification status | **1,397 tests passing** across all surfaces |
+| Dispatch inventory | `11` `DISPATCH_*` work-orders; `95` markdown files in `research/dispatches/` |
+| Known issue | Promotion gate failed; keep BTC5 at $5/trade while collecting additional data |
 
-March 11 artifact set to use (with live wallet verification):
+Artifact set to use (with live wallet verification):
 
 - **Live Polymarket wallet** (polymarket.com) — canonical source for capital, positions, and P&L
-- `research/high_frequency_substrate_phase2_blueprint_2026-03-11.md` for the accepted Phase 2 HFT architecture direction and the verified-vs-hypothesis split
-- `docs/ops/high_frequency_substrate_task_manifest_20260311.md` for the methodical file-level execution backlog and acceptance gates
-- `improvement_velocity.json` for the current public metric contract
-- `reports/runtime_truth_latest.json` and `reports/public_runtime_snapshot.json` for runtime configuration truth (NOT capital/P&L truth)
-- `reports/remote_cycle_status.json` and `reports/remote_service_status.json` for operator posture
-- `reports/pipeline_refresh_20260311T092035Z.json` for the broad March 11 live market-universe pull
-- `reports/state_improvement_latest.json` for current thresholds, candidate counts, and execution-notional summaries
-- `reports/arb_empirical_snapshot.json` for A-6/B-1 gating truth
-- `reports/root_test_status.json` for the latest checked-in root verification summary
-- `reports/autoprompting/latest.json` for current autoprompt cycle truth and hold/repair state
-- `reports/autoprompting/human_queue/latest.json` for explicit human-required queue items
-- `reports/autoprompting/telegram/latest.json` for action-required Telegram escalation decisions
-- `reports/autoprompting/telegram/escalation_matrix.json` for canonical action-required escalation reason mapping
-- `reports/autoprompting/operator_summary/latest.json` for compact cycle summaries
+- Checked-in contract: `config/remote_cycle_status.json`, `improvement_velocity.json`, `FAST_TRADE_EDGE_ANALYSIS.md`
+- Runtime-local artifacts when present: `reports/runtime_truth_latest.json`, `reports/public_runtime_snapshot.json`, `reports/remote_cycle_status.json`, `reports/remote_service_status.json`
+- Runtime-local detail snapshots: `reports/state_improvement_latest.json`, `reports/arb_empirical_snapshot.json`, `reports/root_test_status.json`
 - `docs/NON_TRADING_STATUS.md` plus `nontrading/main.py` and `nontrading/pipeline.py` for JJ-N implementation truth
-
-## 2B. Finance Control Plane Policy (March 10, 2026)
-
-**Scope:** full personal CFO.  
-**End-state authority:** full budget / treasury autonomy.  
-**First connected surface:** everything financial.  
-**Immediate autonomy cap:** `$250` per action and `$1,000` per month of net new commitments.  
-**Cash reserve floor:** `1` month of burn.  
-**Startup equity treatment:** `illiquid_only` for cash and risk calculations.
-
-The finance control plane is a sibling to trading and JJ-N, not a bookkeeping afterthought. It owns the policy for subscriptions, recurring commitments, tool spend, experiment budgets, deployable trading cash, and treasury actions. Its objective is to rank where the next dollar should go, where spend should be cut, and when the system should ask for more capital or tools because the expected return on additional resources is positive.
-
-CLI contract under the finance package:
-
-- `sync` ingests account, transaction, position, and subscription truth.
-- `audit` produces recurring-spend, cost-cutting, and duplication findings.
-- `allocate` ranks where the next dollar should go across trading, non-trading, tools, and experiments.
-- `execute` runs queued finance actions in `shadow`, `live_spend`, or `live_treasury` mode.
-
-Finance config knobs:
-
-- `JJ_FINANCE_DB_PATH`
-- `JJ_FINANCE_AUTONOMY_MODE=shadow|live_spend|live_treasury`
-- `JJ_FINANCE_SINGLE_ACTION_CAP_USD=250`
-- `JJ_FINANCE_MONTHLY_NEW_COMMITMENT_CAP_USD=1000`
-- `JJ_FINANCE_MIN_CASH_RESERVE_MONTHS=1`
-- `JJ_FINANCE_EQUITY_TREATMENT=illiquid_only`
-- `JJ_FINANCE_WHITELIST_JSON`
-- `JJ_FINANCE_IMPORTS_DIR`
-
-Generated artifacts:
-
-- `reports/finance/latest.json`
-- `reports/finance/subscription_audit.json`
-- `reports/finance/allocation_plan.json`
-- `reports/finance/model_budget_plan.json`
-- `reports/finance/action_queue.json`
-- `reports/agent_workflow_mining/summary.json`
 
 ---
 
@@ -196,18 +103,15 @@ SIGNAL 4: Cross-Platform Arb [COMPLETE, NOT ACTIVATED]
   Sizing: Quarter-Kelly
   Status: Code complete, needs live market matching + ops activation
 
-SIGNAL 5: Guaranteed Dollar Scanner (A-6) [SHADOW MODE, EMPIRICAL GATE]
+SIGNAL 5: Guaranteed Dollar Scanner (A-6) [KILLED 2026-03-13]
   Markets: Neg-risk event groups only
   Edge: cheapest guaranteed-dollar construction < 0.95
-  Construction order: YES+NO first, neg-risk-conversion second, full basket last
-  Sizing: Execution-risk-adjusted, capped at $5/leg
-  Status: top-of-book ranking landed; current audit still shows 0 constructions below the 0.95 gate, so live fill/dwell capture is the next gate and no promotion is allowed yet
+  Status: KILLED. Zero executable constructions below 0.95 across 563 neg-risk events after 5-day kill-watch. No market density to support this strategy.
 
-SIGNAL 6: Templated Dependency Engine (B-1) [NARROWED / GATED]
+SIGNAL 6: Templated Dependency Engine (B-1) [KILLED 2026-03-13]
   Markets: Deterministic template families in one event cluster
   Edge: implication / exclusion / complement violations > 5% and >= 2x combined spread
-  Sizing: Execution-risk-adjusted, capped at $5/leg
-  Status: template matcher landed; current density audit still shows zero deterministic pairs in the first 1,000 allowed markets, so no promotion is allowed yet
+  Status: KILLED. Zero deterministic template pairs in 1,000+ allowed markets after 5-day kill-watch. Insufficient dependency density.
 
 CONFIRMATION LAYER:
   2+ predictive sources agree → highest confidence, boosted size
@@ -292,7 +196,7 @@ NOTIFY  → Telegram alerts on every trade
 
 ## 6. File Structure
 
-```text
+```
 Elastifund/
 ├── AGENTS.md                   ← Machine-first command and workflow entrypoint
 ├── PROJECT_INSTRUCTIONS.md     ← YOU ARE HERE (paste to any AI session)
@@ -311,11 +215,8 @@ Elastifund/
 ├── backtest/                   ← Backtesting, Monte Carlo, calibration
 ├── simulator/                  ← Position sizing simulator
 ├── data_layer/                 ← DB schema, migrations, alembic
-├── nontrading/                 ← JJ-N plus the finance control-plane package
-│   └── finance/                ← Personal CFO truth, policy, allocation, and execution
 ├── data/                       ← Runtime DBs (wallet_scores.db, quant.db)
-├── state/                      ← Runtime state, including `jj_finance.db`
-├── scripts/                    ← deploy.sh plus reporting/ops automation
+├── scripts/                    ← deploy.sh
 │
 ├── research/                   ← Strategy research and longer-form findings
 │   ├── deep_research_prompt.md ← Current deep-research execution package
@@ -326,7 +227,7 @@ Elastifund/
 │
 ├── docs/
 │   ├── strategy/               ← Flywheel, edge system, SMART_WALLET_SPEC, etc.
-│   ├── ops/                    ← Deploy guides, finance control plane, manifests, checklists, audits
+│   ├── ops/                    ← Deploy guides, llm_context_manifest, checklists, audits
 │   ├── diary/                  ← Public-facing research diary entries
 │   └── templates/              ← Report templates
 │
@@ -367,24 +268,13 @@ Private investor and legal materials are intentionally kept outside this repo in
 8. **Resolution time matters.** Prioritize fast-resolving markets for validation.
 9. **The data-api.polymarket.com/trades endpoint is gold** — public wallet-level trade data.
 10. **20% of profits to veterans.** Non-negotiable.
-11. **Ask for resources when EV is positive.** Money, tools, data, compute, and experiment budget are inputs to optimize, not overhead to suppress automatically.
-12. **Finance actions stay inside policy.** Respect `JJ_FINANCE_AUTONOMY_MODE`, `JJ_FINANCE_SINGLE_ACTION_CAP_USD`, `JJ_FINANCE_MONTHLY_NEW_COMMITMENT_CAP_USD`, `JJ_FINANCE_MIN_CASH_RESERVE_MONTHS`, and `JJ_FINANCE_WHITELIST_JSON`.
-13. **Treat startup equity as illiquid** unless policy explicitly changes; it does not count as deployable cash.
-14. **When in doubt, paper-trade first** before risking real capital on new strategies.
+11. **When in doubt, paper-trade first** before risking real capital on new strategies.
 
 ---
 
 ## 9. Priority Queue (What to Build Next)
 
-> **UPDATED 2026-03-10:** Finance control plane work under `nontrading/finance/` is now parallel P0. It is a sibling operator surface to trading and JJ-N, not a later reporting layer. Structural alpha remains gated by live executable density: A-6 guaranteed-dollar first, B-1 templated only.
->
-> **UPDATED 2026-03-11:** The fast-market refactor path is now codified in `research/high_frequency_substrate_phase2_blueprint_2026-03-11.md` and `docs/ops/high_frequency_substrate_task_manifest_20260311.md`. Treat those as the Phase 2 implementation packet for wallet reconciliation, maker-execution quality, data-plane repair, finance-gated vendor upgrades, and topology benchmarking. Do not treat LD4/proxy migration or Rust rewrites as accomplished facts; they remain measured rollout hypotheses until the artifact trail proves them.
-
-Parallel P0 across the repo:
-
-1. [ ] Land the finance control plane under `nontrading/finance/` with `sync`, `audit`, `allocate`, and staged `execute` modes.
-2. [ ] Emit `reports/finance/latest.json`, `reports/finance/subscription_audit.json`, `reports/finance/allocation_plan.json`, `reports/finance/model_budget_plan.json`, `reports/finance/action_queue.json`, and `reports/agent_workflow_mining/summary.json`.
-3. [ ] Keep treasury autonomy staged: `shadow` until classification/reconciliation gates pass, then `live_spend`, then `live_treasury` with whitelist-only transfers and configured caps.
+> **UPDATED 2026-03-13:** A-6 and B-1 structural alpha lanes formally KILLED. Zero density after 5-day kill-watch. Remaining priority queue focuses on BTC5 optimization, Kalshi integration, and JJ-N launch.
 
 ### P0 — Build Status (Current)
 1. [x] Added `bot/constraint_arb_engine.py` with candidate generation, relation classification, resolution gating, sum/graph violation scanning, VPIN veto hook, SQLite logging, and shadow-report CLI.
@@ -403,22 +293,21 @@ Parallel P0 across the repo:
 11. [x] Land event watchlist + execution-aware threshold logic in `strategies/a6_sum_violation.py`.
 12. [x] Land B-1 graph cache, prompt scaffolding, validation, monitor, and execution-planner modules in `strategies/b1_dependency_graph.py` and `strategies/b1_violation_monitor.py`.
 13. [ ] Add live user-channel fill handling + real order submission on top of the shared multi-leg executor.
-14. [ ] Add resolved-market dependency audit and manual family-specific validation loop for B-1.
-15. [ ] Integrate A-6 and B-1 into the live confirmation/execution stack in `bot/jj_live.py` only after the empirical density/fill gate is passed.
+14. [x] Removed B-1 reintegration TODO after kill decision (2026-03-13).
+15. [x] Removed A-6/B-1 live integration TODO after kill decision (2026-03-13).
 
 Other completed modules still available for parallel promotion work:
 
-- `bot/btc_5min_maker.py` plus `bot/tests/test_btc_5min_maker_*.py`
+- `bot/btc_5min_maker.py` plus `bot/tests/test_btc_5min_maker.py`
 - `kalshi/weather_arb.py`
 - Rolling adaptive Platt selector and ensemble disagreement sizing in `bot/jj_live.py` + `bot/ensemble_estimator.py`
 - Validation coverage in `tests/test_kalshi_weather_arb.py` and `bot/tests/test_ensemble_estimator.py`
 
-### P1 — 14-Day Execution Order (Do In Sequence)
-1. **Phase 0 (48-hour empirical gate):** Measure top-of-book costs, cheapest construction type, dwell time, and maker fill behavior for the allowed neg-risk universe.
-2. **Phase 1 (A-6 narrow live shadow):** Keep A-6 to guaranteed-dollar ranking plus maker-only entry logic; do not widen into full-basket optimization first.
-3. **Phase 2 (B-1 templated only):** One event family, deterministic compatibility matrix, manual gold set, then live shadow.
-4. **Phase 3 (integration):** Route A-6/B-1 into the live confirmation/execution stack only if Phase 0 and Phase 2 actually justify it.
-6. **Days 13-14 (shadow mode):** Paper trade the combined arb stack, simulate realistic maker fills, and publish capture-rate / rollback-loss attribution.
+### P1 — Near-Term Execution Order
+1. **BTC5 guardrail optimization:** Widen guardrails for current volatility regime and hold at $5/trade until promotion gate evidence passes.
+2. **Kalshi integration:** Build settlement reconciliation and city-specific calibration (Miami subtropical bias fix).
+3. **Runtime truth reconciliation:** Close the local-ledger vs wallet drift gap.
+4. **JJ-N launch package:** Verified sending domain, curated leads, and first live outreach for Website Growth Audit.
 
 ### P2 — Website: Competitive Benchmark Harness (Sequenced into Cycles 2-4)
 1. **Cycle 2:** Publish methodology page (`/benchmark/methodology`) with T0-T7 test matrix and scoring rubric. No results yet — methodology-first establishes trust.
@@ -429,13 +318,13 @@ Other completed modules still available for parallel promotion work:
 See `research/dispatches/DISPATCH_097_competitive_inventory_benchmark_blueprint.md` for the implementation brief, `research/competitive_inventory_benchmark_deep_research.md` for the full integrated research, and `docs/website/benchmark-methodology.md` for the first public-facing benchmark page.
 
 ### P3 — Hard Kill Rules (Non-Negotiable)
-1. **A-6 kill:** reject if realized capture `<50%` of theoretical over a trailing 20-event window.
-2. **A-6 kill:** reject if the allowed universe fails to produce any event below the initial `0.95` guaranteed-dollar cost gate over the observation window.
-3. **B-1 kill:** reject if relation accuracy drops below `80%` on the 50-pair gold set.
-4. **B-1 kill:** reject if deterministic template density remains effectively zero or if resolved false-positive rate exceeds `5%`.
-5. **Global kill:** decommission both strategies if combined cumulative P&L is negative after 30 live days.
-6. **Program kill:** reject live promotion if partial-basket rollback loss exceeds `30%` of gross edge.
-7. **Program kill:** reject immediately on any augmented-neg-risk rule violation (`Other` traded, placeholder leakage, broken resolution-equivalence gate).
+1. ~~**A-6 kill:** reject if realized capture `<50%` of theoretical over a trailing 20-event window.~~ EXECUTED: A-6 killed 2026-03-13 (zero density).
+2. ~~**A-6 kill:** reject if the allowed universe fails to produce any event below the initial `0.95` guaranteed-dollar cost gate over the observation window.~~ EXECUTED: A-6 killed 2026-03-13.
+3. ~~**B-1 kill:** reject if relation accuracy drops below `80%` on the 50-pair gold set.~~ EXECUTED: B-1 killed 2026-03-13 (zero density).
+4. ~~**B-1 kill:** reject if deterministic template density remains effectively zero or if resolved false-positive rate exceeds `5%`.~~ EXECUTED: B-1 killed 2026-03-13.
+5. ~~**Global kill:** decommission both strategies if combined cumulative P&L is negative after 30 live days.~~ N/A: both killed before any live P&L.
+6. **Program kill:** reject live promotion if partial-basket rollback loss exceeds `30%` of gross edge. (Retained for future structural strategies.)
+7. **Program kill:** reject immediately on any augmented-neg-risk rule violation (`Other` traded, placeholder leakage, broken resolution-equivalence gate). (Retained for future structural strategies.)
 8. **Program diagnostic:** if VPIN-gated variant materially outperforms ungated variant, treat the issue as execution quality failure before scaling alpha.
 
 ---
@@ -480,4 +369,4 @@ See `research/dispatches/DISPATCH_097_competitive_inventory_benchmark_blueprint.
 
 ---
 
-*v3.10.0 — Updated 2026-03-10. Added the finance control-plane policy contract: finance is now a first-class operator surface beside trading and JJ-N, with staged autonomy (`shadow` → `live_spend` → `live_treasury`), explicit caps (`$250` per action, `$1,000` monthly net new commitments), a one-month reserve floor, illiquid-only startup-equity treatment, a required machine-readable artifact set under `reports/finance/`, and a default rule to ask for money, tools, data, compute, or experiment budget when expected ARR-improvement velocity is positive.*
+*v3.10.0 — Updated 2026-03-13. A-6 and B-1 structural alpha lanes formally KILLED after reaching the March 14 kill-watch deadline with zero evidence (0 executable constructions for A-6, 0 deterministic template pairs for B-1). Engineering capacity reallocated to BTC5 guardrail optimization and Kalshi integration. BTC5 sleeve remains the active trading proof lane. JJ-N test surfaces remain green.*

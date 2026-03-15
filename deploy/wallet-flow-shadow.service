@@ -1,0 +1,20 @@
+[Unit]
+Description=Wallet Flow Shadow Signal Runner
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/polymarket-trading-bot
+Environment="PYTHONPATH=/home/ubuntu/polymarket-trading-bot:/home/ubuntu/polymarket-trading-bot/bot"
+EnvironmentFile=/home/ubuntu/polymarket-trading-bot/.env
+ExecStart=/usr/bin/python3 bot/shadow_runner.py --lane wallet_flow --continuous
+Restart=on-failure
+RestartSec=60
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wallet-flow-shadow
+
+[Install]
+WantedBy=multi-user.target

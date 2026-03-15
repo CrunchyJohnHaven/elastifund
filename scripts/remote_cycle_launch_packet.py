@@ -49,6 +49,34 @@ def _expected_agent_modes_for_execution(execution_mode: str) -> set[str]:
     return compatible_agent_modes.get(normalized, {"micro_live", "live", "shadow", "research"})
 
 
+def _is_advisory_contract_mismatch(code: str) -> bool:
+    normalized = str(code or "").strip()
+    return normalized in {
+        "launch_order_alignment",
+        "service_launch_order_consistency",
+    }
+
+
+def _is_advisory_launch_blocker(reason: str) -> bool:
+    normalized = str(reason or "").strip().lower()
+    if not normalized:
+        return False
+    if normalized in {"no_closed_trades", "finance_gate_blocked"}:
+        return True
+    advisory_tokens = (
+        "wallet_export_stale",
+        "stage_upgrade",
+        "selected_runtime_package",
+        "trailing_",
+        "confirmation_coverage",
+        "trade_attribution_not_ready",
+        "wallet_flow_vs_llm_not_ready",
+        "signal_source_audit",
+        "no closed trades",
+    )
+    return any(token in normalized for token in advisory_tokens)
+
+
 def _build_launch_contract_checks(*, contract: dict[str, Any]) -> list[dict[str, Any]]:
     service_state = str(contract.get("service_state") or "unknown").strip().lower()
     agent_run_mode = str(contract.get("agent_run_mode") or "unknown").strip().lower()
@@ -243,6 +271,57 @@ def _build_launch_state_bundle(runtime_truth_snapshot: dict[str, Any]) -> dict[s
     }
 
 
+def _resolve_canonical_live_profile_id(runtime_truth_snapshot: dict[str, Any]) -> str | None:
+    selected_package = dict(runtime_truth_snapshot.get("btc5_selected_package") or {})
+    candidates = (
+        runtime_truth_snapshot.get("canonical_live_profile_id"),
+        selected_package.get("canonical_live_profile"),
+        selected_package.get("selected_active_profile_name"),
+        runtime_truth_snapshot.get("effective_runtime_profile"),
+        runtime_truth_snapshot.get("selected_runtime_profile"),
+        selected_package.get("selected_policy_id"),
+        selected_package.get("selected_best_profile_name"),
+    )
+    for value in candidates:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _resolve_canonical_live_package_hash(
+    runtime_truth_snapshot: dict[str, Any],
+    *,
+    canonical_live_profile_id: str | None,
+) -> str | None:
+    selected_package = dict(runtime_truth_snapshot.get("btc5_selected_package") or {})
+    candidates = [
+        (
+            str(selected_package.get("canonical_live_profile") or "").strip(),
+            str(selected_package.get("canonical_live_package_hash") or "").strip(),
+        ),
+        (
+            str(selected_package.get("selected_active_profile_name") or "").strip(),
+            str(selected_package.get("selected_active_package_hash") or "").strip(),
+        ),
+        (
+            str(selected_package.get("selected_best_profile_name") or "").strip(),
+            str(selected_package.get("selected_best_package_hash") or "").strip(),
+        ),
+    ]
+    snapshot_hash = str(runtime_truth_snapshot.get("canonical_live_package_hash") or "").strip()
+    if snapshot_hash:
+        return snapshot_hash
+    if canonical_live_profile_id:
+        for profile_name, package_hash in candidates:
+            if profile_name and profile_name == canonical_live_profile_id and package_hash:
+                return package_hash
+    for _profile_name, package_hash in candidates:
+        if package_hash:
+            return package_hash
+    return None
+
+
 def _bounded_stage1_restart_context(runtime_truth_snapshot: dict[str, Any]) -> dict[str, Any]:
     selected_package = dict(runtime_truth_snapshot.get("btc5_selected_package") or {})
     deployment_confidence = dict(runtime_truth_snapshot.get("deployment_confidence") or {})
@@ -330,6 +409,11 @@ def build_canonical_launch_packet(
     improvement_velocity = dict(state_improvement.get("improvement_velocity") or {})
     improvement_deltas = dict(improvement_velocity.get("deltas") or {})
     launch_state = _build_launch_state_bundle(runtime_truth_snapshot)
+    canonical_live_profile_id = _resolve_canonical_live_profile_id(runtime_truth_snapshot)
+    canonical_live_package_hash = _resolve_canonical_live_package_hash(
+        runtime_truth_snapshot,
+        canonical_live_profile_id=canonical_live_profile_id,
+    )
 
     contract = {
         "service_state": (launch_state.get("service") or {}).get("state") or "unknown",
@@ -342,8 +426,18 @@ def build_canonical_launch_packet(
     }
     contract_checks = _build_launch_contract_checks(contract=contract)
     failed_contract_checks = [item for item in contract_checks if not item.get("pass")]
-    drift_kill_reasons = [f"{item['code']}: {item['detail']}" for item in failed_contract_checks]
-    drift_kill_triggered = bool(failed_contract_checks)
+    advisory_failed_contract_checks = [
+        item
+        for item in failed_contract_checks
+        if _is_advisory_contract_mismatch(str(item.get("code") or ""))
+    ]
+    hard_failed_contract_checks = [
+        item
+        for item in failed_contract_checks
+        if not _is_advisory_contract_mismatch(str(item.get("code") or ""))
+    ]
+    drift_kill_reasons = [f"{item['code']}: {item['detail']}" for item in hard_failed_contract_checks]
+    drift_kill_triggered = bool(hard_failed_contract_checks)
 
     candidate_delta_arr_pct = _float_or_none(
         first_nonempty(
@@ -385,6 +479,23 @@ def build_canonical_launch_packet(
     finance_gate_pass = bool(finance_gate.get("finance_gate_pass"))
     treasury_gate_pass = bool(finance_gate.get("treasury_gate_pass", finance_gate_pass))
     bounded_stage1_restart = _bounded_stage1_restart_context(runtime_truth_snapshot)
+    baseline_safety_ok = bool(
+        contract.get("service_state") == "running"
+        and contract.get("execution_mode") == "live"
+        and contract.get("allow_order_submission")
+        and contract.get("order_submit_enabled")
+        and contract.get("paper_trading") is not True
+        and finance_gate_pass
+    )
+    launch_blocked_checks = [
+        str(item).strip()
+        for item in list(launch.get("blocked_checks") or [])
+        if str(item).strip()
+    ]
+    advisory_launch_blocked_only = bool(launch_blocked_checks) and all(
+        _is_advisory_launch_blocker(check)
+        for check in launch_blocked_checks
+    )
 
     block_reasons = dedupe_preserve_order(
         [
@@ -417,10 +528,26 @@ def build_canonical_launch_packet(
             if str(reason) not in {"no_closed_trades", "finance_gate_blocked"}
             and not str(reason).startswith("finance_gate_blocked:")
         ]
+    block_reasons = dedupe_preserve_order(
+        [
+            *block_reasons,
+            *[
+                (
+                    f"hold_repair:{item['code']}: {item['detail']}"
+                    if str(item.get("code") or "").strip()
+                    else ""
+                )
+                for item in advisory_failed_contract_checks
+            ],
+        ]
+    )
+    block_reasons = [reason for reason in block_reasons if reason]
 
     live_launch_blocked = bool(launch.get("live_launch_blocked"))
     truth_lattice_broken = bool(truth_lattice.get("repair_branch_required"))
     if bounded_stage1_restart.get("eligible") and finance_gate_pass:
+        live_launch_blocked = False
+    if baseline_safety_ok and advisory_launch_blocked_only:
         live_launch_blocked = False
     canonical_blocked = bool(
         live_launch_blocked or drift_kill_triggered or truth_lattice_broken or not finance_gate_pass
@@ -433,6 +560,11 @@ def build_canonical_launch_packet(
         one_next_cycle_action = (
             "Repair launch-contract mismatches in service/mode/posture/order-submission fields, "
             "rerun `python3 scripts/write_remote_cycle_status.py`, then retry when launch_posture=clear."
+        )
+    elif advisory_failed_contract_checks and not canonical_blocked:
+        one_next_cycle_action = (
+            "Continue bounded BTC5 baseline live at flat stage-1 size while repairing launch-contract "
+            "advisory mismatches; rerun `python3 scripts/write_remote_cycle_status.py` in +10m."
         )
     elif truth_lattice_broken:
         one_next_cycle_action = str(
@@ -497,6 +629,8 @@ def build_canonical_launch_packet(
             **contract,
             "checks": contract_checks,
             "failed_checks": [item["code"] for item in failed_contract_checks],
+            "advisory_failed_checks": [item["code"] for item in advisory_failed_contract_checks],
+            "hard_failed_checks": [item["code"] for item in hard_failed_contract_checks],
         },
         "drift_kill_gate": {
             "triggered": drift_kill_triggered,
@@ -519,6 +653,13 @@ def build_canonical_launch_packet(
             "source": finance_gate.get("source"),
         },
         "bounded_stage1_restart": bounded_stage1_restart,
+        "service_name": runtime_truth_snapshot.get("service_name"),
+        "service_name_resolution": runtime_truth_snapshot.get("service_name_resolution"),
+        "allow_order_submission": contract.get("allow_order_submission"),
+        "order_submit_enabled": contract.get("order_submit_enabled"),
+        "canonical_live_profile_id": canonical_live_profile_id,
+        "canonical_live_package_hash": canonical_live_package_hash,
+        "one_next_cycle_action": mandatory_outputs.get("one_next_cycle_action"),
         "mandatory_outputs": mandatory_outputs,
         "sources": {
             "runtime_truth_latest_json": (runtime_truth_snapshot.get("artifacts") or {}).get(

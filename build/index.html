@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Elastifund / Build | Internal setup packet for new contributors</title>
+  <meta name="description" content="Internal no-assumption setup packet for getting a new Elastifund contributor from zero to a verified paper-mode clone with the right first-run loop.">
+  <link rel="stylesheet" href="/site.css">
+  <script src="/site.js" defer></script>
+</head>
+<body data-page="develop">
+  <div class="page-wrap">
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="/">
+          <span class="brand-mark"></span>
+          <span class="brand-text">
+            <span class="brand-name">Elastifund</span>
+            <span class="brand-subtitle">Internal cohort build packet</span>
+          </span>
+        </a>
+        <nav class="header-nav" aria-label="Primary">
+          <a class="nav-link" data-page="home" href="/">Home</a>
+          <a class="nav-link" data-page="live" href="/live/">Live</a>
+          <a class="nav-link" data-page="elastic" href="/elastic/">Elastic</a>
+          <a class="nav-link" data-page="develop" href="/develop/">Develop</a>
+          <a class="nav-link" data-page="trading" href="/leaderboards/trading/">Trading</a>
+          <a class="nav-link" data-page="worker" href="/leaderboards/worker/">Worker</a>
+        </nav>
+        <div class="header-actions">
+          <span class="status-pill" data-role="status-pill">runtime syncing</span>
+          <a class="header-link" href="https://github.com/CrunchyJohnHaven/elastifund" target="_blank" rel="noopener">GitHub</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="route-hero">
+        <div class="container route-hero-grid">
+          <div>
+            <span class="eyebrow">Internal build packet</span>
+            <h1>Get a new contributor from zero to verified paper mode without guesswork.</h1>
+            <p class="route-copy">
+              This is the no-assumption handoff for onboarding a small Elastic cohort. It answers the predictable setup questions, keeps the first pass paper-mode safe, and tells people exactly what to run and what to report back after the first 20 minutes.
+            </p>
+            <p class="route-note">
+              First pass is local paper mode or a shared paper-mode hub. Do not ask for live exchange keys, wallet keys, treasury access, or a personal VPS just to get someone contributing.
+            </p>
+            <div class="badge-row">
+              <span class="tag neutral">Paper mode first</span>
+              <span class="tag neutral">Shared hub optional</span>
+              <span class="tag neutral">No live keys required</span>
+            </div>
+            <div class="cta-row">
+              <a class="button button-primary" href="/develop/">Open the public develop path</a>
+              <a class="button button-secondary" href="/live/">Inspect live proof</a>
+              <a class="button button-secondary" href="https://github.com/CrunchyJohnHaven/elastifund/blob/main/docs/ops/elastic_employee_build_dispatch_20260311.md" target="_blank" rel="noopener">Open the dispatch plan</a>
+            </div>
+          </div>
+
+          <aside class="status-panel">
+            <div class="status-panel-header">
+              <div>
+                <div class="panel-kicker">Current defaults</div>
+                <h3>Start safe, verify, then claim one lane.</h3>
+              </div>
+              <span class="tag warn">Hidden route</span>
+            </div>
+            <dl class="info-list">
+              <div class="info-row">
+                <dt>Runtime posture</dt>
+                <dd data-fill="runtime_split_summary"></dd>
+              </div>
+              <div class="info-row">
+                <dt>Verification baseline</dt>
+                <dd data-fill="verification_summary"></dd>
+              </div>
+              <div class="info-row">
+                <dt>First-pass secrets</dt>
+                <dd>none</dd>
+              </div>
+              <div class="info-row">
+                <dt>Shared infra</dt>
+                <dd>paper hub only</dd>
+              </div>
+              <div class="info-row">
+                <dt>First finish line</dt>
+                <dd><code>make verify</code> + <code>make smoke-nontrading</code></dd>
+              </div>
+            </dl>
+          </aside>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">Before they touch anything</div>
+            <h2>What they actually need on day one.</h2>
+            <p class="section-copy">Keep the ask narrow. They need a fork, a local clone, and enough machine setup to boot safely. Everything else is optional until the first verification pass is green.</p>
+          </div>
+          <div class="surface-grid">
+            <article class="surface-card">
+              <div class="tag good">Required</div>
+              <h3>GitHub account plus Git installed.</h3>
+              <p class="surface-copy">Fork the repo first so they can work safely in their own copy and open PRs cleanly later.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag good">Required</div>
+              <h3>Python 3.10 or newer.</h3>
+              <p class="surface-copy">`make doctor` will fail fast if the machine is below the supported floor.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag neutral">Optional</div>
+              <h3>Docker if they want the full local stack.</h3>
+              <p class="surface-copy">Docker is useful, not mandatory. They can still do the prepare-only and verification path without it.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag neutral">Optional</div>
+              <h3>An approved LLM assistant.</h3>
+              <p class="surface-copy">Claude, Codex, Gemini, or another approved assistant can help once the repo is running. None of them are required to clone or verify the repo.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">Approved entry paths</div>
+            <h2>There are only two valid onboarding stories.</h2>
+            <p class="section-copy">Start with a local paper clone. Use a shared hub only if someone is intentionally hosting a separate paper-mode demo environment.</p>
+          </div>
+          <div class="split-grid">
+            <article class="code-block">
+              <div class="code-block-header">
+                <div class="panel-kicker">Path A</div>
+                <div class="tiny">Default and recommended</div>
+              </div>
+              <pre><code>git clone https://github.com/YOUR-GITHUB-USERNAME/elastifund.git
+cd elastifund
+make doctor
+python3 scripts/quickstart.py --prepare-only
+
+python3 -m venv .venv
+source .venv/bin/activate
+make bootstrap
+make verify
+make smoke-nontrading</code></pre>
+            </article>
+
+            <article class="code-block">
+              <div class="code-block-header">
+                <div class="panel-kicker">Path B</div>
+                <div class="tiny">Only for a separate paper-mode host/spoke demo</div>
+              </div>
+              <pre><code>python3 scripts/quickstart.py --prepare-only \
+  --agent-name "alice-laptop" \
+  --hub-url "https://your-paper-hub.example" \
+  --hub-bootstrap-token "paste-shared-token-here"
+
+python3 -m venv .venv
+source .venv/bin/activate
+make bootstrap
+make verify</code></pre>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">Do this in order</div>
+            <h2>The idiot-proof step sequence.</h2>
+            <p class="section-copy">This is the exact order. Do not skip forward to live credentials, paid infra, or personal access handoffs.</p>
+          </div>
+          <div class="table-wrap">
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Step</th>
+                    <th>Do this</th>
+                    <th>Success check</th>
+                    <th>If blocked</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><span class="cell-title">1. Fork</span></td>
+                    <td>Fork `CrunchyJohnHaven/elastifund` into a personal GitHub namespace.</td>
+                    <td>Your own repo URL exists and you can clone it.</td>
+                    <td>Fix GitHub access before doing anything local.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="cell-title">2. Clone</span></td>
+                    <td>Clone your fork locally and `cd` into the repo root.</td>
+                    <td>`pwd` ends in `elastifund` and the repo files are present.</td>
+                    <td>Do not edit from a zip download.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="cell-title">3. Diagnose</span></td>
+                    <td>Run <code>make doctor</code>.</td>
+                    <td>Git and Python show as pass. Docker can be pass or warn.</td>
+                    <td>Install the missing dependency and rerun the command.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="cell-title">4. Prepare</span></td>
+                    <td>Run <code>python3 scripts/quickstart.py --prepare-only</code>.</td>
+                    <td><code>.env</code> and <code>state/elastifund/runtime-manifest.json</code> are written.</td>
+                    <td>If this fails, capture the full error and stop before improvising values.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="cell-title">5. Virtualenv</span></td>
+                    <td>Create <code>.venv</code> and activate it.</td>
+                    <td><code>python --version</code> resolves inside the virtualenv.</td>
+                    <td>Do not editable-install nested subprojects.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="cell-title">6. Bootstrap</span></td>
+                    <td>Run <code>make bootstrap</code>.</td>
+                    <td>Dependencies install without asking for private keys.</td>
+                    <td>If a package build fails, capture the exact package and platform.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="cell-title">7. Verify</span></td>
+                    <td>Run <code>make verify</code> and <code>make smoke-nontrading</code>.</td>
+                    <td>Either both pass or the blocking command is explicit.</td>
+                    <td>Do not widen scope. Fix the first real blocker only.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="cell-title">8. Claim one lane</span></td>
+                    <td>Read <a href="/live/">/live/</a>, then pick one doc or code lane with one file owner.</td>
+                    <td>You know what you own and what command proves it.</td>
+                    <td>If two people need the same file, stop and re-split the work.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">Predictable questions</div>
+            <h2>Answer the setup objections before they ask them.</h2>
+          </div>
+          <div class="surface-grid">
+            <article class="surface-card">
+              <div class="tag good">Fork or clone?</div>
+              <h3>Fork first, then clone your fork.</h3>
+              <p class="surface-copy">That keeps experimentation safe and keeps later PRs clean. Do not work directly in the upstream repo on day one.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag good">Do I need live creds?</div>
+              <h3>No for the first pass.</h3>
+              <p class="surface-copy">You do not need Polymarket keys, wallet keys, treasury access, or Kalshi credentials to boot the repo and contribute safely.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag good">Do I need John's AWS?</div>
+              <h3>No.</h3>
+              <p class="surface-copy">The approved story is local paper mode or a separate paper-mode shared hub. Do not make onboarding depend on a personal live stack.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag neutral">What if Docker is missing?</div>
+              <h3>Keep going with prepare-only and verification.</h3>
+              <p class="surface-copy">Docker is optional for first-pass contribution. Treat it as a later convenience, not a hard gate.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag neutral">Can I use my own machine?</div>
+              <h3>Yes.</h3>
+              <p class="surface-copy">Macs, Linux laptops, and home servers are fine for the first pass as long as the repo boots and the commands are reproducible.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag neutral">Can I use an AI tool?</div>
+              <h3>Yes, if it is approved.</h3>
+              <p class="surface-copy">Use an approved assistant for research and patching after the repo boots. Do not turn AI-tool access into a prerequisite for the clone itself.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag neutral">How do we work in parallel?</div>
+              <h3>One owner per file.</h3>
+              <p class="surface-copy">Read <code>docs/PARALLEL_AGENT_WORKFLOW.md</code>. Split by directory or deliverable, run the narrowest relevant checks, then sync.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag warn">What should I never do?</div>
+              <h3>Do not improvise secrets or live access.</h3>
+              <p class="surface-copy">If a step seems to require a personal wallet, private VPS key, treasury permission, or undocumented env value, stop and mark it as a blocker.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container split-grid">
+          <article class="card">
+            <div class="card-kicker">First 20 minutes</div>
+            <h3>What a good first run looks like.</h3>
+            <p class="card-copy">Minute 0-5: fork, clone, run <code>make doctor</code>. Minute 5-10: run <code>python3 scripts/quickstart.py --prepare-only</code>. Minute 10-15: create <code>.venv</code>, run <code>make bootstrap</code>. Minute 15-20: run <code>make verify</code> and report the first real blocker or the green pass.</p>
+            <a class="inline-link" href="https://github.com/CrunchyJohnHaven/elastifund/blob/main/docs/ops/elastic_employee_build_dispatch_20260311.md" target="_blank" rel="noopener">Use the canonical dispatch plan</a>
+          </article>
+
+          <article class="code-block">
+            <div class="code-block-header">
+              <div class="panel-kicker">What they paste back</div>
+              <div class="tiny">Required output contract</div>
+            </div>
+            <pre><code>candidate_delta_arr_bps:
+expected_improvement_velocity_delta:
+arr_confidence_score:
+block_reasons:
+finance_gate_pass:
+one_next_cycle_action:</code></pre>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container">
+        <div class="footer-panel">
+          <div>
+            <div class="footer-kicker">Build route</div>
+            <h3>Hidden on purpose, narrow by design.</h3>
+            <p class="footer-meta">Use this for cohort onboarding, then move people back to <code>/develop/</code>, <code>/live/</code>, and the repo docs.</p>
+          </div>
+          <div class="footer-links">
+            <a href="/develop/">Develop</a>
+            <a href="/live/">Live</a>
+            <a href="/elastic/">Elastic</a>
+            <a href="https://github.com/CrunchyJohnHaven/elastifund/blob/main/docs/ops/elastic_employee_build_dispatch_20260311.md" target="_blank" rel="noopener">Dispatch plan</a>
+          </div>
+          <div class="footer-meta">
+            <div>Snapshot <span data-fill="generated_utc"></span>.</div>
+            <div>Current posture: <span data-fill="runtime_split_summary"></span>.</div>
+            <div>&copy; <span data-fill="year"></span> Elastifund.</div>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

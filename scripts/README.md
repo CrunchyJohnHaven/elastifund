@@ -27,9 +27,6 @@ Canonical command path rule:
 | Non-trading-only tests | `make test-nontrading` | `python3 -m pytest nontrading/tests -q` |
 | Non-trading smoke | `make smoke-nontrading` | `python3 scripts/nontrading_smoke.py` |
 | Public messaging scan | `make lint-messaging` | `python3 scripts/lint_messaging.py` |
-| Changed-path test selection map | `make test-select` | `python3 scripts/select_test_targets.py` |
-| Fast docs/static verify | `make verify-static` | `python3 scripts/check_docs_indexes.py` + `python3 scripts/check_static_routes.py` + dispatch/pointer checks |
-| Changed-path test routing helper | `make test-select` | `python3 scripts/select_test_targets.py` |
 
 ## Deploy, Remote Ops, And Runtime Control
 
@@ -56,3 +53,5 @@ Canonical command path rule:
 
 - `scripts/deploy.sh` and `scripts/deploy_release_bundle.py` are both active. The Python bundle path is the manifest-safe deploy lane; `deploy.sh` remains an explicit compatibility wrapper for existing VPS workflows.
 - `scripts/deploy_ws.sh` is a scoped WebSocket deployment utility, not a replacement for full deploy.
+- `scripts/vps_setup.sh` is a one-shot bootstrap helper for manual VPS bring-up; treat it as manual-only and non-canonical for daily operations.
+- Cron installer wrappers (`install_bridge_cron.sh`, `install_jj_health_cron.sh`) are operational helpers and should expose `--help`.

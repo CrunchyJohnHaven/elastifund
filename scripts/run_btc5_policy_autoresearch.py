@@ -224,6 +224,147 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _session_policy_shape_signature(session_policy: list[dict[str, Any]] | None) -> tuple[tuple[Any, ...], ...]:
+    items = session_policy if isinstance(session_policy, list) else []
+    normalized: list[tuple[Any, ...]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        normalized.append(
+            (
+                tuple(sorted(int(hour) for hour in (item.get("et_hours") or []) if isinstance(hour, int))),
+                safe_float(item.get("max_abs_delta"), None),
+                safe_float(item.get("up_max_buy_price"), None),
+                safe_float(item.get("down_max_buy_price"), None),
+            )
+        )
+    normalized.sort()
+    return tuple(normalized)
+
+
+def _runtime_package_shape_signature(runtime_package: dict[str, Any] | None) -> tuple[Any, ...] | None:
+    if not isinstance(runtime_package, dict):
+        return None
+    profile = runtime_package.get("profile") if isinstance(runtime_package.get("profile"), dict) else {}
+    if not profile:
+        return None
+    return (
+        safe_float(profile.get("max_abs_delta"), None),
+        safe_float(profile.get("up_max_buy_price"), None),
+        safe_float(profile.get("down_max_buy_price"), None),
+        _session_policy_shape_signature(runtime_package.get("session_policy")),
+    )
+
+
+def _session_policy_match(
+    *,
+    session_policy: list[dict[str, Any]] | None,
+    candidate_item: dict[str, Any],
+) -> dict[str, Any] | None:
+    candidate_hours = tuple(sorted(int(hour) for hour in (candidate_item.get("et_hours") or []) if isinstance(hour, int)))
+    for item in session_policy if isinstance(session_policy, list) else []:
+        if not isinstance(item, dict):
+            continue
+        item_hours = tuple(sorted(int(hour) for hour in (item.get("et_hours") or []) if isinstance(hour, int)))
+        if item_hours == candidate_hours:
+            return item
+    return None
+
+
+def _profile_relaxes(reference: dict[str, Any], candidate: dict[str, Any]) -> bool:
+    reference_delta = safe_float(reference.get("max_abs_delta"), None)
+    candidate_delta = safe_float(candidate.get("max_abs_delta"), None)
+    reference_up = safe_float(reference.get("up_max_buy_price"), None)
+    candidate_up = safe_float(candidate.get("up_max_buy_price"), None)
+    reference_down = safe_float(reference.get("down_max_buy_price"), None)
+    candidate_down = safe_float(candidate.get("down_max_buy_price"), None)
+    return bool(
+        (reference_delta is not None and candidate_delta is not None and candidate_delta > reference_delta)
+        or (reference_up is not None and candidate_up is not None and candidate_up > reference_up)
+        or (reference_down is not None and candidate_down is not None and candidate_down > reference_down)
+    )
+
+
+def _runtime_package_relaxes_live_envelope(
+    candidate_runtime_package: dict[str, Any] | None,
+    active_runtime_package: dict[str, Any] | None,
+) -> bool:
+    if not isinstance(candidate_runtime_package, dict) or not isinstance(active_runtime_package, dict):
+        return False
+    active_profile = active_runtime_package.get("profile") if isinstance(active_runtime_package.get("profile"), dict) else {}
+    candidate_profile = (
+        candidate_runtime_package.get("profile")
+        if isinstance(candidate_runtime_package.get("profile"), dict)
+        else {}
+    )
+    if active_profile and candidate_profile and _profile_relaxes(active_profile, candidate_profile):
+        return True
+
+    active_session_policy = (
+        active_runtime_package.get("session_policy")
+        if isinstance(active_runtime_package.get("session_policy"), list)
+        else []
+    )
+    candidate_session_policy = (
+        candidate_runtime_package.get("session_policy")
+        if isinstance(candidate_runtime_package.get("session_policy"), list)
+        else []
+    )
+    for candidate_item in candidate_session_policy:
+        if not isinstance(candidate_item, dict):
+            continue
+        reference_item = _session_policy_match(
+            session_policy=active_session_policy,
+            candidate_item=candidate_item,
+        )
+        reference_profile = reference_item if isinstance(reference_item, dict) else active_profile
+        if reference_profile and _profile_relaxes(reference_profile, candidate_item):
+            return True
+    return False
+
+
+def _canonicalize_live_package_alias(
+    *,
+    live_package: dict[str, Any] | None,
+    champion_record: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(live_package, dict):
+        return live_package
+    if not isinstance(champion_record, dict):
+        return live_package
+
+    live_runtime_package = (
+        live_package.get("runtime_package") if isinstance(live_package.get("runtime_package"), dict) else None
+    )
+    champion_runtime_package = (
+        champion_record.get("runtime_package")
+        if isinstance(champion_record.get("runtime_package"), dict)
+        else None
+    )
+    if not live_runtime_package or not champion_runtime_package:
+        return live_package
+
+    live_signature = _runtime_package_shape_signature(live_runtime_package)
+    champion_signature = _runtime_package_shape_signature(champion_runtime_package)
+    if not live_signature or live_signature != champion_signature:
+        return live_package
+
+    live_policy_id = str(live_package.get("policy_id") or "").strip()
+    champion_policy_id = str(champion_record.get("policy_id") or "").strip()
+    if not live_policy_id or not champion_policy_id or live_policy_id == champion_policy_id:
+        return live_package
+
+    canonicalized = dict(live_package)
+    canonicalized["policy_id"] = champion_policy_id
+    canonicalized["package_hash"] = champion_record.get("package_hash")
+    canonicalized["runtime_package"] = dict(champion_runtime_package)
+    canonicalized["source_artifact"] = (
+        champion_record.get("source_artifact")
+        or live_package.get("source_artifact")
+    )
+    return canonicalized
+
+
 def _counts(rows: list[dict[str, Any]]) -> dict[str, int]:
     return {
         "total": len(rows),
@@ -907,6 +1048,11 @@ def main() -> int:
 
     assert current_evaluation is not None
     assert candidate_evaluation is not None
+    if deploy_recommendation == "promote" and _runtime_package_relaxes_live_envelope(
+        candidate_runtime_package,
+        active_runtime_package,
+    ):
+        deploy_recommendation = "shadow_only"
     current_components = dict(current_evaluation.get("policy_benchmark") or {})
     candidate_components = dict(candidate_evaluation.get("policy_benchmark") or {})
     current_loss = safe_float(current_components.get("policy_loss"), 0.0) or 0.0
@@ -942,6 +1088,24 @@ def main() -> int:
         live_registry["promotion_state"] = "live_current"
     live_registry = _hydrate_package_record(live_registry, champion)
     live_registry = _hydrate_package_record(live_registry, staged)
+    prior_live_registry_hash = str(live_registry.get("package_hash") or "").strip()
+    observed_live_hash = str(observed_live.get("package_hash") or "").strip()
+    if (
+        prior_live_registry_hash
+        and observed_live_hash
+        and prior_live_registry_hash != observed_live_hash
+    ):
+        live_registry = dict(observed_live)
+        live_registry["promotion_state"] = "live_current"
+        if (
+            champion is not None
+            and str(champion.get("package_hash") or "").strip() == prior_live_registry_hash
+            and str(champion.get("deploy_recommendation") or "hold").strip().lower() != "promote"
+        ):
+            champion = dict(champion)
+            champion["promotion_state"] = "shadow_updated"
+            if staged is None or str(staged.get("package_hash") or "").strip() != prior_live_registry_hash:
+                staged = dict(champion)
 
     candidate_record = _package_record(
         runtime_package=candidate_runtime_package,
@@ -1034,6 +1198,7 @@ def main() -> int:
         decision_reason = "launch_posture_cleared_activate_staged_champion"
     else:
         actionable_candidate = deploy_recommendation in {"promote", "shadow_only"}
+        live_promote_eligible = deploy_recommendation == "promote"
         incumbent_loss = safe_float(comparison_incumbent.get("policy_loss"), 0.0) or 0.0
         policy_improved = candidate_loss < (incumbent_loss - policy_min_improvement)
         median_improved = (safe_float(candidate_components.get("median_30d_return_pct"), 0.0) or 0.0) > incumbent_median
@@ -1044,7 +1209,7 @@ def main() -> int:
             keep = True
             status = "keep"
             champion_record = dict(candidate_record)
-            if launch_posture == "clear" and safety_gates.get("all_green"):
+            if live_promote_eligible and launch_posture == "clear" and safety_gates.get("all_green"):
                 activated = _write_package_files(
                     runtime_package=candidate_runtime_package,
                     policy_loss=candidate_loss,
@@ -1066,7 +1231,7 @@ def main() -> int:
                 staged_package = None
                 promotion_state = "live_promoted"
                 decision_reason = "champion_policy_loss_improved_live_promote"
-            elif launch_posture == "clear" and not safety_gates.get("all_green"):
+            elif live_promote_eligible and launch_posture == "clear" and not safety_gates.get("all_green"):
                 keep = False
                 status = "discard"
                 champion_record = dict(champion)
@@ -1211,6 +1376,50 @@ def main() -> int:
     _write_json(promotion_decision_json, decision_packet)
 
     rows_after = _load_jsonl(results_ledger)
+    canonical_live_package = _canonicalize_live_package_alias(
+        live_package=live_package,
+        champion_record=champion_record,
+    )
+    canonical_active_runtime_package = (
+        dict((canonical_live_package or {}).get("runtime_package") or {})
+        if isinstance((canonical_live_package or {}).get("runtime_package"), dict)
+        else active_runtime_package
+    )
+    selected_best_profile_name = runtime_package_id(candidate_runtime_package) if candidate_runtime_package else None
+    selected_active_profile_name = (
+        runtime_package_id(canonical_active_runtime_package)
+        if canonical_active_runtime_package
+        else None
+    )
+    selected_best_package_hash = (
+        runtime_package_hash(candidate_runtime_package)
+        if candidate_runtime_package
+        else None
+    )
+    selected_active_package_hash = str(
+        (canonical_live_package or {}).get("package_hash")
+        or (live_package or {}).get("package_hash")
+        or (
+            runtime_package_hash(canonical_active_runtime_package)
+            if canonical_active_runtime_package
+            else ""
+        )
+        or ""
+    ).strip() or None
+    canonical_live_profile = (
+        selected_active_profile_name
+        or selected_best_profile_name
+    )
+    canonical_live_package_hash = (
+        selected_active_package_hash
+        or selected_best_package_hash
+    )
+    shadow_comparator_profile = (
+        selected_best_profile_name
+        if selected_best_profile_name and selected_best_profile_name != canonical_live_profile
+        else None
+    )
+
     summary = {
         "updated_at": generated_at,
         "champion_id": champion_record.get("policy_id"),
@@ -1231,14 +1440,22 @@ def main() -> int:
         "candidate_vs_incumbent_summary": candidate_vs_incumbent,
         "safety_gates": safety_gates,
         "champion": champion_record,
-        "live_package": live_package,
+        "live_package": canonical_live_package,
         "staged_package": staged_package,
         "latest_experiment": run_payload,
         "counts": _counts(rows_after),
+        "selected_active_profile_name": selected_active_profile_name,
+        "selected_best_profile_name": selected_best_profile_name,
+        "selected_active_package_hash": selected_active_package_hash,
+        "selected_best_package_hash": selected_best_package_hash,
+        "canonical_live_profile": canonical_live_profile,
+        "canonical_live_package_hash": canonical_live_package_hash,
+        "shadow_comparator_profile": shadow_comparator_profile,
+        "canonical_package_drift_detected": bool(shadow_comparator_profile),
         "best_runtime_package": candidate_runtime_package,
         "selected_best_runtime_package": candidate_runtime_package,
-        "active_runtime_package": active_runtime_package,
-        "selected_active_runtime_package": active_runtime_package,
+        "active_runtime_package": canonical_active_runtime_package,
+        "selected_active_runtime_package": canonical_active_runtime_package,
         "artifacts": {
             "results_ledger": _relative(results_ledger),
             "latest_run": _relative(run_path),

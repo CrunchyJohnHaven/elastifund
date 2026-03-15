@@ -347,7 +347,17 @@ def _build_baseline_contract(
         ],
         "block_reasons": block_reasons,
         "retry_in_minutes": retry_in_minutes,
-        "one_next_cycle_action": "consume baseline_guard.v1 inside autoprompt gating",
+        "canonical_live_profile": str(
+            selected_package.get("canonical_live_profile")
+            or selected_package.get("selected_active_profile_name")
+            or selected_package.get("selected_best_profile_name")
+            or ""
+        ).strip() or None,
+        "one_next_cycle_action": (
+            f"Keep canonical live profile "
+            f"{selected_package.get('canonical_live_profile') or selected_package.get('selected_active_profile_name') or 'unknown'} "
+            f"at flat stage-1 size via baseline_guard.v1 inside autoprompt gating"
+        ),
     }
 
 
@@ -599,10 +609,14 @@ def select_rollout_decision(remote_cycle_status: dict[str, Any]) -> RolloutDecis
     validation_live_filled_rows = int(_safe_float(selected_package.get("validation_live_filled_rows"), 0.0) or 0)
     generalization_ratio = _safe_float(selected_package.get("generalization_ratio"), 0.0)
     stage1_live_candidate = bool(selected_package.get("stage1_live_candidate"))
+    has_capital_on_platform = (
+        _safe_float(capital.get("deployed_capital_usd"), 0.0) > 0.0
+        or _safe_float(polymarket_wallet.get("free_collateral_usd"), 0.0) >= 100.0
+    )
     baseline_live_override = bool(
         root_tests.get("status") == "passing"
         and service.get("status") == "running"
-        and _safe_float(capital.get("deployed_capital_usd"), 0.0) > 0.0
+        and has_capital_on_platform
         and _safe_float(polymarket_wallet.get("free_collateral_usd"), 0.0) > 0.0
         and (
             int(runtime.get("closed_trades") or 0) > 0
@@ -615,7 +629,7 @@ def select_rollout_decision(remote_cycle_status: dict[str, Any]) -> RolloutDecis
     bounded_live_restart_override = bool(
         root_tests.get("status") == "passing"
         and service.get("status") == "running"
-        and _safe_float(capital.get("deployed_capital_usd"), 0.0) > 0.0
+        and has_capital_on_platform
         and _safe_float(polymarket_wallet.get("free_collateral_usd"), 0.0) > 0.0
         and stage1_live_candidate
         and selected_best_profile_name
@@ -634,11 +648,17 @@ def select_rollout_decision(remote_cycle_status: dict[str, Any]) -> RolloutDecis
         and baseline_trade_now_status in {"unblocked", "ready", "allowed"}
         and root_tests.get("status") == "passing"
         and service.get("status") == "running"
-        and _safe_float(capital.get("deployed_capital_usd"), 0.0) > 0.0
+        and has_capital_on_platform
         and _safe_float(polymarket_wallet.get("free_collateral_usd"), 0.0) > 0.0
         and bool(remote_cycle_status.get("allow_order_submission"))
     )
 
+    bootstrap_live_override = bool(
+        os.environ.get("BTC5_BOOTSTRAP_LIVE_OVERRIDE", "").strip().lower() in {"1", "true", "yes"}
+        and root_tests.get("status") == "passing"
+        and service.get("status") == "running"
+        and _safe_float(polymarket_wallet.get("free_collateral_usd"), 0.0) >= 100.0
+    )
     live_stage_allowed = (
         validated_for_live_stage1
         and can_trade_now
@@ -646,7 +666,7 @@ def select_rollout_decision(remote_cycle_status: dict[str, Any]) -> RolloutDecis
         and confidence_label in {"medium", "high"}
     )
     rationale: list[str] = []
-    if live_stage_allowed or explicit_baseline_contract_override or baseline_live_override or bounded_live_restart_override:
+    if live_stage_allowed or explicit_baseline_contract_override or baseline_live_override or bounded_live_restart_override or bootstrap_live_override:
         rationale.append("validated_package_and_truth_surface_allow_bounded_stage_1")
         if explicit_baseline_contract_override and not live_stage_allowed:
             rationale.append("explicit_baseline_live_contract_override")
@@ -654,13 +674,15 @@ def select_rollout_decision(remote_cycle_status: dict[str, Any]) -> RolloutDecis
             rationale.append("continuous_live_baseline_override")
         if bounded_live_restart_override and not live_stage_allowed:
             rationale.append("bounded_live_restart_override")
+        if bootstrap_live_override and not live_stage_allowed:
+            rationale.append("bootstrap_live_override_free_collateral_sufficient")
         return RolloutDecision(
             deploy_mode="live_stage1",
             paper_trading=False,
             desired_stage=1,
             allowed_stage=max(allowed_stage, 1),
             confidence_label=confidence_label,
-            can_trade_now=(can_trade_now or baseline_live_override or bounded_live_restart_override),
+            can_trade_now=(can_trade_now or baseline_live_override or bounded_live_restart_override or bootstrap_live_override),
             rationale=tuple(rationale),
         )
 
@@ -1043,6 +1065,54 @@ def _probe_freshness_block(remote_cycle_status: dict[str, Any]) -> dict[str, Any
     }
 
 
+def _evaluate_refresh_contract(remote_cycle_status: dict[str, Any]) -> dict[str, Any]:
+    data_cadence = dict(remote_cycle_status.get("data_cadence") or {})
+    service = dict(remote_cycle_status.get("service") or {})
+    trade_proof = dict(remote_cycle_status.get("trade_proof") or {})
+    generated_at = _parse_datetime(remote_cycle_status.get("generated_at"))
+    age_minutes = (
+        round(max(0.0, (datetime.now(timezone.utc) - generated_at).total_seconds()) / 60.0, 4)
+        if generated_at is not None
+        else None
+    )
+    freshness_sla_minutes = int(
+        trade_proof.get("freshness_sla_minutes")
+        or data_cadence.get("freshness_sla_minutes")
+        or 45
+    )
+    critical_errors: list[str] = []
+    if generated_at is None:
+        critical_errors.append("remote_cycle_status_generated_at_missing")
+    elif age_minutes is not None and age_minutes > freshness_sla_minutes:
+        critical_errors.append("remote_cycle_status_not_fresh")
+    if bool(data_cadence.get("stale")):
+        critical_errors.append("post_refresh_data_cadence_stale")
+    service_name = str(service.get("service_name") or "").strip()
+    if service_name and service_name != REMOTE_BTC5_SERVICE:
+        critical_errors.append("primary_service_mismatch")
+    if not trade_proof:
+        critical_errors.append("trade_proof_missing")
+    else:
+        for key in ("service_name", "source_of_truth", "lane_id", "profile_id", "attribution_mode"):
+            if not str(trade_proof.get(key) or "").strip():
+                critical_errors.append(f"trade_proof_missing_{key}")
+        if bool(trade_proof.get("fill_confirmed")):
+            for key in ("latest_filled_trade_at", "trade_size_usd", "order_price"):
+                if trade_proof.get(key) in (None, ""):
+                    critical_errors.append(f"fill_proof_missing_{key}")
+            if str(trade_proof.get("proof_status") or "").strip().lower() != "fill_confirmed":
+                critical_errors.append("fill_proof_status_not_confirmed")
+    return {
+        "valid": not critical_errors,
+        "critical_errors": critical_errors,
+        "generated_at": generated_at.isoformat() if generated_at is not None else None,
+        "age_minutes": age_minutes,
+        "freshness_sla_minutes": freshness_sla_minutes,
+        "service_name": service_name or None,
+        "trade_proof": trade_proof,
+    }
+
+
 def evaluate_post_deploy(
     *,
     decision: RolloutDecision,
@@ -1054,6 +1124,7 @@ def evaluate_post_deploy(
     activation_checks = dict(activation.get("verification_checks") or {})
     stage_in_effect = dict(activation.get("stage_in_effect") or {})
     probe_freshness = _probe_freshness_block(remote_cycle_status)
+    refresh_contract = _evaluate_refresh_contract(remote_cycle_status)
     service_running = (
         activation.get("service_status") == "running"
         and remote_service_status.get("status") == "running"
@@ -1077,6 +1148,11 @@ def evaluate_post_deploy(
         critical_errors.append("status_summary_missing")
     if str(probe_freshness.get("freshness") or "unknown") != "fresh":
         critical_errors.append("remote_probe_not_fresh")
+    critical_errors.extend(
+        error
+        for error in refresh_contract["critical_errors"]
+        if error not in critical_errors
+    )
 
     return {
         "valid": not critical_errors,
@@ -1087,6 +1163,7 @@ def evaluate_post_deploy(
         "remote_probe_freshness": probe_freshness.get("freshness"),
         "remote_probe_checked_at": probe_freshness.get("checked_at"),
         "remote_probe_confidence_label": probe_freshness.get("confidence_label"),
+        "post_refresh_contract": refresh_contract,
         "stage_in_effect": stage_in_effect,
         "deploy_mode": activation.get("deploy_mode"),
         "paper_trading": activation.get("paper_trading"),
@@ -1162,6 +1239,9 @@ def build_rollout_artifact(
             "selected_package_confidence_label": selected_package.get("selected_package_confidence_label"),
             "selected_best_profile_name": selected_package.get("selected_best_profile_name"),
             "selected_active_profile_name": selected_package.get("selected_active_profile_name"),
+            "canonical_live_profile": selected_package.get("canonical_live_profile"),
+            "shadow_comparator_profile": selected_package.get("shadow_comparator_profile"),
+            "canonical_package_drift_detected": bool(selected_package.get("canonical_package_drift_detected")),
             "validated_for_live_stage1": bool(selected_package.get("validated_for_live_stage1")),
             "runtime_package_loaded": bool(selected_package.get("runtime_package_loaded")),
             "runtime_load_required": bool(selected_package.get("runtime_load_required")),

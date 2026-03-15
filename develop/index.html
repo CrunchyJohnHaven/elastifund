@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Elastifund / Develop | One verified path into the repo</title>
+  <meta name="description" content="Boot Elastifund with the verified repo-root path, inspect the live board first, and contribute through explicit ownership and shared verification.">
+  <link rel="stylesheet" href="/site.css">
+  <script src="/site.js" defer></script>
+</head>
+<body data-page="develop">
+  <div class="page-wrap">
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="/">
+          <span class="brand-mark"></span>
+          <span class="brand-text">
+            <span class="brand-name">Elastifund</span>
+            <span class="brand-subtitle">Contributor onboarding and safe local boot</span>
+          </span>
+        </a>
+        <nav class="header-nav" aria-label="Primary">
+          <a class="nav-link" data-page="home" href="/">Home</a>
+          <a class="nav-link" data-page="live" href="/live/">Live</a>
+          <a class="nav-link" data-page="elastic" href="/elastic/">Elastic</a>
+          <a class="nav-link" data-page="develop" href="/develop/">Develop</a>
+          <a class="nav-link" data-page="trading" href="/leaderboards/trading/">Trading</a>
+          <a class="nav-link" data-page="worker" href="/leaderboards/worker/">Worker</a>
+        </nav>
+        <div class="header-actions">
+          <span class="status-pill" data-role="status-pill">runtime syncing</span>
+          <a class="header-link" href="https://github.com/CrunchyJohnHaven/elastifund" target="_blank" rel="noopener">GitHub</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="route-hero">
+        <div class="container route-hero-grid">
+          <div>
+            <span class="eyebrow">Develop</span>
+            <h1>Use the evidence first, then boot the repo with one verified path.</h1>
+            <p class="route-copy">
+              New contributors should not have to reverse-engineer the repo or guess which claims are current. Start at the live board, read the current posture split, then boot the root quickstart path in paper mode by default.
+            </p>
+            <div class="cta-row">
+              <a class="button button-primary" href="/live/">Read the live board first</a>
+              <a class="button button-secondary" href="https://github.com/CrunchyJohnHaven/elastifund" target="_blank" rel="noopener">Fork the repo</a>
+            </div>
+          </div>
+          <aside class="status-panel">
+            <div class="status-panel-header">
+              <div>
+                <div class="panel-kicker">Current runtime contract</div>
+                <h3><span data-fill="runtime_split_summary"></span></h3>
+              </div>
+              <span class="tag warn"><span data-fill="launch_posture"></span></span>
+            </div>
+            <dl class="info-list">
+              <div class="info-row">
+                <dt>Verification</dt>
+                <dd data-fill="verification_summary"></dd>
+              </div>
+              <div class="info-row">
+                <dt>BTC5 sleeve</dt>
+                <dd><span data-fill="btc5_live_rows"></span> rows / <span data-fill="btc5_live_pnl"></span></dd>
+              </div>
+              <div class="info-row">
+                <dt>JJ-N</dt>
+                <dd data-fill="jjn_claim_status"></dd>
+              </div>
+              <div class="info-row">
+                <dt>Next operator action</dt>
+                <dd data-fill="next_action"></dd>
+              </div>
+            </dl>
+          </aside>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">Verified root boot</div>
+            <h2>Start with the shortest safe path.</h2>
+          </div>
+          <div class="code-block">
+            <div class="code-block-header">
+              <div class="panel-kicker">Run from the repo root</div>
+              <div class="tiny">Prepare first, verify second</div>
+            </div>
+            <pre><code>git clone https://github.com/CrunchyJohnHaven/elastifund.git
+cd elastifund
+python3 scripts/doctor.py
+python3 scripts/quickstart.py --prepare-only
+
+# optional full verification
+python3 -m venv .venv
+source .venv/bin/activate
+make bootstrap
+make verify</code></pre>
+          </div>
+          <a class="inline-link" href="/build/">Open the internal /build/ packet for cohort onboarding, FAQ coverage, and the first 20-minute run.</a>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">Contributor modes</div>
+            <h2>Three useful ways to enter the repo.</h2>
+          </div>
+          <div class="surface-grid">
+            <article class="surface-card">
+              <div class="tag good">Observer</div>
+              <h3>Read the claim surfaces before touching code.</h3>
+              <p class="surface-copy">Start with the homepage, trading board, worker board, and /live/ route so you understand what is live, forecast, and still blocked.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag good">Runner</div>
+              <h3>Boot the stack in safe mode and keep artifacts coherent.</h3>
+              <p class="surface-copy">Run the verified commands, regenerate the checked-in outputs, and leave the public story sharper than you found it.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag good">Builder</div>
+              <h3>Own one path, patch it, and verify it.</h3>
+              <p class="surface-copy">Use one owner per file, run the narrowest relevant tests, then finish with the shared hygiene and verification targets.</p>
+            </article>
+            <article class="surface-card">
+              <div class="tag neutral">Trust model</div>
+              <h3>Paper mode by default, explicit escalation for real-money changes.</h3>
+              <p class="surface-copy">Capital transitions, risk-limit changes, and unclear architecture choices stay behind human review.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">Public route map</div>
+            <h2>Route ownership and status at a glance.</h2>
+          </div>
+          <div class="table-wrap">
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Route</th>
+                    <th>Status</th>
+                    <th>Purpose</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><span class="cell-title"><a href="/">/</a></span></td>
+                    <td><span class="tag good">Active</span></td>
+                    <td>Public homepage and route hub.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="cell-title"><a href="/live/">/live/</a></span></td>
+                    <td><span class="tag good">Active</span></td>
+                    <td>Current runtime proof and blockers.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="cell-title"><a href="/elastic/">/elastic/</a></span></td>
+                    <td><span class="tag good">Active</span></td>
+                    <td>Employee-facing Elastic framing.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="cell-title"><a href="/develop/">/develop/</a></span></td>
+                    <td><span class="tag good">Active</span></td>
+                    <td>Contributor onboarding and safe boot path.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="cell-title"><a href="/leaderboards/">/leaderboards/</a></span></td>
+                    <td><span class="tag good">Active</span></td>
+                    <td>Index route for evidence boards.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="cell-title"><a href="/leaderboards/trading/">/leaderboards/trading/</a></span></td>
+                    <td><span class="tag good">Active</span></td>
+                    <td>Trading evidence board.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="cell-title"><a href="/leaderboards/worker/">/leaderboards/worker/</a></span></td>
+                    <td><span class="tag good">Active</span></td>
+                    <td>JJ-N worker board.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="cell-title"><a href="/manage/">/manage/</a></span></td>
+                    <td><span class="tag warn">Preview stub</span></td>
+                    <td>Operator surface preview only.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="cell-title"><a href="/roadmap/">/roadmap/</a></span></td>
+                    <td><span class="tag warn">Preview stub</span></td>
+                    <td>Forecast and checkpoint preview only.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container split-grid">
+          <article class="card">
+            <div class="card-kicker">Architecture map</div>
+            <h3>Minimal mental model for a new contributor.</h3>
+            <div class="diagram">
+              <article class="diagram-step">
+                <div class="diagram-title">Artifacts</div>
+                <div class="diagram-copy">Checked-in snapshots and reports define the public runtime contract.</div>
+              </article>
+              <article class="diagram-step">
+                <div class="diagram-title">Workers</div>
+                <div class="diagram-copy">Trading workers and JJ-N share one evaluation and publishing substrate.</div>
+              </article>
+              <article class="diagram-step">
+                <div class="diagram-title">Verification</div>
+                <div class="diagram-copy">Run the narrowest relevant tests first, then shared checks.</div>
+              </article>
+              <article class="diagram-step">
+                <div class="diagram-title">Publish</div>
+                <div class="diagram-copy">The site, docs, and root artifacts should tell the same story.</div>
+              </article>
+              <article class="diagram-step">
+                <div class="diagram-title">Repeat</div>
+                <div class="diagram-copy">Improvement is the product, so each run should sharpen the next.</div>
+              </article>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-kicker">Current safety defaults</div>
+            <h3>Do not widen these casually.</h3>
+            <div class="status-grid" style="margin-top: 18px;">
+              <div class="status-item">
+                <div class="status-label">Position cap</div>
+                <div class="status-value" data-fill="risk_position"></div>
+                <div class="status-sub">Per trading position.</div>
+              </div>
+              <div class="status-item">
+                <div class="status-label">Daily loss cap</div>
+                <div class="status-value" data-fill="risk_daily_loss"></div>
+                <div class="status-sub">Hard loss boundary.</div>
+              </div>
+              <div class="status-item">
+                <div class="status-label">Kelly fraction</div>
+                <div class="status-value" data-fill="risk_kelly"></div>
+                <div class="status-sub">Current public-safe setting.</div>
+              </div>
+              <div class="status-item">
+                <div class="status-label">Open positions</div>
+                <div class="status-value" data-fill="risk_open_positions"></div>
+                <div class="status-sub">Maximum simultaneous positions.</div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container">
+        <div class="footer-panel">
+          <div>
+            <div class="footer-kicker">Develop route</div>
+            <h3>Verified boot path, live board first, one owner per file.</h3>
+            <p class="footer-meta">Verification snapshot: <span data-fill="verification_summary"></span>.</p>
+          </div>
+          <div class="footer-links">
+            <a href="/live/">Live</a>
+            <a href="/">Home</a>
+            <a href="/leaderboards/trading/">Trading</a>
+            <a href="/leaderboards/worker/">Worker</a>
+          </div>
+          <div class="footer-meta">
+            <div>Snapshot: <span data-fill="generated_utc"></span>.</div>
+            <div>&copy; <span data-fill="year"></span> Elastifund.</div>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

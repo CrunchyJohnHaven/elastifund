@@ -1,0 +1,93 @@
+# Paper-Trade Simulator Configuration
+# All assumptions that drive simulation results are declared here.
+#
+# POSTURE: AGGRESSIVE VELOCITY
+# Objective: Maximize expected forward velocity (ARR)
+# Risk tolerance: High — this is disposable income
+# Capital plan: $2K seed + $1K/week adds
+
+capital:
+  initial: 2000.0             # Starting capital in USD ($2K seed)
+  weekly_add: 1000.0           # $1K/week additional capital injection
+  add_weeks: 52                # Continue weekly adds for 1 year
+
+fees:
+  taker_rate: 0.02        # 2% taker fee (Polymarket default for most categories)
+  maker_rate: 0.0         # 0% maker fee (Polymarket rewards makers)
+  winner_fee: 0.02        # 2% fee on winning payouts
+
+fill_model:
+  # Taker execution: crosses the spread, immediate fill
+  taker:
+    base_slippage_bps: 50           # 0.50% base slippage in basis points
+    size_impact_bps_per_dollar: 2   # Additional bps slippage per $1 of order size
+    liquidity_impact_factor: 0.001  # Slippage multiplier: order_size / liquidity
+    fill_probability: 1.0           # Takers always fill (they cross the spread)
+
+  # Maker execution: passive limit order, probabilistic fill
+  maker:
+    base_fill_probability: 0.55     # 55% base fill rate
+    distance_decay: 2.0             # Fill prob decays as: base * exp(-decay * |edge|)
+    min_fill_probability: 0.10      # Floor on fill probability
+    price_improvement_bps: 0        # Bps of price improvement vs mid
+
+  # Spread assumptions by market tier
+  spreads:
+    high_volume:
+      half_spread_cents: 1.5        # 1.5 cent half-spread
+      min_liquidity: 10000
+    us_weather:
+      half_spread_cents: 7.0
+      min_liquidity: 2000
+    international:
+      half_spread_cents: 20.0
+      min_liquidity: 500
+    niche:
+      half_spread_cents: 22.0
+      min_liquidity: 100
+    default:
+      half_spread_cents: 5.0
+      min_liquidity: 500
+
+sizing:
+  method: kelly                      # CHANGED: kelly (was fixed_fraction)
+  fixed_fraction:
+    fraction: 0.027                  # Legacy: 2.7% of capital per trade
+  kelly:
+    kelly_fraction: 0.50             # CHANGED: Half-Kelly (was 0.25 quarter-Kelly)
+    kelly_fraction_no: 0.70          # NEW: Aggressive NO sizing (structural 76% WR edge)
+    max_allocation: 0.35             # CHANGED: 35% max per position (was 20%)
+    min_size: 5.0                    # CHANGED: Minimum $5 trade (was $1)
+  capped:
+    max_position_usd: 500.0          # CHANGED: $500 cap (was $5)
+    min_position_usd: 5.0            # CHANGED: $5 min (was $1)
+
+velocity:
+  enabled: true                      # NEW: Velocity optimization active
+  sort_by: velocity_score            # Rank signals by edge/days * 365
+  top_n_per_cycle: 5                 # Take top-5 velocity-sorted signals
+  max_resolution_days: 14            # Skip markets resolving > 14 days
+  prefer_fast: true                  # Strongly prefer <24h and 1-3 day markets
+  capital_turnover_cap: 5.0          # CHANGED: 5x turnover cap (was 3x)
+
+execution:
+  mode: taker                        # taker | maker
+  max_concurrent_positions: 50
+  min_edge_threshold: 0.05           # 5% minimum edge to enter (NO trades)
+  min_edge_threshold_yes: 0.10       # 10% minimum edge for YES trades (was 15%)
+
+filters:
+  min_liquidity: 500               # Minimum market liquidity in USD
+  min_volume: 1000                 # Minimum market volume in USD
+  price_range: [0.10, 0.90]       # Only trade markets with prices in this range
+
+risk:
+  # AGGRESSIVE posture — maximize expected value, not minimize risk
+  daily_loss_limit_pct: 0.25         # CHANGED: 25% daily loss limit (was $10 flat)
+  max_exposure_pct: 0.95             # CHANGED: 95% (was 80% — deploy almost everything)
+  cooldown_consecutive_losses: 5     # CHANGED: 5 losses before cooldown (was 3)
+  cooldown_seconds: 1800             # CHANGED: 30 min cooldown (was 3600)
+  drawdown_halt_pct: 0.50            # CHANGED: 50% drawdown halts (was 25%)
+  drawdown_reduce_pct: 0.30          # CHANGED: 30% drawdown halves sizing (was 15%)
+
+random_seed: 42                    # For reproducibility of probabilistic fills

@@ -1,0 +1,2 @@
+run_id	timestamp	benchmark_score	frontier_score	status	selected_variant	description	packet_json
+1	2026-03-08T08:21:02Z	-0.235722	-0.235722	keep	rolling_100	freeze calibration benchmark baseline	research/results/calibration/packets/run_0001_baseline.json

@@ -10,6 +10,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from collections.abc import Mapping
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -512,7 +513,12 @@ def main() -> int:
         fallback=DEFAULT_CYCLE_REPORT_INPUT_PATH,
     )
     cycle_reports = load_cycle_reports(cycle_report_path) if cycle_report_path is not None else None
-    recurring_monitor_payload = _load_optional_json(args.recurring_monitor_input)
+    recurring_monitor_payload = _load_optional_json(
+        resolve_optional_input_path(
+            args.recurring_monitor_input,
+            fallback=DEFAULT_RECURRING_MONITOR_OUTPUT_PATH,
+        )
+    )
     report = build_public_report(
         store,
         launch_summary=launch_summary,

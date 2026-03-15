@@ -1,0 +1,68 @@
+[tool.poetry]
+name = "polymarket-bot"
+version = "0.1.0"
+description = "Autonomous Polymarket trading bot powered by Claude AI"
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+packages = [{include = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+fastapi = "^0.104.0"
+uvicorn = {version = "^0.24.0", extras = ["standard"]}
+sqlalchemy = {version = "^2.0.0", extras = ["asyncio"]}
+alembic = "^1.12.0"
+asyncpg = "^0.29.0"
+pydantic-settings = "^2.0.0"
+structlog = "^23.1.0"
+httpx = "^0.25.0"
+websockets = "^12.0"
+py-clob-client = "^0.6.0"
+anthropic = "^0.7.0"
+python-dotenv = "^1.0.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.0"
+pytest-asyncio = "^0.21.0"
+pytest-cov = "^4.1.0"
+black = "^23.10.0"
+ruff = "^0.11.0"
+mypy = "^1.6.0"
+httpx-mock = "^0.3.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = ["E", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-ra"
+python_files = ["test_*.py"]
+norecursedirs = [
+    ".git",
+    ".pytest_cache",
+    ".venv",
+    "__pycache__",
+    "archive",
+    "build",
+    "dist",
+    "htmlcov",
+    "snapshots",
+    "venv",
+]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false

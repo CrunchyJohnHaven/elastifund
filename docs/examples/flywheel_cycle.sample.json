@@ -1,0 +1,75 @@
+{
+  "cycle_key": "sample-20260307T230000Z",
+  "strategies": [
+    {
+      "strategy_key": "wallet-flow",
+      "version_label": "wf-20260307",
+      "lane": "fast_flow",
+      "artifact_uri": "artifacts/wallet-flow/wf-20260307.tar.gz",
+      "git_sha": "abc123",
+      "status": "candidate",
+      "config": {
+        "entry_window_seconds": 60,
+        "maker_only": true
+      },
+      "deployments": [
+        {
+          "environment": "paper",
+          "capital_cap_usd": 25.0,
+          "status": "active",
+          "snapshot": {
+            "snapshot_date": "2026-03-07",
+            "starting_bankroll": 100.0,
+            "ending_bankroll": 111.0,
+            "realized_pnl": 11.0,
+            "unrealized_pnl": 1.0,
+            "open_positions": 2,
+            "closed_trades": 24,
+            "win_rate": 0.62,
+            "fill_rate": 0.74,
+            "avg_slippage_bps": 12.0,
+            "rolling_brier": 0.22,
+            "rolling_ece": 0.06,
+            "max_drawdown_pct": 0.08,
+            "kill_events": 0
+          }
+        }
+      ]
+    },
+    {
+      "strategy_key": "constraint-arb",
+      "version_label": "ca-20260307",
+      "lane": "structural_arb",
+      "artifact_uri": "artifacts/constraint-arb/ca-20260307.tar.gz",
+      "git_sha": "def456",
+      "status": "candidate",
+      "config": {
+        "max_legs": 2,
+        "micro_live_cap": 25.0
+      },
+      "deployments": [
+        {
+          "environment": "micro_live",
+          "capital_cap_usd": 25.0,
+          "status": "active",
+          "snapshot": {
+            "snapshot_date": "2026-03-07",
+            "starting_bankroll": 100.0,
+            "ending_bankroll": 96.0,
+            "realized_pnl": -4.0,
+            "unrealized_pnl": 0.0,
+            "open_positions": 1,
+            "closed_trades": 25,
+            "win_rate": 0.48,
+            "fill_rate": 0.2,
+            "avg_slippage_bps": 28.0,
+            "rolling_brier": 0.23,
+            "rolling_ece": 0.08,
+            "max_drawdown_pct": 0.11,
+            "kill_events": 0
+          }
+        }
+      ]
+    }
+  ]
+}

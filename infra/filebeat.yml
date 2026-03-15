@@ -1,0 +1,38 @@
+filebeat.inputs:
+  - type: filestream
+    id: elastifund-json
+    enabled: true
+    paths:
+      - /var/log/elastifund/*.json
+      - /var/log/elastifund/*.json.log
+    parsers:
+      - ndjson:
+          target: ""
+          overwrite_keys: true
+          add_error_key: true
+
+  - type: filestream
+    id: elastifund-plain
+    enabled: true
+    paths:
+      - /var/log/elastifund/*.log
+    exclude_files:
+      - '\.json\.log$'
+
+processors:
+  - add_fields:
+      target: ""
+      fields:
+        service.name: elastifund-bot
+        environment: production
+
+setup.ilm.enabled: false
+setup.template.enabled: false
+
+output.elasticsearch:
+  hosts: ["http://elasticsearch:9200"]
+  username: "${ELASTICSEARCH_USERNAME:elastic}"
+  password: "${ELASTIC_PASSWORD}"
+
+logging.level: info
+logging.json: true

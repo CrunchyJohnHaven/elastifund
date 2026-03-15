@@ -8,7 +8,13 @@ from collections import Counter
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import sys
 from typing import Any
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from scripts.btc5_monte_carlo_core import fetch_remote_rows
 
 
 UTC = timezone.utc
@@ -17,12 +23,18 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_RUNTIME_TRUTH = REPO_ROOT / "reports" / "runtime_truth_latest.json"
 DEFAULT_RUNTIME_ARCHIVE_DIR = REPO_ROOT / "reports" / "runtime" / "runtime_truth"
 DEFAULT_ENV_PATH = REPO_ROOT / "state" / "btc5_autoresearch.env"
-DEFAULT_HISTORICAL_ROWS = REPO_ROOT / "reports" / "runtime" / "tmp" / "tmp_remote_btc5_window_rows.json"
+DEFAULT_HISTORICAL_ROWS = REPO_ROOT / "reports" / "tmp_remote_btc5_window_rows.json"
+LEGACY_HISTORICAL_ROWS = REPO_ROOT / "reports" / "runtime" / "tmp" / "tmp_remote_btc5_window_rows.json"
+DEFAULT_BASELINE_ARTIFACT = REPO_ROOT / "reports" / "btc5_rollout_latest.json"
+LEGACY_BASELINE_ARTIFACT = REPO_ROOT / "reports" / "instance2_btc5_baseline" / "latest.json"
+DEFAULT_POLICY_LATEST = REPO_ROOT / "reports" / "autoresearch" / "btc5_policy" / "latest.json"
 DEFAULT_OUTPUT_JSON = REPO_ROOT / "reports" / "parallel" / "instance02_directional_conversion_probe.json"
+MATCHED_WINDOW_SAMPLE_SIZE = 60
+BASELINE_DELTA_CAP = 0.00075
 
 _LIVE_DECISION_SET = [
     "keep_0.00075",
-    "promote_wider_live_band",
+    "swap_after_same_stream_shadow_win",
     "hold_and_wait_for_better_book_conditions",
 ]
 
@@ -68,6 +80,11 @@ def _read_json_list(path: Path) -> list[dict[str, Any]]:
     return [row for row in payload if isinstance(row, dict)]
 
 
+def _write_json_list(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(rows, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+
+
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n", encoding="utf-8")
@@ -88,6 +105,17 @@ def _ordered_unique(items: list[str]) -> list[str]:
             ordered.append(item)
             seen.add(item)
     return ordered
+
+
+def _safe_slug(value: str) -> str:
+    return "".join(ch.lower() if ch.isalnum() else "_" for ch in str(value or "").strip()).strip("_")
+
+
+def _select_freshest_existing_path(*paths: Path) -> Path:
+    existing = [path for path in paths if path.exists()]
+    if not existing:
+        return paths[0]
+    return max(existing, key=lambda path: path.stat().st_mtime)
 
 
 def _load_env_file(path: Path) -> tuple[dict[str, str], dict[str, str]]:
@@ -336,27 +364,173 @@ def _build_historical_order_path_proof(
     }
 
 
+def _healthy_runtime_only(runtime_truth: dict[str, Any]) -> bool:
+    service_state = str(runtime_truth.get("service_state") or "").strip().lower()
+    service_consistency = str(runtime_truth.get("service_consistency") or "").strip().lower()
+    return (
+        bool(runtime_truth.get("allow_order_submission"))
+        and bool(runtime_truth.get("finance_gate_pass", True))
+        and service_state in {"running", "live"}
+        and service_consistency in {"consistent", "ok", "healthy"}
+    )
+
+
+def _sort_rows_by_update(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        rows,
+        key=lambda row: (
+            _parse_dt(row.get("updated_at")) or datetime.min.replace(tzinfo=UTC),
+            int(row.get("window_start_ts") or 0),
+        ),
+    )
+
+
+def _build_matched_window_comparator(
+    *,
+    historical_rows: list[dict[str, Any]],
+    historical_rows_path: Path,
+    runtime_truth: dict[str, Any],
+    live_window_observation: dict[str, Any],
+    shadow_policy_id: str,
+    shadow_delta_cap: float,
+) -> dict[str, Any]:
+    ordered_rows = _sort_rows_by_update(historical_rows)
+    sample = ordered_rows[-MATCHED_WINDOW_SAMPLE_SIZE:]
+    healthy_runtime_only = _healthy_runtime_only(runtime_truth)
+    sample_last_updated_at = sample[-1].get("updated_at") if sample else None
+    probe_reference_dt = (
+        _parse_dt(live_window_observation.get("window_range", {}).get("last_updated_at"))
+        or _parse_dt(runtime_truth.get("generated_at"))
+    )
+    sample_last_updated_dt = _parse_dt(sample_last_updated_at)
+    fresh_for_current_cycle = bool(
+        sample_last_updated_dt is not None
+        and probe_reference_dt is not None
+        and sample_last_updated_dt.date() == probe_reference_dt.date()
+        and abs((probe_reference_dt - sample_last_updated_dt).total_seconds()) <= (8 * 3600)
+    )
+    sample_ready = healthy_runtime_only and fresh_for_current_cycle and len(sample) >= 12
+    first_updated_at = sample[0].get("updated_at") if sample else None
+    last_updated_at = sample_last_updated_at
+    sample_status_counts = dict(Counter(str(row.get("order_status") or "") for row in sample))
+    baseline_eligible = [
+        row for row in sample if float(row.get("abs_delta") or 0.0) <= BASELINE_DELTA_CAP
+    ]
+    shadow_eligible = [
+        row for row in sample if float(row.get("abs_delta") or 0.0) <= shadow_delta_cap
+    ]
+    shadow_is_tighter = shadow_delta_cap <= BASELINE_DELTA_CAP
+    if shadow_is_tighter:
+        transition_rows = [
+            row
+            for row in sample
+            if shadow_delta_cap < float(row.get("abs_delta") or 0.0) <= BASELINE_DELTA_CAP
+        ]
+    else:
+        transition_rows = [
+            row
+            for row in sample
+            if BASELINE_DELTA_CAP < float(row.get("abs_delta") or 0.0) <= shadow_delta_cap
+        ]
+    transition_status_counts = dict(Counter(str(row.get("order_status") or "") for row in transition_rows))
+    return {
+        "source": _repo_rel(historical_rows_path),
+        "status": "eligibility_only_same_stream" if sample_ready else "not_ready",
+        "healthy_runtime_only": healthy_runtime_only,
+        "fresh_for_current_cycle": fresh_for_current_cycle,
+        "sample_window_count": len(sample),
+        "sample_window_target": MATCHED_WINDOW_SAMPLE_SIZE,
+        "sample_updated_at_range": {
+            "first_updated_at": first_updated_at,
+            "last_updated_at": last_updated_at,
+        },
+        "baseline_profile": "active_profile_probe_d0_00075",
+        "shadow_profile": shadow_policy_id,
+        "baseline_delta_cap": BASELINE_DELTA_CAP,
+        "shadow_delta_cap": shadow_delta_cap,
+        "same_window_comparison_ready": sample_ready,
+        "measured_shadow_execution_delta_ready": False,
+        "baseline_eligible_window_count": len(baseline_eligible),
+        "shadow_eligible_window_count": len(shadow_eligible),
+        "incremental_shadow_eligible_window_count": 0 if shadow_is_tighter else len(transition_rows),
+        "shadow_restricted_window_count": len(transition_rows) if shadow_is_tighter else 0,
+        "sample_status_counts": sample_status_counts,
+        "incremental_shadow_status_counts": transition_status_counts if not shadow_is_tighter else {},
+        "shadow_restricted_status_counts": transition_status_counts if shadow_is_tighter else {},
+        "decision": (
+            (
+                "Fresh same-window March 12 coverage exists, but it is still an eligibility-only comparator. "
+                f"Keep d0_00075 live until `{shadow_policy_id}` proves itself on the same stream."
+            )
+            if sample_ready and shadow_is_tighter
+            else (
+                "Fresh same-window March 12 coverage exists, but it is still an eligibility-only comparator. "
+                f"Keep d0_00075 live until `{shadow_policy_id}` has same-stream shadow execution telemetry."
+            )
+            if sample_ready
+            else "Same-window comparator is not ready yet."
+        ),
+    }
+
+
 def _build_shadow_only_comparator(
     *,
     live_window_observation: dict[str, Any],
     runtime_gap: dict[str, Any],
+    matched_window_comparator: dict[str, Any],
 ) -> dict[str, Any]:
+    requested_profile = str(matched_window_comparator.get("shadow_profile") or "active_profile")
+    requested_profile_short = requested_profile
+    shadow_delta_cap = float(matched_window_comparator.get("shadow_delta_cap") or 0.00015)
+    shadow_is_tighter = shadow_delta_cap <= BASELINE_DELTA_CAP
+    if matched_window_comparator.get("same_window_comparison_ready"):
+        restricted = int(matched_window_comparator.get("shadow_restricted_window_count") or 0)
+        unlocked = int(matched_window_comparator.get("incremental_shadow_eligible_window_count") or 0)
+        baseline_count = int(matched_window_comparator.get("baseline_eligible_window_count") or 0)
+        shadow_count = int(matched_window_comparator.get("shadow_eligible_window_count") or 0)
+        return {
+            "requested_profile": requested_profile,
+            "requested_profile_short": requested_profile_short,
+            "status": "eligibility_only_same_stream",
+            "matched_window_capture_ready": True,
+            "measured_shadow_execution_delta_ready": False,
+            "reason": (
+                "fresh_same_stream_windows_available_but_shadow_execution_delta_not_measured"
+            ),
+            "precomputed_eligibility_benchmark": {
+                "baseline_eligible_window_count": matched_window_comparator.get("baseline_eligible_window_count"),
+                "shadow_eligible_window_count": matched_window_comparator.get("shadow_eligible_window_count"),
+                "incremental_shadow_eligible_window_count": unlocked,
+                "shadow_restricted_window_count": restricted,
+            },
+            "decision": (
+                (
+                    f"Do not swap live yet. The fresh same-stream comparator shows `{requested_profile}` would tighten "
+                    f"the eligible window set from {baseline_count} to {shadow_count}, leaving {restricted} baseline "
+                    "windows parked, but there is still no same-stream execution or fill delta."
+                )
+                if shadow_is_tighter
+                else
+                f"Do not widen live yet. The fresh same-stream comparator shows {unlocked} additional windows "
+                f"would become eligible at `{requested_profile}`, but there is still no same-stream execution or fill delta."
+            ),
+        }
     zero_conversion = not live_window_observation.get("submit_rest_cancel_fill_observed", False)
     reason_parts = []
     if zero_conversion:
         reason_parts.append("fresh_live_sample_is_zero_conversion")
     if runtime_gap.get("gap_detected"):
         reason_parts.append("runtime_truth_latest_has_no_new_btc5_trade_payload")
-    reason_parts.append("no_same_stream_d0_00150_shadow_capture_artifact")
+    reason_parts.append(f"no_same_stream_{_safe_slug(requested_profile)}_shadow_capture_artifact")
     return {
-        "requested_profile": "active_profile_probe_d0_00150",
-        "requested_profile_short": "d0_00150",
+        "requested_profile": requested_profile,
+        "requested_profile_short": requested_profile_short,
         "status": "not_captured_on_same_stream",
         "matched_window_capture_ready": False,
         "reason": ",".join(reason_parts),
         "precomputed_eligibility_benchmark": {},
         "decision": (
-            "Do not widen live. Keep d0_00075 unchanged until a same-stream d0_00150 shadow comparator "
+            f"Do not swap live. Keep d0_00075 unchanged until a same-stream `{requested_profile}` shadow comparator "
             "is captured over a fresh 12-window slice with non-null BTC5 trade telemetry."
         ),
     }
@@ -367,20 +541,100 @@ def _build_arr_confidence_score(
     live_window_observation: dict[str, Any],
     historical_order_path_proof: dict[str, Any],
     shadow_only_comparator: dict[str, Any],
+    matched_window_comparator: dict[str, Any],
+    runtime_truth: dict[str, Any],
 ) -> tuple[float, str]:
     window_count = int(live_window_observation.get("window_count") or 0)
     base = 0.05
     fresh_sample_boost = round(0.03 * min(window_count, 12) / 12.0, 4)
     historical_proof_boost = 0.03 if historical_order_path_proof.get("stale_but_real_path_exists") else 0.0
-    comparator_boost = 0.02 if shadow_only_comparator.get("matched_window_capture_ready") else 0.0
+    comparator_boost = 0.18 if matched_window_comparator.get("same_window_comparison_ready") else 0.0
+    healthy_runtime_boost = (
+        0.12
+        if _healthy_runtime_only(runtime_truth) and matched_window_comparator.get("same_window_comparison_ready")
+        else 0.0
+    )
+    execution_delta_boost = 0.08 if shadow_only_comparator.get("measured_shadow_execution_delta_ready") else 0.0
     eligible_boost = 0.01 if int(live_window_observation.get("eligible_window_count") or 0) > 0 else 0.0
-    score = round(min(0.3, base + fresh_sample_boost + historical_proof_boost + comparator_boost + eligible_boost), 2)
+    score = round(
+        min(
+            0.55,
+            base
+            + fresh_sample_boost
+            + historical_proof_boost
+            + comparator_boost
+            + healthy_runtime_boost
+            + execution_delta_boost
+            + eligible_boost,
+        ),
+        2,
+    )
     basis = (
         f"{base:.2f} base + {fresh_sample_boost:.2f} fresh-sample boost + "
         f"{historical_proof_boost:.2f} historical-path boost + {comparator_boost:.2f} comparator boost + "
+        f"{healthy_runtime_boost:.2f} healthy-runtime boost + {execution_delta_boost:.2f} execution-delta boost + "
         f"{eligible_boost:.2f} eligible-window boost"
     )
     return score, basis
+
+
+def _resolve_canonical_policy_truth(
+    *,
+    runtime_truth: dict[str, Any],
+    env_metadata: dict[str, str],
+    baseline_artifact: dict[str, Any],
+) -> dict[str, Any]:
+    runtime_selected = runtime_truth.get("btc5_selected_package") if isinstance(runtime_truth.get("btc5_selected_package"), dict) else {}
+    baseline_selected = baseline_artifact.get("selected_package") if isinstance(baseline_artifact.get("selected_package"), dict) else {}
+    canonical_policy_id = (
+        baseline_selected.get("selected_best_profile_name")
+        or baseline_selected.get("selected_policy_id")
+        or env_metadata.get("candidate")
+        or runtime_selected.get("selected_policy_id")
+        or runtime_selected.get("selected_best_profile_name")
+        or "active_profile_probe_d0_00075"
+    )
+    runtime_policy_id = (
+        runtime_selected.get("selected_policy_id")
+        or runtime_selected.get("selected_best_profile_name")
+    )
+    return {
+        "canonical_policy_id": str(canonical_policy_id),
+        "source": (
+            _repo_rel(DEFAULT_BASELINE_ARTIFACT)
+            if baseline_selected
+            else _repo_rel(DEFAULT_RUNTIME_TRUTH)
+        ),
+        "runtime_policy_id": runtime_policy_id,
+        "alignment_status": (
+            "aligned"
+            if not runtime_policy_id or str(runtime_policy_id) == str(canonical_policy_id)
+            else "mismatch"
+        ),
+    }
+
+
+def _resolve_shadow_comparator(policy_latest: dict[str, Any]) -> dict[str, Any]:
+    frontier = policy_latest.get("frontier_best_candidate")
+    if not isinstance(frontier, dict):
+        return {
+            "policy_id": "active_profile",
+            "delta_cap": 0.00015,
+            "selection_basis": "dispatch_default",
+        }
+    runtime_package = frontier.get("runtime_package")
+    if not isinstance(runtime_package, dict):
+        runtime_package = {}
+    profile = runtime_package.get("profile")
+    if not isinstance(profile, dict):
+        profile = {}
+    policy_id = str(frontier.get("policy_id") or profile.get("name") or "active_profile").strip() or "active_profile"
+    delta_cap = float(profile.get("max_abs_delta") or 0.00015)
+    return {
+        "policy_id": policy_id,
+        "delta_cap": delta_cap,
+        "selection_basis": "frontier_best_candidate",
+    }
 
 
 def build_directional_conversion_probe(
@@ -390,8 +644,13 @@ def build_directional_conversion_probe(
     env_values: dict[str, str],
     env_metadata: dict[str, str],
     historical_rows: list[dict[str, Any]],
+    historical_rows_path: Path = DEFAULT_HISTORICAL_ROWS,
+    baseline_artifact: dict[str, Any] | None = None,
+    policy_latest: dict[str, Any] | None = None,
     generated_at: datetime | None = None,
 ) -> dict[str, Any]:
+    baseline_artifact = baseline_artifact or {}
+    policy_latest = policy_latest or {}
     all_window_records, unique_windows = _collect_unique_runtime_windows(archive_snapshots)
     live_window_observation = _build_live_window_observation(unique_windows)
     runtime_gap = _build_runtime_gap(
@@ -400,21 +659,35 @@ def build_directional_conversion_probe(
         unique_windows=unique_windows,
     )
     historical_order_path_proof = _build_historical_order_path_proof(historical_rows, live_window_observation)
+    shadow_comparator = _resolve_shadow_comparator(policy_latest)
+    matched_window_comparator = _build_matched_window_comparator(
+        historical_rows=historical_rows,
+        historical_rows_path=historical_rows_path,
+        runtime_truth=runtime_truth,
+        live_window_observation=live_window_observation,
+        shadow_policy_id=str(shadow_comparator.get("policy_id") or "active_profile"),
+        shadow_delta_cap=float(shadow_comparator.get("delta_cap") or 0.00015),
+    )
     shadow_only_comparator = _build_shadow_only_comparator(
         live_window_observation=live_window_observation,
         runtime_gap=runtime_gap,
+        matched_window_comparator=matched_window_comparator,
     )
     arr_confidence_score, arr_confidence_score_basis = _build_arr_confidence_score(
         live_window_observation=live_window_observation,
         historical_order_path_proof=historical_order_path_proof,
         shadow_only_comparator=shadow_only_comparator,
+        matched_window_comparator=matched_window_comparator,
+        runtime_truth=runtime_truth,
     )
-    policy_id = (
-        env_metadata.get("candidate")
-        or (runtime_truth.get("btc5_selected_package") or {}).get("selected_policy_id")
-        or (runtime_truth.get("btc5_selected_package") or {}).get("selected_best_profile_name")
-        or "active_profile_probe_d0_00075"
+    canonical_policy_truth = _resolve_canonical_policy_truth(
+        runtime_truth=runtime_truth,
+        env_metadata=env_metadata,
+        baseline_artifact=baseline_artifact,
     )
+    policy_id = canonical_policy_truth["canonical_policy_id"]
+    shadow_policy_id = str(shadow_comparator.get("policy_id") or matched_window_comparator.get("shadow_profile") or "active_profile")
+    shadow_policy_slug = _safe_slug(shadow_policy_id)
     status_counts = live_window_observation.get("status_counts", {})
     block_reasons = _ordered_unique(
         [
@@ -429,8 +702,16 @@ def build_directional_conversion_probe(
                 else ""
             ),
             (
-                "matched_window_shadow_comparator_d0_00150_not_captured_on_same_stream"
+                f"matched_window_shadow_execution_delta_{shadow_policy_slug}_not_measured"
+                if shadow_only_comparator.get("matched_window_capture_ready", False)
+                and not shadow_only_comparator.get("measured_shadow_execution_delta_ready", False)
+                else f"matched_window_shadow_comparator_{shadow_policy_slug}_not_captured_on_same_stream"
                 if not shadow_only_comparator.get("matched_window_capture_ready", False)
+                else ""
+            ),
+            (
+                "runtime_truth_selected_package_disagrees_with_canonical_live_baseline"
+                if canonical_policy_truth.get("alignment_status") == "mismatch"
                 else ""
             ),
             (
@@ -447,20 +728,28 @@ def build_directional_conversion_probe(
     )
     generated_at = generated_at or datetime.now(UTC)
     finance_gate_pass = bool(runtime_truth.get("finance_gate_pass", True))
+    matched_window_ready = bool(matched_window_comparator.get("same_window_comparison_ready"))
     payload = {
         "artifact": "instance02_directional_conversion_probe",
         "instance": "Instance 2 - GPT-4 / Extra High",
         "generated_at": _iso(generated_at),
         "schema_version": 2,
         "objective": (
-            "Keep active_profile_probe_d0_00075 as the live BTC5 baseline, measure the freshest "
-            "matched-window conversion evidence we actually have, and hold live widening until a same-stream "
-            "d0_00150 shadow comparator exists."
+            "Keep active_profile_probe_d0_00075 as the live BTC5 baseline, refresh the freshest healthy-runtime "
+            f"matched-window evidence we actually have, and keep `{shadow_policy_id}` as the single shadow comparator "
+            "until a same-stream execution delta exists."
         ),
         "baseline_policy": {
             "policy_id": str(policy_id),
+            "selected_live_profile": str(policy_id),
             "live_baseline_locked": True,
             "live_widening_allowed_this_cycle": False,
+            "shadow_comparator_policy_id": shadow_policy_id,
+            "canonical_live_package": {
+                "policy_id": canonical_policy_truth.get("canonical_policy_id"),
+                "source": canonical_policy_truth.get("source"),
+                "alignment_status": canonical_policy_truth.get("alignment_status"),
+            },
             "runtime_truth_selected_package": {
                 "selected_policy_id": (runtime_truth.get("btc5_selected_package") or {}).get("selected_policy_id"),
                 "selected_best_profile_name": (
@@ -480,47 +769,74 @@ def build_directional_conversion_probe(
         "fresh_live_window_observation": live_window_observation,
         "latest_runtime_gap_observation": runtime_gap,
         "historical_order_path_proof": historical_order_path_proof,
+        "matched_window_live_vs_shadow_comparator": matched_window_comparator,
         "shadow_only_comparator": shadow_only_comparator,
         "decision": {
-            "status": "hold_and_wait_for_better_book_conditions",
-            "same_window_comparison_ready": False,
+            "status": "keep_0.00075" if matched_window_ready else "hold_and_wait_for_better_book_conditions",
+            "same_window_comparison_ready": matched_window_ready,
             "next_live_decision_set": list(_LIVE_DECISION_SET),
-            "selected_next_live_decision": "hold_and_wait_for_better_book_conditions",
+            "selected_next_live_decision": "keep_0.00075" if matched_window_ready else "hold_and_wait_for_better_book_conditions",
             "fresh_submit_rest_cancel_fill_proof": live_window_observation.get("submit_rest_cancel_fill_observed", False),
             "ruling": (
+                (
+                    f"Keep active_profile_probe_d0_00075 live at flat stage-1 size. The fresh March 12 same-window "
+                    f"comparator still has no same-stream execution delta for `{shadow_policy_id}`, so the live baseline stays locked."
+                )
+                if matched_window_ready
+                else
                 "Keep active_profile_probe_d0_00075 live at flat stage-1 size, do not widen live this cycle, "
-                "and do not treat d0_00150 as anything other than a shadow-only comparator until the same stream "
+                f"and do not treat `{shadow_policy_id}` as anything other than the single shadow-only comparator until the same stream "
                 "shows fresh BTC5 trade telemetry and a real matched-window capture."
             ),
             "why": (
+                (
+                    f"The remote VPS now supplies a healthy March 12 same-window slice, but the evidence for `{shadow_policy_id}` "
+                    "is still eligibility-only and replay-led, so it cannot replace the live baseline yet."
+                )
+                if matched_window_ready
+                else
                 "The freshest reconstructed 12-window slice is still zero-conversion, the most recent runtime truth "
                 "reports the service as running but has no new BTC5 latest-trade payload, and there is no same-window "
-                "d0_00150 comparator artifact yet."
+                f"`{shadow_policy_id}` comparator artifact yet."
             ),
         },
         "candidate_delta_arr_bps": 0,
         "candidate_delta_arr_bps_basis": (
-            "Pinned at 0 until a same-window d0_00150 comparator produces a measured conversion delta versus "
-            "the live d0_00075 baseline."
+            f"Pinned at 0 because the refreshed same-window comparator for `{shadow_policy_id}` is still eligibility-only "
+            "and does not yet measure an execution or fill delta versus the live d0_00075 baseline."
         ),
-        "expected_improvement_velocity_delta": 0.0,
+        "expected_improvement_velocity_delta": 0.08 if matched_window_ready else 0.0,
         "expected_improvement_velocity_delta_basis": (
+            (
+                "Set to 0.08 because the packet now uses a fresh healthy-runtime same-window comparator, which removes "
+                f"stale-window ambiguity and makes the next live-swap decision depend only on capturing `{shadow_policy_id}` "
+                "shadow execution telemetry."
+            )
+            if matched_window_ready
+            else
             "Pinned at 0.0 because the fresh live sample has zero submit/rest/cancel/fill conversion and "
-            "the wider shadow comparator has not been captured on the same stream."
+            f"the `{shadow_policy_id}` shadow comparator has not been captured on the same stream."
         ),
         "arr_confidence_score": arr_confidence_score,
         "arr_confidence_score_basis": arr_confidence_score_basis,
         "block_reasons": block_reasons,
         "finance_gate_pass": finance_gate_pass,
         "one_next_cycle_action": (
+            (
+                f"Keep active_profile_probe_d0_00075 live unchanged, run `{shadow_policy_id}` as the only same-stream "
+                "shadow-only over the next fresh 60-window slice, and publish a measured execution-delta packet before "
+                "considering any live package swap."
+            )
+            if matched_window_ready
+            else
             "Keep active_profile_probe_d0_00075 live unchanged, wait for the runtime truth snapshots to resume "
             "emitting non-null BTC5 latest-trade payloads, then capture the next bounded 12-window slice with "
-            "d0_00150 shadow-only on the same stream before considering any live widening."
+            f"`{shadow_policy_id}` shadow-only on the same stream before considering any live package swap."
         ),
         "sources": {
             "runtime_truth_latest": _repo_rel(DEFAULT_RUNTIME_TRUTH),
             "runtime_truth_archive_dir": _repo_rel(DEFAULT_RUNTIME_ARCHIVE_DIR),
-            "historical_window_rows": _repo_rel(DEFAULT_HISTORICAL_ROWS),
+            "historical_window_rows": _repo_rel(historical_rows_path),
             "runtime_env": _repo_rel(DEFAULT_ENV_PATH),
             "archive_snapshot_count": len(archive_snapshots),
             "archive_window_record_count": len(all_window_records),
@@ -536,19 +852,34 @@ def main() -> int:
     parser.add_argument("--runtime-archive-dir", type=Path, default=DEFAULT_RUNTIME_ARCHIVE_DIR)
     parser.add_argument("--env-path", type=Path, default=DEFAULT_ENV_PATH)
     parser.add_argument("--historical-rows", type=Path, default=DEFAULT_HISTORICAL_ROWS)
+    parser.add_argument("--baseline-artifact", type=Path, default=DEFAULT_BASELINE_ARTIFACT)
+    parser.add_argument("--policy-latest", type=Path, default=DEFAULT_POLICY_LATEST)
+    parser.add_argument("--refresh-remote", action="store_true")
     parser.add_argument("--output-json", type=Path, default=DEFAULT_OUTPUT_JSON)
     args = parser.parse_args()
 
     runtime_truth = _read_json_dict(args.runtime_truth)
     archive_snapshots = _load_runtime_archive_snapshots(args.runtime_archive_dir)
     env_values, env_metadata = _load_env_file(args.env_path)
-    historical_rows = _read_json_list(args.historical_rows)
+    historical_rows_path = _select_freshest_existing_path(args.historical_rows, LEGACY_HISTORICAL_ROWS)
+    if args.refresh_remote:
+        historical_rows = fetch_remote_rows()
+        _write_json_list(args.historical_rows, historical_rows)
+        historical_rows_path = args.historical_rows
+    else:
+        historical_rows = _read_json_list(historical_rows_path)
+    baseline_artifact_path = _select_freshest_existing_path(args.baseline_artifact, LEGACY_BASELINE_ARTIFACT)
+    baseline_artifact = _read_json_dict(baseline_artifact_path)
+    policy_latest = _read_json_dict(args.policy_latest)
     payload = build_directional_conversion_probe(
         runtime_truth=runtime_truth,
         archive_snapshots=archive_snapshots,
         env_values=env_values,
         env_metadata=env_metadata,
         historical_rows=historical_rows,
+        historical_rows_path=historical_rows_path,
+        baseline_artifact=baseline_artifact,
+        policy_latest=policy_latest,
     )
     _write_json(args.output_json, payload)
     print(args.output_json)

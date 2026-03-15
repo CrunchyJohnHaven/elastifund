@@ -1,0 +1,68 @@
+{
+  "index_patterns": ["elastifund-nontrading-events*"],
+  "priority": 500,
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "refresh_interval": "5s"
+    },
+    "mappings": {
+      "dynamic": true,
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "ecs": {
+          "properties": {
+            "version": { "type": "keyword" }
+          }
+        },
+        "event": {
+          "properties": {
+            "kind": { "type": "keyword" },
+            "category": { "type": "keyword" },
+            "type": { "type": "keyword" },
+            "action": { "type": "keyword" },
+            "outcome": { "type": "keyword" },
+            "dataset": { "type": "keyword" }
+          }
+        },
+        "service": {
+          "properties": {
+            "name": { "type": "keyword" },
+            "type": { "type": "keyword" }
+          }
+        },
+        "labels": {
+          "properties": {
+            "environment": { "type": "keyword" },
+            "engine": { "type": "keyword" },
+            "pipeline_stage": { "type": "keyword" }
+          }
+        },
+        "entity": {
+          "properties": {
+            "type": { "type": "keyword" },
+            "id": { "type": "keyword" }
+          }
+        },
+        "related": {
+          "properties": {
+            "id": { "type": "keyword" }
+          }
+        },
+        "payload": { "type": "flattened" },
+        "elastifund": {
+          "properties": {
+            "worker_family": { "type": "keyword" },
+            "worker_name": { "type": "keyword" },
+            "event_type": { "type": "keyword" },
+            "event_alias": { "type": "keyword" },
+            "engine": { "type": "keyword" },
+            "pipeline_stage": { "type": "keyword" },
+            "payload": { "type": "flattened" }
+          }
+        }
+      }
+    }
+  }
+}

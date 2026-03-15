@@ -3,23 +3,6 @@
 
 set -euo pipefail
 
-usage() {
-    cat <<'EOF'
-Usage:
-  ./scripts/health_check.sh
-
-Environment overrides:
-  JJ_HEARTBEAT_FILE            Path to heartbeat JSON (default: data/heartbeat.json)
-  JJ_HEARTBEAT_TIMEOUT_SECONDS Max age before failure (default: 600)
-  JJ_HEALTH_NOW_EPOCH          Override current epoch for deterministic checks
-EOF
-}
-
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-    usage
-    exit 0
-fi
-
 HEARTBEAT_FILE="${JJ_HEARTBEAT_FILE:-data/heartbeat.json}"
 TIMEOUT_SECONDS="${JJ_HEARTBEAT_TIMEOUT_SECONDS:-600}"
 NOW_EPOCH="${JJ_HEALTH_NOW_EPOCH:-$(date -u +%s)}"

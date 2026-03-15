@@ -18,11 +18,6 @@ from execution.shadow_order_lifecycle import ShadowOrderLifecycle
 
 
 REPORTS_DIR = Path("reports")
-DEFAULT_BTC5_ARTIFACT = Path("reports/btc5_autoresearch/latest.json")
-
-BTC5_MIN_ARR_UPLIFT_PCT = 0.0
-BTC5_MIN_CONFIDENCE = 0.8
-BTC5_MAX_CANDIDATE_AGE_HOURS = 6.0
 
 
 def _utc_stamp() -> str:
@@ -37,149 +32,9 @@ def _read_json(path: Path) -> dict[str, Any]:
         return {}
 
 
-def _parse_iso8601(raw_value: str | None) -> datetime | None:
-    if not raw_value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(raw_value)
-    except Exception:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
-
-
-def _as_optional_float(value: Any) -> float | None:
-    try:
-        if value is None:
-            return None
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _find_latest(pattern: str) -> Path | None:
     matches = sorted(REPORTS_DIR.glob(pattern), key=lambda item: item.stat().st_mtime, reverse=True)
     return matches[0] if matches else None
-
-
-def _safe_int(value: Any, default: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _safe_float(value: Any, default: float) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return float(default)
-
-
-def _candidate_age_hours(artifact_path: Path, generated_at: str | None) -> float:
-    now = datetime.now(timezone.utc)
-    generated = _parse_iso8601(generated_at)
-    if generated is None:
-        generated = datetime.fromtimestamp(artifact_path.stat().st_mtime, tz=timezone.utc)
-    return max(0.0, (now - generated).total_seconds() / 3600.0)
-
-
-def _extract_btc5_readiness(artifact_path: Path | None) -> dict[str, Any]:
-    if artifact_path is None or not artifact_path.exists():
-        return {
-            "ok": False,
-            "ready": False,
-            "reasons": ["missing_btc5_readiness_artifact"],
-            "expected_arr_uplift_pct": None,
-            "confidence": None,
-            "candidate_age_hours": None,
-            "candidate": {},
-        }
-
-    payload = _read_json(artifact_path)
-    if not payload:
-        return {
-            "ok": False,
-            "ready": False,
-            "reasons": ["btc5_readiness_artifact_unreadable"],
-            "expected_arr_uplift_pct": None,
-            "confidence": None,
-            "candidate_age_hours": None,
-            "candidate": {},
-        }
-
-    candidate = payload.get("best_candidate")
-    if not isinstance(candidate, Mapping):
-        candidate = payload.get("current_candidate", {})
-    if not isinstance(candidate, Mapping):
-        candidate = {}
-
-    candidate_payload = dict(candidate)
-    continuation = candidate_payload.get("continuation")
-    if not isinstance(continuation, Mapping):
-        continuation = {}
-    scoring = candidate_payload.get("scoring")
-    if not isinstance(scoring, Mapping):
-        scoring = {}
-
-    arr_uplift = _as_optional_float(continuation.get("median_arr_pct"))
-    if arr_uplift is None:
-        arr_uplift = _as_optional_float(scoring.get("live_policy_score"))
-    confidence = _as_optional_float(candidate_payload.get("execution_realism_score"))
-    if confidence is None:
-        confidence = _as_optional_float(scoring.get("execution_realism_score"))
-
-    candidate_age_hours = _candidate_age_hours(
-        artifact_path=artifact_path,
-        generated_at=_as_str(payload.get("generated_at")),
-    )
-
-    reasons: list[str] = []
-    candidate_class = str(candidate_payload.get("candidate_class") or "").strip().lower()
-    evidence_band = str(candidate_payload.get("evidence_band") or "").strip().lower()
-    if candidate_class not in {"promote", "live_candidate"}:
-        reasons.append(f"candidate_class={candidate_class or 'missing'}")
-    if not evidence_band and candidate_class == "promote":
-        reasons.append("evidence_band_missing")
-    elif evidence_band and evidence_band not in {"validated", "high", "medium", "strong"} and candidate_class == "promote":
-        reasons.append(f"evidence_band={evidence_band}")
-    if arr_uplift is None:
-        reasons.append("expected_arr_uplift_missing")
-    elif arr_uplift <= BTC5_MIN_ARR_UPLIFT_PCT:
-        reasons.append(f"expected_arr_uplift_not_positive: {arr_uplift:.4f}")
-    if confidence is None:
-        reasons.append("confidence_missing")
-    elif confidence < BTC5_MIN_CONFIDENCE:
-        reasons.append(f"confidence_below_threshold: {confidence:.4f}")
-    if candidate_age_hours > BTC5_MAX_CANDIDATE_AGE_HOURS:
-        reasons.append(f"candidate_age_hours_exceeds_{BTC5_MAX_CANDIDATE_AGE_HOURS}:{candidate_age_hours:.2f}")
-
-    return {
-        "ok": len(reasons) == 0,
-        "ready": len(reasons) == 0,
-        "reasons": reasons,
-        "candidate_class": candidate_class or None,
-        "evidence_band": evidence_band or None,
-        "expected_arr_uplift_pct": arr_uplift,
-        "confidence": confidence,
-        "candidate_age_hours": candidate_age_hours,
-        "generated_at": payload.get("generated_at"),
-        "artifact": str(artifact_path),
-        "candidate": {
-            "base_profile": candidate_payload.get("base_profile"),
-            "policy": candidate_payload.get("policy"),
-            "session_overrides": candidate_payload.get("session_overrides"),
-            "recommended_session_policy": candidate_payload.get("recommended_session_policy"),
-        },
-    }
-
-
-def _as_str(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
 
 
 def _extract_launch_posture(runtime_truth: Mapping[str, Any]) -> str:
@@ -224,13 +79,6 @@ def evaluate_runtime_guard(runtime_truth_path: Path, runtime_profile_path: Path)
     else:
         order_submit_enabled = bool(order_submit_enabled)
 
-    force_live_attempt = os.environ.get("JJ_FORCE_LIVE_ATTEMPT", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-
     agent_run_mode = str(
         os.environ.get("ELASTIFUND_AGENT_RUN_MODE")
         or runtime_truth.get("agent_run_mode")
@@ -238,15 +86,13 @@ def evaluate_runtime_guard(runtime_truth_path: Path, runtime_profile_path: Path)
         or ""
     ).strip().lower()
 
-    posture_green = force_live_attempt or launch_posture in {"clear", "green", "unblocked"}
+    posture_green = launch_posture in {"clear", "green", "unblocked"}
     paper_green = paper_trading is False
-    mode_green = force_live_attempt or agent_run_mode in {"shadow", "micro_live", "live"}
+    mode_green = agent_run_mode in {"micro_live", "live"}
     submit_green = order_submit_enabled is True
     greenlight = posture_green and paper_green and mode_green and submit_green
 
     reasons: list[str] = []
-    if force_live_attempt:
-        reasons.append("force_live_attempt=true")
     if not posture_green:
         reasons.append(f"launch_posture={launch_posture or 'unknown'}")
     if not paper_green:
@@ -323,25 +169,15 @@ def _candidate_price(candidate: Mapping[str, Any]) -> float:
 def build_shadow_readiness() -> tuple[Path, Path]:
     ts = _utc_stamp()
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    now = datetime.now(timezone.utc)
 
     runtime_truth_path = Path(os.environ.get("JJ_RUNTIME_TRUTH_PATH", "reports/runtime_truth_latest.json"))
     runtime_profile_path = Path(
         os.environ.get("JJ_RUNTIME_PROFILE_EFFECTIVE_PATH", "reports/runtime_profile_effective.json")
     )
-    runtime_profile = _read_json(runtime_profile_path)
-    btc5_path = Path(os.environ.get("INSTANCE3_BTC5_ARTIFACT", str(DEFAULT_BTC5_ARTIFACT)))
-    btc5_readiness = _extract_btc5_readiness(btc5_path if btc5_path.exists() else None)
     candidate_path = _find_latest("poly_fastlane_candidates_*.json")
     candidates, candidate_error = _load_candidates(candidate_path)
 
     guard = evaluate_runtime_guard(runtime_truth_path, runtime_profile_path)
-    runtime_mode = runtime_profile.get("mode", {})
-    if not isinstance(runtime_mode, Mapping):
-        runtime_mode = {}
-    risk_limits = runtime_profile.get("risk_limits", {})
-    if not isinstance(risk_limits, Mapping):
-        risk_limits = {}
     lifecycle = ShadowOrderLifecycle(ttl_seconds=120.0, expected_fill_window_seconds=30.0)
 
     staged = 0
@@ -392,20 +228,14 @@ def build_shadow_readiness() -> tuple[Path, Path]:
 
     readiness_payload = {
         "artifact": "polymarket_shadow_readiness",
-        "generated_at": now.isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "runtime_guard": guard,
-        "submission_policy": (
-            "eligible_btc5_live" if (guard["greenlight"] and btc5_readiness["ready"]) else "eligible_shadow_fastlane"
-            if guard["greenlight"]
-            else "shadow_only"
-        ),
+        "submission_policy": "eligible_live" if guard["greenlight"] else "shadow_only",
         "sources": {
             "runtime_truth": str(runtime_truth_path),
             "runtime_profile_effective": str(runtime_profile_path),
             "candidate_surface": str(candidate_path) if candidate_path else None,
-            "btc5_readiness_artifact": str(btc5_path),
         },
-        "btc5_readiness": btc5_readiness,
         "candidate_intake": {
             "loaded_count": len(candidates),
             "staged_shadow_orders": staged,
@@ -413,14 +243,6 @@ def build_shadow_readiness() -> tuple[Path, Path]:
             "rejected_or_cancelled": rejected,
             "error": candidate_error,
         },
-        "safety_envelope": {
-            "paper_trading": bool(runtime_mode.get("paper_trading", True)),
-            "allow_order_submission": bool(runtime_mode.get("allow_order_submission", False)),
-            "max_position_usd": _safe_float(risk_limits.get("max_position_usd"), 0.0),
-            "max_daily_loss_usd": _safe_float(risk_limits.get("max_daily_loss_usd"), 0.0),
-            "max_open_positions": _safe_int(risk_limits.get("max_open_positions"), 0),
-        },
-        "candidate_to_trade_conversion_estimate": 1.0 if btc5_readiness["ready"] else 0.0,
         "shadow_lifecycle": lifecycle.to_report(),
         "shadow_orders": staged_orders,
     }
@@ -452,18 +274,10 @@ def build_shadow_readiness() -> tuple[Path, Path]:
         f"- Launch posture: `{guard['launch_posture']}`",
         f"- Agent run mode: `{guard['agent_run_mode']}`",
         f"- Order submit enabled: `{guard['order_submit_enabled']}`",
-        f"- BTC5 candidate ready: `{btc5_readiness['ready']}`",
-        f"- BTC5 candidate class: `{btc5_readiness.get('candidate_class') or 'missing'}`",
-        f"- BTC5 evidence band: `{btc5_readiness.get('evidence_band') or 'missing'}`",
-        f"- BTC5 confidence: `{_safe_float(btc5_readiness.get('confidence'), 0.0):.4f}`",
-        f"- BTC5 expected ARR uplift (%): `{_safe_float(btc5_readiness.get('expected_arr_uplift_pct'), 0.0):.4f}`",
-        f"- BTC5 candidate age (h): `{_safe_float(btc5_readiness.get('candidate_age_hours'), 0.0):.2f}`",
-        f"- BTC5 estimated candidate->trade conversion: `{readiness_payload['candidate_to_trade_conversion_estimate']:.2f}`",
         "",
         "## Hard Guardrail",
         "- If runtime guard is not explicitly green, only synthetic shadow orders are permitted.",
         "- Real order submission remains blocked in this plan.",
-        "- BTC5 lane is treated as primary only when runtime guard and BTC5 readiness are both green.",
         "",
         "## Candidate Intake",
         f"- Candidate artifact: `{candidate_path}`" if candidate_path else "- Candidate artifact: `missing`",
@@ -487,28 +301,15 @@ def build_shadow_readiness() -> tuple[Path, Path]:
             "## Rollback Conditions",
             "- Force shadow-only if launch posture is not `clear|green|unblocked`.",
             "- Force shadow-only if `paper_trading=true` in runtime profile effective mode.",
-            "- Force shadow-only if `ELASTIFUND_AGENT_RUN_MODE` is not `shadow`, `micro_live`, or `live`.",
+            "- Force shadow-only if `ELASTIFUND_AGENT_RUN_MODE` is not `micro_live` or `live`.",
             "- Force shadow-only if `allow_order_submission` is false or ambiguous.",
-            "- Force no-BTC5 activation if BTC5 readiness remains blocked.",
-            "",
-            "## BTC5 Micro-Live Activation (One-Cycle)",
-            "- If `submission_policy=eligible_btc5_live`, use this sequence in order:",
-            "  - keep mandatory envelope: max position, max daily loss, max open positions, post-only placement.",
-            "  - load BTC5 readiness package from `reports/btc5_autoresearch/latest.json`.",
-            "  - run `python3 scripts/btc5_rollout.py` and confirm `deploy_mode=live_stage1` in the latest artifact.",
-            "  - suggested invocation:",
-            "    ```bash",
-            "    ELASTIFUND_AGENT_RUN_MODE=micro_live PAPER_TRADING=false JJ_FORCE_LIVE_ATTEMPT=true python3 scripts/btc5_rollout.py",
-            "    ```",
             "",
             "## Risk Envelope (Preparation Only)",
-            f"- `$ {readiness_payload['safety_envelope']['max_position_usd']:.2f}` max position cap for live sleeve.",
-            f"- `${readiness_payload['safety_envelope']['max_daily_loss_usd']:.2f}` max daily loss cap for live sleeve.",
-            f"- `{readiness_payload['safety_envelope']['max_open_positions']}` max open positions.",
-            "- Keep post-only, no market order, and BTC5 session-policy-only routing.",
-            "- Candidate gate: `candidate_class=promote`, confidence >= 0.8, positive expected ARR uplift, and age <= 6h.",
+            "- `$5` max synthetic position per order.",
+            "- `$5` daily loss cap target for any future micro-live activation.",
+            "- `5` max open positions, maker-only, no market orders, `20%` cash reserve.",
             "",
-            "No capital routing is executed by this script.",
+            "No capital routing is performed by this plan.",
         ]
     )
 

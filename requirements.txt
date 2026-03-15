@@ -1,7 +1,5 @@
 # Core runtime dependencies for the shared repo-root workspace.
-# Canonical install path:
-#   python3 -m pip install -r requirements-dev.txt
-# (Install this file directly only for runtime-only environments.)
+# For local development and test runs, install requirements-dev.txt instead.
 
 # Exchange and HTTP clients
 aiohttp
@@ -28,7 +26,6 @@ uvicorn[standard]>=0.30,<1.0
 # Research and modeling
 anthropic
 matplotlib
-msgspec
 numpy
 openai
 pandas

@@ -1,0 +1,3762 @@
+{
+  "api_accessible": true,
+  "weather_markets_found": 500,
+  "market_details": [
+    {
+      "ticker": "KXHIGHNY-26MAR08",
+      "title": "Highest temperature in NYC on Mar 8, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR07",
+      "title": "Highest temperature in NYC on Mar 7, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR06",
+      "title": "Highest temperature in NYC on Mar 6, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR05",
+      "title": "Highest temperature in NYC on Mar 5, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR04",
+      "title": "Highest temperature in NYC on Mar 4, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR03",
+      "title": "Highest temperature in NYC on Mar 3, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR02",
+      "title": "Highest temperature in NYC on Mar 2, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR01",
+      "title": "Highest temperature in NYC on Mar 1, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB28",
+      "title": "Highest temperature in NYC on Feb 28, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB27",
+      "title": "Highest temperature in NYC on Feb 27, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB26",
+      "title": "Highest temperature in NYC on Feb 26, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB25",
+      "title": "Highest temperature in NYC on Feb 25, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB24",
+      "title": "Highest temperature in NYC on Feb 24, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB23",
+      "title": "Highest temperature in NYC on Feb 23, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB22",
+      "title": "Highest temperature in NYC on Feb 22, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB21",
+      "title": "Highest temperature in NYC on Feb 21, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB20",
+      "title": "Highest temperature in NYC on Feb 20, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB19",
+      "title": "Highest temperature in NYC on Feb 19, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB18",
+      "title": "Highest temperature in NYC on Feb 18, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB17",
+      "title": "Highest temperature in NYC on Feb 17, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB16",
+      "title": "Highest temperature in NYC on Feb 16, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB15",
+      "title": "Highest temperature in NYC on Feb 15, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB14",
+      "title": "Highest temperature in NYC on Feb 14, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB13",
+      "title": "Highest temperature in NYC on Feb 13, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB12",
+      "title": "Highest temperature in NYC on Feb 12, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB11",
+      "title": "Highest temperature in NYC on Feb 11, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB10",
+      "title": "Highest temperature in NYC on Feb 10, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB09",
+      "title": "Highest temperature in NYC on Feb 9, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB08",
+      "title": "Highest temperature in NYC on Feb 8, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB07",
+      "title": "Highest temperature in NYC on Feb 7, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB06",
+      "title": "Highest temperature in NYC on Feb 6, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB05",
+      "title": "Highest temperature in NYC on Feb 5, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB04",
+      "title": "Highest temperature in NYC on Feb 4, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB03",
+      "title": "Highest temperature in NYC on Feb 3, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB02",
+      "title": "Highest temperature in NYC on Feb 2, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB01",
+      "title": "Highest temperature in NYC on Feb 1, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN31",
+      "title": "Highest temperature in NYC on Jan 31, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN30",
+      "title": "Highest temperature in NYC on Jan 30, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN29",
+      "title": "Highest temperature in NYC on Jan 29, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN28",
+      "title": "Highest temperature in NYC on Jan 28, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN27",
+      "title": "Highest temperature in NYC on Jan 27, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN26",
+      "title": "Highest temperature in NYC on Jan 26, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN25",
+      "title": "Highest temperature in NYC on Jan 25, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN24",
+      "title": "Highest temperature in NYC on Jan 24, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN23",
+      "title": "Highest temperature in NYC on Jan 23, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN22",
+      "title": "Highest temperature in NYC on Jan 22, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN21",
+      "title": "Highest temperature in NYC on Jan 21, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN20",
+      "title": "Highest temperature in NYC on Jan 20, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN19",
+      "title": "Highest temperature in NYC on Jan 19, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN18",
+      "title": "Highest temperature in NYC on Jan 18, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN17",
+      "title": "Highest temperature in NYC on Jan 17, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN16",
+      "title": "Highest temperature in NYC on Jan 16, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN15",
+      "title": "Highest temperature in NYC on Jan 15, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN14",
+      "title": "Highest temperature in NYC on Jan 14, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN13",
+      "title": "Highest temperature in NYC on Jan 13, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN12",
+      "title": "Highest temperature in NYC on Jan 12, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN11",
+      "title": "Highest temperature in NYC on Jan 11, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN10",
+      "title": "Highest temperature in NYC on Jan 10, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN09",
+      "title": "Highest temperature in NYC on Jan 9, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN08",
+      "title": "Highest temperature in NYC on Jan 8, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN07",
+      "title": "Highest temperature in NYC on Jan 7, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN06",
+      "title": "Highest temperature in NYC on Jan 6, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN05",
+      "title": "Highest temperature in NYC on Jan 5, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN04",
+      "title": "Highest temperature in NYC on Jan 4, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN03",
+      "title": "Highest temperature in NYC on Jan 3, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN02",
+      "title": "Highest temperature in NYC on Jan 2, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26JAN01",
+      "title": "Highest temperature in NYC on Jan 1, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC31",
+      "title": "Highest temperature in NYC on Dec 31, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC30",
+      "title": "Highest temperature in NYC on Dec 30, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC29",
+      "title": "Highest temperature in NYC on Dec 29, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC28",
+      "title": "Highest temperature in NYC on Dec 28, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC27",
+      "title": "Highest temperature in NYC on Dec 27, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC26",
+      "title": "Highest temperature in NYC on Dec 26, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC25",
+      "title": "Highest temperature in NYC on Dec 25, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC24",
+      "title": "Highest temperature in NYC on Dec 24, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC23",
+      "title": "Highest temperature in NYC on Dec 23, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC22",
+      "title": "Highest temperature in NYC on Dec 22, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC21",
+      "title": "Highest temperature in NYC on Dec 21, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC20",
+      "title": "Highest temperature in NYC on Dec 20, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC19",
+      "title": "Highest temperature in NYC on Dec 19, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC18",
+      "title": "Highest temperature in NYC on Dec 18, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC17",
+      "title": "Highest temperature in NYC on Dec 17, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC16",
+      "title": "Highest temperature in NYC on Dec 16, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC15",
+      "title": "Highest temperature in NYC on Dec 15, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC14",
+      "title": "Highest temperature in NYC on Dec 14, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC13",
+      "title": "Highest temperature in NYC on Dec 13, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC12",
+      "title": "Highest temperature in NYC on Dec 12, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC11",
+      "title": "Highest temperature in NYC on Dec 11, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC10",
+      "title": "Highest temperature in NYC on Dec 10, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC09",
+      "title": "Highest temperature in NYC on Dec 9, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC08",
+      "title": "Highest temperature in NYC on Dec 8, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC07",
+      "title": "Highest temperature in NYC on Dec 7, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC06",
+      "title": "Highest temperature in NYC on Dec 6, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC05",
+      "title": "Highest temperature in NYC on Dec 5, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC04",
+      "title": "Highest temperature in NYC on Dec 4, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC03",
+      "title": "Highest temperature in NYC on Dec 3, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC02",
+      "title": "Highest temperature in NYC on Dec 2, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25DEC01",
+      "title": "Highest temperature in NYC on Dec 1, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV30",
+      "title": "Highest temperature in NYC on Nov 30, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV29",
+      "title": "Highest temperature in NYC on Nov 29, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV28",
+      "title": "Highest temperature in NYC on Nov 28, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV27",
+      "title": "Highest temperature in NYC on Nov 27, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV26",
+      "title": "Highest temperature in NYC on Nov 26, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV25",
+      "title": "Highest temperature in NYC on Nov 25, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV24",
+      "title": "Highest temperature in NYC on Nov 24, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV23",
+      "title": "Highest temperature in NYC on Nov 23, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV22",
+      "title": "Highest temperature in NYC on Nov 22, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV21",
+      "title": "Highest temperature in NYC on Nov 21, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV20",
+      "title": "Highest temperature in NYC on Nov 20, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV19",
+      "title": "Highest temperature in NYC on Nov 19, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV18",
+      "title": "Highest temperature in NYC on Nov 18, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV17",
+      "title": "Highest temperature in NYC on Nov 17, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV16",
+      "title": "Highest temperature in NYC on Nov 16, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV15",
+      "title": "Highest temperature in NYC on Nov 15, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV14",
+      "title": "Highest temperature in NYC on Nov 14, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV13",
+      "title": "Highest temperature in NYC on Nov 13, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV12",
+      "title": "Highest temperature in NYC on Nov 12, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV11",
+      "title": "Highest temperature in NYC on Nov 11, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV10",
+      "title": "Highest temperature in NYC on Nov 10, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV09",
+      "title": "Highest temperature in NYC on Nov 9, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV08",
+      "title": "Highest temperature in NYC on Nov 8, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV07",
+      "title": "Highest temperature in NYC on Nov 7, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV06",
+      "title": "Highest temperature in NYC on Nov 6, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV05",
+      "title": "Highest temperature in NYC on Nov 5, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV04",
+      "title": "Highest temperature in NYC on Nov 4, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV03",
+      "title": "Highest temperature in NYC on Nov 3, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV02",
+      "title": "Highest temperature in NYC on Nov 2, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25NOV01",
+      "title": "Highest temperature in NYC on Nov 1, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT31",
+      "title": "Highest temperature in NYC on Oct 31, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT30",
+      "title": "Highest temperature in NYC on Oct 30, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT29",
+      "title": "Highest temperature in NYC on Oct 29, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT28",
+      "title": "Highest temperature in NYC on Oct 28, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT27",
+      "title": "Highest temperature in NYC on Oct 27, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT26",
+      "title": "Highest temperature in NYC on Oct 26, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT25",
+      "title": "Highest temperature in NYC on Oct 25, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT24",
+      "title": "Highest temperature in NYC on Oct 24, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT23",
+      "title": "Highest temperature in NYC on Oct 23, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT22",
+      "title": "Highest temperature in NYC on Oct 22, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT21",
+      "title": "Highest temperature in NYC on Oct 21, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT20",
+      "title": "Highest temperature in NYC on Oct 20, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT19",
+      "title": "Highest temperature in NYC on Oct 19, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT18",
+      "title": "Highest temperature in NYC on Oct 18, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT17",
+      "title": "Highest temperature in NYC on Oct 17, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT16",
+      "title": "Highest temperature in NYC on Oct 16, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT15",
+      "title": "Highest temperature in NYC on Oct 15, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT14",
+      "title": "Highest temperature in NYC on Oct 14, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT13",
+      "title": "Highest temperature in NYC on Oct 13, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT12",
+      "title": "Highest temperature in NYC on Oct 12, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT11",
+      "title": "Highest temperature in NYC on Oct 11, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT10",
+      "title": "Highest temperature in NYC on Oct 10, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT09",
+      "title": "Highest temperature in NYC on Oct 9, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT08",
+      "title": "Highest temperature in NYC on Oct 8, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT07",
+      "title": "Highest temperature in NYC on Oct 7, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT06",
+      "title": "Highest temperature in NYC on Oct 6, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT05",
+      "title": "Highest temperature in NYC on Oct 5, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT04",
+      "title": "Highest temperature in NYC on Oct 4, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT03",
+      "title": "Highest temperature in NYC on Oct 3, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT02",
+      "title": "Highest temperature in NYC on Oct 2, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25OCT01",
+      "title": "Highest temperature in NYC on Oct 1, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP30",
+      "title": "Highest temperature in NYC on Sep 30, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP29",
+      "title": "Highest temperature in NYC on Sep 29, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP28",
+      "title": "Highest temperature in NYC on Sep 28, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP27",
+      "title": "Highest temperature in NYC on Sep 27, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP26",
+      "title": "Highest temperature in NYC on Sep 26, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP25",
+      "title": "Highest temperature in NYC on Sep 25, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP24",
+      "title": "Highest temperature in NYC on Sep 24, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP23",
+      "title": "Highest temperature in NYC on Sep 23, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP22",
+      "title": "Highest temperature in NYC on Sep 22, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP21",
+      "title": "Highest temperature in NYC on Sep 21, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP20",
+      "title": "Highest temperature in NYC on Sep 20, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP19",
+      "title": "Highest temperature in NYC on Sep 19, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP18",
+      "title": "Highest temperature in NYC on Sep 18, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP17",
+      "title": "Highest temperature in NYC on Sep 17, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP16",
+      "title": "Highest temperature in NYC on Sep 16, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP15",
+      "title": "Highest temperature in NYC on Sep 15, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP14",
+      "title": "Highest temperature in NYC on Sep 14, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP13",
+      "title": "Highest temperature in NYC on Sep 13, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP12",
+      "title": "Highest temperature in NYC on Sep 12, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP11",
+      "title": "Highest temperature in NYC on Sep 11, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP10",
+      "title": "Highest temperature in NYC on Sep 10, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP09",
+      "title": "Highest temperature in NYC on Sep 9, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP08",
+      "title": "Highest temperature in NYC on Sep 8, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP07",
+      "title": "Highest temperature in NYC on Sep 7, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP06",
+      "title": "Highest temperature in NYC on Sep 6, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP05",
+      "title": "Highest temperature in NYC on Sep 5, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP04",
+      "title": "Highest temperature in NYC on Sep 4, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP03",
+      "title": "Highest temperature in NYC on Sep 3, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP02",
+      "title": "Highest temperature in NYC on Sep 2, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25SEP01",
+      "title": "Highest temperature in NYC on Sep 1, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25AUG31",
+      "title": "Highest temperature in NYC on Aug 31, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25AUG30",
+      "title": "Highest temperature in NYC on Aug 30, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25AUG29",
+      "title": "Highest temperature in NYC on Aug 29, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25AUG28",
+      "title": "Highest temperature in NYC on Aug 28, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25AUG27",
+      "title": "Highest temperature in NYC on Aug 27, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25AUG26",
+      "title": "Highest temperature in NYC on Aug 26, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25AUG25",
+      "title": "Highest temperature in NYC on Aug 25, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25AUG24",
+      "title": "Highest temperature in NYC on Aug 24, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25AUG23",
+      "title": "Highest temperature in NYC on Aug 23, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25AUG22",
+      "title": "Highest temperature in NYC on Aug 22, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-25AUG21",
+      "title": "Highest temperature in NYC on Aug 21, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26MAR08",
+      "title": "Highest temperature in Austin on Mar 8, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26MAR07",
+      "title": "Highest temperature in Austin on Mar 7, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26MAR06",
+      "title": "Highest temperature in Austin on Mar 6, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26MAR05",
+      "title": "Highest temperature in Austin on Mar 5, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26MAR04",
+      "title": "Highest temperature in Austin on Mar 4, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26MAR03",
+      "title": "Highest temperature in Austin on Mar 3, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26MAR02",
+      "title": "Highest temperature in Austin on Mar 2, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26MAR01",
+      "title": "Highest temperature in Austin on Mar 1, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB28",
+      "title": "Highest temperature in Austin on Feb 28, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB27",
+      "title": "Highest temperature in Austin on Feb 27, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB26",
+      "title": "Highest temperature in Austin on Feb 26, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB25",
+      "title": "Highest temperature in Austin on Feb 25, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB24",
+      "title": "Highest temperature in Austin on Feb 24, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB23",
+      "title": "Highest temperature in Austin on Feb 23, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB22",
+      "title": "Highest temperature in Austin on Feb 22, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB21",
+      "title": "Highest temperature in Austin on Feb 21, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB20",
+      "title": "Highest temperature in Austin on Feb 20, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB19",
+      "title": "Highest temperature in Austin on Feb 19, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB18",
+      "title": "Highest temperature in Austin on Feb 18, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB17",
+      "title": "Highest temperature in Austin on Feb 17, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB16",
+      "title": "Highest temperature in Austin on Feb 16, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB15",
+      "title": "Highest temperature in Austin on Feb 15, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB14",
+      "title": "Highest temperature in Austin on Feb 14, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB13",
+      "title": "Highest temperature in Austin on Feb 13, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB12",
+      "title": "Highest temperature in Austin on Feb 12, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB11",
+      "title": "Highest temperature in Austin on Feb 11, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB10",
+      "title": "Highest temperature in Austin on Feb 10, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB09",
+      "title": "Highest temperature in Austin on Feb 9, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB08",
+      "title": "Highest temperature in Austin on Feb 8, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB07",
+      "title": "Highest temperature in Austin on Feb 7, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB06",
+      "title": "Highest temperature in Austin on Feb 6, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB05",
+      "title": "Highest temperature in Austin on Feb 5, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB04",
+      "title": "Highest temperature in Austin on Feb 4, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB03",
+      "title": "Highest temperature in Austin on Feb 3, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB02",
+      "title": "Highest temperature in Austin on Feb 2, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26FEB01",
+      "title": "Highest temperature in Austin on Feb 1, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN31",
+      "title": "Highest temperature in Austin on Jan 31, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN30",
+      "title": "Highest temperature in Austin on Jan 30, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN29",
+      "title": "Highest temperature in Austin on Jan 29, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN28",
+      "title": "Highest temperature in Austin on Jan 28, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN27",
+      "title": "Highest temperature in Austin on Jan 27, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN26",
+      "title": "Highest temperature in Austin on Jan 26, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN25",
+      "title": "Highest temperature in Austin on Jan 25, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN24",
+      "title": "Highest temperature in Austin on Jan 24, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN23",
+      "title": "Highest temperature in Austin on Jan 23, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN22",
+      "title": "Highest temperature in Austin on Jan 22, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN21",
+      "title": "Highest temperature in Austin on Jan 21, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN20",
+      "title": "Highest temperature in Austin on Jan 20, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN19",
+      "title": "Highest temperature in Austin on Jan 19, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN18",
+      "title": "Highest temperature in Austin on Jan 18, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN17",
+      "title": "Highest temperature in Austin on Jan 17, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN16",
+      "title": "Highest temperature in Austin on Jan 16, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN15",
+      "title": "Highest temperature in Austin on Jan 15, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN14",
+      "title": "Highest temperature in Austin on Jan 14, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN13",
+      "title": "Highest temperature in Austin on Jan 13, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN12",
+      "title": "Highest temperature in Austin on Jan 12, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN11",
+      "title": "Highest temperature in Austin on Jan 11, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN10",
+      "title": "Highest temperature in Austin on Jan 10, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN09",
+      "title": "Highest temperature in Austin on Jan 9, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN08",
+      "title": "Highest temperature in Austin on Jan 8, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN07",
+      "title": "Highest temperature in Austin on Jan 7, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN06",
+      "title": "Highest temperature in Austin on Jan 6, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN05",
+      "title": "Highest temperature in Austin on Jan 5, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN04",
+      "title": "Highest temperature in Austin on Jan 4, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN03",
+      "title": "Highest temperature in Austin on Jan 3, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN02",
+      "title": "Highest temperature in Austin on Jan 2, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-26JAN01",
+      "title": "Highest temperature in Austin on Jan 1, 2026?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC31",
+      "title": "Highest temperature in Austin on Dec 31, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC30",
+      "title": "Highest temperature in Austin on Dec 30, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC29",
+      "title": "Highest temperature in Austin on Dec 29, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC28",
+      "title": "Highest temperature in Austin on Dec 28, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC27",
+      "title": "Highest temperature in Austin on Dec 27, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC26",
+      "title": "Highest temperature in Austin on Dec 26, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC25",
+      "title": "Highest temperature in Austin on Dec 25, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC24",
+      "title": "Highest temperature in Austin on Dec 24, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC23",
+      "title": "Highest temperature in Austin on Dec 23, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC22",
+      "title": "Highest temperature in Austin on Dec 22, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC21",
+      "title": "Highest temperature in Austin on Dec 21, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC20",
+      "title": "Highest temperature in Austin on Dec 20, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC19",
+      "title": "Highest temperature in Austin on Dec 19, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC18",
+      "title": "Highest temperature in Austin on Dec 18, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC17",
+      "title": "Highest temperature in Austin on Dec 17, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC16",
+      "title": "Highest temperature in Austin on Dec 16, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC15",
+      "title": "Highest temperature in Austin on Dec 15, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC14",
+      "title": "Highest temperature in Austin on Dec 14, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC13",
+      "title": "Highest temperature in Austin on Dec 13, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC12",
+      "title": "Highest temperature in Austin on Dec 12, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC11",
+      "title": "Highest temperature in Austin on Dec 11, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC10",
+      "title": "Highest temperature in Austin on Dec 10, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC09",
+      "title": "Highest temperature in Austin on Dec 9, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC08",
+      "title": "Highest temperature in Austin on Dec 8, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC07",
+      "title": "Highest temperature in Austin on Dec 7, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC06",
+      "title": "Highest temperature in Austin on Dec 6, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC05",
+      "title": "Highest temperature in Austin on Dec 5, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC04",
+      "title": "Highest temperature in Austin on Dec 4, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC03",
+      "title": "Highest temperature in Austin on Dec 3, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC02",
+      "title": "Highest temperature in Austin on Dec 2, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25DEC01",
+      "title": "Highest temperature in Austin on Dec 1, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV30",
+      "title": "Highest temperature in Austin on Nov 30, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV29",
+      "title": "Highest temperature in Austin on Nov 29, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV28",
+      "title": "Highest temperature in Austin on Nov 28, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV27",
+      "title": "Highest temperature in Austin on Nov 27, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV26",
+      "title": "Highest temperature in Austin on Nov 26, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV25",
+      "title": "Highest temperature in Austin on Nov 25, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV24",
+      "title": "Highest temperature in Austin on Nov 24, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV23",
+      "title": "Highest temperature in Austin on Nov 23, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV22",
+      "title": "Highest temperature in Austin on Nov 22, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV21",
+      "title": "Highest temperature in Austin on Nov 21, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV20",
+      "title": "Highest temperature in Austin on Nov 20, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV19",
+      "title": "Highest temperature in Austin on Nov 19, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV18",
+      "title": "Highest temperature in Austin on Nov 18, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV17",
+      "title": "Highest temperature in Austin on Nov 17, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV16",
+      "title": "Highest temperature in Austin on Nov 16, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV15",
+      "title": "Highest temperature in Austin on Nov 15, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV14",
+      "title": "Highest temperature in Austin on Nov 14, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV13",
+      "title": "Highest temperature in Austin on Nov 13, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV12",
+      "title": "Highest temperature in Austin on Nov 12, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV11",
+      "title": "Highest temperature in Austin on Nov 11, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV10",
+      "title": "Highest temperature in Austin on Nov 10, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV09",
+      "title": "Highest temperature in Austin on Nov 9, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV08",
+      "title": "Highest temperature in Austin on Nov 8, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV07",
+      "title": "Highest temperature in Austin on Nov 7, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV06",
+      "title": "Highest temperature in Austin on Nov 6, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV05",
+      "title": "Highest temperature in Austin on Nov 5, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV04",
+      "title": "Highest temperature in Austin on Nov 4, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV03",
+      "title": "Highest temperature in Austin on Nov 3, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV02",
+      "title": "Highest temperature in Austin on Nov 2, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25NOV01",
+      "title": "Highest temperature in Austin on Nov 1, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT31",
+      "title": "Highest temperature in Austin on Oct 31, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT30",
+      "title": "Highest temperature in Austin on Oct 30, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT29",
+      "title": "Highest temperature in Austin on Oct 29, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT28",
+      "title": "Highest temperature in Austin on Oct 28, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT27",
+      "title": "Highest temperature in Austin on Oct 27, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT26",
+      "title": "Highest temperature in Austin on Oct 26, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT25",
+      "title": "Highest temperature in Austin on Oct 25, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT24",
+      "title": "Highest temperature in Austin on Oct 24, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT23",
+      "title": "Highest temperature in Austin on Oct 23, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT22",
+      "title": "Highest temperature in Austin on Oct 22, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT21",
+      "title": "Highest temperature in Austin on Oct 21, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT20",
+      "title": "Highest temperature in Austin on Oct 20, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT19",
+      "title": "Highest temperature in Austin on Oct 19, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT18",
+      "title": "Highest temperature in Austin on Oct 18, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT17",
+      "title": "Highest temperature in Austin on Oct 17, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT16",
+      "title": "Highest temperature in Austin on Oct 16, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT15",
+      "title": "Highest temperature in Austin on Oct 15, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT14",
+      "title": "Highest temperature in Austin on Oct 14, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT13",
+      "title": "Highest temperature in Austin on Oct 13, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT12",
+      "title": "Highest temperature in Austin on Oct 12, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT11",
+      "title": "Highest temperature in Austin on Oct 11, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT10",
+      "title": "Highest temperature in Austin on Oct 10, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT09",
+      "title": "Highest temperature in Austin on Oct 9, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT08",
+      "title": "Highest temperature in Austin on Oct 8, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT07",
+      "title": "Highest temperature in Austin on Oct 7, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT06",
+      "title": "Highest temperature in Austin on Oct 6, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT05",
+      "title": "Highest temperature in Austin on Oct 5, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT04",
+      "title": "Highest temperature in Austin on Oct 4, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT03",
+      "title": "Highest temperature in Austin on Oct 3, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT02",
+      "title": "Highest temperature in Austin on Oct 2, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25OCT01",
+      "title": "Highest temperature in Austin on Oct 1, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP30",
+      "title": "Highest temperature in Austin on Sep 30, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP29",
+      "title": "Highest temperature in Austin on Sep 29, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP28",
+      "title": "Highest temperature in Austin on Sep 28, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP27",
+      "title": "Highest temperature in Austin on Sep 27, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP26",
+      "title": "Highest temperature in Austin on Sep 26, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP25",
+      "title": "Highest temperature in Austin on Sep 25, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP24",
+      "title": "Highest temperature in Austin on Sep 24, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP23",
+      "title": "Highest temperature in Austin on Sep 23, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP22",
+      "title": "Highest temperature in Austin on Sep 22, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP21",
+      "title": "Highest temperature in Austin on Sep 21, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP20",
+      "title": "Highest temperature in Austin on Sep 20, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP19",
+      "title": "Highest temperature in Austin on Sep 19, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP18",
+      "title": "Highest temperature in Austin on Sep 18, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP17",
+      "title": "Highest temperature in Austin on Sep 17, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP16",
+      "title": "Highest temperature in Austin on Sep 16, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP15",
+      "title": "Highest temperature in Austin on Sep 15, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP14",
+      "title": "Highest temperature in Austin on Sep 14, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP13",
+      "title": "Highest temperature in Austin on Sep 13, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP12",
+      "title": "Highest temperature in Austin on Sep 12, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP11",
+      "title": "Highest temperature in Austin on Sep 11, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP10",
+      "title": "Highest temperature in Austin on Sep 10, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP09",
+      "title": "Highest temperature in Austin on Sep 9, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP08",
+      "title": "Highest temperature in Austin on Sep 8, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP07",
+      "title": "Highest temperature in Austin on Sep 7, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP06",
+      "title": "Highest temperature in Austin on Sep 6, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP05",
+      "title": "Highest temperature in Austin on Sep 5, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP04",
+      "title": "Highest temperature in Austin on Sep 4, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP03",
+      "title": "Highest temperature in Austin on Sep 3, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP02",
+      "title": "Highest temperature in Austin on Sep 2, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25SEP01",
+      "title": "Highest temperature in Austin on Sep 1, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25AUG31",
+      "title": "Highest temperature in Austin on Aug 31, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25AUG30",
+      "title": "Highest temperature in Austin on Aug 30, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25AUG29",
+      "title": "Highest temperature in Austin on Aug 29, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25AUG28",
+      "title": "Highest temperature in Austin on Aug 28, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25AUG27",
+      "title": "Highest temperature in Austin on Aug 27, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25AUG26",
+      "title": "Highest temperature in Austin on Aug 26, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25AUG25",
+      "title": "Highest temperature in Austin on Aug 25, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25AUG24",
+      "title": "Highest temperature in Austin on Aug 24, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25AUG23",
+      "title": "Highest temperature in Austin on Aug 23, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25AUG22",
+      "title": "Highest temperature in Austin on Aug 22, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHAUS-25AUG21",
+      "title": "Highest temperature in Austin on Aug 21, 2025?",
+      "category": "Climate and Weather",
+      "status": "",
+      "markets": 0
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR08-T69",
+      "title": "Will the **high temp in NYC** be >69\u00b0 on Mar 8, 2026?",
+      "status": "active",
+      "yes_bid": 3,
+      "yes_ask": 4,
+      "volume": 22,
+      "open_interest": 22
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR08-T62",
+      "title": "Will the **high temp in NYC** be <62\u00b0 on Mar 8, 2026?",
+      "status": "active",
+      "yes_bid": 20,
+      "yes_ask": 24,
+      "volume": 512,
+      "open_interest": 493
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR08-B68.5",
+      "title": "Will the **high temp in NYC** be 68-69\u00b0 on Mar 8, 2026?",
+      "status": "active",
+      "yes_bid": 6,
+      "yes_ask": 8,
+      "volume": 241,
+      "open_interest": 216
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR08-B66.5",
+      "title": "Will the **high temp in NYC** be 66-67\u00b0 on Mar 8, 2026?",
+      "status": "active",
+      "yes_bid": 15,
+      "yes_ask": 16,
+      "volume": 107,
+      "open_interest": 101
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR08-B64.5",
+      "title": "Will the **high temp in NYC** be 64-65\u00b0 on Mar 8, 2026?",
+      "status": "active",
+      "yes_bid": 26,
+      "yes_ask": 28,
+      "volume": 51,
+      "open_interest": 43
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR08-B62.5",
+      "title": "Will the **high temp in NYC** be 62-63\u00b0 on Mar 8, 2026?",
+      "status": "active",
+      "yes_bid": 25,
+      "yes_ask": 26,
+      "volume": 343,
+      "open_interest": 343
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR07-T57",
+      "title": "Will the **high temp in NYC** be >57\u00b0 on Mar 7, 2026?",
+      "status": "active",
+      "yes_bid": 0,
+      "yes_ask": 1,
+      "volume": 3739,
+      "open_interest": 3188
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR07-T50",
+      "title": "Will the **high temp in NYC** be <50\u00b0 on Mar 7, 2026?",
+      "status": "active",
+      "yes_bid": 52,
+      "yes_ask": 54,
+      "volume": 24931,
+      "open_interest": 16362
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR07-B56.5",
+      "title": "Will the **high temp in NYC** be 56-57\u00b0 on Mar 7, 2026?",
+      "status": "active",
+      "yes_bid": 0,
+      "yes_ask": 1,
+      "volume": 5509,
+      "open_interest": 5355
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR07-B54.5",
+      "title": "Will the **high temp in NYC** be 54-55\u00b0 on Mar 7, 2026?",
+      "status": "active",
+      "yes_bid": 1,
+      "yes_ask": 2,
+      "volume": 14552,
+      "open_interest": 10555
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR07-B52.5",
+      "title": "Will the **high temp in NYC** be 52-53\u00b0 on Mar 7, 2026?",
+      "status": "active",
+      "yes_bid": 9,
+      "yes_ask": 10,
+      "volume": 15654,
+      "open_interest": 10044
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR07-B50.5",
+      "title": "Will the **high temp in NYC** be 50-51\u00b0 on Mar 7, 2026?",
+      "status": "active",
+      "yes_bid": 40,
+      "yes_ask": 41,
+      "volume": 12623,
+      "open_interest": 9418
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR06-T48",
+      "title": "Will the **high temp in NYC** be >48\u00b0 on Mar 6, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 16505,
+      "open_interest": 15023
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR06-T41",
+      "title": "Will the **high temp in NYC** be <41\u00b0 on Mar 6, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 46494,
+      "open_interest": 33179
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR06-B47.5",
+      "title": "Will the **high temp in NYC** be 47-48\u00b0 on Mar 6, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 12775,
+      "open_interest": 10964
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR06-B45.5",
+      "title": "Will the **high temp in NYC** be 45-46\u00b0 on Mar 6, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 28100,
+      "open_interest": 19551
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR06-B43.5",
+      "title": "Will the **high temp in NYC** be 43-44\u00b0 on Mar 6, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 57451,
+      "open_interest": 24546
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR06-B41.5",
+      "title": "Will the **high temp in NYC** be 41-42\u00b0 on Mar 6, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 57574,
+      "open_interest": 31026
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR05-T48",
+      "title": "Will the **high temp in NYC** be >48\u00b0 on Mar 5, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 17770,
+      "open_interest": 10411
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR05-T41",
+      "title": "Will the **high temp in NYC** be <41\u00b0 on Mar 5, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 41783,
+      "open_interest": 38186
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR05-B47.5",
+      "title": "Will the **high temp in NYC** be 47-48\u00b0 on Mar 5, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 30212,
+      "open_interest": 16756
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR05-B45.5",
+      "title": "Will the **high temp in NYC** be 45-46\u00b0 on Mar 5, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 61194,
+      "open_interest": 33098
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR05-B43.5",
+      "title": "Will the **high temp in NYC** be 43-44\u00b0 on Mar 5, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 149386,
+      "open_interest": 140925
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR05-B41.5",
+      "title": "Will the **high temp in NYC** be 41-42\u00b0 on Mar 5, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 144203,
+      "open_interest": 135833
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR04-T55",
+      "title": "Will the **high temp in NYC** be >55\u00b0 on Mar 4, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 6752,
+      "open_interest": 5200
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR04-T48",
+      "title": "Will the **high temp in NYC** be <48\u00b0 on Mar 4, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 87264,
+      "open_interest": 45743
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR04-B54.5",
+      "title": "Will the **high temp in NYC** be 54-55\u00b0 on Mar 4, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 8069,
+      "open_interest": 7298
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR04-B52.5",
+      "title": "Will the **high temp in NYC** be 52-53\u00b0 on Mar 4, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 34491,
+      "open_interest": 21273
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR04-B50.5",
+      "title": "Will the **high temp in NYC** be 50-51\u00b0 on Mar 4, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 80870,
+      "open_interest": 33246
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR04-B48.5",
+      "title": "Will the **high temp in NYC** be 48-49\u00b0 on Mar 4, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 83737,
+      "open_interest": 37231
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR03-T46",
+      "title": "Will the **high temp in NYC** be >46\u00b0 on Mar 3, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 18643,
+      "open_interest": 16071
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR03-T39",
+      "title": "Will the **high temp in NYC** be <39\u00b0 on Mar 3, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 119191,
+      "open_interest": 70291
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR03-B45.5",
+      "title": "Will the **high temp in NYC** be 45-46\u00b0 on Mar 3, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 19846,
+      "open_interest": 19624
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR03-B43.5",
+      "title": "Will the **high temp in NYC** be 43-44\u00b0 on Mar 3, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 25424,
+      "open_interest": 19378
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR03-B41.5",
+      "title": "Will the **high temp in NYC** be 41-42\u00b0 on Mar 3, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 45225,
+      "open_interest": 31842
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR03-B39.5",
+      "title": "Will the **high temp in NYC** be 39-40\u00b0 on Mar 3, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 51312,
+      "open_interest": 27801
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR02-T35",
+      "title": "Will the **high temp in NYC** be >35\u00b0 on Mar 2, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 39129,
+      "open_interest": 25969
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR02-T28",
+      "title": "Will the **high temp in NYC** be <28\u00b0 on Mar 2, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 5822,
+      "open_interest": 5456
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR02-B34.5",
+      "title": "Will the **high temp in NYC** be 34-35\u00b0 on Mar 2, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 43248,
+      "open_interest": 19975
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR02-B32.5",
+      "title": "Will the **high temp in NYC** be 32-33\u00b0 on Mar 2, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 43558,
+      "open_interest": 23151
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR02-B30.5",
+      "title": "Will the **high temp in NYC** be 30-31\u00b0 on Mar 2, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 36841,
+      "open_interest": 18526
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR02-B28.5",
+      "title": "Will the **high temp in NYC** be 28-29\u00b0 on Mar 2, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 9552,
+      "open_interest": 7046
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR01-T45",
+      "title": "Will the **high temp in NYC** be >45\u00b0 on Mar 1, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 18847,
+      "open_interest": 12232
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR01-T38",
+      "title": "Will the **high temp in NYC** be <38\u00b0 on Mar 1, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 67856,
+      "open_interest": 58962
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR01-B44.5",
+      "title": "Will the **high temp in NYC** be 44-45\u00b0 on Mar 1, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 37678,
+      "open_interest": 17823
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR01-B42.5",
+      "title": "Will the **high temp in NYC** be 42-43\u00b0 on Mar 1, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 69653,
+      "open_interest": 31412
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR01-B40.5",
+      "title": "Will the **high temp in NYC** be 40-41\u00b0 on Mar 1, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 175718,
+      "open_interest": 167686
+    },
+    {
+      "ticker": "KXHIGHNY-26MAR01-B38.5",
+      "title": "Will the **high temp in NYC** be 38-39\u00b0 on Mar 1, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 155574,
+      "open_interest": 149415
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB28-T57",
+      "title": "Will the **high temp in NYC** be >57\u00b0 on Feb 28, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 10017,
+      "open_interest": 9390
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB28-T50",
+      "title": "Will the **high temp in NYC** be <50\u00b0 on Feb 28, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 49557,
+      "open_interest": 28231
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB28-B56.5",
+      "title": "Will the **high temp in NYC** be 56-57\u00b0 on Feb 28, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 18394,
+      "open_interest": 17682
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB28-B54.5",
+      "title": "Will the **high temp in NYC** be 54-55\u00b0 on Feb 28, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 40718,
+      "open_interest": 19688
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB28-B52.5",
+      "title": "Will the **high temp in NYC** be 52-53\u00b0 on Feb 28, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 49485,
+      "open_interest": 22111
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB28-B50.5",
+      "title": "Will the **high temp in NYC** be 50-51\u00b0 on Feb 28, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 46561,
+      "open_interest": 24834
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB27-T45",
+      "title": "Will the **high temp in NYC** be >45\u00b0 on Feb 27, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 72273,
+      "open_interest": 30629
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB27-T38",
+      "title": "Will the **high temp in NYC** be <38\u00b0 on Feb 27, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 13173,
+      "open_interest": 10106
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB27-B44.5",
+      "title": "Will the **high temp in NYC** be 44-45\u00b0 on Feb 27, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 43834,
+      "open_interest": 24338
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB27-B42.5",
+      "title": "Will the **high temp in NYC** be 42-43\u00b0 on Feb 27, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 49680,
+      "open_interest": 30381
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB27-B40.5",
+      "title": "Will the **high temp in NYC** be 40-41\u00b0 on Feb 27, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 38527,
+      "open_interest": 29788
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB27-B38.5",
+      "title": "Will the **high temp in NYC** be 38-39\u00b0 on Feb 27, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 21479,
+      "open_interest": 19506
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB26-T43",
+      "title": "Will the **high temp in NYC** be >43\u00b0 on Feb 26, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 78912,
+      "open_interest": 39814
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB26-T36",
+      "title": "Will the **high temp in NYC** be <36\u00b0 on Feb 26, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 21465,
+      "open_interest": 15916
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB26-B42.5",
+      "title": "Will the **high temp in NYC** be 42-43\u00b0 on Feb 26, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 53057,
+      "open_interest": 30858
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB26-B40.5",
+      "title": "Will the **high temp in NYC** be 40-41\u00b0 on Feb 26, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 96914,
+      "open_interest": 58010
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB26-B38.5",
+      "title": "Will the **high temp in NYC** be 38-39\u00b0 on Feb 26, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 91118,
+      "open_interest": 82349
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB26-B36.5",
+      "title": "Will the **high temp in NYC** be 36-37\u00b0 on Feb 26, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 22451,
+      "open_interest": 17381
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB25-T46",
+      "title": "Will the **high temp in NYC** be >46\u00b0 on Feb 25, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 7010,
+      "open_interest": 5977
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB25-T39",
+      "title": "Will the **high temp in NYC** be <39\u00b0 on Feb 25, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 32064,
+      "open_interest": 21674
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB25-B45.5",
+      "title": "Will the **high temp in NYC** be 45-46\u00b0 on Feb 25, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 42085,
+      "open_interest": 28839
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB25-B43.5",
+      "title": "Will the **high temp in NYC** be 43-44\u00b0 on Feb 25, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 102084,
+      "open_interest": 44485
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB25-B41.5",
+      "title": "Will the **high temp in NYC** be 41-42\u00b0 on Feb 25, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 62564,
+      "open_interest": 44012
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB25-B39.5",
+      "title": "Will the **high temp in NYC** be 39-40\u00b0 on Feb 25, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 64892,
+      "open_interest": 41573
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB24-T35",
+      "title": "Will the **high temp in NYC** be >35\u00b0 on Feb 24, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 12512,
+      "open_interest": 10086
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB24-T28",
+      "title": "Will the **high temp in NYC** be <28\u00b0 on Feb 24, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 18034,
+      "open_interest": 15981
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB24-B34.5",
+      "title": "Will the **high temp in NYC** be 34-35\u00b0 on Feb 24, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 30038,
+      "open_interest": 21761
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB24-B32.5",
+      "title": "Will the **high temp in NYC** be 32-33\u00b0 on Feb 24, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 56363,
+      "open_interest": 25801
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB24-B30.5",
+      "title": "Will the **high temp in NYC** be 30-31\u00b0 on Feb 24, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 69361,
+      "open_interest": 24083
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB24-B28.5",
+      "title": "Will the **high temp in NYC** be 28-29\u00b0 on Feb 24, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 89826,
+      "open_interest": 80058
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB23-T40",
+      "title": "Will the **high temp in NYC** be >40\u00b0 on Feb 23, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 4147,
+      "open_interest": 3913
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB23-T33",
+      "title": "Will the **high temp in NYC** be <33\u00b0 on Feb 23, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 60754,
+      "open_interest": 40507
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB23-B39.5",
+      "title": "Will the **high temp in NYC** be 39-40\u00b0 on Feb 23, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 7810,
+      "open_interest": 5233
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB23-B37.5",
+      "title": "Will the **high temp in NYC** be 37-38\u00b0 on Feb 23, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 23598,
+      "open_interest": 15015
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB23-B35.5",
+      "title": "Will the **high temp in NYC** be 35-36\u00b0 on Feb 23, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 66490,
+      "open_interest": 26761
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB23-B33.5",
+      "title": "Will the **high temp in NYC** be 33-34\u00b0 on Feb 23, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 195257,
+      "open_interest": 151850
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB22-T45",
+      "title": "Will the **high temp in NYC** be >45\u00b0 on Feb 22, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 5731,
+      "open_interest": 5333
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB22-T38",
+      "title": "Will the **high temp in NYC** be <38\u00b0 on Feb 22, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 723006,
+      "open_interest": 397854
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB22-B44.5",
+      "title": "Will the **high temp in NYC** be 44-45\u00b0 on Feb 22, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 13366,
+      "open_interest": 13196
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB22-B42.5",
+      "title": "Will the **high temp in NYC** be 42-43\u00b0 on Feb 22, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 27220,
+      "open_interest": 17671
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB22-B40.5",
+      "title": "Will the **high temp in NYC** be 40-41\u00b0 on Feb 22, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 75987,
+      "open_interest": 47536
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB22-B38.5",
+      "title": "Will the **high temp in NYC** be 38-39\u00b0 on Feb 22, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 122940,
+      "open_interest": 68236
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB21-T50",
+      "title": "Will the **high temp in NYC** be >50\u00b0 on Feb 21, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 5743,
+      "open_interest": 4009
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB21-T43",
+      "title": "Will the **high temp in NYC** be <43\u00b0 on Feb 21, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 13911,
+      "open_interest": 9407
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB21-B49.5",
+      "title": "Will the **high temp in NYC** be 49-50\u00b0 on Feb 21, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 20368,
+      "open_interest": 16646
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB21-B47.5",
+      "title": "Will the **high temp in NYC** be 47-48\u00b0 on Feb 21, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 60470,
+      "open_interest": 30884
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB21-B45.5",
+      "title": "Will the **high temp in NYC** be 45-46\u00b0 on Feb 21, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 61057,
+      "open_interest": 28144
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB21-B43.5",
+      "title": "Will the **high temp in NYC** be 43-44\u00b0 on Feb 21, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 39284,
+      "open_interest": 24754
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB20-T46",
+      "title": "Will the **high temp in NYC** be >46\u00b0 on Feb 20, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 5515,
+      "open_interest": 5481
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB20-T39",
+      "title": "Will the **high temp in NYC** be <39\u00b0 on Feb 20, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 117198,
+      "open_interest": 46954
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB20-B45.5",
+      "title": "Will the **high temp in NYC** be 45-46\u00b0 on Feb 20, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 3654,
+      "open_interest": 2844
+    },
+    {
+      "ticker": "KXHIGHNY-26FEB20-B43.5",
+      "title": "Will the **high temp in NYC** be 43-44\u00b0 on Feb 20, 2026?",
+      "status": "finalized",
+      "yes_bid": 0,
+      "yes_ask": 100,
+      "volume": 24060,
+      "open_interest": 17398
+    },
+    {
+      "ticker": "KXWARMING-50",
+      "title": "Will the world pass 2 degrees Celsius over pre-industrial levels before 2050?",
+      "category": "Climate and Weather",
+      "n_markets": 0
+    },
+    {
+      "ticker": "KXERUPTSUPER-0",
+      "title": "Will a supervolcano erupt before 2050?",
+      "category": "Climate and Weather",
+      "n_markets": 0
+    },
+    {
+      "ticker": "KXEARTHQUAKECALIFORNIA-35",
+      "title": "Will there be an at least 8.0 magnitude earthquake in California before 2035?",
+      "category": "Climate and Weather",
+      "n_markets": 0
+    },
+    {
+      "ticker": "EUCLIMATE",
+      "title": "EU meets its 2030 climate goals?",
+      "category": "Climate and Weather",
+      "n_markets": 0
+    },
+    {
+      "ticker": "INDIACLIMATE-30",
+      "title": "India meets its 2030 climate goals?",
+      "category": "Climate and Weather",
+      "n_markets": 0
+    },
+    {
+      "ticker": "USCLIMATE",
+      "title": "US meets its climate goals?",
+      "category": "Climate and Weather",
+      "n_markets": 0
+    },
+    {
+      "ticker": "KXPRIMEENGCONSUMPTION-30",
+      "title": "What will be the largest source of global primary energy consumption in 2030?",
+      "category": "Climate and Weather",
+      "n_markets": 0
+    },
+    {
+      "ticker": "EVSHARE-30JAN",
+      "title": "EV market share in 2030?",
+      "category": "Climate and Weather",
+      "n_markets": 0
+    },
+    {
+      "ticker": "KXEARTHQUAKEJAPAN-30",
+      "title": "8.0 magnitude earthquake in Japan before 2030?",
+      "category": "Climate and Weather",
+      "n_markets": 0
+    }
+  ],
+  "errors": [],
+  "weather_events_from_scan": 9
+}

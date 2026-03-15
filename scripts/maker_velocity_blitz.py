@@ -18,12 +18,9 @@ from bot.maker_velocity_blitz import (  # noqa: E402
     MarketSnapshot,
     WalletConsensusSignal,
     allocate_hour0_notional,
-    allocate_dual_sided_spread_notional,
-    build_dual_sided_spread_intents,
     build_laddered_quote_intents,
     contract_schemas,
     evaluate_blitz_launch_ready,
-    rank_dual_sided_spread_markets,
     rank_wallet_signals,
     validate_contract_payload,
 )
@@ -143,60 +140,6 @@ def _cmd_build_hour0_plan(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_build_dual_sided_shadow_plan(args: argparse.Namespace) -> int:
-    markets_payload = _load_json(Path(args.markets_json).expanduser().resolve(), [])
-    if not isinstance(markets_payload, list):
-        raise SystemExit("markets_json must be a JSON array")
-
-    markets = [_market_from_payload(row) for row in markets_payload if isinstance(row, dict)]
-    ranked = rank_dual_sided_spread_markets(
-        markets,
-        combined_cost_cap=float(args.combined_cost_cap),
-        max_toxicity=float(args.max_toxicity),
-        min_liquidity_usd=float(args.min_liquidity_usd),
-        max_spread=float(args.max_spread),
-    )
-    allocations = allocate_dual_sided_spread_notional(
-        bankroll_usd=float(args.bankroll_usd),
-        ranked_candidates=ranked,
-        reserve_pct=float(args.reserve_pct),
-        per_market_floor_usd=float(args.per_market_floor_usd),
-        per_market_cap_usd=float(args.per_market_cap_usd),
-        max_markets=int(args.max_markets),
-    )
-    intents = build_dual_sided_spread_intents(
-        allocations_usd=allocations,
-        ranked_candidates=ranked,
-        timeout_seconds=int(args.timeout_seconds),
-        wallet_confirmation_mode=str(args.wallet_confirmation_mode),
-    )
-    intent_payloads = [asdict(intent) for intent in intents]
-    invalid_intents = []
-    for idx, payload in enumerate(intent_payloads):
-        valid, reasons = validate_contract_payload("DualSidedSpreadIntent", payload)
-        if not valid:
-            invalid_intents.append({"index": idx, "reasons": list(reasons)})
-
-    summary = {
-        "bankroll_usd": float(args.bankroll_usd),
-        "strategy_family": "dual_sided_maker_spread_capture",
-        "maker_only": True,
-        "wallet_confirmation_mode": str(args.wallet_confirmation_mode),
-        "combined_cost_cap": float(args.combined_cost_cap),
-        "timeout_seconds": int(args.timeout_seconds),
-        "ranked_candidate_count": len(ranked),
-        "ranked_candidates": ranked,
-        "allocations_usd": allocations,
-        "spread_intents": intent_payloads,
-        "all_spread_intents_valid": len(invalid_intents) == 0,
-        "invalid_spread_intents": invalid_intents,
-    }
-    output = Path(args.output).expanduser().resolve()
-    _write_json(output, summary)
-    print(output)
-    return 0
-
-
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Maker velocity blitz operator tooling.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -228,33 +171,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Output JSON path for hour-0 plan.",
     )
     hour0.set_defaults(func=_cmd_build_hour0_plan)
-
-    spread = subparsers.add_parser(
-        "build-dual-sided-shadow-plan",
-        help="Create a maker-only dual-sided spread-capture shadow plan from market snapshots.",
-    )
-    spread.add_argument("--markets-json", required=True, help="JSON array of MarketSnapshot-like rows.")
-    spread.add_argument("--bankroll-usd", type=float, required=True, help="Current bankroll for allocation.")
-    spread.add_argument("--combined-cost-cap", type=float, default=0.97, help="Max YES+NO combined cost.")
-    spread.add_argument("--max-toxicity", type=float, default=0.35, help="Maximum toxicity allowed.")
-    spread.add_argument("--min-liquidity-usd", type=float, default=250.0, help="Minimum market liquidity.")
-    spread.add_argument("--max-spread", type=float, default=0.08, help="Maximum spread allowed.")
-    spread.add_argument("--reserve-pct", type=float, default=0.20, help="Cash reserve percentage.")
-    spread.add_argument("--per-market-floor-usd", type=float, default=5.0, help="Minimum notional per market.")
-    spread.add_argument("--per-market-cap-usd", type=float, default=10.0, help="Maximum notional per market.")
-    spread.add_argument("--max-markets", type=int, default=8, help="Maximum concurrent markets.")
-    spread.add_argument("--timeout-seconds", type=int, default=120, help="Hedge timeout / scratch window.")
-    spread.add_argument(
-        "--wallet-confirmation-mode",
-        default="overlay_only",
-        help="Wallet-flow usage mode. Defaults to overlay_only.",
-    )
-    spread.add_argument(
-        "--output",
-        default=str(ROOT / "reports" / "maker_velocity_dual_sided_shadow_plan.json"),
-        help="Output JSON path for dual-sided maker shadow plan.",
-    )
-    spread.set_defaults(func=_cmd_build_dual_sided_shadow_plan)
     return parser
 
 
@@ -266,3 +182,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

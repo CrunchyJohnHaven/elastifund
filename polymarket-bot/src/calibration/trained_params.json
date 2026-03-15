@@ -1,0 +1,72 @@
+{
+  "timestamp": "2026-03-06T22:08:07.204642Z",
+  "category_params": {
+    "politics": {
+      "A": 0.869859128288218,
+      "B": -0.6295339706113259
+    },
+    "weather": {
+      "A": 0.5,
+      "B": -0.3
+    },
+    "economic": {
+      "A": 0.55,
+      "B": -0.35
+    },
+    "geopolitical": {
+      "A": 0.828529708128325,
+      "B": -0.9359707997753418
+    },
+    "crypto": {
+      "A": 0.5462562723457076,
+      "B": -0.47651433181553443
+    },
+    "sports": {
+      "A": 0.9362750505257669,
+      "B": -0.6904519700307845
+    },
+    "fed_rates": {
+      "A": 0.62,
+      "B": -0.42
+    },
+    "unknown": {
+      "A": 0.7253720018665124,
+      "B": -0.7860809571883266
+    }
+  },
+  "edge_thresholds": {
+    "politics": {
+      "yes_edge": 0.12,
+      "no_edge": 0.04
+    },
+    "weather": {
+      "yes_edge": 0.15,
+      "no_edge": 0.05
+    },
+    "economic": {
+      "yes_edge": 0.15,
+      "no_edge": 0.05
+    },
+    "geopolitical": {
+      "yes_edge": 0.2,
+      "no_edge": 0.08
+    },
+    "crypto": {
+      "yes_edge": 0.15,
+      "no_edge": 0.05
+    },
+    "sports": {
+      "yes_edge": 0.15,
+      "no_edge": 0.05
+    },
+    "fed_rates": {
+      "yes_edge": 0.18,
+      "no_edge": 0.06
+    },
+    "unknown": {
+      "yes_edge": 0.15,
+      "no_edge": 0.05
+    }
+  },
+  "min_samples": 30
+}

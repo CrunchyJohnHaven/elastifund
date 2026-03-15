@@ -1,0 +1,271 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Change Routing
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    outputs:
+      docs_or_static_only: ${{ steps.route.outputs.docs_or_static_only }}
+      fastpath_metadata: ${{ steps.route.outputs.fastpath_metadata }}
+      run_docs_static_checks: ${{ steps.route.outputs.run_docs_static_checks }}
+      run_fixture_ownership: ${{ steps.route.outputs.run_fixture_ownership }}
+      run_research_sim: ${{ steps.route.outputs.run_research_sim }}
+      run_platform: ${{ steps.route.outputs.run_platform }}
+      run_nontrading: ${{ steps.route.outputs.run_nontrading }}
+      run_root: ${{ steps.route.outputs.run_root }}
+      run_polymarket: ${{ steps.route.outputs.run_polymarket }}
+      run_hygiene: ${{ steps.route.outputs.run_hygiene }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - id: route
+        name: Route changed paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/select_test_targets.py \
+            --format gha \
+            --base-sha "${{ github.event.pull_request.base.sha }}" \
+            --head-sha "${{ github.event.pull_request.head.sha }}"
+
+  full-matrix:
+    name: Full Matrix (main/nightly/manual)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+            requirements-elastic.txt
+            hub/requirements.txt
+            polymarket-bot/pyproject.toml
+            edge-backlog/pyproject.toml
+      - name: Install dependencies
+        run: make bootstrap
+      - name: Doctor
+        run: make doctor
+      - name: Quickstart smoke
+        run: python3 scripts/quickstart.py --prepare-only --agent-name ci-full-matrix
+      - name: Full verification matrix
+        run: make verify-full-matrix
+
+  docs-static-checks:
+    name: Fast Path (Docs/Static/Scripts Maps)
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.run_docs_static_checks == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+      - name: Install lightweight dependencies
+        run: make bootstrap-lite
+      - name: Docs/static verification
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.changes.outputs.fastpath_metadata }}" = "true" ]; then
+            make verify-fastpath
+          else
+            make verify-static
+          fi
+
+  fast-guards:
+    name: Fast Guards (Hygiene Contracts)
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.run_hygiene == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+      - name: Install lightweight dependencies
+        run: make bootstrap-lite
+      - name: Hygiene contracts
+        run: make verify-fastpath
+
+  fixture-ownership:
+    name: Fixture Ownership Contract
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+      - fast-guards
+    if: github.event_name == 'pull_request' && needs.changes.outputs.run_fixture_ownership == 'true' && needs.changes.outputs.run_root != 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+            edge-backlog/pyproject.toml
+      - name: Install dependencies
+        run: make bootstrap
+      - name: Fixture ownership contract
+        run: make test-fixture-ownership
+
+  research-sim:
+    name: Research/Simulation Tests
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+      - fast-guards
+    if: github.event_name == 'pull_request' && needs.changes.outputs.run_research_sim == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Install dependencies
+        run: make bootstrap
+      - name: Research/sim regression suite
+        run: make test-research-sim
+
+  platform:
+    name: Platform Tests (Hub/Data/Orchestration)
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+      - fast-guards
+    if: github.event_name == 'pull_request' && needs.changes.outputs.run_platform == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+            hub/requirements.txt
+            edge-backlog/pyproject.toml
+      - name: Install dependencies
+        run: make bootstrap
+      - name: Platform regression suite
+        run: make test-platform
+
+  nontrading:
+    name: Nontrading Tests
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+      - fast-guards
+    if: github.event_name == 'pull_request' && needs.changes.outputs.run_nontrading == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+            edge-backlog/pyproject.toml
+      - name: Install dependencies
+        run: make bootstrap
+      - name: Nontrading suite
+        run: make test-nontrading
+
+  root:
+    name: Root Hygiene And Tests
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+      - fast-guards
+    if: github.event_name == 'pull_request' && needs.changes.outputs.run_root == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+            hub/requirements.txt
+            edge-backlog/pyproject.toml
+      - name: Install dependencies
+        run: make bootstrap
+      - name: Root regression suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PYTEST_ADDOPTS="${PYTEST_ADDOPTS:-} -x --tb=short -ra"
+          if ! python3 -u scripts/run_root_tests.py 2>&1 | tee root-regression.log; then
+            python3 -c 'from pathlib import Path; tail = Path("root-regression.log").read_text(encoding="utf-8", errors="ignore").splitlines()[-40:]; esc = lambda value: value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"); print(f"::error title=Root regression suite failed::{esc(chr(10).join(tail))}")'
+            exit 1
+          fi
+      - name: Upload root regression log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: root-regression-log
+          path: root-regression.log
+
+  polymarket:
+    name: Polymarket Bot Tests
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+      - fast-guards
+    if: github.event_name == 'pull_request' && needs.changes.outputs.run_polymarket == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+            hub/requirements.txt
+            polymarket-bot/pyproject.toml
+            edge-backlog/pyproject.toml
+      - name: Install dependencies
+        run: make bootstrap
+      - name: Polymarket regression suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          make test-polymarket 2>&1 | tee polymarket-regression.log
+      - name: Upload polymarket regression log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: polymarket-regression-log
+          path: polymarket-regression.log

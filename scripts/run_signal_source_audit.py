@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import sqlite3
 import sys
@@ -44,16 +43,10 @@ BTC_FAST_WINDOW_CONFIRMATION_ARCHIVE_SCHEMA = "btc_fast_window_confirmation_arch
 BTC_FAST_WINDOW_SOURCES = ("wallet_flow", "lmsr")
 MIN_CONFIRMATION_SIGNAL_WINDOWS = 3
 MIN_CONFIRMATION_EXECUTED_WINDOWS = 2
-CONFIRMATION_SOURCE_STALE_HOURS = 6.0
-# Use the local BTC5 maker database as the default probe source because it
-# carries the freshest resolved window coverage for confirmation joins.
-DEFAULT_BTC5_PROBE_DB_PATH = PROJECT_ROOT / "data" / "btc_5min_maker.db"
+DEFAULT_BTC5_PROBE_DB_PATH = PROJECT_ROOT / "data" / "btc_5min_maker.remote_probe.db"
 DEFAULT_EDGE_DISCOVERY_DB_PATH = PROJECT_ROOT / "data" / "edge_discovery_locked.db"
 DEFAULT_WALLET_DB_PATH = PROJECT_ROOT / "data" / "wallet_scores.db"
 DEFAULT_CONFIRMATION_OUTPUT_PATH = PROJECT_ROOT / "reports" / "btc_fast_window_confirmation_archive.json"
-DEFAULT_REMOTE_BTC5_ROWS_PATH = PROJECT_ROOT / "reports" / "tmp_remote_btc5_window_rows.json"
-DEFAULT_BTC5_ARCHIVE_GLOB = "reports/btc_intraday_llm_bundle_*/raw/remote_btc5_window_trades.csv"
-DEFAULT_RUNTIME_TRUTH_PATH = PROJECT_ROOT / "reports" / "runtime_truth_latest.json"
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -138,161 +131,17 @@ def _dedupe_preserve_order(values: list[str]) -> list[str]:
     return output
 
 
-def _clamp(value: float, minimum: float, maximum: float) -> float:
-    return max(minimum, min(maximum, float(value)))
-
-
-def _timestamp_to_iso_utc(value: Any) -> str | None:
-    parsed = _safe_int(value, default=0)
-    if parsed <= 0:
-        return None
-    return datetime.fromtimestamp(parsed, tz=timezone.utc).isoformat()
-
-
-def _btc5_slug_window_start_ts(slug: Any) -> int | None:
-    text = str(slug or "").strip()
-    if not text.startswith("btc-updown-5m-"):
-        return None
-    suffix = text.rsplit("-", 1)[-1]
-    if not suffix.isdigit():
-        return None
-    parsed = _safe_int(suffix, default=0)
-    return parsed if parsed > 0 else None
-
-
-def _slug_window_bounds(slugs: set[str]) -> dict[str, Any]:
-    parsed_rows: list[tuple[int, str]] = []
-    for slug in slugs:
-        ts = _btc5_slug_window_start_ts(slug)
-        if ts is None:
-            continue
-        parsed_rows.append((ts, slug))
-    if not parsed_rows:
-        return {
-            "window_start_ts_min": None,
-            "window_start_ts_max": None,
-            "window_start_at_min": None,
-            "window_start_at_max": None,
-            "slug_min": None,
-            "slug_max": None,
-        }
-    parsed_rows.sort(key=lambda item: item[0])
-    min_ts, min_slug = parsed_rows[0]
-    max_ts, max_slug = parsed_rows[-1]
-    return {
-        "window_start_ts_min": min_ts,
-        "window_start_ts_max": max_ts,
-        "window_start_at_min": _timestamp_to_iso_utc(min_ts),
-        "window_start_at_max": _timestamp_to_iso_utc(max_ts),
-        "slug_min": min_slug,
-        "slug_max": max_slug,
-    }
-
-
-def _gap_hours(*, latest_ts: Any, observed_ts: Any) -> float | None:
-    latest = _safe_float(latest_ts, default=-1.0)
-    observed = _safe_float(observed_ts, default=-1.0)
-    if latest < 0.0 or observed < 0.0:
-        return None
-    return max(0.0, (latest - observed) / 3600.0)
-
-
-def _freshness_label_for_gap_hours(gap_hours: float | None) -> str:
-    if gap_hours is None:
-        return "unknown"
-    if gap_hours <= max(CONFIRMATION_SOURCE_STALE_HOURS / 2.0, 0.5):
-        return "fresh"
-    if gap_hours <= CONFIRMATION_SOURCE_STALE_HOURS:
-        return "aging"
-    return "stale"
-
-
-def _confirmation_coverage_label(
-    *,
-    status: str,
-    resolved_window_coverage: Any,
-    executed_window_coverage: Any,
-) -> str:
-    if str(status).strip().lower() != "ready":
-        return "missing"
-    resolved = _safe_float(resolved_window_coverage, 0.0)
-    executed = _safe_float(executed_window_coverage, 0.0)
-    if resolved >= 0.70 and executed >= 0.50:
-        return "strong"
-    if resolved >= 0.45 and executed >= 0.30:
-        return "moderate"
-    return "weak"
-
-
-def _confirmation_strength_score(
-    *,
-    status: str,
-    resolved_window_coverage: Any,
-    executed_window_coverage: Any,
-    confirmation_lift_avg_pnl_usd: Any,
-    confirmation_lift_win_rate: Any,
-    confirmation_contradiction_penalty: Any,
-    false_suppression_cost_usd: Any,
-    false_confirmation_cost_usd: Any,
-) -> float:
-    if str(status).strip().lower() != "ready":
-        return 0.0
-
-    resolved = _clamp(_safe_float(resolved_window_coverage, 0.0), 0.0, 1.0)
-    executed = _clamp(_safe_float(executed_window_coverage, 0.0), 0.0, 1.0)
-    lift_avg_pnl = _safe_float(confirmation_lift_avg_pnl_usd, 0.0)
-    lift_win_rate = _safe_float(confirmation_lift_win_rate, 0.0)
-    contradiction_penalty = _clamp(_safe_float(confirmation_contradiction_penalty, 0.0), 0.0, 1.0)
-    false_cost = max(
-        0.0,
-        _safe_float(false_suppression_cost_usd, 0.0) + _safe_float(false_confirmation_cost_usd, 0.0),
-    )
-
-    score = (
-        (0.45 * resolved)
-        + (0.25 * executed)
-        + (0.15 * _clamp(lift_win_rate, 0.0, 0.25) / 0.25)
-        + (0.15 * _clamp(lift_avg_pnl, 0.0, 2.0) / 2.0)
-        - (0.20 * contradiction_penalty)
-        - (0.10 * _clamp(false_cost / 5.0, 0.0, 1.0))
-    )
-    return round(_clamp(score, 0.0, 1.0), 6)
-
-
-def _confirmation_strength_label(
-    *,
-    status: str,
-    coverage_label: str,
-    strength_score: float,
-) -> str:
-    if str(status).strip().lower() != "ready":
-        return "missing"
-    if coverage_label == "weak":
-        return "weak"
-    if coverage_label == "strong" and strength_score >= 0.65:
-        return "strong"
-    if strength_score >= 0.40:
-        return "moderate"
-    return "weak"
-
-
 def _load_btc_fast_window_rows(probe_db_path: Path | None) -> tuple[list[dict[str, Any]], list[str]]:
     if probe_db_path is None:
         return [], ["btc5_probe_db_not_provided"]
     if not probe_db_path.exists():
-        fallback_rows, fallback_requirements = _load_btc_fast_window_rows_from_reports()
-        if fallback_rows:
-            return fallback_rows, []
-        return [], [f"btc5_probe_db_missing:{probe_db_path}", *fallback_requirements]
+        return [], [f"btc5_probe_db_missing:{probe_db_path}"]
 
     conn = sqlite3.connect(str(probe_db_path))
     conn.row_factory = sqlite3.Row
     try:
         if not _table_exists(conn, "window_trades"):
-            fallback_rows, fallback_requirements = _load_btc_fast_window_rows_from_reports()
-            if fallback_rows:
-                return fallback_rows, []
-            return [], [f"btc5_probe_window_trades_missing:{probe_db_path}", *fallback_requirements]
+            return [], [f"btc5_probe_window_trades_missing:{probe_db_path}"]
 
         columns = {row[1] for row in conn.execute("PRAGMA table_info(window_trades)").fetchall()}
         selected_columns = []
@@ -329,100 +178,9 @@ def _load_btc_fast_window_rows(probe_db_path: Path | None) -> tuple[list[dict[st
             ORDER BY COALESCE(decision_ts, window_end_ts, window_start_ts) ASC
             """
         ).fetchall()
-        loaded_rows = [dict(row) for row in rows]
-        if loaded_rows:
-            return loaded_rows, []
-        fallback_rows, fallback_requirements = _load_btc_fast_window_rows_from_reports()
-        if fallback_rows:
-            return fallback_rows, []
-        return [], [f"btc5_probe_window_rows_0:{probe_db_path}", *fallback_requirements]
+        return [dict(row) for row in rows], []
     finally:
         conn.close()
-
-
-def _parse_csv_rows(path: Path) -> list[dict[str, Any]]:
-    with path.open(newline="") as handle:
-        return [dict(row) for row in csv.DictReader(handle)]
-
-
-def _latest_existing_path(paths: list[Path]) -> Path | None:
-    existing = [path for path in paths if path.exists()]
-    if not existing:
-        return None
-    return max(existing, key=lambda path: path.stat().st_mtime)
-
-
-def _latest_btc5_bundle_dir() -> Path | None:
-    candidates = [
-        path
-        for path in (PROJECT_ROOT / "reports").glob("btc_intraday_llm_bundle_*")
-        if path.is_dir()
-    ]
-    if not candidates:
-        return None
-    return max(candidates, key=lambda path: path.name)
-
-
-def _normalize_remote_probe_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "slug": row.get("slug"),
-        "window_start_ts": _safe_int(row.get("window_start_ts"), default=0),
-        "window_end_ts": _safe_int(row.get("window_end_ts"), default=0),
-        "decision_ts": _safe_int(row.get("decision_ts"), default=0),
-        "direction": row.get("direction"),
-        "order_status": row.get("order_status"),
-        "order_price": _present_metric(row.get("order_price")),
-        "trade_size_usd": _present_metric(row.get("trade_size_usd")),
-        "filled": _safe_int(row.get("filled"), default=1 if str(row.get("order_status") or "").lower() == "live_filled" else 0),
-        "resolved_side": row.get("resolved_side") or ("UP" if row.get("won") is True else "DOWN" if row.get("won") is False else None),
-        "won": row.get("won"),
-        "pnl_usd": _present_metric(row.get("pnl_usd")),
-        "best_bid": _present_metric(row.get("best_bid")),
-        "best_ask": _present_metric(row.get("best_ask")),
-        "token_id": row.get("token_id"),
-        "created_at": row.get("created_at"),
-        "updated_at": row.get("updated_at"),
-    }
-
-
-def _load_btc_fast_window_rows_from_reports() -> tuple[list[dict[str, Any]], list[str]]:
-    requirements: list[str] = []
-    cache_path = DEFAULT_REMOTE_BTC5_ROWS_PATH
-    if cache_path.exists():
-        try:
-            payload = json.loads(cache_path.read_text())
-        except json.JSONDecodeError:
-            requirements.append(f"btc5_probe_report_invalid_json:{cache_path}")
-        else:
-            candidates = payload if isinstance(payload, list) else []
-            rows = [
-                _normalize_remote_probe_row(dict(item))
-                for item in candidates
-                if isinstance(item, dict) and str(item.get("slug") or "").startswith("btc-updown-5m-")
-            ]
-            if rows:
-                return rows, [f"btc5_probe_db_missing_local_path_using_report:{cache_path}"]
-            requirements.append(f"btc5_probe_report_rows_0:{cache_path}")
-
-    bundle_dir = _latest_btc5_bundle_dir()
-    if bundle_dir is None:
-        requirements.append("btc5_probe_report_bundle_missing")
-        return [], requirements
-
-    csv_path = bundle_dir / "raw" / "remote_btc5_window_trades.csv"
-    if not csv_path.exists():
-        requirements.append(f"btc5_probe_bundle_csv_missing:{csv_path}")
-        return [], requirements
-
-    rows = [
-        _normalize_remote_probe_row(row)
-        for row in _parse_csv_rows(csv_path)
-        if str(row.get("slug") or "").startswith("btc-updown-5m-")
-    ]
-    if rows:
-        return rows, [f"btc5_probe_db_missing_local_path_using_bundle:{csv_path}"]
-    requirements.append(f"btc5_probe_bundle_rows_0:{csv_path}")
-    return [], requirements
 
 
 def _load_wallet_flow_confirmation_signals(
@@ -436,20 +194,13 @@ def _load_wallet_flow_confirmation_signals(
         "missing_requirements": [],
         "candidate_windows": len(slugs),
         "signal_windows": 0,
-        "latest_btc5_trade_timestamp": None,
-        "latest_btc5_trade_at": None,
-        "latest_btc5_slug": None,
-        "latest_signal_timestamp": None,
-        "latest_signal_at": None,
-        "available_btc5_slug_count": 0,
-        "overlap_with_probe_slug_count": 0,
     }
     if wallet_db_path is None:
         diagnostics["missing_requirements"].append("wallet_flow_db_not_provided")
-        return _load_wallet_flow_confirmation_signals_from_reports(slugs=slugs, diagnostics=diagnostics)
+        return {}, diagnostics
     if not wallet_db_path.exists():
         diagnostics["missing_requirements"].append(f"wallet_flow_db_missing:{wallet_db_path}")
-        return _load_wallet_flow_confirmation_signals_from_reports(slugs=slugs, diagnostics=diagnostics)
+        return {}, diagnostics
 
     conn = sqlite3.connect(str(wallet_db_path))
     conn.row_factory = sqlite3.Row
@@ -457,38 +208,6 @@ def _load_wallet_flow_confirmation_signals(
         if not _table_exists(conn, "wallet_scores") or not _table_exists(conn, "wallet_trades"):
             diagnostics["missing_requirements"].append(f"wallet_flow_tables_missing:{wallet_db_path}")
             return {}, diagnostics
-
-        latest_btc5_row = conn.execute(
-            """
-            SELECT event_slug, timestamp
-            FROM wallet_trades
-            WHERE event_slug LIKE 'btc-updown-5m-%'
-            ORDER BY timestamp DESC
-            LIMIT 1
-            """
-        ).fetchone()
-        if latest_btc5_row is not None:
-            latest_btc5_timestamp = _safe_int(latest_btc5_row["timestamp"], default=0)
-            if latest_btc5_timestamp > 0:
-                diagnostics["latest_btc5_trade_timestamp"] = latest_btc5_timestamp
-                diagnostics["latest_btc5_trade_at"] = _timestamp_to_iso_utc(latest_btc5_timestamp)
-                diagnostics["latest_btc5_slug"] = str(latest_btc5_row["event_slug"] or "").strip() or None
-
-        available_slug_rows = conn.execute(
-            """
-            SELECT DISTINCT event_slug
-            FROM wallet_trades
-            WHERE event_slug LIKE 'btc-updown-5m-%'
-            """
-        ).fetchall()
-        available_slugs = {
-            str(row["event_slug"] or "").strip()
-            for row in available_slug_rows
-            if str(row["event_slug"] or "").strip()
-        }
-        diagnostics["available_btc5_slug_count"] = len(available_slugs)
-        diagnostics["overlap_with_probe_slug_count"] = len(available_slugs & slugs)
-        diagnostics.update(_slug_window_bounds(available_slugs))
 
         if not slugs:
             diagnostics["available"] = True
@@ -589,100 +308,6 @@ def _load_wallet_flow_confirmation_signals(
 
     diagnostics["available"] = True
     diagnostics["signal_windows"] = len(signals)
-    latest_signal_timestamp = max(
-        (
-            _safe_int(signal.get("last_timestamp"), default=0)
-            for signal in signals.values()
-            if _safe_int(signal.get("last_timestamp"), default=0) > 0
-        ),
-        default=0,
-    )
-    if latest_signal_timestamp > 0:
-        diagnostics["latest_signal_timestamp"] = latest_signal_timestamp
-        diagnostics["latest_signal_at"] = _timestamp_to_iso_utc(latest_signal_timestamp)
-    if not signals:
-        diagnostics["missing_requirements"].append("wallet_flow_overlap_windows_0")
-    return signals, diagnostics
-
-
-def _load_wallet_flow_confirmation_signals_from_reports(
-    *,
-    slugs: set[str],
-    diagnostics: dict[str, Any],
-) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
-    bundle_dir = _latest_btc5_bundle_dir()
-    if bundle_dir is None:
-        diagnostics["missing_requirements"].append("wallet_flow_bundle_missing")
-        return {}, diagnostics
-
-    consensus_path = bundle_dir / "derived" / "wallet_consensus_btc5_windows.csv"
-    trades_path = bundle_dir / "raw" / "wallet_wallet_trades.csv"
-    if not consensus_path.exists():
-        diagnostics["missing_requirements"].append(f"wallet_flow_bundle_consensus_missing:{consensus_path}")
-        return {}, diagnostics
-
-    diagnostics["path"] = str(consensus_path)
-    consensus_rows = _parse_csv_rows(consensus_path)
-    available_slugs = {
-        str(row.get("event_slug") or "").strip()
-        for row in consensus_rows
-        if str(row.get("event_slug") or "").strip()
-    }
-    diagnostics["available_btc5_slug_count"] = len(available_slugs)
-    diagnostics["overlap_with_probe_slug_count"] = len(available_slugs & slugs)
-    diagnostics.update(_slug_window_bounds(available_slugs))
-
-    latest_trade_timestamp = 0
-    latest_trade_slug: str | None = None
-    if trades_path.exists():
-        for row in _parse_csv_rows(trades_path):
-            slug = str(row.get("event_slug") or "").strip()
-            if not slug.startswith("btc-updown-5m-"):
-                continue
-            timestamp = _safe_int(row.get("timestamp"), default=0)
-            if timestamp > latest_trade_timestamp:
-                latest_trade_timestamp = timestamp
-                latest_trade_slug = slug
-    if latest_trade_timestamp > 0:
-        diagnostics["latest_btc5_trade_timestamp"] = latest_trade_timestamp
-        diagnostics["latest_btc5_trade_at"] = _timestamp_to_iso_utc(latest_trade_timestamp)
-        diagnostics["latest_btc5_slug"] = latest_trade_slug
-
-    signals: dict[str, dict[str, Any]] = {}
-    for row in consensus_rows:
-        slug = str(row.get("event_slug") or "").strip()
-        if not slug or (slugs and slug not in slugs):
-            continue
-        direction = _normalize_btc_direction(row.get("consensus_direction"))
-        if direction is None:
-            continue
-        last_timestamp = _safe_int(row.get("last_timestamp"), default=0)
-        signals[slug] = {
-            "status": "present",
-            "direction": direction,
-            "consensus_share": _present_metric(row.get("consensus_share")),
-            "consensus_volume": round(_safe_float(row.get("total_volume"), 0.0), 6),
-            "consensus_trades": _safe_int(row.get("trades"), default=0),
-            "consensus_unique_wallets": _safe_int(row.get("unique_wallets"), default=0),
-            "total_volume": round(_safe_float(row.get("window_total_volume"), 0.0), 6),
-            "total_trades": _safe_int(row.get("trades"), default=0),
-            "unique_wallets": _safe_int(row.get("unique_wallets"), default=0),
-            "avg_price": _present_metric(row.get("avg_price")),
-            "first_timestamp": _safe_int(row.get("first_timestamp"), default=0),
-            "last_timestamp": last_timestamp,
-        }
-
-    diagnostics["available"] = True
-    diagnostics["signal_windows"] = len(signals)
-    latest_signal_timestamp = max(
-        (_safe_int(signal.get("last_timestamp"), default=0) for signal in signals.values()),
-        default=0,
-    )
-    if latest_signal_timestamp > 0:
-        diagnostics["latest_signal_timestamp"] = latest_signal_timestamp
-        diagnostics["latest_signal_at"] = _timestamp_to_iso_utc(latest_signal_timestamp)
-    if diagnostics["missing_requirements"]:
-        diagnostics["missing_requirements"].append(f"wallet_flow_db_missing_local_path_using_bundle:{consensus_path}")
     if not signals:
         diagnostics["missing_requirements"].append("wallet_flow_overlap_windows_0")
     return signals, diagnostics
@@ -761,7 +386,6 @@ def _build_lmsr_signal_for_window(
         "market_price_yes": signal.get("market_price"),
         "estimated_prob": signal.get("estimated_prob"),
         "trades_processed": int(state.trades_processed),
-        "last_trade_timestamp": _safe_int(relevant_trades[-1]["timestamp_ts"], default=0),
     }
 
 
@@ -777,23 +401,15 @@ def _load_lmsr_confirmation_signals(
         "candidate_windows": len(window_rows),
         "signal_windows": 0,
         "matched_markets": 0,
-        "latest_btc5_market_window_end_ts": None,
-        "latest_btc5_market_window_end_at": None,
-        "latest_btc5_slug": None,
-        "latest_signal_timestamp": None,
-        "latest_signal_at": None,
-        "available_btc5_slug_count": 0,
-        "overlap_with_probe_slug_count": 0,
     }
     if edge_db_path is None:
         diagnostics["missing_requirements"].append("edge_discovery_db_not_provided")
-        return _load_lmsr_confirmation_signals_from_reports(window_rows=window_rows, diagnostics=diagnostics)
+        return {}, diagnostics
     if not edge_db_path.exists():
         diagnostics["missing_requirements"].append(f"edge_discovery_db_missing:{edge_db_path}")
-        return _load_lmsr_confirmation_signals_from_reports(window_rows=window_rows, diagnostics=diagnostics)
+        return {}, diagnostics
 
     slugs = {str(row.get("slug") or "").strip() for row in window_rows if row.get("slug")}
-    diagnostics.update(_slug_window_bounds(slugs))
     if not slugs:
         diagnostics["available"] = True
         return {}, diagnostics
@@ -804,43 +420,6 @@ def _load_lmsr_confirmation_signals(
         if not _table_exists(conn, "markets") or not _table_exists(conn, "trades"):
             diagnostics["missing_requirements"].append(f"edge_discovery_tables_missing:{edge_db_path}")
             return {}, diagnostics
-
-        latest_btc5_market_row = conn.execute(
-            """
-            SELECT slug, window_end_ts
-            FROM markets
-            WHERE slug LIKE 'btc-updown-5m-%'
-            ORDER BY COALESCE(window_end_ts, window_start_ts) DESC
-            LIMIT 1
-            """
-        ).fetchone()
-        if latest_btc5_market_row is not None:
-            latest_market_ts = _safe_int(latest_btc5_market_row["window_end_ts"], default=0)
-            if latest_market_ts > 0:
-                diagnostics["latest_btc5_market_window_end_ts"] = latest_market_ts
-                diagnostics["latest_btc5_market_window_end_at"] = _timestamp_to_iso_utc(latest_market_ts)
-                diagnostics["latest_btc5_slug"] = str(latest_btc5_market_row["slug"] or "").strip() or None
-
-        available_slug_rows = conn.execute(
-            """
-            SELECT DISTINCT slug
-            FROM markets
-            WHERE slug LIKE 'btc-updown-5m-%'
-            """
-        ).fetchall()
-        available_slugs = {
-            str(row["slug"] or "").strip()
-            for row in available_slug_rows
-            if str(row["slug"] or "").strip()
-        }
-        diagnostics["available_btc5_slug_count"] = len(available_slugs)
-        diagnostics["overlap_with_probe_slug_count"] = len(available_slugs & slugs)
-        diagnostics.update(
-            {
-                f"market_{key}": value
-                for key, value in _slug_window_bounds(available_slugs).items()
-            }
-        )
 
         placeholders = ",".join("?" for _ in slugs)
         market_rows = conn.execute(
@@ -894,112 +473,6 @@ def _load_lmsr_confirmation_signals(
 
     diagnostics["available"] = True
     diagnostics["signal_windows"] = len(signals)
-    latest_signal_timestamp = max(
-        (
-            _safe_int(signal.get("last_trade_timestamp"), default=0)
-            for signal in signals.values()
-            if _safe_int(signal.get("last_trade_timestamp"), default=0) > 0
-        ),
-        default=0,
-    )
-    if latest_signal_timestamp > 0:
-        diagnostics["latest_signal_timestamp"] = latest_signal_timestamp
-        diagnostics["latest_signal_at"] = _timestamp_to_iso_utc(latest_signal_timestamp)
-    if not signals:
-        diagnostics["missing_requirements"].append("lmsr_confirmation_windows_0")
-    return signals, diagnostics
-
-
-def _load_lmsr_confirmation_signals_from_reports(
-    *,
-    window_rows: list[dict[str, Any]],
-    diagnostics: dict[str, Any],
-) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
-    bundle_dir = _latest_btc5_bundle_dir()
-    if bundle_dir is None:
-        diagnostics["missing_requirements"].append("edge_discovery_bundle_missing")
-        return {}, diagnostics
-
-    markets_path = bundle_dir / "raw" / "edge_discovery_markets.csv"
-    trades_path = bundle_dir / "raw" / "edge_discovery_trades.csv"
-    if not markets_path.exists() or not trades_path.exists():
-        missing_path = markets_path if not markets_path.exists() else trades_path
-        diagnostics["missing_requirements"].append(f"edge_discovery_bundle_csv_missing:{missing_path}")
-        return {}, diagnostics
-
-    diagnostics["path"] = str(markets_path)
-    slugs = {str(row.get("slug") or "").strip() for row in window_rows if row.get("slug")}
-    diagnostics.update(_slug_window_bounds(slugs))
-
-    market_rows = _parse_csv_rows(markets_path)
-    available_slugs = {
-        str(row.get("slug") or "").strip()
-        for row in market_rows
-        if str(row.get("slug") or "").strip().startswith("btc-updown-5m-")
-    }
-    diagnostics["available_btc5_slug_count"] = len(available_slugs)
-    diagnostics["overlap_with_probe_slug_count"] = len(available_slugs & slugs)
-    diagnostics.update(
-        {f"market_{key}": value for key, value in _slug_window_bounds(available_slugs).items()}
-    )
-
-    latest_market = max(
-        (
-            row
-            for row in market_rows
-            if str(row.get("slug") or "").strip().startswith("btc-updown-5m-")
-        ),
-        key=lambda row: _safe_int(row.get("window_end_ts"), default=0),
-        default=None,
-    )
-    if latest_market is not None:
-        latest_market_ts = _safe_int(latest_market.get("window_end_ts"), default=0)
-        if latest_market_ts > 0:
-            diagnostics["latest_btc5_market_window_end_ts"] = latest_market_ts
-            diagnostics["latest_btc5_market_window_end_at"] = _timestamp_to_iso_utc(latest_market_ts)
-            diagnostics["latest_btc5_slug"] = str(latest_market.get("slug") or "").strip() or None
-
-    markets_by_slug = {
-        str(row.get("slug") or "").strip(): row
-        for row in market_rows
-        if str(row.get("slug") or "").strip() in slugs
-    }
-    diagnostics["matched_markets"] = len(markets_by_slug)
-    if not markets_by_slug:
-        diagnostics["available"] = True
-        diagnostics["missing_requirements"].append("edge_market_overlap_0")
-        return {}, diagnostics
-
-    trade_rows = _parse_csv_rows(trades_path)
-    trades_by_condition: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in trade_rows:
-        trades_by_condition[str(row.get("condition_id") or "")].append(row)
-
-    signals: dict[str, dict[str, Any]] = {}
-    for row in window_rows:
-        slug = str(row.get("slug") or "").strip()
-        market_row = markets_by_slug.get(slug)
-        if market_row is None:
-            continue
-        signal = _build_lmsr_signal_for_window(
-            row,
-            market_row=market_row,
-            trade_rows=trades_by_condition.get(str(market_row.get("condition_id") or ""), []),
-        )
-        if signal is not None:
-            signals[slug] = signal
-
-    diagnostics["available"] = True
-    diagnostics["signal_windows"] = len(signals)
-    latest_signal_timestamp = max(
-        (_safe_int(signal.get("last_trade_timestamp"), default=0) for signal in signals.values()),
-        default=0,
-    )
-    if latest_signal_timestamp > 0:
-        diagnostics["latest_signal_timestamp"] = latest_signal_timestamp
-        diagnostics["latest_signal_at"] = _timestamp_to_iso_utc(latest_signal_timestamp)
-    if diagnostics["missing_requirements"]:
-        diagnostics["missing_requirements"].append(f"edge_discovery_db_missing_local_path_using_bundle:{markets_path}")
     if not signals:
         diagnostics["missing_requirements"].append("lmsr_confirmation_windows_0")
     return signals, diagnostics
@@ -1116,41 +589,17 @@ def _summarize_confirmation_source(
             f"{covered_executed_window_rows} < required {MIN_CONFIRMATION_EXECUTED_WINDOWS}"
         )
 
-    status = "ready" if not missing_requirements else "insufficient_data"
-    resolved_window_coverage = (
-        source_window_rows / resolved_window_rows if resolved_window_rows > 0 else None
-    )
-    executed_window_coverage = (
-        covered_executed_window_rows / executed_window_rows if executed_window_rows > 0 else None
-    )
-    coverage_label = _confirmation_coverage_label(
-        status=status,
-        resolved_window_coverage=resolved_window_coverage,
-        executed_window_coverage=executed_window_coverage,
-    )
-    strength_score = _confirmation_strength_score(
-        status=status,
-        resolved_window_coverage=resolved_window_coverage,
-        executed_window_coverage=executed_window_coverage,
-        confirmation_lift_avg_pnl_usd=confirmation_lift_avg_pnl_usd,
-        confirmation_lift_win_rate=confirmation_lift_win_rate,
-        confirmation_contradiction_penalty=contradiction_rate,
-        false_suppression_cost_usd=false_suppression_cost_usd,
-        false_confirmation_cost_usd=false_confirmation_cost_usd,
-    )
-    strength_label = _confirmation_strength_label(
-        status=status,
-        coverage_label=coverage_label,
-        strength_score=strength_score,
-    )
-
     return {
-        "status": status,
+        "status": "ready" if not missing_requirements else "insufficient_data",
         "source_window_rows": int(source_window_rows),
         "resolved_window_rows": int(resolved_window_rows),
         "executed_window_rows": int(executed_window_rows),
-        "resolved_window_coverage": resolved_window_coverage,
-        "executed_window_coverage": executed_window_coverage,
+        "resolved_window_coverage": (
+            source_window_rows / resolved_window_rows if resolved_window_rows > 0 else None
+        ),
+        "executed_window_coverage": (
+            covered_executed_window_rows / executed_window_rows if executed_window_rows > 0 else None
+        ),
         "confirmed_window_rows": int(confirmed_window_rows),
         "contradicted_window_rows": int(contradicted_window_rows),
         "covered_executed_window_rows": int(covered_executed_window_rows),
@@ -1169,9 +618,6 @@ def _summarize_confirmation_source(
         "confirmed_avg_pnl_usd": confirmed_avg_pnl_usd,
         "confirmation_lift_avg_pnl_usd": confirmation_lift_avg_pnl_usd,
         "confirmation_contradiction_penalty": contradiction_rate,
-        "confirmation_coverage_label": coverage_label,
-        "confirmation_strength_label": strength_label,
-        "confirmation_strength_score": strength_score,
         "missing_requirements": missing_requirements,
     }
 
@@ -1196,9 +642,6 @@ def build_btc_fast_window_confirmation_archive(
     lmsr_signals, lmsr_diagnostics = _load_lmsr_confirmation_signals(
         edge_db_path,
         window_rows=resolved_rows,
-    )
-    probe_slug_bounds = _slug_window_bounds(
-        {str(row.get("slug") or "").strip() for row in resolved_rows if row.get("slug")}
     )
 
     windows: list[dict[str, Any]] = []
@@ -1263,77 +706,6 @@ def build_btc_fast_window_confirmation_archive(
         source_key: _summarize_confirmation_source(windows, source_key=source_key)
         for source_key in BTC_FAST_WINDOW_SOURCES
     }
-    latest_probe_decision_ts = max(
-        (
-            _safe_int(row.get("decision_ts") or row.get("window_end_ts"), default=0)
-            for row in resolved_rows
-            if _safe_int(row.get("decision_ts") or row.get("window_end_ts"), default=0) > 0
-        ),
-        default=0,
-    )
-    latest_probe_decision_at = _timestamp_to_iso_utc(latest_probe_decision_ts)
-    source_diagnostics = {
-        "wallet_flow": wallet_flow_diagnostics,
-        "lmsr": lmsr_diagnostics,
-    }
-    fresh_sources: list[str] = []
-    aging_sources: list[str] = []
-    stale_sources: list[str] = []
-    unknown_sources: list[str] = []
-    source_gaps_hours: dict[str, float | None] = {}
-    source_freshness: dict[str, str] = {}
-    source_next_required_artifacts: list[str] = []
-    source_input_paths = {
-        "wallet_flow": wallet_db_path,
-        "lmsr": edge_db_path,
-    }
-    for source_key in BTC_FAST_WINDOW_SOURCES:
-        summary = by_source[source_key]
-        diagnostics = source_diagnostics[source_key]
-        latest_source_timestamp = _safe_int(diagnostics.get("latest_signal_timestamp"), default=0)
-        if latest_source_timestamp <= 0:
-            fallback_key = (
-                "latest_btc5_trade_timestamp"
-                if source_key == "wallet_flow"
-                else "latest_btc5_market_window_end_ts"
-            )
-            latest_source_timestamp = _safe_int(diagnostics.get(fallback_key), default=0)
-        latest_source_at = _timestamp_to_iso_utc(latest_source_timestamp)
-        overlap_count = _safe_int(diagnostics.get("overlap_with_probe_slug_count"), 0)
-        source_window_rows = _safe_int(summary.get("source_window_rows"), 0)
-        gap_hours = _gap_hours(
-            latest_ts=latest_probe_decision_ts if latest_probe_decision_ts > 0 else None,
-            observed_ts=latest_source_timestamp if latest_source_timestamp > 0 else None,
-        )
-        freshness = (
-            _freshness_label_for_gap_hours(gap_hours)
-            if source_window_rows > 0 or overlap_count > 0
-            else "unknown"
-        )
-        if freshness == "fresh":
-            fresh_sources.append(source_key)
-        elif freshness == "aging":
-            aging_sources.append(source_key)
-        elif freshness == "stale":
-            stale_sources.append(source_key)
-            source_path = source_input_paths.get(source_key)
-            if source_path is not None:
-                source_next_required_artifacts.append(str(source_path))
-        else:
-            unknown_sources.append(source_key)
-
-        source_gaps_hours[source_key] = round(gap_hours, 4) if gap_hours is not None else None
-        source_freshness[source_key] = freshness
-        summary["latest_source_timestamp"] = latest_source_timestamp if latest_source_timestamp > 0 else None
-        summary["latest_source_at"] = latest_source_at
-        summary["source_gap_vs_probe_hours"] = source_gaps_hours[source_key]
-        summary["source_freshness"] = freshness
-        diagnostics["latest_source_timestamp"] = latest_source_timestamp if latest_source_timestamp > 0 else None
-        diagnostics["latest_source_at"] = latest_source_at
-        diagnostics["source_gap_vs_probe_hours"] = source_gaps_hours[source_key]
-        diagnostics["source_freshness"] = freshness
-        diagnostics["stale_vs_probe"] = freshness == "stale"
-
     ready_sources = [
         source_key
         for source_key, summary in by_source.items()
@@ -1348,19 +720,6 @@ def build_btc_fast_window_confirmation_archive(
     confirmation_lift_avg_pnl_usd = None
     confirmation_lift_win_rate = None
     confirmation_contradiction_penalty = None
-    confirmation_coverage_label = "missing"
-    confirmation_strength_label = "missing"
-    confirmation_strength_score = 0.0
-    confirmation_freshness_label = (
-        "fresh"
-        if fresh_sources
-        else "aging"
-        if aging_sources
-        else "stale"
-        if stale_sources
-        else "missing"
-    )
-    confirmation_next_required_artifact = None
     if ready_sources:
         best_source_by_confirmation_lift = max(
             ready_sources,
@@ -1390,31 +749,6 @@ def build_btc_fast_window_confirmation_archive(
         confirmation_lift_avg_pnl_usd = best_summary.get("confirmation_lift_avg_pnl_usd")
         confirmation_lift_win_rate = best_summary.get("confirmation_lift_win_rate")
         confirmation_contradiction_penalty = best_summary.get("confirmation_contradiction_penalty")
-        confirmation_coverage_label = str(
-            best_summary.get("confirmation_coverage_label") or "missing"
-        )
-        confirmation_strength_label = str(
-            best_summary.get("confirmation_strength_label") or "missing"
-        )
-        confirmation_strength_score = round(
-            _safe_float(best_summary.get("confirmation_strength_score"), 0.0),
-            6,
-        )
-        best_source_freshness = source_freshness.get(best_source_by_confirmation_lift)
-        if best_source_freshness in {"fresh", "aging", "stale"}:
-            confirmation_freshness_label = best_source_freshness
-
-    if not resolved_rows:
-        confirmation_next_required_artifact = (
-            str(btc5_probe_db_path) if btc5_probe_db_path is not None else None
-        )
-    elif source_next_required_artifacts:
-        confirmation_next_required_artifact = source_next_required_artifacts[0]
-    elif not ready_sources:
-        if wallet_db_path is not None:
-            confirmation_next_required_artifact = str(wallet_db_path)
-        elif edge_db_path is not None:
-            confirmation_next_required_artifact = str(edge_db_path)
 
     missing_requirements = list(base_missing_requirements)
     if not resolved_rows:
@@ -1422,34 +756,6 @@ def build_btc_fast_window_confirmation_archive(
     for source_key in BTC_FAST_WINDOW_SOURCES:
         for item in by_source[source_key].get("missing_requirements", []):
             missing_requirements.append(f"{source_key}:{item}")
-        if source_freshness.get(source_key) == "stale":
-            gap_hours = source_gaps_hours.get(source_key)
-            if gap_hours is not None:
-                missing_requirements.append(
-                    f"{source_key}:source_stale_vs_probe_gap_hours:{gap_hours:.4f}"
-                )
-        if source_key == "wallet_flow":
-            overlap_count = _safe_int(wallet_flow_diagnostics.get("overlap_with_probe_slug_count"), 0)
-            source_min = wallet_flow_diagnostics.get("window_start_ts_min")
-            source_max = wallet_flow_diagnostics.get("window_start_ts_max")
-        else:
-            overlap_count = _safe_int(lmsr_diagnostics.get("overlap_with_probe_slug_count"), 0)
-            source_min = lmsr_diagnostics.get("market_window_start_ts_min")
-            source_max = lmsr_diagnostics.get("market_window_start_ts_max")
-        probe_min = probe_slug_bounds.get("window_start_ts_min")
-        probe_max = probe_slug_bounds.get("window_start_ts_max")
-        if (
-            overlap_count == 0
-            and by_source[source_key].get("source_window_rows", 0) == 0
-            and probe_min is not None
-            and probe_max is not None
-            and source_min is not None
-            and source_max is not None
-        ):
-            missing_requirements.append(
-                f"{source_key}:join_key_window_mismatch:probe[{probe_min}-{probe_max}]"
-                f":source[{source_min}-{source_max}]"
-            )
 
     return {
         "schema": BTC_FAST_WINDOW_CONFIRMATION_ARCHIVE_SCHEMA,
@@ -1470,20 +776,13 @@ def build_btc_fast_window_confirmation_archive(
             "executed_window_rows": sum(1 for window in windows if window.get("base_executed")),
             "ready_sources": len(ready_sources),
         },
-        "source_diagnostics": source_diagnostics,
+        "source_diagnostics": {
+            "wallet_flow": wallet_flow_diagnostics,
+            "lmsr": lmsr_diagnostics,
+        },
         "summary": {
             "ready_sources": ready_sources,
             "best_source_by_confirmation_lift": best_source_by_confirmation_lift,
-            "latest_probe_decision_ts": latest_probe_decision_ts if latest_probe_decision_ts > 0 else None,
-            "latest_probe_decision_at": latest_probe_decision_at,
-            "fresh_sources": fresh_sources,
-            "aging_sources": aging_sources,
-            "stale_sources": stale_sources,
-            "unknown_sources": unknown_sources,
-            "source_gap_vs_probe_hours": source_gaps_hours,
-            "probe_slug_bounds": probe_slug_bounds,
-            "confirmation_freshness_label": confirmation_freshness_label,
-            "confirmation_next_required_artifact": confirmation_next_required_artifact,
             "confirmation_coverage_ratio": confirmation_coverage_ratio,
             "confirmation_resolved_window_coverage": confirmation_resolved_window_coverage,
             "confirmation_executed_window_coverage": confirmation_executed_window_coverage,
@@ -1492,9 +791,6 @@ def build_btc_fast_window_confirmation_archive(
             "confirmation_lift_avg_pnl_usd": confirmation_lift_avg_pnl_usd,
             "confirmation_lift_win_rate": confirmation_lift_win_rate,
             "confirmation_contradiction_penalty": confirmation_contradiction_penalty,
-            "confirmation_coverage_label": confirmation_coverage_label,
-            "confirmation_strength_label": confirmation_strength_label,
-            "confirmation_strength_score": confirmation_strength_score,
         },
         "missing_requirements": _dedupe_preserve_order(missing_requirements),
         "by_source": by_source,
@@ -1653,39 +949,6 @@ def _load_state_snapshot(state_path: Path) -> dict[str, Any]:
     }
 
 
-def _load_runtime_truth_trade_totals(path: Path | None = None) -> dict[str, Any]:
-    runtime_truth_path = path or DEFAULT_RUNTIME_TRUTH_PATH
-    if runtime_truth_path is None or not runtime_truth_path.exists():
-        return {
-            "available": False,
-            "path": str(runtime_truth_path) if runtime_truth_path is not None else None,
-            "total_trades": 0,
-            "live_filled_rows": 0,
-        }
-    try:
-        payload = json.loads(runtime_truth_path.read_text())
-    except json.JSONDecodeError:
-        return {
-            "available": False,
-            "path": str(runtime_truth_path),
-            "total_trades": 0,
-            "live_filled_rows": 0,
-        }
-    accounting = payload.get("accounting_reconciliation") or {}
-    local_ledger = accounting.get("local_ledger_counts") or {}
-    btc5_counts = accounting.get("btc_5min_maker_counts") or {}
-    total_trades = max(
-        _safe_int(local_ledger.get("total_trades"), default=0),
-        _safe_int(btc5_counts.get("live_filled_rows"), default=0),
-    )
-    return {
-        "available": True,
-        "path": str(runtime_truth_path),
-        "total_trades": total_trades,
-        "live_filled_rows": _safe_int(btc5_counts.get("live_filled_rows"), default=0),
-    }
-
-
 def _decode_source_fields(row: dict[str, Any]) -> tuple[str, str, list[str], int]:
     raw_components = row.get("source_components_json")
     parsed_components: Any = raw_components
@@ -1797,26 +1060,6 @@ def _best_win_rate_entry(metrics_map: dict[str, dict[str, Any]], key_name: str) 
     }
 
 
-def _decision_readiness(
-    *,
-    recommendation: str,
-    role: str,
-) -> tuple[str, bool]:
-    normalized_recommendation = str(recommendation or "").strip().lower()
-    normalized_role = str(role or "").strip().lower()
-    if normalized_role == "gate_only":
-        return ("gate_only", False)
-    if normalized_recommendation == "keep":
-        return ("decision_eligible", True)
-    if normalized_recommendation == "collect_more_data":
-        return ("data_collection_only", False)
-    if normalized_recommendation == "demote_to_tiebreaker":
-        return ("tiebreaker_only", False)
-    if normalized_recommendation == "kill":
-        return ("disabled", False)
-    return ("unknown", False)
-
-
 def build_audit_payload(
     *,
     db_path: Path,
@@ -1829,7 +1072,6 @@ def build_audit_payload(
     generated_at = datetime.now(timezone.utc).isoformat()
     rows, db_columns = _load_trade_rows(db_path)
     state_snapshot = _load_state_snapshot(state_path)
-    runtime_truth_trade_totals = _load_runtime_truth_trade_totals()
     attribution_ready = all(
         column in set(db_columns)
         for column in ("source", "source_combo", "source_components_json", "source_count")
@@ -1956,26 +1198,12 @@ def build_audit_payload(
     }
 
     recommendations: dict[str, dict[str, Any]] = {}
-    source_decision_readiness: dict[str, dict[str, Any]] = {}
     for source_key, meta in SOURCE_DECISION_SCOPE.items():
         if meta["role"] == "gate_only":
-            decision_mode, decision_eligible = _decision_readiness(
-                recommendation="keep_as_gate",
-                role=meta["role"],
-            )
             recommendations[source_key] = {
                 "recommendation": "keep_as_gate",
                 "reason": "VPIN/OFI is a microstructure filter, not an order-originating trade source; audit it from telemetry, not paper-trade attribution.",
                 "role": meta["role"],
-                "decision_mode": decision_mode,
-                "decision_eligible": decision_eligible,
-            }
-            source_decision_readiness[source_key] = {
-                "decision_mode": decision_mode,
-                "decision_eligible": decision_eligible,
-                "recommendation": "keep_as_gate",
-                "role": meta["role"],
-                "reason": recommendations[source_key]["reason"],
             }
             continue
 
@@ -1986,34 +1214,12 @@ def build_audit_payload(
             wallet_flow_comparison=wallet_flow_comparison,
             minimum_signal_sample=minimum_signal_sample,
         )
-        decision_mode, decision_eligible = _decision_readiness(
-            recommendation=recommendation,
-            role=meta["role"],
-        )
         recommendations[source_key] = {
             "recommendation": recommendation,
             "reason": reason,
             "role": meta["role"],
             "metrics": metrics,
-            "decision_mode": decision_mode,
-            "decision_eligible": decision_eligible,
         }
-        source_decision_readiness[source_key] = {
-            "decision_mode": decision_mode,
-            "decision_eligible": decision_eligible,
-            "recommendation": recommendation,
-            "role": meta["role"],
-            "reason": reason,
-        }
-
-    decision_eligible_sources = sorted(
-        key for key, value in source_decision_readiness.items() if bool(value.get("decision_eligible"))
-    )
-    data_collection_only_sources = sorted(
-        key
-        for key, value in source_decision_readiness.items()
-        if str(value.get("decision_mode") or "") == "data_collection_only"
-    )
 
     confirmation_archive = build_btc_fast_window_confirmation_archive(
         btc5_probe_db_path=btc5_probe_db_path,
@@ -2021,12 +1227,6 @@ def build_audit_payload(
         edge_db_path=edge_db_path,
     )
     confirmation_summary = confirmation_archive.get("summary") or {}
-    wallet_flow_archive_confirmation_ready = (
-        ((confirmation_archive.get("by_source") or {}).get("wallet_flow") or {}).get("status") == "ready"
-    )
-    lmsr_archive_confirmation_ready = (
-        ((confirmation_archive.get("by_source") or {}).get("lmsr") or {}).get("status") == "ready"
-    )
     wallet_flow_confirmation_ready = attribution_ready and wallet_flow_comparison["status"] == "ready"
     btc_fast_window_confirmation_ready = confirmation_archive.get("status") == "ready"
     stage_upgrade_blocking_checks = [
@@ -2074,11 +1274,10 @@ def build_audit_payload(
             "trade_log_has_source_attribution": state_snapshot["trade_log_has_source_attribution"],
         },
         "trade_totals": {
-            "total_trades": max(len(rows), _safe_int(runtime_truth_trade_totals.get("total_trades"), default=0)),
+            "total_trades": len(rows),
             "resolved_trades": sum(1 for row in rows if str(row.get("outcome") or "").lower() in {"won", "lost"}),
             "observed_primary_sources": sorted(primary_metrics),
             "observed_source_combos": list(combo_metrics.keys())[:10],
-            "runtime_truth_fallback": runtime_truth_trade_totals,
         },
         "by_component_source": component_metrics,
         "by_primary_source": primary_metrics,
@@ -2088,7 +1287,6 @@ def build_audit_payload(
         "combined_sources_vs_single_source": combined_vs_single,
         "ranking_snapshot": ranking_snapshot,
         "btc_fast_window_confirmation": confirmation_archive,
-        "source_decision_readiness": source_decision_readiness,
         "capital_ranking_support": {
             "stale_threshold_hours": 6.0,
             "audit_generated_at": generated_at,
@@ -2098,11 +1296,7 @@ def build_audit_payload(
             "best_component_source": (ranking_snapshot.get("best_component_source") or {}).get("source"),
             "best_source_combo": (ranking_snapshot.get("best_source_combo") or {}).get("source_combo"),
             "supports_capital_allocation": attribution_ready,
-            "decision_eligible_sources": decision_eligible_sources,
-            "data_collection_only_sources": data_collection_only_sources,
             "wallet_flow_confirmation_ready": wallet_flow_confirmation_ready,
-            "wallet_flow_archive_confirmation_ready": wallet_flow_archive_confirmation_ready,
-            "lmsr_archive_confirmation_ready": lmsr_archive_confirmation_ready,
             "btc_fast_window_confirmation_ready": btc_fast_window_confirmation_ready,
             "confirmation_support_status": confirmation_support_status,
             "confirmation_sources_ready": confirmation_summary.get("ready_sources") or [],
@@ -2123,23 +1317,6 @@ def build_audit_payload(
             "confirmation_lift_avg_pnl_usd": confirmation_summary.get("confirmation_lift_avg_pnl_usd"),
             "confirmation_lift_win_rate": confirmation_summary.get("confirmation_lift_win_rate"),
             "confirmation_contradiction_penalty": confirmation_summary.get("confirmation_contradiction_penalty"),
-            "confirmation_coverage_label": confirmation_summary.get("confirmation_coverage_label"),
-            "confirmation_freshness_label": confirmation_summary.get("confirmation_freshness_label"),
-            "confirmation_fresh_sources": confirmation_summary.get("fresh_sources") or [],
-            "confirmation_aging_sources": confirmation_summary.get("aging_sources") or [],
-            "confirmation_stale_sources": confirmation_summary.get("stale_sources") or [],
-            "confirmation_unknown_sources": confirmation_summary.get("unknown_sources") or [],
-            "confirmation_source_gap_vs_probe_hours": confirmation_summary.get(
-                "source_gap_vs_probe_hours"
-            ),
-            "confirmation_latest_probe_decision_at": confirmation_summary.get(
-                "latest_probe_decision_at"
-            ),
-            "confirmation_next_required_artifact": confirmation_summary.get(
-                "confirmation_next_required_artifact"
-            ),
-            "confirmation_strength_label": confirmation_summary.get("confirmation_strength_label"),
-            "confirmation_strength_score": confirmation_summary.get("confirmation_strength_score"),
             "confirmation_blocking_checks": confirmation_archive.get("missing_requirements") or [],
             "capital_expansion_support_status": capital_expansion_support_status,
             "stage_upgrade_support_status": stage_upgrade_support_status,

@@ -32,6 +32,18 @@
     {
       "path": "scripts/btc5_status.sh",
       "why_not_removed": "Referenced by BTC5 rollout/deploy flows"
+    },
+    {
+      "path": "scripts/install_bridge_cron.sh",
+      "why_not_removed": "Active operational helper"
+    },
+    {
+      "path": "scripts/install_jj_health_cron.sh",
+      "why_not_removed": "Canonical install path for health-monitor cron"
+    },
+    {
+      "path": "scripts/vps_setup.sh",
+      "why_not_removed": "Manual bootstrap helper still discoverable"
     }
   ],
   "completed": [
@@ -39,21 +51,6 @@
       "path": "scripts/install_flywheel_cron.sh",
       "action": "Deleted",
       "proof": "Had zero external references before deletion."
-    },
-    {
-      "path": "scripts/install_bridge_cron.sh",
-      "action": "Deleted",
-      "proof": "Had zero external references outside scripts metadata before deletion."
-    },
-    {
-      "path": "scripts/vps_setup.sh",
-      "action": "Deleted",
-      "proof": "Had zero external references outside scripts metadata before deletion."
-    },
-    {
-      "path": "scripts/install_jj_health_cron.sh",
-      "action": "Deleted",
-      "proof": "Had zero external references outside scripts metadata before deletion."
     }
   ],
   "exit_criteria": [

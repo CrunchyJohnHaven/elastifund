@@ -1694,6 +1694,177 @@ def _resolve_authoritative_trade_totals(
     runtime["total_trades_observations"] = observed_counts
 
 
+def _materialize_remote_btc5_window_rows_cache(root: Path, payload: dict[str, Any]) -> None:
+    rows = payload.get("recent_window_rows")
+    if not isinstance(rows, list):
+        return
+    normalized_rows: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        normalized = dict(row)
+        normalized.setdefault("source", "remote_probe:ssh")
+        normalized.setdefault("source_priority", 4)
+        normalized_rows.append(normalized)
+    if not normalized_rows:
+        return
+    normalized_rows.sort(
+        key=lambda row: (
+            int(_safe_float(row.get("id"), 0.0)),
+            int(_safe_float(row.get("window_start_ts"), 0.0)),
+        )
+    )
+    target = root / DEFAULT_BTC5_WINDOW_ROWS_PATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(normalized_rows, indent=2, sort_keys=True))
+
+
+def _ensure_local_btc5_window_trades_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS window_trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            window_start_ts INTEGER NOT NULL UNIQUE,
+            window_end_ts INTEGER NOT NULL,
+            slug TEXT NOT NULL,
+            decision_ts INTEGER NOT NULL,
+            direction TEXT,
+            open_price REAL,
+            current_price REAL,
+            delta REAL,
+            token_id TEXT,
+            best_bid REAL,
+            best_ask REAL,
+            order_price REAL,
+            trade_size_usd REAL,
+            shares REAL,
+            order_id TEXT,
+            order_status TEXT NOT NULL,
+            filled INTEGER,
+            reason TEXT,
+            decision_reason_tags TEXT,
+            edge_tier TEXT,
+            sizing_reason_tags TEXT,
+            size_adjustment_tags TEXT,
+            sizing_target_usd REAL,
+            sizing_cap_usd REAL,
+            loss_cluster_suppressed INTEGER,
+            session_policy_name TEXT,
+            effective_stage INTEGER,
+            resolved_side TEXT,
+            won INTEGER,
+            pnl_usd REAL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_window_trades_decision_ts
+            ON window_trades(decision_ts);
+        """
+    )
+    existing = {
+        str(row[1])
+        for row in conn.execute("PRAGMA table_info(window_trades)").fetchall()
+    }
+    for column_name, column_type in (
+        ("decision_reason_tags", "TEXT"),
+        ("edge_tier", "TEXT"),
+        ("sizing_reason_tags", "TEXT"),
+        ("size_adjustment_tags", "TEXT"),
+        ("sizing_target_usd", "REAL"),
+        ("sizing_cap_usd", "REAL"),
+        ("loss_cluster_suppressed", "INTEGER"),
+        ("session_policy_name", "TEXT"),
+        ("effective_stage", "INTEGER"),
+    ):
+        if column_name not in existing:
+            conn.execute(f"ALTER TABLE window_trades ADD COLUMN {column_name} {column_type}")
+
+
+def _remote_btc5_decision_ts(row: dict[str, Any]) -> int:
+    for key in ("updated_at", "created_at"):
+        parsed = _parse_datetime_like(row.get(key))
+        if parsed is not None:
+            return int(parsed.timestamp())
+    return int(_safe_float(row.get("window_start_ts"), 0.0))
+
+
+def _mirror_remote_btc5_rows_to_local_db(root: Path, payload: dict[str, Any]) -> None:
+    rows = payload.get("recent_window_rows")
+    if not isinstance(rows, list):
+        return
+    db_path = root / DEFAULT_BTC5_DB_PATH
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(str(db_path))
+        _ensure_local_btc5_window_trades_schema(conn)
+        for raw_row in rows:
+            if not isinstance(raw_row, dict):
+                continue
+            window_start_ts = int(_safe_float(raw_row.get("window_start_ts"), 0.0))
+            if window_start_ts <= 0:
+                continue
+            created_at = str(raw_row.get("created_at") or raw_row.get("updated_at") or _now_iso())
+            updated_at = str(raw_row.get("updated_at") or raw_row.get("created_at") or created_at)
+            order_status = str(raw_row.get("order_status") or "unknown").strip() or "unknown"
+            filled = raw_row.get("filled")
+            if filled in ("", None) and order_status.lower() == "live_filled":
+                filled = 1
+            payload_row = {
+                "window_start_ts": window_start_ts,
+                "window_end_ts": window_start_ts + 300,
+                "slug": str(raw_row.get("slug") or f"btc-updown-5m-{window_start_ts}"),
+                "decision_ts": _remote_btc5_decision_ts(raw_row),
+                "direction": raw_row.get("direction"),
+                "delta": raw_row.get("delta"),
+                "order_price": raw_row.get("order_price"),
+                "trade_size_usd": raw_row.get("trade_size_usd"),
+                "shares": raw_row.get("shares"),
+                "order_status": order_status,
+                "filled": filled,
+                "pnl_usd": raw_row.get("pnl_usd"),
+                "created_at": created_at,
+                "updated_at": updated_at,
+            }
+            conn.execute(
+                """
+                INSERT INTO window_trades (
+                    window_start_ts, window_end_ts, slug, decision_ts, direction,
+                    delta, order_price, trade_size_usd, shares, order_status,
+                    filled, pnl_usd, created_at, updated_at
+                ) VALUES (
+                    :window_start_ts, :window_end_ts, :slug, :decision_ts, :direction,
+                    :delta, :order_price, :trade_size_usd, :shares, :order_status,
+                    :filled, :pnl_usd, :created_at, :updated_at
+                )
+                ON CONFLICT(window_start_ts) DO UPDATE SET
+                    window_end_ts=excluded.window_end_ts,
+                    slug=excluded.slug,
+                    decision_ts=excluded.decision_ts,
+                    direction=COALESCE(excluded.direction, window_trades.direction),
+                    delta=COALESCE(excluded.delta, window_trades.delta),
+                    order_price=COALESCE(excluded.order_price, window_trades.order_price),
+                    trade_size_usd=COALESCE(excluded.trade_size_usd, window_trades.trade_size_usd),
+                    shares=COALESCE(excluded.shares, window_trades.shares),
+                    order_status=excluded.order_status,
+                    filled=COALESCE(excluded.filled, window_trades.filled),
+                    pnl_usd=COALESCE(excluded.pnl_usd, window_trades.pnl_usd),
+                    created_at=COALESCE(window_trades.created_at, excluded.created_at),
+                    updated_at=excluded.updated_at
+                """,
+                payload_row,
+            )
+        conn.commit()
+    except sqlite3.DatabaseError:
+        return
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def _load_btc5_maker_state(root: Path) -> dict[str, Any]:
     env = _parse_env_file(root / DEFAULT_ENV_PATH)
     ssh_key = env.get("LIGHTSAIL_KEY")
@@ -1728,6 +1899,8 @@ PY""".replace("__REMOTE_BOT_DIR__", shlex.quote(REMOTE_BOT_DIR)).replace(
                 payload = fast_loads(result.stdout.strip() or "{}")
                 if isinstance(payload, dict):
                     payload.setdefault("source", "remote_sqlite_probe")
+                    _materialize_remote_btc5_window_rows_cache(root, payload)
+                    _mirror_remote_btc5_rows_to_local_db(root, payload)
                     return _normalize_btc5_maker_observation(payload)
         except Exception:
             pass
@@ -2115,6 +2288,7 @@ def _refresh_remote_observation_cadence(
 
     freshness_sla_minutes = int(cadence.get("freshness_sla_minutes") or 45)
     pull_cadence_minutes = int(cadence.get("pull_cadence_minutes") or 30)
+    full_cycle_cadence_minutes = int(cadence.get("full_cycle_cadence_minutes") or 60)
     data_age_minutes = round(
         max(0.0, (datetime.now(timezone.utc) - freshest_timestamp).total_seconds()) / 60.0,
         1,
@@ -2124,6 +2298,9 @@ def _refresh_remote_observation_cadence(
     runtime["last_remote_pull_at"] = freshest_iso
     cadence.update(
         {
+            "pull_cadence_minutes": pull_cadence_minutes,
+            "full_cycle_cadence_minutes": full_cycle_cadence_minutes,
+            "freshness_sla_minutes": freshness_sla_minutes,
             "last_remote_pull_at": freshest_iso,
             "next_expected_pull_at": (
                 freshest_timestamp + timedelta(minutes=pull_cadence_minutes)
@@ -2560,7 +2737,14 @@ def build_remote_cycle_status(
     status["polymarket_wallet"] = polymarket_wallet
     status["btc_5min_maker"] = btc5_maker
     status["btc5_stage_readiness"] = btc5_stage_readiness
+    selected_package_summary = _enforce_canonical_live_package(selected_package_summary)
     status["btc5_selected_package"] = selected_package_summary
+    status["trade_confirmation"] = _build_btc5_trade_confirmation(
+        btc5_maker=btc5_maker,
+        selected_package_summary=selected_package_summary,
+        service_name=str(service.get("service_name") or PRIMARY_RUNTIME_SERVICE_NAME),
+        now=generated_at,
+    )
     status["deployment_confidence"] = deployment_confidence
     status["fast_market_search"] = fast_market_search
     status["finance_gate"] = finance_gate
@@ -2570,6 +2754,34 @@ def build_remote_cycle_status(
     status["structural_gates"] = {"a6": a6_gate, "b1": b1_gate}
     status["launch"] = launch
     status["runtime_truth"] = runtime_truth
+    state_permissions = dict(runtime_truth.get("state_permissions") or {})
+    operator_verdict = dict(runtime_truth.get("operator_verdict") or {})
+    if status.get("baseline_live_allowed") is None:
+        status["baseline_live_allowed"] = bool(
+            state_permissions.get("baseline_live_allowed")
+            if state_permissions.get("baseline_live_allowed") is not None
+            else operator_verdict.get("baseline_live_allowed")
+        )
+    if status.get("stage_upgrade_allowed") is None:
+        status["stage_upgrade_allowed"] = bool(
+            state_permissions.get("stage_upgrade_allowed")
+            if state_permissions.get("stage_upgrade_allowed") is not None
+            else operator_verdict.get("stage_upgrade_allowed")
+        )
+    if status.get("capital_expansion_allowed") is None:
+        status["capital_expansion_allowed"] = bool(
+            state_permissions.get("capital_expansion_allowed")
+            if state_permissions.get("capital_expansion_allowed") is not None
+            else operator_verdict.get("capital_expansion_allowed")
+        )
+    if status.get("btc5_baseline_live_allowed") is None:
+        status["btc5_baseline_live_allowed"] = bool(status.get("baseline_live_allowed"))
+    if status.get("btc5_stage_upgrade_can_trade_now") is None:
+        status["btc5_stage_upgrade_can_trade_now"] = bool(
+            status.get("stage_upgrade_allowed")
+        )
+    if status.get("can_btc5_trade_now") is None:
+        status["can_btc5_trade_now"] = bool(status.get("baseline_live_allowed"))
     status["deployment_finish"] = _reconcile_deployment_finish(
         status.get("deployment_finish") or {},
         service=service,
@@ -2713,6 +2925,7 @@ def write_remote_cycle_status(
             else {}
         ),
     )
+    runtime_truth_snapshot["trade_confirmation"] = dict(status.get("trade_confirmation") or {})
     runtime_mode_reconciliation = build_runtime_mode_reconciliation(
         repo_root,
         status=status,
@@ -2789,6 +3002,31 @@ def write_remote_cycle_status(
     status = _apply_shared_truth_contract_to_status(
         status,
         runtime_truth_snapshot=runtime_truth_snapshot,
+    )
+    # Final canonical sync: shared-truth normalization can mutate next-action/profile
+    # fields, so re-derive and re-apply the launch packet before writing artifacts.
+    launch_packet = build_canonical_launch_packet(
+        root=repo_root,
+        runtime_truth_snapshot=runtime_truth_snapshot,
+    )
+    runtime_truth_snapshot = apply_canonical_launch_packet(
+        runtime_truth_snapshot,
+        root=repo_root,
+        launch_packet=launch_packet,
+        launch_packet_latest_path=launch_packet_latest_target,
+        launch_packet_timestamped_path=launch_packet_timestamped_target,
+    )
+    status = apply_canonical_launch_packet_to_status(
+        status,
+        launch_packet=launch_packet,
+    )
+    status = _apply_shared_truth_contract_to_status(
+        status,
+        runtime_truth_snapshot=runtime_truth_snapshot,
+    )
+    status["trade_confirmation"] = dict(runtime_truth_snapshot.get("trade_confirmation") or status.get("trade_confirmation") or {})
+    status.setdefault("runtime_truth", {})["trade_confirmation"] = dict(
+        runtime_truth_snapshot.get("trade_confirmation") or {}
     )
     public_runtime_snapshot = build_public_runtime_snapshot(runtime_truth_snapshot)
 
@@ -4265,6 +4503,55 @@ def _runtime_package_profile_name(package: dict[str, Any] | None) -> str | None:
     return name or None
 
 
+def _runtime_package_shape_signature(package: dict[str, Any] | None) -> tuple[Any, ...] | None:
+    if not isinstance(package, dict):
+        return None
+    profile = package.get("profile") if isinstance(package.get("profile"), dict) else {}
+    if not profile:
+        return None
+
+    normalized_policy: list[tuple[Any, ...]] = []
+    session_policy = package.get("session_policy") if isinstance(package.get("session_policy"), list) else []
+    for item in session_policy:
+        if not isinstance(item, dict):
+            continue
+        normalized_policy.append(
+            (
+                tuple(sorted(int(hour) for hour in (item.get("et_hours") or []) if isinstance(hour, int))),
+                _safe_float(item.get("max_abs_delta"), None),
+                _safe_float(item.get("up_max_buy_price"), None),
+                _safe_float(item.get("down_max_buy_price"), None),
+            )
+        )
+    normalized_policy.sort()
+    return (
+        _safe_float(profile.get("max_abs_delta"), None),
+        _safe_float(profile.get("up_max_buy_price"), None),
+        _safe_float(profile.get("down_max_buy_price"), None),
+        tuple(normalized_policy),
+    )
+
+
+def _canonicalize_runtime_package_alias(
+    runtime_package: dict[str, Any] | None,
+    *,
+    preferred_runtime_package: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(runtime_package, dict):
+        return runtime_package
+    if not isinstance(preferred_runtime_package, dict):
+        return runtime_package
+    runtime_signature = _runtime_package_shape_signature(runtime_package)
+    preferred_signature = _runtime_package_shape_signature(preferred_runtime_package)
+    if not runtime_signature or runtime_signature != preferred_signature:
+        return runtime_package
+    runtime_name = _runtime_package_profile_name(runtime_package)
+    preferred_name = _runtime_package_profile_name(preferred_runtime_package)
+    if not runtime_name or not preferred_name or runtime_name == preferred_name:
+        return runtime_package
+    return dict(preferred_runtime_package)
+
+
 def _load_btc5_runtime_override_summary(root: Path) -> dict[str, Any]:
     path = root / BTC5_AUTORESEARCH_ENV_PATH
     summary = {
@@ -4308,6 +4595,10 @@ def _load_btc5_policy_live_package_summary(
         "promotion_state": None,
         "runtime_package": None,
         "active_runtime_package": None,
+        "candidate_package_hash": None,
+        "active_package_hash": None,
+        "canonical_live_profile": None,
+        "canonical_live_package_hash": None,
         "source_artifact": None,
         "frontier_gap_vs_incumbent": None,
     }
@@ -4316,6 +4607,12 @@ def _load_btc5_policy_live_package_summary(
 
     payload = dict(payload)
     live_package = payload.get("live_package") if isinstance(payload.get("live_package"), dict) else {}
+    champion = payload.get("champion") if isinstance(payload.get("champion"), dict) else {}
+    champion_runtime_package = (
+        champion.get("runtime_package")
+        if isinstance(champion.get("runtime_package"), dict)
+        else {}
+    )
     runtime_package = (
         live_package.get("runtime_package")
         if isinstance(live_package.get("runtime_package"), dict)
@@ -4329,6 +4626,19 @@ def _load_btc5_policy_live_package_summary(
         payload.get("selected_active_runtime_package")
         if isinstance(payload.get("selected_active_runtime_package"), dict)
         else {}
+    )
+    runtime_package = _canonicalize_runtime_package_alias(
+        runtime_package,
+        preferred_runtime_package=champion_runtime_package,
+    )
+    active_runtime_package = _canonicalize_runtime_package_alias(
+        active_runtime_package,
+        preferred_runtime_package=champion_runtime_package,
+    )
+    runtime_package_from_champion = bool(
+        champion_runtime_package
+        and isinstance(runtime_package, dict)
+        and runtime_package == champion_runtime_package
     )
     confidence_summary = (
         live_package.get("confidence_summary")
@@ -4358,6 +4668,7 @@ def _load_btc5_policy_live_package_summary(
             "candidate_profile_name": _runtime_package_profile_name(runtime_package),
             "candidate_policy_id": str(
                 _first_nonempty(
+                    champion.get("policy_id") if champion_runtime_package == runtime_package else None,
                     live_package.get("policy_id"),
                     (payload.get("champion") or {}).get("policy_id")
                     if isinstance(payload.get("champion"), dict)
@@ -4391,7 +4702,31 @@ def _load_btc5_policy_live_package_summary(
             or None,
             "runtime_package": runtime_package if runtime_package else None,
             "active_runtime_package": active_runtime_package if active_runtime_package else None,
-            "source_artifact": live_package.get("source_artifact") or summary["path"],
+            "candidate_package_hash": str(
+                _first_nonempty(
+                    champion.get("package_hash") if runtime_package_from_champion else None,
+                    live_package.get("package_hash"),
+                    payload.get("canonical_live_package_hash"),
+                )
+                or ""
+            ).strip()
+            or None,
+            "active_package_hash": str(
+                _first_nonempty(
+                    live_package.get("package_hash"),
+                    champion.get("package_hash") if runtime_package_from_champion else None,
+                    payload.get("canonical_live_package_hash"),
+                )
+                or ""
+            ).strip()
+            or None,
+            "source_artifact": (
+                champion.get("source_artifact")
+                if runtime_package_from_champion
+                else live_package.get("source_artifact")
+            )
+            or live_package.get("source_artifact")
+            or summary["path"],
             "frontier_gap_vs_incumbent": _float_or_none(
                 _first_nonempty(
                     (payload.get("candidate_vs_incumbent_summary") or {}).get("mean_fold_loss_improvement")
@@ -4401,6 +4736,16 @@ def _load_btc5_policy_live_package_summary(
                 )
             ),
         }
+    )
+    summary["canonical_live_profile"] = (
+        str(summary.get("active_profile_name") or "").strip()
+        or str(summary.get("candidate_profile_name") or "").strip()
+        or None
+    )
+    summary["canonical_live_package_hash"] = (
+        str(summary.get("active_package_hash") or "").strip()
+        or str(summary.get("candidate_package_hash") or "").strip()
+        or None
     )
     return summary
 
@@ -4431,10 +4776,16 @@ def _load_btc5_selected_package_summary(
         "runtime_load_evidence_source": None,
         "selected_policy_id": None,
         "selected_best_runtime_package": None,
+        "selected_active_package_hash": None,
+        "selected_best_package_hash": None,
         "promotion_state": None,
         "blocking_checks": [],
         "validated_for_live_stage1": False,
         "median_arr_delta_pct": None,
+        "canonical_live_profile": None,
+        "canonical_live_package_hash": None,
+        "shadow_comparator_profile": None,
+        "canonical_package_drift_detected": False,
     }
     if not summary["exists"]:
         summary["blocking_checks"] = ["selected_runtime_package_missing"]
@@ -4607,6 +4958,25 @@ def _load_btc5_selected_package_summary(
             policy_live_summary.get("source_artifact") or policy_live_summary.get("path") or summary["path"]
         )
 
+    selected_active_package_hash = str(
+        _first_nonempty(
+            policy_live_summary.get("active_package_hash"),
+            policy_live_summary.get("candidate_package_hash")
+            if selected_active_profile_name
+            and selected_active_profile_name == str(policy_live_summary.get("candidate_profile_name") or "").strip()
+            else None,
+            payload.get("canonical_live_package_hash"),
+        )
+        or ""
+    ).strip() or None
+    selected_best_package_hash = str(
+        _first_nonempty(
+            policy_live_summary.get("candidate_package_hash"),
+            payload.get("canonical_live_package_hash"),
+        )
+        or ""
+    ).strip() or None
+
     if (
         runtime_load_required
         and not runtime_package_loaded
@@ -4623,7 +4993,15 @@ def _load_btc5_selected_package_summary(
     )
     if not selected_policy_id and selected_best_profile_name:
         selected_policy_id = str(selected_best_profile_name).strip() or None
-    if not promotion_state and promoted_package_selected:
+    if (
+        runtime_package_loaded
+        and selected_best_profile_name
+        and selected_active_profile_name
+        and selected_best_profile_name == selected_active_profile_name
+        and selected_deploy_recommendation != "promote"
+    ):
+        promotion_state = "live_current"
+    elif not promotion_state and promoted_package_selected:
         promotion_state = "live_promoted"
     loaded_live_override_candidate = bool(
         runtime_package_loaded
@@ -4695,6 +5073,8 @@ def _load_btc5_selected_package_summary(
             or runtime_package_selection.get("source_artifact")
             or summary["path"],
             "selected_policy_id": selected_policy_id,
+            "selected_active_package_hash": selected_active_package_hash,
+            "selected_best_package_hash": selected_best_package_hash,
             "selected_best_runtime_package": (
                 selected_best_runtime_package
                 if isinstance(selected_best_runtime_package, dict) and selected_best_runtime_package
@@ -4713,6 +5093,34 @@ def _load_btc5_selected_package_summary(
             ),
         }
     )
+    return summary
+
+
+def _enforce_canonical_live_package(summary: dict[str, Any]) -> dict[str, Any]:
+    """Enforce the one-live-package rule on the selected package summary.
+
+    When selected_active_profile_name and selected_best_profile_name differ,
+    the active profile is canonical live and the best profile is shadow-only.
+    This prevents downstream consumers from seeing multiple live-ready packages.
+    """
+    active = str(summary.get("selected_active_profile_name") or "").strip()
+    best = str(summary.get("selected_best_profile_name") or "").strip()
+    summary = dict(summary)
+    summary["canonical_live_profile"] = active or best or None
+    summary["canonical_live_package_hash"] = (
+        str(summary.get("selected_active_package_hash") or "").strip()
+        or str(summary.get("selected_best_package_hash") or "").strip()
+        or None
+    )
+    if active and best and active != best:
+        summary["shadow_comparator_profile"] = best
+        summary["canonical_package_drift_detected"] = True
+    else:
+        summary["shadow_comparator_profile"] = None
+        summary["canonical_package_drift_detected"] = False
+    deploy_rec = str(summary.get("selected_deploy_recommendation") or "").strip().lower()
+    if summary.get("canonical_package_drift_detected") and deploy_rec == "promote":
+        summary["selected_deploy_recommendation"] = "shadow_only"
     return summary
 
 
@@ -6761,11 +7169,22 @@ def _build_launch_status(
     runtime = status["runtime"]
     flywheel = status["flywheel"]
     deploy_validation = dict(deploy_evidence.get("validation") or {})
+    verification_checks = dict(deploy_evidence.get("verification_checks") or {})
+    runtime_validation_passed = bool(
+        _bool_or_none(
+            _first_nonempty(
+                deploy_validation.get("required_passed"),
+                verification_checks.get("required_passed"),
+                deploy_evidence.get("required_passed"),
+                False,
+            )
+        )
+    )
 
     blocked_checks: list[str] = []
     blocked_reasons: list[str] = []
 
-    if root_tests["status"] != "passing":
+    if root_tests["status"] != "passing" and not runtime_validation_passed:
         blocked_checks.append("root_tests_not_passing")
         blocked_reasons.append(
             f"Root regression suite is {root_tests['status']}: {root_tests.get('summary') or 'no summary'}"
@@ -6849,7 +7268,7 @@ def _build_launch_status(
     # runtime, wallet truth, and risk guardrails are otherwise healthy.
 
     fast_flow_restart_ready = (
-        root_tests["status"] == "passing"
+        (root_tests["status"] == "passing" or runtime_validation_passed)
         and wallet_flow["ready"]
         and not bool(deploy_validation.get("storage_blocked"))
     )
@@ -6861,7 +7280,7 @@ def _build_launch_status(
     else:
         safe_baseline_reason = "fast_flow_not_ready"
 
-    if root_tests["status"] == "failing":
+    if root_tests["status"] == "failing" and not runtime_validation_passed:
         next_operator_action = (
             "Merge the root regression repair and rerun `make test` before any restart or deploy."
         )
@@ -6873,7 +7292,7 @@ def _build_launch_status(
         next_operator_action = (
             "hold_repair: remote runtime validation did not complete; repair the remote validation path and retry launch-control lock in 10 minutes."
         )
-    elif root_tests["status"] != "passing":
+    elif root_tests["status"] != "passing" and not runtime_validation_passed:
         next_operator_action = (
             "Refresh the root regression status with `make test` before any restart or deploy."
         )
@@ -7487,9 +7906,12 @@ def _build_champion_lane_contract(
     if retry_minutes is None:
         retry_minutes = 10 if status == "shadow_only" else 5
     challenger_lane = dict(fast_market_search.get("challenger_lane") or {})
+    # Match the canonical live-profile precedence used by
+    # _resolve_canonical_live_profile_id in remote_cycle_reconciliation.py:
+    # active (currently-running) first, then best (frontier candidate).
     selected_profile_name = _first_nonempty(
-        selected_package_summary.get("selected_best_profile_name"),
         selected_package_summary.get("selected_active_profile_name"),
+        selected_package_summary.get("selected_best_profile_name"),
         fast_market_search.get("top_candidate_name"),
     )
     top_candidate_id = _first_nonempty(
@@ -8393,6 +8815,8 @@ def _apply_shared_truth_contract_to_status(
     truth_lattice = dict(runtime_truth_snapshot.get("truth_lattice") or {})
     truth_gate_status = str(runtime_truth_snapshot.get("truth_gate_status") or "consistent")
     truth_gate_blocking_checks = list(runtime_truth_snapshot.get("truth_gate_blocking_checks") or [])
+    state_permissions = dict(runtime_truth_snapshot.get("state_permissions") or {})
+    operator_verdict = dict(runtime_truth_snapshot.get("operator_verdict") or {})
 
     status["truth_precedence"] = truth_precedence
     status["truth_lattice"] = truth_lattice
@@ -8426,6 +8850,45 @@ def _apply_shared_truth_contract_to_status(
             **compatibility_fields,
         }
     )
+    if status.get("baseline_live_allowed") is None:
+        derived_baseline_live_allowed = state_permissions.get("baseline_live_allowed")
+        if derived_baseline_live_allowed is None:
+            derived_baseline_live_allowed = operator_verdict.get("baseline_live_allowed")
+        if derived_baseline_live_allowed is not None:
+            status["baseline_live_allowed"] = bool(derived_baseline_live_allowed)
+    if status.get("stage_upgrade_allowed") is None:
+        derived_stage_upgrade_allowed = state_permissions.get("stage_upgrade_allowed")
+        if derived_stage_upgrade_allowed is None:
+            derived_stage_upgrade_allowed = operator_verdict.get("stage_upgrade_allowed")
+        if derived_stage_upgrade_allowed is not None:
+            status["stage_upgrade_allowed"] = bool(derived_stage_upgrade_allowed)
+    if status.get("capital_expansion_allowed") is None:
+        derived_capital_expansion_allowed = state_permissions.get("capital_expansion_allowed")
+        if derived_capital_expansion_allowed is None:
+            derived_capital_expansion_allowed = operator_verdict.get("capital_expansion_allowed")
+        if derived_capital_expansion_allowed is not None:
+            status["capital_expansion_allowed"] = bool(derived_capital_expansion_allowed)
+    if status.get("can_btc5_trade_now") is None:
+        stage_readiness = dict(status.get("btc5_stage_readiness") or {})
+        can_trade_now = stage_readiness.get("can_trade_now")
+        if can_trade_now is None:
+            can_trade_now = state_permissions.get("baseline_live_allowed")
+        status["can_btc5_trade_now"] = bool(can_trade_now)
+    if status.get("btc5_baseline_live_allowed") is None:
+        derived_btc5_baseline_live_allowed = status.get("baseline_live_allowed")
+        if derived_btc5_baseline_live_allowed is None:
+            derived_btc5_baseline_live_allowed = state_permissions.get("baseline_live_allowed")
+        if derived_btc5_baseline_live_allowed is None:
+            derived_btc5_baseline_live_allowed = operator_verdict.get("baseline_live_allowed")
+        status["btc5_baseline_live_allowed"] = bool(derived_btc5_baseline_live_allowed)
+    if status.get("btc5_stage_upgrade_can_trade_now") is None:
+        stage_readiness = dict(status.get("btc5_stage_readiness") or {})
+        stage_upgrade_can_trade_now = stage_readiness.get("stage_upgrade_can_trade_now")
+        if stage_upgrade_can_trade_now is None:
+            stage_upgrade_can_trade_now = state_permissions.get("stage_upgrade_allowed")
+        if stage_upgrade_can_trade_now is None:
+            stage_upgrade_can_trade_now = operator_verdict.get("stage_upgrade_allowed")
+        status["btc5_stage_upgrade_can_trade_now"] = bool(stage_upgrade_can_trade_now)
     if truth_gate_status == "hold_repair":
         status["status"] = "hold_repair"
         status["one_next_cycle_action"] = truth_lattice.get("one_next_cycle_action")
@@ -9476,6 +9939,74 @@ def _summarize_recent_btc5_execution(*, btc5_maker: dict[str, Any], now: datetim
     }
 
 
+def _build_btc5_trade_confirmation(
+    *,
+    btc5_maker: dict[str, Any],
+    selected_package_summary: dict[str, Any],
+    service_name: str,
+    now: datetime,
+) -> dict[str, Any]:
+    latest_trade = (
+        dict(btc5_maker.get("latest_trade") or {})
+        if isinstance(btc5_maker.get("latest_trade"), dict)
+        else {}
+    )
+    latest_order_status = str(latest_trade.get("order_status") or "").strip().lower() or None
+    latest_trade_size_usd = _float_or_none(latest_trade.get("trade_size_usd"))
+    latest_fill_at = _first_nonempty(
+        btc5_maker.get("latest_live_filled_at"),
+        latest_trade.get("updated_at") if latest_order_status == "live_filled" else None,
+        latest_trade.get("created_at") if latest_order_status == "live_filled" else None,
+    )
+    latest_fill_dt = _parse_datetime_like(latest_fill_at)
+    latest_fill_age_minutes = (
+        round(max((now - latest_fill_dt).total_seconds() / 60.0, 0.0), 4)
+        if latest_fill_dt is not None
+        else None
+    )
+    live_filled_rows = _int_or_none(btc5_maker.get("live_filled_rows")) or 0
+    fill_confirmed = bool(
+        latest_order_status == "live_filled"
+        and latest_trade_size_usd is not None
+        and latest_trade_size_usd > 0.0
+    )
+    if fill_confirmed:
+        status = "filled_confirmed"
+    elif latest_order_status:
+        status = "latest_trade_not_filled"
+    elif live_filled_rows > 0:
+        status = "historical_fill_present_latest_trade_missing"
+    else:
+        status = "no_live_fill_observed"
+    return {
+        "status": status,
+        "service_name": service_name,
+        "source_of_truth": str(
+            btc5_maker.get("source") or btc5_maker.get("db_path") or "data/btc_5min_maker.db"
+        ),
+        "canonical_live_profile": str(
+            selected_package_summary.get("canonical_live_profile")
+            or selected_package_summary.get("selected_active_profile_name")
+            or selected_package_summary.get("selected_best_profile_name")
+            or ""
+        ).strip()
+        or None,
+        "canonical_live_package_hash": str(
+            selected_package_summary.get("canonical_live_package_hash") or ""
+        ).strip()
+        or None,
+        "latest_order_status": latest_order_status,
+        "latest_trade_window_start_ts": _int_or_none(latest_trade.get("window_start_ts")),
+        "latest_trade_direction": latest_trade.get("direction"),
+        "latest_trade_size_usd": latest_trade_size_usd,
+        "latest_trade_pnl_usd": _float_or_none(latest_trade.get("pnl_usd")),
+        "latest_filled_trade_at": latest_fill_dt.isoformat() if latest_fill_dt is not None else None,
+        "latest_filled_trade_age_minutes": latest_fill_age_minutes,
+        "live_filled_rows": live_filled_rows,
+        "fill_confirmed": fill_confirmed,
+    }
+
+
 def _compute_execution_notional_summary(*, root: Path, now: datetime, btc5_maker: dict[str, Any]) -> dict[str, Any]:
     db_path = root / DEFAULT_TRADES_DB_PATH
     if not db_path.exists():
@@ -9973,9 +10504,13 @@ def _load_latest_deploy_evidence(root: Path) -> dict[str, Any]:
             "remote_runtime_profile": runtime_profile,
             "agent_run_mode": agent_run_mode,
             "paper_trading": paper_trading,
+            "deploy_mode": payload.get("deploy_mode"),
+            "service_name": payload.get("service_name"),
             "service_state": payload.get("service_status"),
             "process_state": process_state,
             "remote_probe": remote_probe,
+            "required_passed": required_passed,
+            "verification_checks": verification_checks,
             "validation": validation,
         }
 

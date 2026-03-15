@@ -327,7 +327,6 @@ def _build_entry(
     execution_drag_summary = (cycle_payload or {}).get("execution_drag_summary") or {}
     one_sided_bias_recommendation = (cycle_payload or {}).get("one_sided_bias_recommendation") or {}
     size_aware_deployment = (cycle_payload or {}).get("size_aware_deployment") or {}
-    package_ranking = (cycle_payload or {}).get("package_ranking") or {}
     current_probe = (cycle_payload or {}).get("current_probe") or {}
     probe_feedback = (cycle_payload or {}).get("probe_feedback") or {}
     return {
@@ -358,14 +357,6 @@ def _build_entry(
         "selected_deploy_recommendation": (cycle_payload or {}).get("selected_deploy_recommendation") or (cycle_payload or {}).get("deploy_recommendation") or "hold",
         "selected_package_confidence_label": (cycle_payload or {}).get("selected_package_confidence_label") or (cycle_payload or {}).get("package_confidence_label") or "low",
         "selected_package_confidence_reasons": list((cycle_payload or {}).get("selected_package_confidence_reasons") or (cycle_payload or {}).get("package_confidence_reasons") or []),
-        "package_class": (cycle_payload or {}).get("package_class"),
-        "package_candidate_class": (cycle_payload or {}).get("package_candidate_class"),
-        "package_class_reason": (cycle_payload or {}).get("package_class_reason"),
-        "package_class_reason_tags": list((cycle_payload or {}).get("package_class_reason_tags") or []),
-        "selected_package_class": (cycle_payload or {}).get("selected_package_class") or (cycle_payload or {}).get("package_class"),
-        "selected_package_candidate_class": (cycle_payload or {}).get("selected_package_candidate_class") or (cycle_payload or {}).get("package_candidate_class"),
-        "selected_package_class_reason": (cycle_payload or {}).get("selected_package_class_reason") or (cycle_payload or {}).get("package_class_reason"),
-        "selected_package_class_reason_tags": list((cycle_payload or {}).get("selected_package_class_reason_tags") or (cycle_payload or {}).get("package_class_reason_tags") or []),
         "promoted_package_selected": bool((cycle_payload or {}).get("promoted_package_selected")),
         "deploy_recommendation": (cycle_payload or {}).get("deploy_recommendation") or "hold",
         "package_confidence_label": (cycle_payload or {}).get("package_confidence_label") or "low",
@@ -381,7 +372,6 @@ def _build_entry(
         "execution_drag_summary": execution_drag_summary,
         "one_sided_bias_recommendation": one_sided_bias_recommendation,
         "size_aware_deployment": size_aware_deployment,
-        "package_ranking": package_ranking,
         "current_probe": current_probe,
         "probe_feedback": probe_feedback,
         "probe_freshness_hours": current_probe.get("probe_freshness_hours"),
@@ -498,46 +488,20 @@ def _cadence_decision(
         - _safe_int((previous_entry or {}).get("validation_live_filled_rows"), 0),
     )
     probe_freshness_hours = _safe_float(current_probe.get("probe_freshness_hours"), 9999.0)
-    stage_not_ready_tags = {
-        str(tag).strip()
-        for tag in (current_probe.get("stage_not_ready_reason_tags") or [])
-        if str(tag).strip()
-    }
-    package_class = str(entry.get("selected_package_class") or entry.get("package_class") or "").strip().lower()
-    previous_package_class = str(
-        (previous_entry or {}).get("selected_package_class") or (previous_entry or {}).get("package_class") or ""
-    ).strip().lower()
-    package_class_changed = bool(package_class and previous_package_class and package_class != previous_package_class)
-    weak_regime = bool(
-        {"trailing_12_live_filled_non_positive", "trailing_40_live_filled_non_positive", "recent_loss_cluster_flags_present"}
-        & stage_not_ready_tags
-    ) or package_class in {"shadow_only", "suppress"}
     has_new_evidence = live_fill_delta > 0 or validation_delta > 0
     if has_new_evidence:
-        if live_fill_delta > 0 and (weak_regime or package_class_changed):
-            multiplier = 0.25 if (validation_delta > 0 or package_class_changed) else 0.3
-            reason = "fresh_fills_arrived_in_weak_or_changed_regime"
-        else:
-            multiplier = 0.4 if live_fill_delta > 0 and validation_delta > 0 else 0.5
-            reason = "new_fills_or_validation_rows_arrived"
+        multiplier = 0.4 if live_fill_delta > 0 and validation_delta > 0 else 0.5
         recommended = max(60, int(round(base_interval * multiplier)))
         mode = "accelerated"
-    elif package_class_changed:
-        recommended = max(60, int(round(base_interval * 0.5)))
-        mode = "accelerated"
-        reason = "package_class_changed_without_new_evidence"
+        reason = "new_fills_or_validation_rows_arrived"
     elif probe_freshness_hours > 6.0:
         recommended = min(1800, int(round(base_interval * 2.0)))
         mode = "slowed"
         reason = "probe_stale_and_no_new_evidence"
     else:
-        stable_package_class = bool(
-            package_class and previous_package_class and package_class == previous_package_class
-        )
-        multiplier = 2.0 if stable_package_class and package_class in {"hold_current", "shadow_only", "suppress"} else 1.5
-        recommended = min(1800 if multiplier >= 2.0 else 1200, int(round(base_interval * multiplier)))
+        recommended = min(1200, int(round(base_interval * 1.5)))
         mode = "slowed"
-        reason = "evidence_flat_and_package_class_stable" if multiplier >= 2.0 else "no_new_evidence"
+        reason = "no_new_evidence"
     return {
         "mode": mode,
         "reason": reason,
@@ -546,9 +510,6 @@ def _cadence_decision(
         "live_filled_rows_delta": int(live_fill_delta),
         "validation_live_filled_rows_delta": int(validation_delta),
         "probe_freshness_hours": round(probe_freshness_hours, 4) if probe_freshness_hours < 9999.0 else None,
-        "package_class": package_class or None,
-        "previous_package_class": previous_package_class or None,
-        "package_class_changed": package_class_changed,
     }
 
 
@@ -593,16 +554,6 @@ def _write_loop_reports(loop_report_dir: Path, entry: dict[str, Any]) -> dict[st
     payload["selected_package_confidence_label"] = entry.get("selected_package_confidence_label") or payload["package_confidence_label"]
     payload["package_confidence_reasons"] = list(entry.get("package_confidence_reasons") or [])
     payload["selected_package_confidence_reasons"] = list(entry.get("selected_package_confidence_reasons") or payload["package_confidence_reasons"])
-    payload["package_class"] = entry.get("package_class")
-    payload["package_candidate_class"] = entry.get("package_candidate_class")
-    payload["package_class_reason"] = entry.get("package_class_reason")
-    payload["package_class_reason_tags"] = list(entry.get("package_class_reason_tags") or [])
-    payload["selected_package_class"] = entry.get("selected_package_class") or payload["package_class"]
-    payload["selected_package_candidate_class"] = entry.get("selected_package_candidate_class") or payload["package_candidate_class"]
-    payload["selected_package_class_reason"] = entry.get("selected_package_class_reason") or payload["package_class_reason"]
-    payload["selected_package_class_reason_tags"] = list(
-        entry.get("selected_package_class_reason_tags") or payload["package_class_reason_tags"]
-    )
     payload["public_forecast_selection"] = entry.get("public_forecast_selection") or {}
     payload["public_forecast_source_artifact"] = entry.get("public_forecast_source_artifact")
     payload["active_runtime_package"] = entry.get("active_runtime_package") or {}
@@ -615,7 +566,6 @@ def _write_loop_reports(loop_report_dir: Path, entry: dict[str, Any]) -> dict[st
     payload["execution_drag_summary"] = entry.get("execution_drag_summary") or {}
     payload["one_sided_bias_recommendation"] = entry.get("one_sided_bias_recommendation") or {}
     payload["size_aware_deployment"] = entry.get("size_aware_deployment") or {}
-    payload["package_ranking"] = entry.get("package_ranking") or {}
     payload["current_probe"] = entry.get("current_probe") or {}
     payload["probe_feedback"] = entry.get("probe_feedback") or {}
     payload["probe_freshness_hours"] = entry.get("probe_freshness_hours")
@@ -646,8 +596,6 @@ def _write_loop_reports(loop_report_dir: Path, entry: dict[str, Any]) -> dict[st
                 f"- Last best session policy records: `{len(entry.get('recommended_session_policy') or [])}`",
                 f"- Last package decision: `{entry.get('deploy_recommendation', 'hold')}`",
                 f"- Last package confidence: `{entry.get('package_confidence_label', 'low')}`",
-                f"- Last package class: `{entry.get('package_class', 'none')}`",
-                f"- Last selected package class: `{entry.get('selected_package_class', entry.get('package_class', 'none'))}`",
                 f"- Last package confidence reasons: `{'; '.join(entry.get('package_confidence_reasons') or ['none'])}`",
                 f"- Last missing evidence: `{'; '.join(entry.get('package_missing_evidence') or ['none'])}`",
                 f"- Last public forecast source: `{entry.get('public_forecast_source_artifact', 'none')}`",
@@ -660,11 +608,6 @@ def _write_loop_reports(loop_report_dir: Path, entry: dict[str, Any]) -> dict[st
                 f"- Last best package session-policy records: `{len(((entry.get('best_runtime_package') or {}).get('session_policy') or []))}`",
                 f"- Last best live package source: `{(entry.get('best_live_package') or {}).get('source', 'none')}`",
                 f"- Last best raw package source: `{(entry.get('best_raw_research_package') or {}).get('source', 'none')}`",
-                f"- Last live-candidate package count: `{(((entry.get('package_ranking') or {}).get('package_set_breakdown') or {}).get('live_candidate', 0))}`",
-                f"- Last shadow-only package count: `{(((entry.get('package_ranking') or {}).get('package_set_breakdown') or {}).get('shadow_only', 0))}`",
-                f"- Last hold-current package count: `{(((entry.get('package_ranking') or {}).get('package_set_breakdown') or {}).get('hold_current', 0))}`",
-                f"- Last suppress package count: `{(((entry.get('package_ranking') or {}).get('package_set_breakdown') or {}).get('suppress', 0))}`",
-                f"- Last top package set: `{((entry.get('package_ranking') or {}).get('top_package_set') or 'none')}`",
                 f"- Last one-sided bias recommendation: `{(entry.get('one_sided_bias_recommendation') or {}).get('recommendation', 'balanced_directional_bias')}`",
                 f"- Last median ARR delta: `{(entry.get('arr') or {}).get('median_arr_delta_pct', 0.0)}`",
                 f"- Last replay PnL delta (USD): `{(entry.get('arr') or {}).get('replay_pnl_delta_usd', 0.0)}`",
@@ -776,6 +719,21 @@ def main() -> int:
     args = parse_args()
     max_cycles = _resolved_max_cycles(args)
     cycle_count = 0
+    consecutive_no_evidence = 0
+
+    # v2: Load persistent state
+    try:
+        from scripts.btc5_autoresearch_v2 import (
+            enhanced_cadence_decision,
+            load_kill_list,
+            save_kill_list,
+            save_row_hash_cache,
+            v2_cycle_metadata,
+        )
+        v2_available = True
+    except ImportError:
+        v2_available = False
+
     while True:
         history_entries = _parse_history_entries(args.loop_report_dir / "history.jsonl")
         previous_entry = history_entries[-1] if history_entries else None
@@ -806,11 +764,46 @@ def main() -> int:
             finished_at=finished_at,
             hook_result=hook_result,
         )
-        entry["cadence"] = _cadence_decision(
-            entry=entry,
-            previous_entry=previous_entry,
-            base_interval_seconds=int(args.interval_seconds),
-        )
+
+        # v2: Enhanced cadence with consecutive-stale tracking
+        if v2_available:
+            entry["cadence"] = enhanced_cadence_decision(
+                entry=entry,
+                previous_entry=previous_entry,
+                base_interval_seconds=int(args.interval_seconds),
+                consecutive_no_evidence_cycles=consecutive_no_evidence,
+            )
+            # Track consecutive no-evidence cycles
+            current_probe = entry.get("current_probe") if isinstance(entry.get("current_probe"), dict) else {}
+            live_delta = _safe_int(current_probe.get("live_filled_rows_delta"), 0)
+            val_delta = _safe_int(current_probe.get("validation_live_filled_rows_delta"), 0)
+            if live_delta > 0 or val_delta > 0:
+                consecutive_no_evidence = 0
+            else:
+                consecutive_no_evidence += 1
+
+            # v2: Update kill list from hypothesis lab results
+            try:
+                kill_list = load_kill_list()
+                hyp_lab = entry.get("hypothesis_lab") or {}
+                best_hyp = hyp_lab.get("best_hypothesis") or {}
+                if best_hyp:
+                    from scripts.btc5_autoresearch_v2 import evaluate_for_kill
+                    # We don't have raw rows here but we record the kill list state
+                    entry["v2_kill_list_size"] = len(kill_list.get("killed", {}))
+                save_row_hash_cache(
+                    row_hash=str(entry.get("validation_live_filled_rows", 0)),
+                    cycle_result=entry,
+                )
+            except Exception:
+                pass  # v2 features are best-effort
+        else:
+            entry["cadence"] = _cadence_decision(
+                entry=entry,
+                previous_entry=previous_entry,
+                base_interval_seconds=int(args.interval_seconds),
+            )
+
         if not args.skip_hypothesis_lab:
             entry["hypothesis_lab"] = _run_hypothesis_lab(args)
         if not args.skip_regime_policy_lab:

@@ -7,7 +7,6 @@ import argparse
 import json
 from pathlib import Path
 import sys
-from statistics import mean
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -59,88 +58,7 @@ def parse_args() -> argparse.Namespace:
         default=OPENCLAW_AUDITED_COMMIT,
         help="Pinned upstream commit hash.",
     )
-    parser.add_argument(
-        "--source",
-        default="openclaw",
-        help="Source identifier included on the normalized OpenClaw evidence packet.",
-    )
-    parser.add_argument(
-        "--expected-arr-delta",
-        type=float,
-        default=None,
-        help="Optional top-line expected annualized ARR delta uplift in bps.",
-    )
-    parser.add_argument(
-        "--improvement-velocity",
-        type=float,
-        default=None,
-        help="Optional expected improvement velocity metric from OpenClaw evidence.",
-    )
-    parser.add_argument(
-        "--candidate-confidence",
-        type=float,
-        default=None,
-        help="Optional confidence score for OpenClaw recommendation quality.",
-    )
-    parser.add_argument(
-        "--pipeline-version",
-        default=None,
-        help="Optional OpenClaw benchmark pipeline version tag.",
-    )
-    parser.add_argument(
-        "--data-timestamp",
-        default=None,
-        help="Optional source-timestamp for recommendation evidence.",
-    )
     return parser.parse_args()
-
-
-def _safe_float(value: object) -> float | None:
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _infer_packet_metrics(
-    comparisons: list[dict[str, object]],
-    args: argparse.Namespace,
-) -> dict[str, float | None]:
-    inferred_arr = _safe_float(args.expected_arr_delta)
-    inferred_velocity = _safe_float(args.improvement_velocity)
-    inferred_confidence = _safe_float(args.candidate_confidence)
-
-    if inferred_arr is None:
-        inferred_arr_values: list[float] = []
-        for comparison in comparisons:
-            value = _safe_float(comparison.get("expected_arr_delta"))
-            if value is not None:
-                inferred_arr_values.append(value)
-        if inferred_arr_values:
-            inferred_arr = mean(inferred_arr_values)
-    if inferred_velocity is None:
-        inferred_velocity_values: list[float] = []
-        for comparison in comparisons:
-            value = _safe_float(comparison.get("improvement_velocity"))
-            if value is not None:
-                inferred_velocity_values.append(value)
-        if inferred_velocity_values:
-            inferred_velocity = mean(inferred_velocity_values)
-    if inferred_confidence is None:
-        inferred_confidence_values: list[float] = []
-        for comparison in comparisons:
-            value = _safe_float(comparison.get("candidate_confidence"))
-            if value is not None:
-                inferred_confidence_values.append(value)
-        if inferred_confidence_values:
-            inferred_confidence = mean(inferred_confidence_values)
-    return {
-        "expected_arr_delta": inferred_arr,
-        "improvement_velocity": inferred_velocity,
-        "candidate_confidence": inferred_confidence,
-    }
 
 
 def main() -> int:
@@ -151,7 +69,6 @@ def main() -> int:
 
     diagnostics_events = load_jsonl_events(diagnostics_path)
     comparison_rows = load_outcome_comparisons(comparison_path) if comparison_path else []
-    inferred_metrics = _infer_packet_metrics(comparison_rows, args)
     source_artifacts = [str(diagnostics_path)]
     if comparison_path is not None:
         source_artifacts.append(str(comparison_path))
@@ -164,12 +81,6 @@ def main() -> int:
         log_index_prefix=args.log_index_prefix,
         source_artifacts=source_artifacts,
         upstream_commit=args.upstream_commit,
-        source=args.source,
-        expected_arr_delta=inferred_metrics["expected_arr_delta"],
-        improvement_velocity=inferred_metrics["improvement_velocity"],
-        candidate_confidence=inferred_metrics["candidate_confidence"],
-        data_timestamp=args.data_timestamp,
-        pipeline_version=args.pipeline_version,
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)

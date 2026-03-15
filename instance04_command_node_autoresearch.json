@@ -1,0 +1,86 @@
+{
+  "instance": 4,
+  "project": "BTC5 Dual Autoresearch",
+  "status": "implemented",
+  "generated_at": "2026-03-11T17:50:37+00:00",
+  "mutable_surface": "btc5_command_node.md",
+  "benchmark": {
+    "benchmark_id": "command_node_btc5_v1",
+    "manifest_path": "benchmarks/command_node_btc5/v1/manifest.json",
+    "task_suite_path": "benchmarks/command_node_btc5/v1/tasks.jsonl",
+    "task_count": 5,
+    "objective": "agent_loss = 100 - total_score",
+    "subscores": {
+      "source_path_correctness": 30,
+      "dependency_correctness": 25,
+      "dispatch_completeness": 25,
+      "judge_clarity": 20
+    },
+    "frozen_epoch_hours": 24,
+    "champion_roll_rule": "Champion evaluators can roll only at epoch boundary."
+  },
+  "artifacts": {
+    "program_file": "btc5_command_node.md",
+    "scorer_module": "benchmarks/command_node_btc5/v1/benchmark.py",
+    "runner_script": "scripts/run_btc5_command_node_autoresearch.py",
+    "renderer_script": "scripts/render_btc5_command_node_progress.py",
+    "results_ledger": "reports/autoresearch/command_node/results.jsonl",
+    "champion_registry": "reports/autoresearch/command_node/champion.json",
+    "latest_summary": "reports/autoresearch/command_node/latest.json",
+    "latest_run": "reports/autoresearch/command_node/runs/experiment_0001_20260311T175038Z.json",
+    "progress_chart": "research/btc5_command_node_progress.svg"
+  },
+  "baseline_run": {
+    "experiment_id": 1,
+    "status": "keep",
+    "candidate_label": "baseline-command-node",
+    "prompt_hash": "1be6584a11beb55e501fbd2f0083b1c7bee9bf6157b3b80742da20014ae1d214",
+    "total_score": 100.0,
+    "loss": 0.0,
+    "subscores": {
+      "source_path_correctness": 30.0,
+      "dependency_correctness": 25.0,
+      "dispatch_completeness": 25.0,
+      "judge_clarity": 20.0
+    }
+  },
+  "files_created": [
+    "btc5_command_node.md",
+    "benchmarks/command_node_btc5/__init__.py",
+    "benchmarks/command_node_btc5/v1/__init__.py",
+    "benchmarks/command_node_btc5/v1/README.md",
+    "benchmarks/command_node_btc5/v1/benchmark.py",
+    "benchmarks/command_node_btc5/v1/manifest.json",
+    "benchmarks/command_node_btc5/v1/tasks.jsonl",
+    "scripts/render_btc5_command_node_progress.py",
+    "scripts/run_btc5_command_node_autoresearch.py",
+    "tests/test_btc5_command_node_benchmark.py",
+    "tests/test_render_btc5_command_node_progress.py",
+    "tests/test_run_btc5_command_node_autoresearch.py",
+    "research/btc5_command_node_progress.svg"
+  ],
+  "files_updated": [
+    "benchmarks/README.md",
+    "benchmarks/index.manifest.json"
+  ],
+  "verification": {
+    "pytest": {
+      "status": "passed",
+      "command": "pytest -q tests/test_btc5_command_node_benchmark.py tests/test_render_btc5_command_node_progress.py tests/test_run_btc5_command_node_autoresearch.py"
+    },
+    "runner": {
+      "status": "passed",
+      "command": "python3 scripts/run_btc5_command_node_autoresearch.py"
+    },
+    "make_hygiene": {
+      "status": "failed",
+      "command": "make hygiene",
+      "detail": "Repo hygiene check failed on a pre-existing root compatibility shim expectation: improvement_velocity.json expected symlink for root compatibility shim."
+    }
+  },
+  "notes": [
+    "The frozen task suite covers the five BTC5 dual-autoresearch instance tasks and encodes exact model ownership, dependency order, output files, and self-verifiable checklists.",
+    "The benchmark now scores btc5_command_node.md directly rather than a sidecar prompt packet, preserving the one-file mutable-surface contract.",
+    "The runner appends every evaluation to the command-node ledger, preserves the champion unless a lower-loss candidate wins, and refreshes the Karpathy-style progress chart."
+  ]
+}

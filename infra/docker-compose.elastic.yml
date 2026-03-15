@@ -1,0 +1,96 @@
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.5
+    container_name: elastifund-elasticsearch
+    restart: unless-stopped
+    env_file:
+      - ../state/elastifund/elastic/elastic-stack.env
+    environment:
+      discovery.type: single-node
+      cluster.name: elastifund-elastic
+      node.name: elastifund-es01
+      xpack.security.enabled: "true"
+      xpack.security.http.ssl.enabled: "false"
+      xpack.security.enrollment.enabled: "false"
+      xpack.license.self_generated.type: basic
+      bootstrap.memory_lock: "true"
+      ES_JAVA_OPTS: -Xms1g -Xmx1g
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    mem_limit: 1536m
+    ports:
+      - "127.0.0.1:${ELASTICSEARCH_PORT:-9200}:9200"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    networks:
+      - elastic-net
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.15.5
+    container_name: elastifund-kibana
+    restart: unless-stopped
+    env_file:
+      - ../state/elastifund/elastic/elastic-stack.env
+    environment:
+      SERVER_NAME: kibana
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      ELASTICSEARCH_USERNAME: kibana_system
+      XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY: ${KIBANA_ENCRYPTION_KEY:-changemechangemechangemechangeme}
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        export ELASTICSEARCH_PASSWORD="$KIBANA_SYSTEM_PASSWORD"
+        exec /usr/local/bin/kibana-docker
+    depends_on:
+      - elasticsearch
+    ports:
+      - "127.0.0.1:${KIBANA_PORT:-5601}:5601"
+    volumes:
+      - kibana-data:/usr/share/kibana/data
+    networks:
+      - elastic-net
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.15.5
+    container_name: elastifund-filebeat
+    restart: unless-stopped
+    user: root
+    env_file:
+      - ../state/elastifund/elastic/elastic-stack.env
+    command: ["filebeat", "-e", "--strict.perms=false"]
+    depends_on:
+      - elasticsearch
+    volumes:
+      - ./filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - ${ELASTIFUND_LOG_DIR:-../logs/elastifund}:/var/log/elastifund:ro
+      - ../state/elastifund/elastic/filebeat-data:/usr/share/filebeat/data
+    networks:
+      - elastic-net
+
+  apm-server:
+    image: docker.elastic.co/apm/apm-server:8.15.5
+    container_name: elastifund-apm-server
+    restart: unless-stopped
+    user: root
+    env_file:
+      - ../state/elastifund/elastic/elastic-stack.env
+    command: ["apm-server", "-e", "--strict.perms=false"]
+    depends_on:
+      - elasticsearch
+    ports:
+      - "127.0.0.1:${APM_PORT:-8200}:8200"
+    volumes:
+      - ./apm-server.yml:/usr/share/apm-server/apm-server.yml:ro
+    networks:
+      - elastic-net
+
+volumes:
+  es-data:
+  kibana-data:
+
+networks:
+  elastic-net:
+    name: elastic-net

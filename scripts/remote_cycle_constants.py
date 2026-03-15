@@ -200,6 +200,28 @@ recent_live_filled = conn.execute(
     LIMIT 5
     \"\"\"
 ).fetchall()
+recent_window_rows = conn.execute(
+    \"\"\"
+    SELECT
+        id,
+        window_start_ts,
+        slug,
+        direction,
+        delta,
+        ABS(delta) AS abs_delta,
+        order_price,
+        trade_size_usd,
+        shares,
+        filled,
+        order_status,
+        pnl_usd,
+        created_at,
+        updated_at
+    FROM window_trades
+    ORDER BY id DESC
+    LIMIT 200
+    \"\"\"
+).fetchall()
 
 all_live_filled = [dict(row) for row in conn.execute(
     \"\"\"
@@ -385,6 +407,7 @@ print(json.dumps({
     "latest_live_filled_at": summary_row["latest_live_filled_at"],
     "latest_trade": dict(latest_row) if latest_row is not None else {},
     "recent_live_filled": [dict(row) for row in recent_live_filled],
+    "recent_window_rows": [dict(row) for row in recent_window_rows],
     "guardrail_recommendation": recommend_guardrails(all_live_filled),
     "fill_attribution": summarize_fill_attribution(all_live_filled),
 }, sort_keys=True))

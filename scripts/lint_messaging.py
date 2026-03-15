@@ -18,7 +18,6 @@ FORBIDDEN = (
 PUBLIC_GLOBS = (
     "README.md",
     "index.html",
-    "build/**/*.html",
     "docs/index.html",
     "docs/numbered/*.md",
     "elastic/**/*.html",

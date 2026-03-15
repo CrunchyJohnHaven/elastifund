@@ -7,29 +7,11 @@ import argparse
 import json
 import math
 import subprocess
-import sys
 from datetime import UTC, datetime
 from html import escape
 from pathlib import Path
 from typing import Any
 
-if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from infra.fast_json import dump_path_atomic, load_path, loads as fast_loads
-from scripts.public_metrics_utils import (
-    as_int as _as_int_impl,
-    as_int_or_none as _as_int_or_none_impl,
-    as_number as _as_number_impl,
-    get_path as _get_path_impl,
-    isoformat as _isoformat_impl,
-    normalize_confidence_label as _normalize_confidence_label_impl,
-    normalize_deploy_recommendation as _normalize_deploy_recommendation_impl,
-    normalize_string_list as _normalize_string_list_impl,
-    parse_timestamp as _parse_timestamp_impl,
-    pick_first as _pick_first_impl,
-    to_repo_relative as _to_repo_relative_impl,
-)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -37,8 +19,6 @@ DEFAULT_PUBLIC_RUNTIME_SNAPSHOT = ROOT / "reports/public_runtime_snapshot.json"
 DEFAULT_RUNTIME_TRUTH = ROOT / "reports/runtime_truth_latest.json"
 DEFAULT_REMOTE_CYCLE_STATUS = ROOT / "reports/remote_cycle_status.json"
 DEFAULT_ROOT_TEST_STATUS = ROOT / "reports/root_test_status.json"
-DEFAULT_AUTORESEARCH_SURFACE = ROOT / "reports/autoresearch/latest.json"
-DEFAULT_MARKET_REGISTRY = ROOT / "reports/market_registry/latest.json"
 DEFAULT_FORECAST_ARTIFACTS = (
     ROOT / "reports/btc5_autoresearch/latest.json",
     ROOT / "reports/btc5_autoresearch_current_probe/latest.json",
@@ -65,7 +45,6 @@ DEPLOYMENT_RANK = {
 }
 
 SOURCE_CLASS_LABELS = {
-    "autoresearch_surface": "dual autoresearch surface",
     "runtime_public_snapshot": "runtime snapshot",
     "runtime_truth": "runtime truth",
     "remote_cycle_status": "remote cycle status",
@@ -77,15 +56,6 @@ SOURCE_CLASS_LABELS = {
 }
 
 FONT_STACK = "'Trebuchet MS','Segoe UI',sans-serif"
-PUBLIC_FORECAST_ARR_CAP_PCT = 4000.0
-LIVE_DECISION_FIELDS = (
-    "launch_posture",
-    "execution_mode",
-    "allow_order_submission",
-    "effective_runtime_profile",
-    "total_trades",
-    "live_filled_rows",
-)
 
 
 def parse_args() -> argparse.Namespace:
@@ -113,12 +83,6 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_ROOT_TEST_STATUS,
         help="Path to reports/root_test_status.json",
-    )
-    parser.add_argument(
-        "--autoresearch-surface",
-        type=Path,
-        default=DEFAULT_AUTORESEARCH_SURFACE,
-        help="Path to reports/autoresearch/latest.json",
     )
     parser.add_argument(
         "--forecast-artifact",
@@ -169,7 +133,6 @@ def main() -> None:
         runtime_truth_path=args.runtime_truth,
         remote_cycle_status_path=args.remote_cycle_status,
         root_test_status_path=args.root_test_status,
-        autoresearch_surface_path=args.autoresearch_surface,
         forecast_artifact_paths=forecast_artifacts,
         loop_history_path=args.loop_history,
         btc5_window_rows_path=args.btc5_window_rows,
@@ -197,7 +160,6 @@ def build_public_metrics_contract(
     runtime_truth_path: Path,
     remote_cycle_status_path: Path,
     root_test_status_path: Path,
-    autoresearch_surface_path: Path | None = None,
     forecast_artifact_paths: list[Path],
     loop_history_path: Path,
     btc5_window_rows_path: Path,
@@ -206,46 +168,23 @@ def build_public_metrics_contract(
     runtime_truth = load_json(runtime_truth_path)
     remote_cycle_status = load_json(remote_cycle_status_path)
     root_test_status = load_optional_json(root_test_status_path) or {}
-    autoresearch_surface = (
-        load_optional_json(autoresearch_surface_path)
-        if autoresearch_surface_path is not None
-        else {}
-    ) or {}
-    market_registry = load_optional_json(DEFAULT_MARKET_REGISTRY) or {}
     loop_history = load_jsonl(loop_history_path)
 
-    runtime_scoreboard = (
-        get_path(runtime_truth, "state_improvement.strategy_recommendations.public_performance_scoreboard")
-        or {}
-    )
-    snapshot_scoreboard = (
-        get_path(public_runtime_snapshot, "state_improvement.strategy_recommendations.public_performance_scoreboard")
-        or {}
-    )
     existing_scoreboard = (
-        runtime_scoreboard
-        or snapshot_scoreboard
+        get_path(
+            public_runtime_snapshot,
+            "state_improvement.strategy_recommendations.public_performance_scoreboard",
+        )
+        or get_path(
+            runtime_truth,
+            "state_improvement.strategy_recommendations.public_performance_scoreboard",
+        )
         or get_path(
             load_optional_json(public_runtime_snapshot_path.parent / "state_improvement_latest.json"),
             "strategy_recommendations.public_performance_scoreboard",
         )
         or {}
     )
-    if not isinstance(existing_scoreboard, dict):
-        existing_scoreboard = {}
-    strategy_recommendations = pick_first(
-        get_path(runtime_truth, "state_improvement.strategy_recommendations"),
-        get_path(public_runtime_snapshot, "state_improvement.strategy_recommendations"),
-        {},
-    ) or {}
-    if not isinstance(strategy_recommendations, dict):
-        strategy_recommendations = {}
-    capital_readiness = strategy_recommendations.get("capital_addition_readiness") or {}
-    if not isinstance(capital_readiness, dict):
-        capital_readiness = {}
-    control_plane_consistency = strategy_recommendations.get("control_plane_consistency") or {}
-    if not isinstance(control_plane_consistency, dict):
-        control_plane_consistency = {}
 
     forecast_candidates = [
         build_forecast_candidate(path, load_optional_json(path))
@@ -273,10 +212,6 @@ def build_public_metrics_contract(
         existing_scoreboard=existing_scoreboard,
     )
     use_existing_realized_window = live_fill_window["source_class"] == "runtime_public_snapshot"
-    runtime_truth_precedence = build_runtime_truth_precedence(
-        public_runtime_snapshot=public_runtime_snapshot,
-        runtime_truth=runtime_truth,
-    )
 
     fund_claim = build_fund_realized_claim(runtime_truth=runtime_truth, existing_scoreboard=existing_scoreboard)
     timebound_velocity = build_timebound_velocity(
@@ -355,8 +290,8 @@ def build_public_metrics_contract(
         "btc5_live_filled_rows_total": live_total_rows,
         "btc5_live_filled_pnl_usd_total": round(live_total_pnl_usd, 4),
         "active_forecast_arr_pct": pick_first(
-            selected_forecast.get("active_arr_pct"),
             as_number(existing_scoreboard.get("forecast_active_arr_pct")),
+            selected_forecast.get("active_arr_pct"),
         ),
         "best_package_forecast_arr_pct": pick_first(
             as_number(existing_scoreboard.get("forecast_best_arr_pct")),
@@ -381,59 +316,14 @@ def build_public_metrics_contract(
             [],
         ),
         "deploy_recommendation": pick_first(
-            selected_forecast.get("deploy_recommendation"),
             existing_scoreboard.get("deploy_recommendation"),
+            selected_forecast.get("deploy_recommendation"),
             "hold",
-        ),
-        "capital_stage_readiness": pick_first(
-            existing_scoreboard.get("capital_stage_readiness"),
-            get_path(capital_readiness, "polymarket_btc5.status"),
-            "hold",
-        ),
-        "next_1000_usd_status": pick_first(
-            existing_scoreboard.get("next_1000_usd_status"),
-            get_path(capital_readiness, "next_1000_usd.status"),
-            "hold",
-        ),
-        "next_1000_usd_recommended_amount": as_number(
-            pick_first(
-                existing_scoreboard.get("next_1000_usd_recommended_amount_usd"),
-                existing_scoreboard.get("next_1000_usd_recommended_amount"),
-                get_path(capital_readiness, "next_1000_usd.recommended_amount_usd"),
-                0.0,
-            )
         ),
         "public_forecast_source_artifact": pick_first(
             existing_scoreboard.get("public_forecast_source_artifact"),
             selected_forecast.get("source_path"),
         ),
-        "wallet_reconciliation_summary": pick_first(
-            existing_scoreboard.get("wallet_reconciliation_summary"),
-            runtime_scoreboard.get("wallet_reconciliation_summary") if isinstance(runtime_scoreboard, dict) else {},
-            {},
-        ),
-        "realized_closed_btc_cashflow_usd": as_number(
-            pick_first(
-                existing_scoreboard.get("realized_closed_btc_cashflow_usd"),
-                get_path(existing_scoreboard, "wallet_reconciliation_summary.btc_closed_net_cashflow_usd"),
-            )
-        ),
-        "open_non_btc_notional_usd": as_number(
-            pick_first(
-                existing_scoreboard.get("open_non_btc_notional_usd"),
-                get_path(existing_scoreboard, "wallet_reconciliation_summary.non_btc_open_buy_notional_usd"),
-            )
-        ),
-        "forecast_arr_pct": as_number(
-            pick_first(
-                selected_forecast.get("active_arr_pct"),
-                existing_scoreboard.get("forecast_arr_pct"),
-                existing_scoreboard.get("forecast_active_arr_pct"),
-            )
-        ),
-        "portfolio_equity_delta_1d": as_number(existing_scoreboard.get("portfolio_equity_delta_1d")),
-        "closed_cashflow_delta_1d": as_number(existing_scoreboard.get("closed_cashflow_delta_1d")),
-        "open_notional_delta_1d": as_number(existing_scoreboard.get("open_notional_delta_1d")),
         "active_package": selected_forecast.get("active_package"),
         "best_package": selected_forecast.get("best_package"),
         "validation_live_filled_rows": selected_forecast.get("validation_live_filled_rows"),
@@ -441,10 +331,7 @@ def build_public_metrics_contract(
         "baseline_window_rows": selected_forecast.get("baseline_window_rows"),
         "sample_size_annotation": build_sample_size_annotation(live_fill_window, selected_forecast),
         "intraday_live_summary": intraday_summary,
-        "control_plane_consistency": control_plane_consistency,
-        "registry_health": build_registry_health(market_registry),
     }
-    scoreboard.update(build_public_arr_disclosure(scoreboard))
 
     chart_series = build_chart_series(
         loop_history=loop_history,
@@ -461,8 +348,6 @@ def build_public_metrics_contract(
         remote_cycle_status=remote_cycle_status,
         root_test_status_path=root_test_status_path,
         root_test_status=root_test_status,
-        autoresearch_surface_path=autoresearch_surface_path,
-        autoresearch_surface=autoresearch_surface,
         forecast_candidates=forecast_candidates,
         loop_history_path=loop_history_path,
         btc5_window_rows_path=btc5_window_rows_path,
@@ -491,42 +376,13 @@ def build_public_metrics_contract(
         "deploy_recommendation": scoreboard["deploy_recommendation"],
         "forecast_confidence_label": scoreboard["forecast_confidence_label"],
         "public_forecast_source_artifact": scoreboard["public_forecast_source_artifact"],
-        "public_forecast_arr_pct": scoreboard["public_forecast_arr_pct"],
-        "public_forecast_arr_label": scoreboard["public_forecast_arr_label"],
-        "public_forecast_arr_cap_applied": scoreboard["public_forecast_arr_cap_applied"],
     }
-
-    runtime_total_trades, runtime_total_trades_source, runtime_total_trades_observations = (
-        resolve_runtime_total_trades(
-            public_runtime_snapshot=public_runtime_snapshot,
-            runtime_truth=runtime_truth,
-            scoreboard=scoreboard,
-            truth_precedence=runtime_truth_precedence,
-        )
-    )
-    authoritative_launch_posture = str(
-        pick_first(
-            runtime_truth_precedence.get("selected_values", {}).get("launch_posture"),
-            get_path(runtime_truth, "launch.posture"),
-            runtime_truth.get("launch_posture"),
-            get_path(public_runtime_snapshot, "launch.posture"),
-            "unknown",
-        )
-        or "unknown"
-    )
 
     contract = {
         "schema_version": "3.0.0",
         "generated_at": headline["generated_at"],
         "headline": headline,
         "scoreboard": scoreboard,
-        "performance_split": {
-            "closed_cashflow_usd": as_number(scoreboard.get("realized_closed_btc_cashflow_usd")),
-            "open_notional_usd": as_number(scoreboard.get("open_non_btc_notional_usd")),
-            "forecast_arr_pct": as_number(scoreboard.get("forecast_arr_pct")),
-            "stage_readiness": scoreboard.get("capital_stage_readiness"),
-        },
-        "registry_health": build_registry_health(market_registry),
         "timebound_velocity": timebound_velocity,
         "confidence": {
             "label": scoreboard["forecast_confidence_label"],
@@ -534,24 +390,12 @@ def build_public_metrics_contract(
             "sample_size_annotation": scoreboard["sample_size_annotation"],
             "fund_realized_arr_blocked": scoreboard["fund_realized_arr_claim_status"] == "blocked",
         },
-        "autoresearch": normalize_autoresearch_surface(autoresearch_surface),
-        "public_arr_disclosure": {
-            "headline_forecast_arr_pct": scoreboard["public_forecast_arr_pct"],
-            "headline_forecast_arr_label": scoreboard["public_forecast_arr_label"],
-            "headline_cap_pct": scoreboard["public_forecast_arr_cap_pct"],
-            "headline_cap_applied": scoreboard["public_forecast_arr_cap_applied"],
-            "headline_methodology": scoreboard["public_forecast_arr_methodology"],
-            "raw_active_forecast_arr_pct": scoreboard["active_forecast_arr_pct"],
-            "raw_best_package_forecast_arr_pct": scoreboard["best_package_forecast_arr_pct"],
-            "raw_p05_forecast_arr_pct": scoreboard["p05_forecast_arr_pct"],
-        },
         "source_artifacts": source_artifacts,
         "sources": {
             "runtime_public_snapshot": to_repo_relative(public_runtime_snapshot_path),
             "runtime_truth": to_repo_relative(runtime_truth_path),
             "remote_cycle_status": to_repo_relative(remote_cycle_status_path),
             "root_test_status": to_repo_relative(root_test_status_path),
-            "market_registry": to_repo_relative(DEFAULT_MARKET_REGISTRY),
             "selected_public_forecast": scoreboard["public_forecast_source_artifact"],
             "btc5_window_rows": to_repo_relative(btc5_window_rows_path),
         },
@@ -564,9 +408,13 @@ def build_public_metrics_contract(
                     runtime_truth.get("cycles_completed"),
                 )
             ),
-            "total_trades": runtime_total_trades,
-            "total_trades_source": runtime_total_trades_source,
-            "total_trades_observations": runtime_total_trades_observations,
+            "total_trades": as_int(
+                pick_first(
+                    get_path(public_runtime_snapshot, "runtime.total_trades"),
+                    get_path(runtime_truth, "runtime.total_trades"),
+                    runtime_truth.get("total_trades"),
+                )
+            ),
             "closed_trades": as_int(
                 pick_first(
                     get_path(public_runtime_snapshot, "runtime.closed_trades"),
@@ -580,7 +428,11 @@ def build_public_metrics_contract(
                 get_path(remote_cycle_status, "service.status"),
                 "unknown",
             ),
-            "launch_posture": authoritative_launch_posture,
+            "launch_posture": pick_first(
+                get_path(public_runtime_snapshot, "launch.posture"),
+                get_path(runtime_truth, "launch.posture"),
+                "unknown",
+            ),
             "verification_summary": verification_summary,
         },
         "trading_agent": {
@@ -611,15 +463,24 @@ def build_public_metrics_contract(
                     runtime_truth.get("polymarket_wallet", {}).get("closed_positions_count"),
                 )
             ),
-            "total_trades": runtime_total_trades,
-            "total_trades_source": runtime_total_trades_source,
+            "total_trades": as_int(
+                pick_first(
+                    get_path(public_runtime_snapshot, "runtime.total_trades"),
+                    get_path(runtime_truth, "runtime.total_trades"),
+                    runtime_truth.get("total_trades"),
+                )
+            ),
             "service_status": pick_first(
                 get_path(public_runtime_snapshot, "service.status"),
                 get_path(runtime_truth, "service.status"),
                 get_path(remote_cycle_status, "service.status"),
                 "unknown",
             ),
-            "launch_posture": authoritative_launch_posture,
+            "launch_posture": pick_first(
+                get_path(public_runtime_snapshot, "launch.posture"),
+                get_path(runtime_truth, "launch.posture"),
+                "unknown",
+            ),
             "wallet_flow_ready": bool(
                 pick_first(
                     get_path(public_runtime_snapshot, "launch.fast_flow_restart_ready"),
@@ -643,21 +504,12 @@ def build_public_metrics_contract(
             "dispatch_markdown_files": contribution_flywheel["dispatch_markdown_files"],
             "commits_total_after_instance": contribution_flywheel["commits_total_after_instance"],
         },
-        "stale_hold_repair": {
-            "active": bool(runtime_truth_precedence.get("repair_required")),
-            "reason": runtime_truth_precedence.get("repair_reason"),
-            "block_reasons": list(runtime_truth_precedence.get("block_reasons") or []),
-            "conflicting_fields": list(runtime_truth_precedence.get("conflicting_fields") or []),
-        },
-        "source_precedence": runtime_truth_precedence,
         "arr_estimate": {
             "trading_realized_pct": current_realized_arr_pct,
             "trading_realized_usd": 0.0,
             "trading_next_target_pct": as_number(scoreboard["active_forecast_arr_pct"]),
             "trading_next_target_usd": 0.0,
             "trading_next_target_confidence": scoreboard["forecast_confidence_label"],
-            "trading_public_headline_pct": as_number(scoreboard["public_forecast_arr_pct"]),
-            "trading_public_headline_label": scoreboard["public_forecast_arr_label"],
             "trading_backtest_reference_pct": as_number(scoreboard["best_package_forecast_arr_pct"]),
             "trading_backtest_reference_methodology": (
                 "Selected BTC5 forecast continuation ARR from the freshest public forecast artifact."
@@ -673,7 +525,6 @@ def build_public_metrics_contract(
                 "combined_current_pct remains fund-level realized ARR for backward compatibility. "
                 "Use headline/scoreboard for the BTC5 sleeve run-rate and selected forecast."
             ),
-            "public_headline_methodology": scoreboard["public_forecast_arr_methodology"],
         },
     }
     return contract
@@ -730,42 +581,6 @@ def build_forecast_candidate(path: Path, payload: dict[str, Any] | None) -> dict
         )
     )
 
-    active_arr_pct = as_number(
-        pick_first(
-            selected_entry.get("forecast_active_arr_pct"),
-            selection.get("active_forecast_arr_pct"),
-            selection.get("selected_forecast", {}).get("active_forecast_arr_pct"),
-            arr_tracking.get("current_median_arr_pct"),
-            latest_entry_arr.get("active_median_arr_pct"),
-        )
-    )
-    best_arr_pct = as_number(
-        pick_first(
-            selected_entry.get("forecast_best_arr_pct"),
-            selection.get("best_forecast_arr_pct"),
-            selection.get("selected_forecast", {}).get("best_forecast_arr_pct"),
-            arr_tracking.get("best_median_arr_pct"),
-            best_candidate_continuation.get("median_arr_pct"),
-            latest_entry_arr.get("best_median_arr_pct"),
-        )
-    )
-    best_candidate_class = str(best_candidate.get("candidate_class") or "").lower()
-
-    # Profile contamination override: when the active profile forecast is
-    # negative but the best validated candidate is promote-ready with positive
-    # ARR, the active forecast is contaminated (e.g. shadow profile evaluated
-    # instead of the live sleeve).  Use the best candidate's ARR and deploy
-    # recommendation so downstream gates reflect the best available evidence.
-    if (
-        active_arr_pct is not None
-        and best_arr_pct is not None
-        and active_arr_pct < 0
-        and best_arr_pct > 0
-        and best_candidate_class == "promote"
-    ):
-        active_arr_pct = best_arr_pct
-        deploy_recommendation = "promote"
-
     return {
         "source_path": pick_first(
             selected_entry.get("source_artifact"),
@@ -778,8 +593,25 @@ def build_forecast_candidate(path: Path, payload: dict[str, Any] | None) -> dict
             payload.get("generated_at"),
             latest_entry.get("finished_at"),
         ),
-        "active_arr_pct": active_arr_pct,
-        "best_arr_pct": best_arr_pct,
+        "active_arr_pct": as_number(
+            pick_first(
+                selected_entry.get("forecast_active_arr_pct"),
+                selection.get("active_forecast_arr_pct"),
+                selection.get("selected_forecast", {}).get("active_forecast_arr_pct"),
+                arr_tracking.get("current_median_arr_pct"),
+                latest_entry_arr.get("active_median_arr_pct"),
+            )
+        ),
+        "best_arr_pct": as_number(
+            pick_first(
+                selected_entry.get("forecast_best_arr_pct"),
+                selection.get("best_forecast_arr_pct"),
+                selection.get("selected_forecast", {}).get("best_forecast_arr_pct"),
+                arr_tracking.get("best_median_arr_pct"),
+                best_candidate_continuation.get("median_arr_pct"),
+                latest_entry_arr.get("best_median_arr_pct"),
+            )
+        ),
         "p05_arr_pct": as_number(
             pick_first(
                 selection.get("p05_forecast_arr_pct"),
@@ -989,38 +821,6 @@ def build_fund_realized_claim(*, runtime_truth: dict[str, Any], existing_scorebo
     }
 
 
-def build_registry_health(market_registry: dict[str, Any]) -> dict[str, Any]:
-    health = market_registry.get("health") or {}
-    summary = market_registry.get("summary") or {}
-    gamma_ok = bool(health.get("gamma_ok"))
-    eligible_count = as_int(pick_first(market_registry.get("eligible_count"), summary.get("eligible_count")))
-    total_discovered = as_int(summary.get("total_discovered"))
-    if gamma_ok and eligible_count > 0:
-        status = "healthy"
-    elif gamma_ok and eligible_count == 0:
-        status = "broken"
-    elif total_discovered > 0:
-        status = "degraded"
-    else:
-        status = "unknown"
-    return {
-        "status": status,
-        "gamma_ok": gamma_ok,
-        "eligible_count": eligible_count,
-        "total_discovered": total_discovered,
-        "eligible_assets": market_registry.get("eligible_assets") or [],
-        "staleness_breach_count": as_int(market_registry.get("staleness_breach_count")),
-        "quote_coverage_ratio": as_number(market_registry.get("quote_coverage_ratio")),
-        "cascade_execution_enabled": bool(market_registry.get("cascade_execution_enabled")),
-        "broken_reason": (
-            "gamma_reachable_but_registry_empty"
-            if gamma_ok and eligible_count == 0
-            else None
-        ),
-        "generated_at": market_registry.get("generated_at"),
-    }
-
-
 def build_timebound_velocity(
     *,
     loop_history: list[dict[str, Any]],
@@ -1178,8 +978,6 @@ def build_source_artifacts(
     remote_cycle_status: dict[str, Any],
     root_test_status_path: Path,
     root_test_status: dict[str, Any],
-    autoresearch_surface_path: Path | None,
-    autoresearch_surface: dict[str, Any],
     forecast_candidates: list[dict[str, Any]],
     loop_history_path: Path,
     btc5_window_rows_path: Path,
@@ -1216,26 +1014,6 @@ def build_source_artifacts(
             "generated_at": None,
         },
     ]
-    if autoresearch_surface_path is not None:
-        artifacts.append(
-            {
-                "path": to_repo_relative(autoresearch_surface_path),
-                "source_class": "autoresearch_surface",
-                "generated_at": autoresearch_surface.get("generated_at"),
-            }
-        )
-    for chart_path in (
-        get_path(autoresearch_surface, "public_charts.market_model.path"),
-        get_path(autoresearch_surface, "public_charts.command_node.path"),
-    ):
-        if chart_path:
-            artifacts.append(
-                {
-                    "path": str(chart_path),
-                    "source_class": "autoresearch_surface",
-                    "generated_at": autoresearch_surface.get("generated_at"),
-                }
-            )
     for candidate in forecast_candidates:
         artifacts.append(
             {
@@ -1256,63 +1034,14 @@ def build_source_artifacts(
     return deduped
 
 
-def normalize_autoresearch_surface(surface: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(surface, dict):
-        return {}
-    return {
-        "summary": str(surface.get("summary") or ""),
-        "benchmark_progress_only": bool(surface.get("benchmark_progress_only", True)),
-        "service_health": dict(surface.get("service_health") or {}),
-        "lane_summaries": dict(surface.get("lane_summaries") or {}),
-        "current_champions": dict(surface.get("current_champions") or {}),
-        "public_charts": dict(surface.get("public_charts") or {}),
-        "audit_trail_paths": dict(surface.get("audit_trail_paths") or {}),
-        "morning_report_paths": dict(surface.get("morning_report_paths") or {}),
-    }
-
-
-def build_public_arr_disclosure(scoreboard: dict[str, Any]) -> dict[str, Any]:
-    active_forecast_arr_pct = as_number(scoreboard.get("active_forecast_arr_pct"), default=0.0) or 0.0
-    best_package_forecast_arr_pct = as_number(scoreboard.get("best_package_forecast_arr_pct"), default=0.0) or 0.0
-    p05_forecast_arr_pct = as_number(scoreboard.get("p05_forecast_arr_pct"), default=0.0) or 0.0
-    cap_applied = active_forecast_arr_pct > PUBLIC_FORECAST_ARR_CAP_PCT
-    public_forecast_arr_pct = min(active_forecast_arr_pct, PUBLIC_FORECAST_ARR_CAP_PCT) if active_forecast_arr_pct > 0 else 0.0
-    public_best_package_arr_pct = (
-        min(best_package_forecast_arr_pct, PUBLIC_FORECAST_ARR_CAP_PCT)
-        if best_package_forecast_arr_pct > 0
-        else 0.0
-    )
-    public_p05_arr_pct = min(p05_forecast_arr_pct, PUBLIC_FORECAST_ARR_CAP_PCT) if p05_forecast_arr_pct > 0 else 0.0
-    methodology = (
-        "Conservative public disclosure cap. When the selected BTC5 annualized forecast exceeds 4,000%, "
-        "README and chart headline claims clamp to 4,000%+ until longer live duration and fund-level reconciliation support a wider claim."
-    )
-    return {
-        "public_forecast_arr_cap_pct": PUBLIC_FORECAST_ARR_CAP_PCT,
-        "public_forecast_arr_cap_applied": cap_applied,
-        "public_forecast_arr_pct": round(public_forecast_arr_pct, 4),
-        "public_forecast_arr_label": format_public_arr_label(public_forecast_arr_pct, cap_applied=cap_applied),
-        "public_best_package_arr_pct": round(public_best_package_arr_pct, 4),
-        "public_p05_forecast_arr_pct": round(public_p05_arr_pct, 4),
-        "public_forecast_arr_methodology": methodology,
-    }
-
-
 def build_headline_summary(scoreboard: dict[str, Any]) -> str:
     intraday = normalize_intraday_live_summary(scoreboard.get("intraday_live_summary"))
     day_pnl = as_number(intraday.get("filled_pnl_usd_today"))
     day_direction = "positive" if day_pnl > 0 else ("negative" if day_pnl < 0 else "flat")
-    public_forecast_summary = (
-        f"Conservative public forecast ARR is {scoreboard['public_forecast_arr_label']} "
-        f"(raw selected forecast {format_compact_percent(scoreboard['active_forecast_arr_pct'])}). "
-        if scoreboard.get("public_forecast_arr_cap_applied")
-        else f"Conservative public forecast ARR is {scoreboard['public_forecast_arr_label']}. "
-    )
     return (
         f"BTC5 live sleeve has {scoreboard['btc5_live_filled_rows_total']} live-filled rows and "
         f"{format_usd(scoreboard['btc5_live_filled_pnl_usd_total'])} live-filled PnL "
         f"(today {format_usd(day_pnl)}, {day_direction}). "
-        f"{public_forecast_summary}"
         f"Fund-level realized ARR is {scoreboard['fund_realized_arr_claim_status']}. "
         f"Selected public forecast is {scoreboard['deploy_recommendation']} / "
         f"{scoreboard['forecast_confidence_label']} confidence from "
@@ -1362,193 +1091,6 @@ def build_verification_summary(
     return str(summary)
 
 
-def resolve_runtime_total_trades(
-    *,
-    public_runtime_snapshot: dict[str, Any],
-    runtime_truth: dict[str, Any],
-    scoreboard: dict[str, Any],
-    truth_precedence: dict[str, Any] | None = None,
-) -> tuple[int, str, dict[str, int]]:
-    observations: dict[str, int] = {}
-    repair_required = bool((truth_precedence or {}).get("repair_required"))
-    observation_rows: list[tuple[str, Any]] = [
-        ("runtime_truth.runtime.total_trades", get_path(runtime_truth, "runtime.total_trades")),
-        ("runtime_truth.total_trades", runtime_truth.get("total_trades")),
-        ("runtime_truth.runtime.trade_db_total_trades", get_path(runtime_truth, "runtime.trade_db_total_trades")),
-        (
-            "runtime_truth.runtime.closed_plus_open",
-            as_int(get_path(runtime_truth, "runtime.closed_trades"))
-            + as_int(get_path(runtime_truth, "runtime.open_positions")),
-        ),
-        ("scoreboard.btc5_live_filled_rows_total", scoreboard.get("btc5_live_filled_rows_total")),
-    ]
-    if not repair_required:
-        observation_rows.insert(
-            0,
-            ("public.runtime.total_trades", get_path(public_runtime_snapshot, "runtime.total_trades")),
-        )
-    for label, value in observation_rows:
-        observations[label] = max(0, as_int(value))
-
-    runtime_observations = pick_first(
-        get_path(runtime_truth, "runtime.total_trades_observations"),
-        {} if repair_required else get_path(public_runtime_snapshot, "runtime.total_trades_observations"),
-        {},
-    )
-    if isinstance(runtime_observations, dict):
-        for label, value in runtime_observations.items():
-            if repair_required and str(label).startswith("public."):
-                continue
-            observations[f"runtime_observation.{label}"] = max(0, as_int(value))
-
-    resolved_total = max(observations.values(), default=0)
-    winners = sorted(source for source, value in observations.items() if value == resolved_total)
-    if repair_required:
-        source = "runtime_truth_precedence"
-        if winners:
-            source += ":" + ",".join(winners)
-    else:
-        source = "max_observed" if not winners else "max_observed:" + ",".join(winners)
-    return resolved_total, source, observations
-
-
-def build_runtime_truth_precedence(
-    *,
-    public_runtime_snapshot: dict[str, Any],
-    runtime_truth: dict[str, Any],
-) -> dict[str, Any]:
-    public_generated_at = parse_timestamp(get_path(public_runtime_snapshot, "generated_at"))
-    runtime_generated_at = parse_timestamp(
-        pick_first(runtime_truth.get("generated_at"), runtime_truth.get("summary", {}).get("generated_at"))
-    )
-    runtime_newer = bool(
-        runtime_generated_at is not None
-        and (public_generated_at is None or runtime_generated_at > public_generated_at)
-    )
-
-    selected_values = {
-        "launch_posture": pick_first(
-            get_path(runtime_truth, "launch.posture"),
-            runtime_truth.get("launch_posture"),
-            get_path(public_runtime_snapshot, "launch.posture"),
-        ),
-        "execution_mode": pick_first(
-            runtime_truth.get("execution_mode"),
-            get_path(public_runtime_snapshot, "runtime_mode.execution_mode"),
-        ),
-        "allow_order_submission": pick_first(
-            runtime_truth.get("allow_order_submission"),
-            get_path(public_runtime_snapshot, "runtime_mode.allow_order_submission"),
-        ),
-        "effective_runtime_profile": pick_first(
-            runtime_truth.get("effective_runtime_profile"),
-            get_path(public_runtime_snapshot, "runtime_mode.effective_runtime_profile"),
-            get_path(public_runtime_snapshot, "runtime_mode.remote_runtime_profile"),
-        ),
-        "total_trades": pick_first(
-            get_path(runtime_truth, "runtime.total_trades"),
-            runtime_truth.get("total_trades"),
-            get_path(public_runtime_snapshot, "runtime.total_trades"),
-        ),
-        "live_filled_rows": pick_first(
-            get_path(runtime_truth, "runtime.btc5_live_filled_rows"),
-            get_path(runtime_truth, "btc_5min_maker.live_filled_rows"),
-            get_path(public_runtime_snapshot, "runtime.btc5_live_filled_rows"),
-            get_path(public_runtime_snapshot, "btc_5min_maker.live_filled_rows"),
-        ),
-    }
-
-    field_observations = {
-        "launch_posture": {
-            "runtime_truth": pick_first(
-                get_path(runtime_truth, "launch.posture"),
-                runtime_truth.get("launch_posture"),
-            ),
-            "public_runtime_snapshot": get_path(public_runtime_snapshot, "launch.posture"),
-        },
-        "execution_mode": {
-            "runtime_truth": runtime_truth.get("execution_mode"),
-            "public_runtime_snapshot": get_path(public_runtime_snapshot, "runtime_mode.execution_mode"),
-        },
-        "allow_order_submission": {
-            "runtime_truth": runtime_truth.get("allow_order_submission"),
-            "public_runtime_snapshot": get_path(
-                public_runtime_snapshot, "runtime_mode.allow_order_submission"
-            ),
-        },
-        "effective_runtime_profile": {
-            "runtime_truth": runtime_truth.get("effective_runtime_profile"),
-            "public_runtime_snapshot": pick_first(
-                get_path(public_runtime_snapshot, "runtime_mode.effective_runtime_profile"),
-                get_path(public_runtime_snapshot, "runtime_mode.remote_runtime_profile"),
-            ),
-        },
-        "total_trades": {
-            "runtime_truth": pick_first(
-                get_path(runtime_truth, "runtime.total_trades"),
-                runtime_truth.get("total_trades"),
-            ),
-            "public_runtime_snapshot": get_path(public_runtime_snapshot, "runtime.total_trades"),
-        },
-        "live_filled_rows": {
-            "runtime_truth": pick_first(
-                get_path(runtime_truth, "runtime.btc5_live_filled_rows"),
-                get_path(runtime_truth, "btc_5min_maker.live_filled_rows"),
-            ),
-            "public_runtime_snapshot": pick_first(
-                get_path(public_runtime_snapshot, "runtime.btc5_live_filled_rows"),
-                get_path(public_runtime_snapshot, "btc_5min_maker.live_filled_rows"),
-            ),
-        },
-    }
-
-    conflicting_fields: list[str] = []
-    conflicts: list[dict[str, Any]] = []
-    for field in LIVE_DECISION_FIELDS:
-        observations = field_observations[field]
-        runtime_value = observations.get("runtime_truth")
-        public_value = observations.get("public_runtime_snapshot")
-        if runtime_newer and runtime_value is not None and public_value is not None and runtime_value != public_value:
-            conflicting_fields.append(field)
-            conflicts.append(
-                {
-                    "field": field,
-                    "runtime_truth_value": runtime_value,
-                    "public_runtime_snapshot_value": public_value,
-                }
-            )
-
-    repair_required = bool(conflicting_fields)
-    return {
-        "rule": (
-            "When reports/runtime_truth_latest.json is newer than reports/public_runtime_snapshot.json, "
-            "runtime truth is the sole authority for live-decision fields."
-        ),
-        "authoritative_source": (
-            "runtime_truth_latest"
-            if runtime_newer
-            else "public_runtime_snapshot"
-        ),
-        "runtime_truth_generated_at": isoformat(runtime_generated_at),
-        "public_runtime_snapshot_generated_at": isoformat(public_generated_at),
-        "runtime_truth_is_newer": runtime_newer,
-        "repair_required": repair_required,
-        "repair_reason": (
-            "public_runtime_conflict_with_newer_runtime_truth"
-            if repair_required
-            else None
-        ),
-        "block_reasons": (
-            ["public_runtime_conflict_with_newer_runtime_truth"]
-            if repair_required
-            else []
-        ),
-        "conflicting_fields": conflicting_fields,
-        "conflicts": conflicts,
-        "selected_values": selected_values,
-    }
-
-
 def build_contribution_flywheel(repo_root: Path) -> dict[str, Any]:
     dispatch_dir = repo_root / "research/dispatches"
     dispatch_markdown_files = 0
@@ -1585,13 +1127,13 @@ def render_improvement_velocity_svg(path: Path, contract: dict[str, Any]) -> Non
     width = 1280
     height = 780
     chart_left = 100
-    chart_top = 270
+    chart_top = 170
     chart_width = 760
-    chart_height = 270
+    chart_height = 360
     panel_x = 900
-    panel_y = 250
+    panel_y = 150
     panel_width = 320
-    panel_height = 390
+    panel_height = 420
 
     timestamps = [parse_timestamp(point["timestamp"]) for point in series if parse_timestamp(point["timestamp"]) is not None]
     forecast_values = [as_number(point.get("best_forecast_arr_pct"), default=0.0) for point in series]
@@ -1642,44 +1184,6 @@ def render_improvement_velocity_svg(path: Path, contract: dict[str, Any]) -> Non
             f"{escape(SOURCE_CLASS_LABELS['btc5_window_rows'])}"
         ),
     ]
-    public_forecast_label = scoreboard["public_forecast_arr_label"]
-    raw_active_forecast_label = format_compact_percent(scoreboard["active_forecast_arr_pct"])
-    run_rate_label = format_compact_percent(scoreboard["realized_btc5_sleeve_run_rate_pct"])
-    stat_cards = [
-        {
-            "x": 80,
-            "y": 144,
-            "width": 250,
-            "height": 88,
-            "label": "PUBLIC FORECAST ARR",
-            "value": public_forecast_label,
-            "note": "Conservative headline for README",
-            "fill": "#0b1d2e",
-            "stroke": "#4df0c7",
-        },
-        {
-            "x": 350,
-            "y": 144,
-            "width": 250,
-            "height": 88,
-            "label": "RAW SELECTED FORECAST",
-            "value": raw_active_forecast_label,
-            "note": "Freshest selected BTC5 forecast artifact",
-            "fill": "#11192e",
-            "stroke": "#58b5ff",
-        },
-        {
-            "x": 620,
-            "y": 144,
-            "width": 250,
-            "height": 88,
-            "label": "LIVE SLEEVE RUN-RATE",
-            "value": run_rate_label,
-            "note": "Trailing BTC5 live-fill annualization",
-            "fill": "#171621",
-            "stroke": "#ffaf45",
-        },
-    ]
 
     svg = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
@@ -1704,15 +1208,6 @@ def render_improvement_velocity_svg(path: Path, contract: dict[str, Any]) -> Non
         f'<text x="80" y="116" font-family="{FONT_STACK}" font-size="17" fill="#bfd0ea">Generated {escape(format_timestamp(contract["generated_at"]))} from runtime truth and the freshest public BTC5 forecast artifact.</text>',
         f'<rect x="{panel_x}" y="{panel_y}" width="{panel_width}" height="{panel_height}" rx="24" fill="#0d1b2e" opacity="0.92" stroke="#27496d"/>',
     ]
-    for card in stat_cards:
-        svg.extend(
-            [
-                f'<rect x="{card["x"]}" y="{card["y"]}" width="{card["width"]}" height="{card["height"]}" rx="22" fill="{card["fill"]}" opacity="0.96" stroke="{card["stroke"]}" stroke-width="2"/>',
-                f'<text x="{card["x"] + 24}" y="{card["y"] + 28}" font-family="{FONT_STACK}" font-size="12" fill="#a8c0dc">{escape(card["label"])}</text>',
-                f'<text x="{card["x"] + 24}" y="{card["y"] + 58}" font-family="{FONT_STACK}" font-size="28" font-weight="700" fill="#f7fafc">{escape(card["value"])}</text>',
-                f'<text x="{card["x"] + 24}" y="{card["y"] + 78}" font-family="{FONT_STACK}" font-size="12" fill="#9cb3ce">{escape(card["note"])}</text>',
-            ]
-        )
 
     for index in range(5):
         y_value = chart_top + (chart_height / 4.0) * index
@@ -1773,14 +1268,15 @@ def render_improvement_velocity_svg(path: Path, contract: dict[str, Any]) -> Non
     )
 
     panel_lines = [
-        ("Public forecast ARR", public_forecast_label),
-        ("Raw selected forecast", raw_active_forecast_label),
-        ("Live sleeve run-rate", run_rate_label),
+        ("Selected source", scoreboard["public_forecast_source_artifact"] or "n/a"),
+        ("Deploy recommendation", scoreboard["deploy_recommendation"]),
         ("Confidence", scoreboard["forecast_confidence_label"]),
         ("Forecast ARR gain", format_compact_percent(velocity["forecast_arr_gain_pct"])),
+        ("Cycles in window", str(velocity["cycles_in_window"])),
         ("Window", f"{velocity['window_hours']:.2f}h"),
         ("Fill growth", f"+{velocity['validation_fill_growth']} rows"),
-        ("Deploy recommendation", scoreboard["deploy_recommendation"]),
+        ("Per day", f"{format_compact_percent(velocity['forecast_arr_gain_pct_per_day'])} / {velocity['validation_fill_growth_per_day']:.1f} fills"),
+        ("Sample", scoreboard["sample_size_annotation"]),
     ]
     panel_text_y = panel_y + 54
     for label, value in panel_lines:
@@ -1806,16 +1302,6 @@ def render_arr_estimate_svg(path: Path, contract: dict[str, Any]) -> None:
     scoreboard = contract["scoreboard"]
     metrics = [
         {
-            "label": "Conservative public forecast ARR",
-            "value": as_number(scoreboard["public_forecast_arr_pct"], default=0.0),
-            "window": "public_disclosure_cap",
-            "confidence": scoreboard["forecast_confidence_label"],
-            "source": scoreboard["public_forecast_source_artifact"] or "n/a",
-            "note": scoreboard["public_forecast_arr_methodology"],
-            "display_value": scoreboard["public_forecast_arr_label"],
-            "color": "#7ef0c9",
-        },
-        {
             "label": "Realized BTC5 sleeve run-rate",
             "value": as_number(scoreboard["realized_btc5_sleeve_run_rate_pct"], default=0.0),
             "window": scoreboard["realized_btc5_sleeve_window_label"],
@@ -1826,27 +1312,24 @@ def render_arr_estimate_svg(path: Path, contract: dict[str, Any]) -> None:
                 f"{scoreboard['realized_btc5_sleeve_window_hours']:.2f}h, "
                 f"{format_usd(scoreboard['realized_btc5_sleeve_window_pnl_usd'])} PnL"
             ),
-            "display_value": format_compact_percent(scoreboard["realized_btc5_sleeve_run_rate_pct"]),
             "color": "#53f3c8",
         },
         {
-            "label": "Raw active forecast ARR",
+            "label": "Active forecast ARR",
             "value": as_number(scoreboard["active_forecast_arr_pct"], default=0.0),
             "window": "selected_public_forecast",
             "confidence": scoreboard["forecast_confidence_label"],
             "source": scoreboard["public_forecast_source_artifact"] or "n/a",
             "note": f"Active package: {scoreboard['active_package'] or 'n/a'}",
-            "display_value": format_compact_percent(scoreboard["active_forecast_arr_pct"]),
             "color": "#58b5ff",
         },
         {
-            "label": "Raw best package forecast ARR",
+            "label": "Best package forecast ARR",
             "value": as_number(scoreboard["best_package_forecast_arr_pct"], default=0.0),
             "window": "selected_public_forecast",
             "confidence": scoreboard["forecast_confidence_label"],
             "source": scoreboard["public_forecast_source_artifact"] or "n/a",
             "note": f"Best package: {scoreboard['best_package'] or 'n/a'}",
-            "display_value": format_compact_percent(scoreboard["best_package_forecast_arr_pct"]),
             "color": "#ff8d5c",
         },
         {
@@ -1856,7 +1339,6 @@ def render_arr_estimate_svg(path: Path, contract: dict[str, Any]) -> None:
             "confidence": scoreboard["forecast_confidence_label"],
             "source": scoreboard["public_forecast_source_artifact"] or "n/a",
             "note": f"Selected forecast validation rows: {scoreboard['validation_live_filled_rows'] or 'n/a'}",
-            "display_value": format_compact_percent(scoreboard["p05_forecast_arr_pct"]),
             "color": "#ffd467",
         },
     ]
@@ -1867,7 +1349,7 @@ def render_arr_estimate_svg(path: Path, contract: dict[str, Any]) -> None:
         max_log = min_log + 1.0
 
     width = 1280
-    height = 900
+    height = 780
     svg = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
         "<defs>",
@@ -1880,7 +1362,7 @@ def render_arr_estimate_svg(path: Path, contract: dict[str, Any]) -> None:
         '<circle cx="150" cy="130" r="140" fill="#22304d" opacity="0.22"/>',
         '<circle cx="1140" cy="650" r="160" fill="#412c1b" opacity="0.25"/>',
         f'<text x="80" y="84" font-family="{FONT_STACK}" font-size="34" font-weight="700" fill="#fafcff">BTC5 Public ARR Surface</text>',
-        f'<text x="80" y="122" font-family="{FONT_STACK}" font-size="17" fill="#c7d4e7">Conservative public headline ARR plus the raw BTC5 sleeve and forecast surfaces from the freshest March 10, 2026 artifacts.</text>',
+        f'<text x="80" y="122" font-family="{FONT_STACK}" font-size="17" fill="#c7d4e7">Linear annualized sleeve run-rate from live-filled BTC5 results, plus the freshest selected BTC5 forecast.</text>',
         '<rect x="80" y="154" width="1120" height="126" rx="26" fill="#0e1523" stroke="#5b3046" opacity="0.95"/>',
         f'<text x="112" y="194" font-family="{FONT_STACK}" font-size="14" fill="#e1a7be">FUND-LEVEL REALIZED ARR CLAIM</text>',
         f'<text x="112" y="234" font-family="{FONT_STACK}" font-size="30" font-weight="700" fill="#fff0f4">{escape(scoreboard["fund_realized_arr_claim_status"].upper())}</text>',
@@ -1913,12 +1395,12 @@ def render_arr_estimate_svg(path: Path, contract: dict[str, Any]) -> None:
                 f'<rect x="{bar_x}" y="{row_y - 18}" width="{length:.2f}" height="22" rx="11" fill="{metric["color"]}" opacity="0.92"/>'
             )
         svg.append(
-            f'<text x="{bar_x + bar_width + 24}" y="{row_y}" font-family="{FONT_STACK}" font-size="22" font-weight="700" fill="#fefefe">{escape(str(metric.get("display_value") or format_compact_percent(metric["value"])))}</text>'
+            f'<text x="{bar_x + bar_width + 24}" y="{row_y}" font-family="{FONT_STACK}" font-size="22" font-weight="700" fill="#fefefe">{escape(format_compact_percent(metric["value"]))}</text>'
         )
-        row_y += 96
+        row_y += 110
 
     svg.append(
-        f'<text x="80" y="836" font-family="{FONT_STACK}" font-size="14" fill="#d5e2f3">'
+        f'<text x="80" y="716" font-family="{FONT_STACK}" font-size="14" fill="#d5e2f3">'
         f'Deploy recommendation: {escape(str(scoreboard["deploy_recommendation"]))} | '
         f'Forecast delta vs active: {escape(format_compact_percent(as_number(scoreboard["forecast_arr_delta_pct"], default=0.0)))} | '
         f'Sample: {escape(scoreboard["sample_size_annotation"])}</text>'
@@ -1973,15 +1455,6 @@ def format_compact_percent(value: float | None) -> str:
     return f"{sign}{numeric:,.1f}%"
 
 
-def format_public_arr_label(value: float | None, *, cap_applied: bool) -> str:
-    numeric = as_number(value, default=0.0) or 0.0
-    if cap_applied and numeric >= PUBLIC_FORECAST_ARR_CAP_PCT:
-        return f"{numeric:,.0f}%+"
-    if abs(numeric) >= 1_000:
-        return f"{numeric:,.0f}%"
-    return f"{numeric:,.1f}%"
-
-
 def wrap_text(text: str, width: int) -> list[str]:
     words = text.split()
     if not words:
@@ -2031,7 +1504,7 @@ def load_json(path: Path) -> dict[str, Any]:
 def load_optional_json(path: Path | None) -> dict[str, Any] | list[Any] | None:
     if path is None or not path.exists():
         return None
-    return load_path(path)
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -2041,58 +1514,106 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
-        payload = fast_loads(line)
+        payload = json.loads(line)
         if isinstance(payload, dict):
             records.append(payload)
     return records
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
-    dump_path_atomic(path, payload, indent=2, sort_keys=True, trailing_newline=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def to_repo_relative(path: Path) -> str:
-    return _to_repo_relative_impl(root=ROOT, path=path)
+    try:
+        return str(path.resolve().relative_to(ROOT.resolve()))
+    except ValueError:
+        return str(path)
 
 
 def parse_timestamp(value: str | datetime | None) -> datetime | None:
-    return _parse_timestamp_impl(value)
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        timestamp = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if timestamp.tzinfo is None:
+        return timestamp.replace(tzinfo=UTC)
+    return timestamp.astimezone(UTC)
 
 
 def isoformat(timestamp: datetime | None) -> str | None:
-    return _isoformat_impl(timestamp)
+    if timestamp is None:
+        return None
+    return timestamp.astimezone(UTC).isoformat()
 
 
 def get_path(payload: dict[str, Any] | None, dotted_path: str) -> Any:
-    return _get_path_impl(payload, dotted_path)
+    current: Any = payload
+    for part in dotted_path.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current
 
 
 def pick_first(*values: Any) -> Any:
-    return _pick_first_impl(*values)
+    for value in values:
+        if value is not None:
+            return value
+    return None
 
 
 def normalize_string_list(value: Any) -> list[str]:
-    return _normalize_string_list_impl(value)
+    if isinstance(value, list):
+        return [str(item) for item in value if item is not None and str(item).strip()]
+    if value is None:
+        return []
+    text = str(value).strip()
+    return [text] if text else []
 
 
 def normalize_confidence_label(value: Any) -> str:
-    return _normalize_confidence_label_impl(value, allowed=set(CONFIDENCE_RANK))
+    text = str(value or "unknown").strip().lower()
+    return text if text in CONFIDENCE_RANK else "unknown"
 
 
 def normalize_deploy_recommendation(value: Any) -> str:
-    return _normalize_deploy_recommendation_impl(value, allowed=set(DEPLOYMENT_RANK))
+    text = str(value or "hold").strip().lower()
+    return text if text in DEPLOYMENT_RANK else "hold"
 
 
 def as_number(value: Any, default: float | None = None) -> float | None:
-    return _as_number_impl(value, default=default)
+    if value is None or value == "":
+        return default
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return default
+    if math.isnan(numeric) or math.isinf(numeric):
+        return default
+    return numeric
 
 
 def as_int(value: Any, default: int = 0) -> int:
-    return _as_int_impl(value, default=default)
+    numeric = as_number(value)
+    if numeric is None:
+        return default
+    return int(round(numeric))
 
 
 def as_int_or_none(value: Any) -> int | None:
-    return _as_int_or_none_impl(value)
+    numeric = as_number(value)
+    if numeric is None:
+        return None
+    return int(round(numeric))
 
 
 def git_count(repo_root: Path, args: list[str]) -> int:

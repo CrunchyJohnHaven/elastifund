@@ -1,0 +1,42 @@
+{
+  "accepted_candidates": [],
+  "accepted_count": 0,
+  "crash_count": 0,
+  "discard_count": 1,
+  "discovery_count": 2,
+  "generated_at": "2026-03-11T15:01:41.113525Z",
+  "keep_count": 1,
+  "paper_count": 0,
+  "promotion_gate_reason_counts": {
+    "no_expected_arr_gain": 1
+  },
+  "promotion_ready_count": 0,
+  "ranking": [
+    {
+      "arr_per_burn_bps_per_usd": 0.0,
+      "arr_per_compute_bps_per_usd": 0.0,
+      "candidate_confidence": 0.725172,
+      "candidate_confidence_score": 0.0,
+      "candidate_edge_bps": 0.0,
+      "candidate_gate_quality": 0.0,
+      "candidate_information_gain_bps": 55.34,
+      "candidate_label": "baseline",
+      "candidate_stage": "discovery",
+      "candidate_stale_reasons": [],
+      "expected_arr_delta": 0.0,
+      "expected_improvement_velocity": 0.0,
+      "model_tier": "routine_ingestion",
+      "packet_json": "/private/var/folders/50/d2807qtd1xd1n_xs934bdn740000gn/T/pytest-of-johnbradley/pytest-120/test_lane_runner_logs_keep_the0/packets/run_0001_baseline.json",
+      "promotion_action": "hold",
+      "promotion_gate_reasons": [
+        "no_expected_arr_gain"
+      ],
+      "run_id": 1
+    }
+  ],
+  "rows_considered": 2,
+  "shadow_count": 0,
+  "sim_count": 0,
+  "stale_count": 0,
+  "window_minutes": 10080.0
+}

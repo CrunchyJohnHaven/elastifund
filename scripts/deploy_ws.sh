@@ -13,22 +13,6 @@
 
 set -euo pipefail
 
-usage() {
-    cat <<'EOF'
-Usage:
-  ./scripts/deploy_ws.sh [user@host]
-
-Description:
-  Deploy WebSocket-specific bot/infra files and manage the jj-ws service.
-  Defaults target to $VPS_USER@$VPS_IP from .env or environment.
-EOF
-}
-
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-    usage
-    exit 0
-fi
-
 SSH_KEY="${LIGHTSAIL_KEY:-$HOME/.ssh/lightsail.pem}"
 VPS="${1:-${VPS_USER:-ubuntu}@${VPS_IP:?Set VPS_IP in .env}}"
 BOT_DIR="/home/ubuntu/polymarket-trading-bot"

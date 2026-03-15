@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-label="BTC5 continuation ARR progress">
+<rect width="1280" height="760" fill="#FBF7EE" />
+<text x="90" y="42" font-size="28" font-weight="700" fill="#1E1C18">BTC5 Continuation ARR</text>
+<text x="90" y="66" font-size="16" fill="#5F5A50">Percentage-only strategy estimate. Latest active -312,655.7%; latest best 1,726,721.9%; delta 2,039,377.6%.</text>
+<text x="90" y="66" font-size="18" font-weight="600" fill="#1E1C18">ARR Estimate</text>
+<line x1="90.00" y1="80" x2="90.00" y2="420" stroke="#E7E0D4" stroke-width="1" />
+<line x1="185.83" y1="80" x2="185.83" y2="420" stroke="#E7E0D4" stroke-width="1" />
+<line x1="281.67" y1="80" x2="281.67" y2="420" stroke="#E7E0D4" stroke-width="1" />
+<line x1="377.50" y1="80" x2="377.50" y2="420" stroke="#E7E0D4" stroke-width="1" />
+<line x1="473.33" y1="80" x2="473.33" y2="420" stroke="#E7E0D4" stroke-width="1" />
+<line x1="569.17" y1="80" x2="569.17" y2="420" stroke="#E7E0D4" stroke-width="1" />
+<line x1="665.00" y1="80" x2="665.00" y2="420" stroke="#E7E0D4" stroke-width="1" />
+<line x1="760.83" y1="80" x2="760.83" y2="420" stroke="#E7E0D4" stroke-width="1" />
+<line x1="856.67" y1="80" x2="856.67" y2="420" stroke="#E7E0D4" stroke-width="1" />
+<line x1="952.50" y1="80" x2="952.50" y2="420" stroke="#E7E0D4" stroke-width="1" />
+<line x1="1048.33" y1="80" x2="1048.33" y2="420" stroke="#E7E0D4" stroke-width="1" />
+<line x1="1144.17" y1="80" x2="1144.17" y2="420" stroke="#E7E0D4" stroke-width="1" />
+<line x1="1240.00" y1="80" x2="1240.00" y2="420" stroke="#E7E0D4" stroke-width="1" />
+<line x1="90" y1="420.00" x2="1240" y2="420.00" stroke="#E7E0D4" stroke-width="1" />
+<line x1="90" y1="250.00" x2="1240" y2="250.00" stroke="#E7E0D4" stroke-width="1" />
+<line x1="90" y1="80.00" x2="1240" y2="80.00" stroke="#E7E0D4" stroke-width="1" />
+<text x="78" y="425.00" text-anchor="end" font-size="16" fill="#5F5A50">-721,772.4%</text>
+<text x="78" y="255.00" text-anchor="end" font-size="16" fill="#5F5A50">4,451,981.0%</text>
+<text x="78" y="85.00" text-anchor="end" font-size="16" fill="#5F5A50">9,625,734.3%</text>
+<polyline fill="none" stroke="#5B7188" stroke-width="2.0" points="90.00,261.54 185.83,261.54 281.67,261.54 377.50,255.34 473.33,255.34 569.17,255.34 665.00,243.20 760.83,236.34 856.67,236.24 952.50,236.24 1048.33,236.24 1144.17,236.24 1240.00,236.24" />
+<polyline fill="none" stroke="#16324F" stroke-width="3.5" points="90.00,261.54 185.83,261.54 281.67,261.54 377.50,255.34 473.33,255.34 569.17,255.34 665.00,243.20 760.83,236.34 856.67,236.24 952.50,267.40 1048.33,396.28 1144.17,420.00 1240.00,406.56" />
+<polyline fill="none" stroke="#C56A1A" stroke-width="3.5" points="90.00,247.62 185.83,247.62 281.67,247.62 377.50,248.87 473.33,248.87 569.17,248.87 665.00,239.88 760.83,194.04 856.67,185.42 952.50,202.40 1048.33,80.00 1144.17,321.21 1240.00,339.55" />
+<text x="1240" y="66" text-anchor="end" font-size="15" fill="#16324F">Active</text>
+<text x="1170" y="66" text-anchor="end" font-size="15" fill="#C56A1A">Best candidate</text>
+<text x="1010" y="66" text-anchor="end" font-size="15" fill="#5B7188">Frontier active</text>
+<text x="90" y="486" font-size="18" font-weight="600" fill="#1E1C18">Best minus Active</text>
+<line x1="90" y1="680.00" x2="1240" y2="680.00" stroke="#E7E0D4" stroke-width="1" />
+<line x1="90" y1="680.00" x2="1240" y2="680.00" stroke="#E7E0D4" stroke-width="1" />
+<line x1="90" y1="500.00" x2="1240" y2="500.00" stroke="#E7E0D4" stroke-width="1" />
+<text x="78" y="685.00" text-anchor="end" font-size="16" fill="#5F5A50">0.0%</text>
+<text x="78" y="685.00" text-anchor="end" font-size="16" fill="#5F5A50">0.0%</text>
+<text x="78" y="505.00" text-anchor="end" font-size="16" fill="#5F5A50">9,625,734.3%</text>
+<polyline fill="none" stroke="#1E8A5C" stroke-width="3.0" points="90.00,672.08 185.83,672.08 281.67,672.08 377.50,676.32 473.33,676.32 569.17,676.32 665.00,678.11 760.83,655.93 856.67,651.08 952.50,643.01 1048.33,500.00 1144.17,623.78 1240.00,641.86" />
+<line x1="90" y1="680.00" x2="1240" y2="680.00" stroke="#8E8A80" stroke-width="1.5" stroke-dasharray="4 4" />
+<circle cx="1240.00" cy="406.56" r="6" fill="#16324F" />
+<circle cx="1240.00" cy="339.55" r="6" fill="#C56A1A" />
+<circle cx="1240.00" cy="641.86" r="6" fill="#1E8A5C" />
+<text x="1240" y="714" text-anchor="end" font-size="15" fill="#5F5A50">Last cycle 13 at 2026-03-10T16:29:22.606038+00:00</text>
+</svg>

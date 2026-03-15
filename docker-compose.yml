@@ -1,0 +1,102 @@
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-8.15.5}
+    container_name: elastifund-elasticsearch
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "true"
+      xpack.security.http.ssl.enabled: "false"
+      xpack.security.enrollment.enabled: "false"
+      xpack.license.self_generated.type: basic
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-changeme}
+      ES_JAVA_OPTS: -Xms1g -Xmx1g
+    ports:
+      - "${ELASTICSEARCH_PORT:-9200}:9200"
+    volumes:
+      - elastifund-es-data:/usr/share/elasticsearch/data
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:${ELASTIC_VERSION:-8.15.5}
+    container_name: elastifund-kibana
+    environment:
+      SERVER_NAME: kibana
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      ELASTICSEARCH_USERNAME: elastic
+      ELASTICSEARCH_PASSWORD: ${ELASTIC_PASSWORD:-changeme}
+      XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY: ${KIBANA_ENCRYPTION_KEY:-changemechangemechangemechangeme}
+    depends_on:
+      - elasticsearch
+    ports:
+      - "${KIBANA_PORT:-5601}:5601"
+
+  kafka:
+    image: bitnami/kafka:3.7
+    container_name: elastifund-kafka
+    environment:
+      KAFKA_CFG_NODE_ID: 0
+      KAFKA_CFG_PROCESS_ROLES: controller,broker
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_KRAFT_CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    ports:
+      - "${KAFKA_PORT:-9092}:9092"
+
+  redis:
+    image: redis:7-alpine
+    container_name: elastifund-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+  hub-gateway:
+    build:
+      context: .
+      dockerfile: deploy/init/Dockerfile.hub
+    container_name: elastifund-hub-gateway
+    env_file:
+      - .env
+    depends_on:
+      - elasticsearch
+      - kibana
+      - kafka
+      - redis
+    ports:
+      - "${HUB_GATEWAY_PORT:-8080}:8080"
+    volumes:
+      - ./state/elastifund:/app/state/elastifund
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  bootstrap-agent:
+    build:
+      context: .
+      dockerfile: deploy/init/Dockerfile.agent
+    container_name: elastifund-bootstrap-agent
+    env_file:
+      - .env
+    depends_on:
+      - hub-gateway
+    command:
+      [
+        "python",
+        "-m",
+        "agent.template.main",
+        "--daemon",
+        "--env-path",
+        "/app/.env",
+        "--state-path",
+        "/app/state/elastifund/bootstrap-agent.json"
+      ]
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./state/elastifund:/app/state/elastifund
+
+volumes:
+  elastifund-es-data:
