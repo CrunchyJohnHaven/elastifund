@@ -1,0 +1,13 @@
+[Unit]
+Description=Elastifund Kalshi Weather Trader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/polymarket-trading-bot
+ExecStart=/bin/bash /home/ubuntu/polymarket-trading-bot/scripts/run_kalshi_weather_auto.sh
+StandardOutput=journal
+StandardError=journal
+

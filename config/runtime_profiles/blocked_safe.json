@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "description": "Default repo-safe posture. Launch is blocked, paper mode stays on, and the runtime should not submit orders.",
+  "mode": {
+    "execution_mode": "blocked",
+    "paper_trading": true,
+    "allow_order_submission": false,
+    "launch_gate": "blocked"
+  },
+  "feature_flags": {
+    "enable_llm_signals": true,
+    "enable_wallet_flow": false,
+    "enable_lmsr": false,
+    "enable_cross_platform_arb": false,
+    "fast_flow_only": false,
+    "enable_a6_shadow": false,
+    "enable_a6_live": false,
+    "enable_b1_shadow": false,
+    "enable_b1_live": false,
+    "enable_a6_embedded_shadow_scanner": true
+  },
+  "risk_limits": {
+    "max_position_usd": 5.0,
+    "max_daily_loss_usd": 5.0,
+    "max_exposure_pct": 0.1,
+    "kelly_fraction": 0.125,
+    "max_kelly_fraction": 0.25,
+    "scan_interval_seconds": 300,
+    "max_open_positions": 5,
+    "min_edge": 0.05,
+    "initial_bankroll": 250.0
+  },
+  "market_filters": {
+    "max_resolution_hours": 48.0,
+    "min_category_priority": 1,
+    "category_priorities": {
+      "politics": 3,
+      "weather": 3,
+      "economic": 2,
+      "crypto": 0,
+      "sports": 0,
+      "financial_speculation": 0,
+      "geopolitical": 1,
+      "fed_rates": 0,
+      "unknown": 0
+    }
+  },
+  "signal_thresholds": {
+    "yes_threshold": 0.15,
+    "no_threshold": 0.05,
+    "lmsr_entry_threshold": 0.05
+  },
+  "combinatorial_thresholds": {
+    "a6_buy_threshold": 0.97,
+    "a6_unwind_threshold": 1.03,
+    "b1_implication_threshold": 0.03,
+    "stale_book_max_age_seconds": 45,
+    "fill_timeout_seconds": 3.0,
+    "cancel_replace_count": 1,
+    "max_notional_per_leg_usd": 5.0,
+    "arb_budget_usd": 100.0,
+    "merge_min_notional_usd": 20.0,
+    "promotion_min_signals": 20,
+    "required_capture_rate": 0.5,
+    "required_classification_accuracy": 0.8,
+    "max_false_positive_rate": 0.05,
+    "max_consecutive_rollbacks": 3,
+    "constraint_db_path": "data/constraint_arb.db",
+    "dep_graph_db_path": "data/dep_graph.sqlite"
+  },
+  "microstructure_thresholds": {
+    "vpin_bucket_size": 500.0,
+    "vpin_window_size": 10,
+    "vpin_toxic_threshold": 0.75,
+    "vpin_safe_threshold": 0.25,
+    "ws_heartbeat_interval_seconds": 10.0,
+    "ws_rest_poll_interval_seconds": 5.0
+  }
+}

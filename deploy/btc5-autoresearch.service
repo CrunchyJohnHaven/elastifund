@@ -1,0 +1,19 @@
+# DISABLED 2026-03-15: Legacy control plane superseded by btc5-autoresearch-v3.
+# This service wrote state/btc5_autoresearch.env which the bot no longer reads.
+# The v3 service (bot/autoresearch_loop.py) is the sole live control plane via
+# config/autoresearch_overrides.json.
+# To re-enable, remove Conflicts= and restore ExecStart.
+[Unit]
+Description=BTC5 Autoresearch Cycle (DISABLED — use btc5-autoresearch-v3)
+After=network-online.target
+Wants=network-online.target
+Conflicts=btc5-autoresearch-v3.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/polymarket-trading-bot
+ExecStart=/bin/true
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=btc5autoresearch

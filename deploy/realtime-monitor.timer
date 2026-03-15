@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Elastifund monitor every 5 minutes
+Requires=realtime-monitor.service
+
+[Timer]
+# Fire at :02 past every 5 minutes (offset from backfill at :01, trigger at :03).
+OnCalendar=*-*-* *:02/5:00
+AccuracySec=10
+
+[Install]
+WantedBy=timers.target

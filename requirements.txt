@@ -1,0 +1,40 @@
+# Core runtime dependencies for the shared repo-root workspace.
+# Canonical install path:
+#   python3 -m pip install -r requirements-dev.txt
+# (Install this file directly only for runtime-only environments.)
+
+# Exchange and HTTP clients
+aiohttp
+httpx
+py-clob-client
+python-dotenv
+requests
+websockets
+
+# App and storage layers
+aiosqlite
+alembic
+asyncpg
+elastic-apm
+elasticsearch>=8.0.0
+fastapi>=0.111,<1.0
+greenlet
+pydantic-settings
+python-json-logger
+sqlalchemy
+structlog
+uvicorn[standard]>=0.30,<1.0
+
+# Research and modeling
+anthropic
+matplotlib
+msgspec
+numpy
+openai
+pandas
+scikit-learn
+scipy
+xgboost
+
+# Local config and simulation support
+PyYAML

@@ -1,0 +1,18 @@
+# Canonical developer bootstrap for the monorepo.
+# Run from the repository root:
+#   python3 -m pip install -r requirements-dev.txt
+# Includes:
+#   - requirements.txt (repo-root runtime)
+#   - hub/requirements.txt (hub service runtime)
+#   - root test/development extras
+
+-r requirements.txt
+-r hub/requirements.txt
+
+# Test runner and plugins used across root and nested suites.
+pytest
+pytest-asyncio
+pytest-cov
+
+# Make the edge-backlog package importable from the shared repo-root env.
+-e ./edge-backlog

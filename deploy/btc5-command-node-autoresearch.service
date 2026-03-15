@@ -1,0 +1,16 @@
+[Unit]
+Description=BTC5 Command-Node Mutation Cycle
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/polymarket-trading-bot
+ExecStart=/bin/bash -lc 'mkdir -p state reports/autoresearch && export PYTHONPATH=/home/ubuntu/polymarket-trading-bot:/home/ubuntu/polymarket-trading-bot/bot:/home/ubuntu/polymarket-trading-bot/polymarket-bot && /usr/bin/python3 scripts/run_btc5_command_node_mutation_cycle.py'
+Restart=on-failure
+RestartSec=60
+TimeoutStartSec=1800
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=btc5commandnodeautoresearch

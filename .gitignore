@@ -1,0 +1,196 @@
+# Secrets & credentials
+.env
+.env.*
+!.env.example
+!.env.live.template
+
+# Alpha artifacts — live trading edge, never public
+config/autoresearch_overrides.json
+config/btc5_strategy.env
+config/*.env
+state/*.env
+state/*.json
+state/*.pid
+*.env
+polymarket-bot.env
+Polymarket_Bot_Credentials.docx
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.csr
+*.keystore
+jj_state.json
+*.local.json
+
+# Handoff docs containing live credentials — never commit
+CLAUDE_CODE_HANDOFF.md
+JJ_CONTEXT.md
+JJ_DEPLOY.md
+MIGRATION_BRIEFING.md
+COMMAND_NODE_*.md
+JJ_RESOURCE_INVENTORY.md
+ResearchContext.md
+
+# Investor documents — private
+*Investor*.docx
+*investor*.docx
+*Subscription*.docx
+*Private_Placement*.docx
+*Fund_Pitch*.docx
+*Fund_Overview*.pdf
+*Credentials*.docx
+*.doc
+*.docx
+
+# Spec docs with implementation details — keep private until ready
+LLM_ENSEMBLE_SPEC.md
+SMART_WALLET_SPEC.md
+SystemDesignResearch_*.md
+STRATEGY_REPORT.md
+REPLIT_DASHBOARD*.md
+REPLIT_BUILD*.md
+REPLIT_WEBSITE_CURRENT.pdf
+!REPLIT_NEXT_BUILD.md
+!docs/REPLIT_BUILD_GUIDE.md
+DISPATCH_LIBRARY.md
+
+# Databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+venv/
+.venv/
+env/
+!build/
+build/*
+!build/index.html
+!build/README.md
+
+# Testing
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.pytest_cache/
+pytest-cache-files-*/
+*.cover
+.hypothesis/
+
+# Tooling caches
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.tox/
+.nox/
+.cache/
+.ipynb_checkpoints/
+.direnv/
+.envrc
+.python-version
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.tmp
+*.temp
+*.pid
+tmp/
+temp/
+
+# Logs
+*.log
+*.json.log
+.fuse_hidden*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+
+# Docker (local only)
+docker-compose.override.yml
+infra/es-data/
+infra/kibana-data/
+infra/generated-credentials/
+infra/*.token
+infra/*.credentials
+infra/*-credentials.txt
+infra/*-password.txt
+
+# Claude Code internal
+.claude/
+
+# Archive (may contain old .env copies)
+archive/*
+!archive/README.md
+
+# Large binary outputs
+simulator/output/*.json
+simulator/output/*.csv
+backtest/results/*.json
+backtest/charts/*.png
+backtest/data/*.json
+!backtest/data/historical_markets_532.json
+!backtest/data/claude_cache.json
+!backtest/data/frozen_data_manifest.json
+!backtest/data/README.md
+!backtest/data/.gitignore
+polymarket-bot/backtest_output/
+polymarket-bot/snapshots/*
+!polymarket-bot/snapshots/README.md
+!polymarket-bot/snapshots/.gitignore
+research/dispatches/*
+!research/dispatches/README.md
+!research/dispatches/DISPATCH_097_competitive_inventory_benchmark_blueprint.md
+research/prompts/
+
+# Logs and runtime data
+logs/*
+!logs/README.md
+reports/*
+!reports/README.md
+!reports/improvement_velocity.json
+!reports/improvement_velocity.svg
+!reports/arr_estimate.svg
+!reports/jjn_public_report.json
+!reports/manifest_latest.json
+!reports/retention_policy.json
+!reports/normalization_plan_latest.json
+!reports/tools/
+!reports/tools/prune_timestamped_snapshots.py
+!reports/tools/suggest_reports_layout.py
+!reports/tools/apply_reports_normalization.py
+!reports/tools/render_reports_manifest.py
+!reports/tools/collapse_top_level_symlinks.py
+data/*
+!data/README.md
+!polymarket-bot/src/data/
+!polymarket-bot/src/data/*.py
+!polymarket-bot/src/data/ingest/
+!polymarket-bot/src/data/ingest/*.py
+!inventory/data/
+!inventory/data/*.json
+state/elastifund/
+state/local/
+data/kalshi_rsa_private.pem
+data/*.db
+data/backups/

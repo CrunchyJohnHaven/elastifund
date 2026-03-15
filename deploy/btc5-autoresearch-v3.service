@@ -1,0 +1,15 @@
+[Unit]
+Description=BTC5 Autoresearch v3 — Closed-Loop Self-Improvement
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/polymarket-trading-bot
+Environment="PYTHONPATH=/home/ubuntu/polymarket-trading-bot:/home/ubuntu/polymarket-trading-bot/bot"
+EnvironmentFile=/home/ubuntu/polymarket-trading-bot/.env
+ExecStart=/usr/bin/flock -n /tmp/elastifund_autoresearch.lock /usr/bin/python3 -m bot.autoresearch_loop
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=btc5autoresearch-v3

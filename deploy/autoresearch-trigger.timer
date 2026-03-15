@@ -1,0 +1,11 @@
+[Unit]
+Description=Run autoresearch trigger every 5 minutes
+Requires=autoresearch-trigger.service
+
+[Timer]
+# Fire at :03 past every 5 minutes (offset to avoid races with monitor at :02).
+OnCalendar=*-*-* *:03/5:00
+AccuracySec=10
+
+[Install]
+WantedBy=timers.target

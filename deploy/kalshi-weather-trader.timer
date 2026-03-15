@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Elastifund Kalshi Weather Trader every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=kalshi-weather-trader.service
+
+[Install]
+WantedBy=timers.target
+

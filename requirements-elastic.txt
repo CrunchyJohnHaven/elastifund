@@ -1,0 +1,8 @@
+# Elastic-only dependency overlay for lightweight dashboard/report work.
+# This is intentionally narrow and does not replace requirements-dev.txt.
+# Install with:
+#   python3 -m pip install -r requirements-elastic.txt
+
+elasticsearch>=8.0.0
+elastic-apm
+python-json-logger

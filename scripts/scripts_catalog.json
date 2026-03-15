@@ -1,0 +1,165 @@
+{
+  "title": "Scripts Index",
+  "generated_from": "scripts/scripts_catalog.json",
+  "command_path_rule": [
+    "Prefer `make <target>` when available.",
+    "Use `python3 scripts/<tool>.py` (or `bash scripts/<tool>.sh`) only when no Make target exists.",
+    "Prefer one command per workflow and treat legacy wrappers as compatibility shims."
+  ],
+  "table_sections": [
+    {
+      "heading": "Onboarding And Environment",
+      "columns": [
+        "Workflow",
+        "Canonical command",
+        "Script entrypoint"
+      ],
+      "rows": [
+        [
+          "Setup diagnostics",
+          "`make doctor`",
+          "`python3 scripts/doctor.py`"
+        ],
+        [
+          "Bootstrap `.env` + runtime defaults",
+          "`make onboard`",
+          "`python3 scripts/elastifund_setup.py --non-interactive`"
+        ],
+        [
+          "Quick local start",
+          "`make quickstart`",
+          "`python3 scripts/quickstart.py`"
+        ],
+        [
+          "Preflight check",
+          "`make preflight`",
+          "`python3 scripts/elastifund_setup.py --check`"
+        ]
+      ]
+    },
+    {
+      "heading": "Verification And Hygiene",
+      "columns": [
+        "Workflow",
+        "Canonical command",
+        "Script entrypoint"
+      ],
+      "rows": [
+        [
+          "Repo hygiene gate",
+          "`make hygiene`",
+          "`python3 scripts/check_repo_hygiene.py` + `python3 scripts/check_docs_indexes.py` + `python3 scripts/check_static_routes.py` + `python3 scripts/check_shell_help.py` + `python3 scripts/render_scripts_index.py --check` + `python3 scripts/render_deprecation_candidates.py --check`"
+        ],
+        [
+          "Root regression matrix",
+          "`make test`",
+          "`python3 scripts/run_root_tests.py`"
+        ],
+        [
+          "Full verify path",
+          "`make verify`",
+          "`make hygiene && make test && make test-polymarket`"
+        ],
+        [
+          "Non-trading-only tests",
+          "`make test-nontrading`",
+          "`python3 -m pytest nontrading/tests -q`"
+        ],
+        [
+          "Non-trading smoke",
+          "`make smoke-nontrading`",
+          "`python3 scripts/nontrading_smoke.py`"
+        ],
+        [
+          "Public messaging scan",
+          "`make lint-messaging`",
+          "`python3 scripts/lint_messaging.py`"
+        ],
+        [
+          "Changed-path test selection map",
+          "`make test-select`",
+          "`python3 scripts/select_test_targets.py`"
+        ],
+        [
+          "Fast docs/static verify",
+          "`make verify-static`",
+          "`python3 scripts/check_docs_indexes.py` + `python3 scripts/check_static_routes.py` + dispatch/pointer checks"
+        ],
+        [
+          "Changed-path test routing helper",
+          "`make test-select`",
+          "`python3 scripts/select_test_targets.py`"
+        ]
+      ]
+    },
+    {
+      "heading": "Deploy, Remote Ops, And Runtime Control",
+      "columns": [
+        "Workflow",
+        "Canonical command",
+        "Notes"
+      ],
+      "rows": [
+        [
+          "Safe release manifest + deploy flow",
+          "`python3 scripts/deploy_release_bundle.py --help`",
+          "Manifest-checked deploy bundle path"
+        ],
+        [
+          "Direct VPS sync deploy",
+          "`bash scripts/deploy.sh --help`",
+          "Compatibility deploy wrapper used by multiple runbooks"
+        ],
+        [
+          "Mac\u2194VPS bridge cycle",
+          "`bash scripts/bridge.sh --help`",
+          "Pull-before-push remote cycle automation"
+        ],
+        [
+          "BTC5 remote status check",
+          "`bash scripts/btc5_status.sh --help`",
+          "Reads target from `.env`/env unless host arg supplied"
+        ],
+        [
+          "WebSocket-only deploy",
+          "`bash scripts/deploy_ws.sh --help`",
+          "Scoped jj-ws deploy lane"
+        ],
+        [
+          "BTC5 service launcher",
+          "`bash scripts/run_btc5_service.sh --help`",
+          "Used by BTC5 service units"
+        ],
+        [
+          "Runtime mode/profile edits",
+          "`python3 scripts/runtime_controls.py --help`",
+          "Profile/override control"
+        ],
+        [
+          "Remote cycle status artifact",
+          "`python3 scripts/write_remote_cycle_status.py --help`",
+          "Refreshes remote cycle status contract"
+        ]
+      ]
+    }
+  ],
+  "bullet_sections": [
+    {
+      "heading": "Research And Lane Automation",
+      "items": [
+        "`run_*` scripts: lane dispatches and one-shot operators (cross-asset, audits, collectors, autoresearch).",
+        "`render_*` scripts: artifact/report rendering only.",
+        "`build_*` scripts: gold sets and benchmark fixtures.",
+        "`generate_*` scripts: report/brief generation.",
+        "BTC5 lab surface: `run_btc5_autoresearch_cycle.py`, `run_btc5_autoresearch_loop.py`, `btc5_hypothesis_lab.py`, `btc5_regime_policy_lab.py`, `render_btc5_arr_progress.py`, `render_btc5_hypothesis_frontier.py`."
+      ]
+    },
+    {
+      "heading": "Shell Wrapper Notes",
+      "items": [
+        "`scripts/deploy.sh` and `scripts/deploy_release_bundle.py` are both active. The Python bundle path is the manifest-safe deploy lane; `deploy.sh` remains an explicit compatibility wrapper for existing VPS workflows.",
+        "`scripts/deploy_ws.sh` is a scoped WebSocket deployment utility, not a replacement for full deploy."
+      ]
+    }
+  ]
+}

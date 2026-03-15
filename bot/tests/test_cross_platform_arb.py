@@ -1,0 +1,546 @@
+"""
+Tests for bot/cross_platform_arb.py — Cross-Platform Arbitrage Scanner.
+
+Covers: title normalization, keyword extraction, similarity scoring,
+Kalshi fee calculation, arb detection, signal format, and market parsing.
+"""
+
+import asyncio
+import json
+import math
+import pytest
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+# Ensure bot/ is importable
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+import cross_platform_arb as arb_module
+from cross_platform_arb import (
+    ArbOpportunity,
+    MarketListing,
+    arb_to_signal,
+    build_matched_surface_artifact,
+    detect_arb,
+    extract_keywords,
+    get_signals_for_engine,
+    get_signals_for_engine_async,
+    kalshi_maker_fee,
+    kalshi_taker_fee,
+    keyword_similarity,
+    normalize_title,
+    title_similarity,
+)
+from orchestration.venue_router import RouteDecision, RouteRejection, SharedRiskBudget, VenueRouteCandidate, route_opportunity
+
+
+# ===== Title Normalization =====
+
+class TestNormalizeTitle:
+    def test_lowercase(self):
+        assert "hello world" in normalize_title("Hello World")
+
+    def test_strips_punctuation(self):
+        result = normalize_title("Will it happen?!.")
+        assert "?" not in result
+        assert "!" not in result
+        assert "." not in result
+
+    def test_removes_filler_words(self):
+        result = normalize_title("Will the president be in the house?")
+        assert "will" not in result.split()
+        assert "the" not in result.split()
+        assert "be" not in result.split()
+        assert "president" in result
+
+    def test_strips_markdown_bold(self):
+        result = normalize_title("Will **high temp** be above 70?")
+        assert "**" not in result
+        assert "high" in result
+        assert "temp" in result
+
+
+# ===== Keyword Extraction =====
+
+class TestExtractKeywords:
+    def test_basic(self):
+        kw = extract_keywords("Will Trump win the 2028 Presidential Election?")
+        assert "trump" in kw
+        assert "presidential" in kw
+        assert "election" in kw
+        # "will" and "the" should be removed
+        assert "will" not in kw
+        assert "the" not in kw
+
+    def test_removes_dates(self):
+        kw = extract_keywords("CPI in March 2026")
+        assert "cpi" in kw
+        assert "2026" not in kw
+        assert "march" not in kw
+
+    def test_removes_short_words(self):
+        kw = extract_keywords("Is it a go or no?")
+        # Words <= 2 chars should be removed
+        assert "is" not in kw
+        assert "it" not in kw
+
+    def test_markdown_stripped(self):
+        kw = extract_keywords("**high temp in NYC** above 70")
+        assert "high" in kw
+        assert "temp" in kw
+        assert "**" not in str(kw)
+
+
+# ===== Similarity Scoring =====
+
+class TestSimilarity:
+    def test_identical_titles(self):
+        score = title_similarity(
+            "Will Trump win the 2028 election?",
+            "Will Trump win the 2028 election?"
+        )
+        assert score > 0.95
+
+    def test_similar_titles_different_phrasing(self):
+        score = title_similarity(
+            "Will Alexandria Ocasio-Cortez win the 2028 Democratic presidential nomination?",
+            "Will Alexandria Ocasio-Cortez be the Democratic Presidential nominee in 2028?"
+        )
+        assert score > 0.65
+
+    def test_unrelated_titles(self):
+        score = title_similarity(
+            "Will Bitcoin hit $100k?",
+            "Will it rain in NYC tomorrow?"
+        )
+        # These share some sequence similarity but should score well below match threshold
+        assert score < 0.55
+
+    def test_keyword_similarity_identical(self):
+        assert keyword_similarity({"a", "b", "c"}, {"a", "b", "c"}) == 1.0
+
+    def test_keyword_similarity_no_overlap(self):
+        assert keyword_similarity({"a", "b"}, {"c", "d"}) == 0.0
+
+    def test_keyword_similarity_partial(self):
+        score = keyword_similarity({"trump", "election", "2028"}, {"trump", "president", "2028"})
+        assert 0.3 < score < 0.7  # 2/4 overlap
+
+    def test_keyword_similarity_empty(self):
+        assert keyword_similarity(set(), {"a"}) == 0.0
+        assert keyword_similarity({"a"}, set()) == 0.0
+
+
+# ===== Kalshi Fee Calculation =====
+
+class TestKalshiFees:
+    def test_taker_fee_50_cents(self):
+        """At 50c, fee = 0.07 * 0.5 * 0.5 = 0.0175"""
+        fee = kalshi_taker_fee(50)
+        assert abs(fee - 0.0175) < 0.001
+
+    def test_taker_fee_extreme_prices(self):
+        """Near 0 or 100, fee approaches 0 (price*(1-price) is small)."""
+        fee_low = kalshi_taker_fee(5)
+        fee_high = kalshi_taker_fee(95)
+        assert fee_low < 0.005
+        assert fee_high < 0.005
+
+    def test_taker_fee_multiple_contracts(self):
+        fee_1 = kalshi_taker_fee(50, contracts=1)
+        fee_5 = kalshi_taker_fee(50, contracts=5)
+        assert abs(fee_5 - fee_1 * 5) < 0.001
+
+    def test_maker_fee_zero(self):
+        assert kalshi_maker_fee(50) == 0.0
+        assert kalshi_maker_fee(99) == 0.0
+
+
+# ===== Market Listing =====
+
+class TestMarketListing:
+    def test_creation(self):
+        m = MarketListing(
+            platform="polymarket",
+            market_id="test-1",
+            title="Test Market?",
+            normalized_title="test market",
+            yes_bid=0.45,
+            yes_ask=0.47,
+            no_bid=0.53,
+            no_ask=0.55,
+            volume=10000,
+        )
+        assert m.platform == "polymarket"
+        assert m.market_id == "test-1"
+
+
+# ===== Arb Detection =====
+
+def _make_listing(platform, market_id, title, yes_bid, yes_ask, no_bid, no_ask):
+    return MarketListing(
+        platform=platform,
+        market_id=market_id,
+        title=title,
+        normalized_title=normalize_title(title),
+        yes_bid=yes_bid,
+        yes_ask=yes_ask,
+        no_bid=no_bid,
+        no_ask=no_ask,
+        volume=1000,
+    )
+
+
+class TestArbDetection:
+    def test_no_arb_fair_prices(self):
+        """When prices sum to 1.0, no arb exists."""
+        poly = _make_listing("polymarket", "p1", "Test?", 0.50, 0.52, 0.48, 0.50)
+        kalshi = _make_listing("kalshi", "k1", "Test?", 0.50, 0.52, 0.48, 0.50)
+        arb = detect_arb(poly, kalshi, match_score=0.85)
+        assert arb is None
+
+    def test_arb_detected_poly_yes_kalshi_no(self):
+        """Poly YES cheap + Kalshi NO cheap = arb."""
+        poly = _make_listing("polymarket", "p1", "Test?", 0.10, 0.12, 0.88, 0.90)
+        kalshi = _make_listing("kalshi", "k1", "Test?", 0.20, 0.22, 0.78, 0.80)
+        # Poly YES ask=0.12, Kalshi NO ask=0.80 → total=0.92 < 1.0
+        arb = detect_arb(poly, kalshi, match_score=0.85)
+        assert arb is not None
+        assert arb.direction == "poly_yes_kalshi_no"
+        assert arb.total_cost < 1.0
+        assert arb.net_profit > 0
+
+    def test_arb_detected_poly_no_kalshi_yes(self):
+        """Poly NO cheap + Kalshi YES cheap = arb."""
+        poly = _make_listing("polymarket", "p1", "Test?", 0.80, 0.82, 0.18, 0.20)
+        kalshi = _make_listing("kalshi", "k1", "Test?", 0.70, 0.72, 0.28, 0.30)
+        # Poly NO ask=0.20, Kalshi YES ask=0.72 → total=0.92 < 1.0
+        arb = detect_arb(poly, kalshi, match_score=0.85)
+        assert arb is not None
+        assert arb.direction == "poly_no_kalshi_yes"
+        assert arb.total_cost < 1.0
+        assert arb.net_profit > 0
+
+    def test_arb_fees_kill_small_edge(self):
+        """When edge is too small, fees eat the profit."""
+        poly = _make_listing("polymarket", "p1", "Test?", 0.48, 0.50, 0.50, 0.52)
+        kalshi = _make_listing("kalshi", "k1", "Test?", 0.48, 0.50, 0.50, 0.52)
+        # Poly YES=0.50 + Kalshi NO=0.52 = 1.02 > 1.0 → no arb
+        arb = detect_arb(poly, kalshi, match_score=0.85)
+        assert arb is None
+
+    def test_arb_returns_best_direction(self):
+        """When both directions are profitable, returns the better one."""
+        poly = _make_listing("polymarket", "p1", "Test?", 0.10, 0.12, 0.30, 0.32)
+        kalshi = _make_listing("kalshi", "k1", "Test?", 0.30, 0.32, 0.10, 0.12)
+        # Direction 1: Poly YES=0.12 + Kalshi NO=0.12 = 0.24 → huge arb
+        # Direction 2: Poly NO=0.32 + Kalshi YES=0.32 = 0.64 → arb but smaller %
+        arb = detect_arb(poly, kalshi, match_score=0.85)
+        assert arb is not None
+        # The direction with higher ROI should be picked
+        assert arb.net_profit_pct > 0.01
+
+    def test_arb_profit_fields_consistent(self):
+        """Verify profit calculation consistency."""
+        poly = _make_listing("polymarket", "p1", "Test?", 0.05, 0.07, 0.93, 0.95)
+        kalshi = _make_listing("kalshi", "k1", "Test?", 0.12, 0.14, 0.86, 0.88)
+        arb = detect_arb(poly, kalshi, match_score=0.90)
+        if arb:
+            assert abs(arb.gross_profit - (1.0 - arb.total_cost)) < 1e-10
+            assert abs(arb.net_profit - (arb.gross_profit - arb.total_fees)) < 1e-10
+            assert abs(arb.total_fees - (arb.poly_fee + arb.kalshi_fee)) < 1e-10
+
+
+# ===== Signal Format =====
+
+class TestSignalFormat:
+    def test_arb_to_signal_keys(self):
+        poly = _make_listing("polymarket", "p1", "Will X happen?", 0.05, 0.07, 0.93, 0.95)
+        kalshi = _make_listing("kalshi", "k1", "Will X happen?", 0.15, 0.17, 0.83, 0.85)
+        arb = detect_arb(poly, kalshi, match_score=0.85)
+        assert arb is not None
+
+        signal = arb_to_signal(arb)
+        required_keys = [
+            "market_id", "question", "direction", "market_price",
+            "estimated_prob", "edge", "confidence", "reasoning",
+            "source", "taker_fee", "category", "resolution_hours",
+            "velocity_score", "kelly_fraction", "arb_details",
+        ]
+        for key in required_keys:
+            assert key in signal, f"Missing key: {key}"
+
+        assert signal["source"] == "cross_platform_arb"
+        assert signal["direction"] in ("buy_yes", "buy_no")
+        assert signal["category"] == "arbitrage"
+        assert signal["taker_fee"] == 0.0  # Maker on Poly
+        assert "kalshi_ticker" in signal["arb_details"]
+
+    def test_signal_direction_poly_yes(self):
+        poly = _make_listing("polymarket", "p1", "Test?", 0.05, 0.07, 0.93, 0.95)
+        kalshi = _make_listing("kalshi", "k1", "Test?", 0.15, 0.17, 0.83, 0.85)
+        arb = ArbOpportunity(
+            poly_market=poly, kalshi_market=kalshi,
+            match_score=0.85,
+            direction="poly_yes_kalshi_no",
+            poly_price=0.07, kalshi_price=0.85,
+            total_cost=0.92, gross_profit=0.08,
+            poly_fee=0.0, kalshi_fee=0.009,
+            total_fees=0.009, net_profit=0.071,
+            net_profit_pct=0.077,
+        )
+        signal = arb_to_signal(arb)
+        assert signal["direction"] == "buy_yes"
+
+    def test_signal_direction_poly_no(self):
+        poly = _make_listing("polymarket", "p1", "Test?", 0.85, 0.87, 0.13, 0.15)
+        kalshi = _make_listing("kalshi", "k1", "Test?", 0.78, 0.80, 0.20, 0.22)
+        arb = ArbOpportunity(
+            poly_market=poly, kalshi_market=kalshi,
+            match_score=0.85,
+            direction="poly_no_kalshi_yes",
+            poly_price=0.15, kalshi_price=0.80,
+            total_cost=0.95, gross_profit=0.05,
+            poly_fee=0.0, kalshi_fee=0.011,
+            total_fees=0.011, net_profit=0.039,
+            net_profit_pct=0.041,
+        )
+        signal = arb_to_signal(arb)
+        assert signal["direction"] == "buy_no"
+
+    def test_signal_includes_venue_router_decision_metadata(self):
+        poly = _make_listing("polymarket", "p1", "Test?", 0.05, 0.07, 0.93, 0.95)
+        kalshi = _make_listing("kalshi", "k1", "Test?", 0.15, 0.17, 0.83, 0.85)
+        arb = ArbOpportunity(
+            poly_market=poly,
+            kalshi_market=kalshi,
+            match_score=0.85,
+            direction="poly_yes_kalshi_no",
+            poly_price=0.07,
+            kalshi_price=0.85,
+            total_cost=0.92,
+            gross_profit=0.08,
+            poly_fee=0.0,
+            kalshi_fee=0.009,
+            total_fees=0.009,
+            net_profit=0.071,
+            net_profit_pct=0.077,
+        )
+        route_decision = RouteDecision(
+            opportunity_key="test|yes",
+            selected=VenueRouteCandidate(
+                venue="polymarket",
+                market_id="p1",
+                opportunity_key="test|yes",
+                gross_edge=0.077,
+                fee_rate=0.0,
+                fill_probability=0.95,
+                latency_penalty=0.001,
+                notional_usd=10.0,
+            ),
+            selected_reason="best_net_edge_after_costs",
+            rejections=(
+                RouteRejection(
+                    venue="kalshi",
+                    market_id="k1",
+                    reason="venue_not_best_net_edge",
+                    details={"candidate_net_edge": 0.06},
+                ),
+            ),
+        )
+
+        signal = arb_to_signal(arb, route_decision=route_decision)
+        assert signal["venue_router"]["selected_venue"] == "polymarket"
+        assert signal["venue_router"]["selected_reason"] == "best_net_edge_after_costs"
+        assert signal["venue_router"]["rejections"][0]["reason"] == "venue_not_best_net_edge"
+
+
+class TestVenueRouting:
+    def test_route_opportunity_records_budget_rejection_reason(self):
+        budget = SharedRiskBudget(hourly_cap_usd=5.0, daily_cap_usd=100.0)
+        decision = route_opportunity(
+            [
+                VenueRouteCandidate(
+                    venue="polymarket",
+                    market_id="p1",
+                    opportunity_key="m|yes",
+                    gross_edge=0.08,
+                    fee_rate=0.0,
+                    fill_probability=0.95,
+                    latency_penalty=0.001,
+                    notional_usd=10.0,
+                ),
+                VenueRouteCandidate(
+                    venue="kalshi",
+                    market_id="k1",
+                    opportunity_key="m|yes",
+                    gross_edge=0.07,
+                    fee_rate=0.01,
+                    fill_probability=0.90,
+                    latency_penalty=0.002,
+                    notional_usd=10.0,
+                ),
+            ],
+            budget=budget,
+            min_net_edge=0.01,
+        )
+        assert decision.selected is None
+        assert decision.selected_reason == "shared_budget_exhausted_hourly"
+        assert len(decision.rejections) == 2
+
+
+class TestSignalEntryPoints:
+    def test_sync_entrypoint_runs_async_helper_when_no_loop(self, monkeypatch):
+        expected = [{"market_id": "arb-1", "source": "cross_platform_arb"}]
+
+        async def fake_async_get_signals():
+            return expected
+
+        monkeypatch.setattr(arb_module, "_async_get_signals", fake_async_get_signals)
+
+        assert get_signals_for_engine() == expected
+
+    @pytest.mark.asyncio
+    async def test_sync_entrypoint_rejects_running_loop(self):
+        with pytest.raises(RuntimeError, match="use get_signals_for_engine_async"):
+            get_signals_for_engine()
+
+    @pytest.mark.asyncio
+    async def test_async_entrypoint_runs_inside_active_loop_without_asyncio_run(self, monkeypatch):
+        calls = {"count": 0}
+        expected = [{"market_id": "arb-2", "source": "cross_platform_arb"}]
+
+        async def fake_async_get_signals():
+            calls["count"] += 1
+            await asyncio.sleep(0)
+            return expected
+
+        def fail_asyncio_run(*args, **kwargs):
+            raise AssertionError("asyncio.run should not be used inside an active event loop")
+
+        monkeypatch.setattr(arb_module, "_async_get_signals", fake_async_get_signals)
+        monkeypatch.setattr(arb_module.asyncio, "run", fail_asyncio_run)
+
+        signals = await get_signals_for_engine_async()
+
+        assert calls["count"] == 1
+        assert signals == expected
+
+
+class _MarketsResp:
+    def __init__(self, markets=None, cursor=None):
+        self.markets = markets or []
+        self.cursor = cursor
+
+
+class _EventsResp:
+    def __init__(self, events=None, cursor=None):
+        self.events = events or []
+        self.cursor = cursor
+
+
+class _Event:
+    def __init__(self, event_ticker: str):
+        self.event_ticker = event_ticker
+
+
+class _KalshiMarket:
+    def __init__(self, ticker: str, title: str):
+        self.ticker = ticker
+        self.title = title
+        self.subtitle = title
+        self.yes_bid = 45
+        self.yes_ask = 47
+        self.no_bid = 53
+        self.no_ask = 55
+        self.volume = 1000
+        self.close_time = "2026-03-09T13:00:00Z"
+        self.status = "open"
+
+
+class TestKalshiFetchResilience:
+    def test_kalshi_fetch_uses_cache_when_throttled(self, monkeypatch, tmp_path):
+        cache_path = tmp_path / "kalshi_cache.json"
+        cached_market = _make_listing("kalshi", "KXBTC-CACHED", "Will BTC close above 80k?", 0.45, 0.47, 0.53, 0.55)
+        cache_path.write_text(
+            json.dumps(
+                {
+                    "generated_at": "2026-03-09T12:00:00+00:00",
+                    "market_count": 1,
+                    "markets": [arb_module.asdict(cached_market)],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        class _AlwaysThrottleClient:
+            def get_markets(self, **kwargs):
+                raise RuntimeError("429 Too Many Requests")
+
+            def get_events(self, **kwargs):
+                raise RuntimeError("429 Too Many Requests")
+
+        monkeypatch.setattr(arb_module, "KALSHI_MARKET_CACHE_FILE", cache_path)
+        monkeypatch.setattr(arb_module.time, "sleep", lambda *_args, **_kwargs: None)
+        monkeypatch.setenv("JJ_KALSHI_FETCH_CACHE_TTL_SECONDS", "999999")
+
+        markets, diagnostics = arb_module.fetch_kalshi_markets_with_diagnostics(_AlwaysThrottleClient(), max_pages=1)
+
+        assert len(markets) == 1
+        assert markets[0].market_id == "KXBTC-CACHED"
+        assert diagnostics["used_cache"] is True
+        assert diagnostics["throttle_events"] > 0
+
+    def test_kalshi_fetch_retries_then_recovers_without_cache(self, monkeypatch, tmp_path):
+        cache_path = tmp_path / "kalshi_cache.json"
+        call_counts = {"general": 0}
+
+        class _RetryThenRecoverClient:
+            def get_events(self, **kwargs):
+                return _EventsResp(events=[_Event("KXBTC-EVT")])
+
+            def get_markets(self, **kwargs):
+                if kwargs.get("status") == "open":
+                    call_counts["general"] += 1
+                    if call_counts["general"] == 1:
+                        raise RuntimeError("HTTP 429 throttled")
+                    return _MarketsResp(markets=[_KalshiMarket("KXBTC-RECOVER", "Will Bitcoin close above 85k?")])
+                if kwargs.get("event_ticker"):
+                    return _MarketsResp(markets=[])
+                return _MarketsResp(markets=[])
+
+        monkeypatch.setattr(arb_module, "KALSHI_MARKET_CACHE_FILE", cache_path)
+        monkeypatch.setattr(arb_module.time, "sleep", lambda *_args, **_kwargs: None)
+
+        markets, diagnostics = arb_module.fetch_kalshi_markets_with_diagnostics(_RetryThenRecoverClient(), max_pages=1)
+
+        assert len(markets) >= 1
+        assert diagnostics["used_cache"] is False
+        assert diagnostics["retry_attempts"] >= 1
+        assert diagnostics["throttle_events"] >= 1
+        assert cache_path.exists()
+
+
+class TestMatchedSurfaceArtifact:
+    def test_build_matched_surface_artifact_includes_horizon_spread_and_route_score(self):
+        now = datetime(2026, 3, 9, 12, 0, tzinfo=timezone.utc)
+        poly = _make_listing("polymarket", "poly-1", "Will Bitcoin close above 85k at 1 PM?", 0.40, 0.42, 0.58, 0.60)
+        poly.end_date = "2026-03-09T13:00:00+00:00"
+        kalshi = _make_listing("kalshi", "KXBTC-1", "Will Bitcoin close above 85k at 1 PM?", 0.43, 0.45, 0.55, 0.57)
+        kalshi.end_date = "2026-03-09T13:00:00+00:00"
+
+        artifact = build_matched_surface_artifact(
+            poly_markets=[poly],
+            kalshi_markets=[kalshi],
+            match_threshold=0.2,
+            generated_at=now,
+        )
+
+        assert artifact["schema_version"] == "instance06.v1"
+        assert artifact["counts"]["matched_surfaces"] == 1
+        row = artifact["matched_surface"][0]
+        assert "horizon_hours" in row
+        assert "spread" in row
+        assert "route_score" in row
+        assert row["venues"]["primary"] == "polymarket"

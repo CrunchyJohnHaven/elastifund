@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "description": "LIVE aggressive posture. Thresholds lowered to 0.08/0.03, crypto unlocked to priority 2. LIVE MODE — real orders submitted to CLOB with maker-only execution. Conservative position limits ($5 max, $5 daily loss). Designed for maximum data gathering with real market exposure.",
+  "mode": {
+    "execution_mode": "shadow",
+    "paper_trading": false,
+    "allow_order_submission": true,
+    "launch_gate": "none"
+  },
+  "feature_flags": {
+    "enable_llm_signals": true,
+    "enable_wallet_flow": true,
+    "enable_lmsr": true,
+    "enable_cross_platform_arb": false,
+    "fast_flow_only": false,
+    "enable_a6_shadow": true,
+    "enable_a6_live": false,
+    "enable_b1_shadow": true,
+    "enable_b1_live": false,
+    "enable_a6_embedded_shadow_scanner": true
+  },
+  "risk_limits": {
+    "max_position_usd": 5.0,
+    "max_daily_loss_usd": 5.0,
+    "max_exposure_pct": 0.1,
+    "kelly_fraction": 0.25,
+    "max_kelly_fraction": 0.25,
+    "scan_interval_seconds": 120,
+    "max_open_positions": 5,
+    "min_edge": 0.03,
+    "initial_bankroll": 250.0
+  },
+  "market_filters": {
+    "max_resolution_hours": 48.0,
+    "min_category_priority": 0,
+    "category_priorities": {
+      "politics": 3,
+      "weather": 3,
+      "economic": 2,
+      "crypto": 2,
+      "sports": 1,
+      "financial_speculation": 1,
+      "geopolitical": 1,
+      "fed_rates": 1,
+      "unknown": 0
+    }
+  },
+  "signal_thresholds": {
+    "yes_threshold": 0.08,
+    "no_threshold": 0.03,
+    "lmsr_entry_threshold": 0.04
+  },
+  "combinatorial_thresholds": {
+    "a6_buy_threshold": 0.97,
+    "a6_unwind_threshold": 1.03,
+    "b1_implication_threshold": 0.03,
+    "stale_book_max_age_seconds": 45,
+    "fill_timeout_seconds": 3.0,
+    "cancel_replace_count": 1,
+    "max_notional_per_leg_usd": 5.0,
+    "arb_budget_usd": 100.0,
+    "merge_min_notional_usd": 20.0,
+    "promotion_min_signals": 20,
+    "required_capture_rate": 0.5,
+    "required_classification_accuracy": 0.8,
+    "max_false_positive_rate": 0.05,
+    "max_consecutive_rollbacks": 3,
+    "constraint_db_path": "data/constraint_arb.db",
+    "dep_graph_db_path": "data/dep_graph.sqlite"
+  },
+  "microstructure_thresholds": {
+    "vpin_bucket_size": 500.0,
+    "vpin_window_size": 10,
+    "vpin_toxic_threshold": 0.75,
+    "vpin_safe_threshold": 0.25,
+    "ws_heartbeat_interval_seconds": 10.0,
+    "ws_rest_poll_interval_seconds": 5.0
+  }
+}

@@ -1,0 +1,13 @@
+[Unit]
+Description=BTC5 P&L Monitor — check for drawdown breaches
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/polymarket-trading-bot
+Environment="PYTHONPATH=/home/ubuntu/polymarket-trading-bot:/home/ubuntu/polymarket-trading-bot/bot:/home/ubuntu/polymarket-trading-bot/polymarket-bot"
+ExecStart=/usr/bin/python3 scripts/btc5_pnl_monitor.py --db data/btc_5min_maker.db --alert-threshold -50 --window-hours 24
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=btc5monitor

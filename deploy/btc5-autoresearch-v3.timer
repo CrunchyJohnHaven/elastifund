@@ -1,0 +1,11 @@
+[Unit]
+Description=Run BTC5 Autoresearch v3 every 3 hours
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=3h
+Persistent=true
+Unit=btc5-autoresearch-v3.service
+
+[Install]
+WantedBy=timers.target

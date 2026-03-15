@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Elastifund Improvement Loop every 30 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+Persistent=true
+Unit=jj-improvement-loop.service
+
+[Install]
+WantedBy=timers.target
+

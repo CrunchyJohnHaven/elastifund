@@ -1,0 +1,8 @@
+# Minimal dependency surface for docs/index/report hygiene loops.
+# Canonical install path:
+#   python3 -m pip install -r requirements-lite.txt
+#
+# This file intentionally stays small so contributors can run:
+#   make bootstrap-lite
+#   make verify-static
+# without installing the full runtime or research stack.
