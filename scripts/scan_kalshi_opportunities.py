@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -20,37 +21,37 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-event-pages",
         type=int,
-        default=8,
+        default=int(os.environ.get("KALSHI_SCAN_MAX_EVENT_PAGES", "8")),
         help="How many Kalshi /events pages to scan (default: 8).",
     )
     parser.add_argument(
         "--events-page-limit",
         type=int,
-        default=200,
+        default=int(os.environ.get("KALSHI_SCAN_EVENTS_PAGE_LIMIT", "200")),
         help="Page size for /events calls (default: 200).",
     )
     parser.add_argument(
         "--market-limit-per-event",
         type=int,
-        default=200,
+        default=int(os.environ.get("KALSHI_SCAN_MARKET_LIMIT_PER_EVENT", "200")),
         help="Max markets to request for each event (default: 200).",
     )
     parser.add_argument(
         "--max-hours",
         type=float,
-        default=72.0,
+        default=float(os.environ.get("KALSHI_SCAN_MAX_HOURS", "72")),
         help="Max hours to resolution for eligible opportunities (default: 72).",
     )
     parser.add_argument(
         "--top-n",
         type=int,
-        default=20,
+        default=int(os.environ.get("KALSHI_SCAN_TOP_N", "20")),
         help="Max number of opportunities in output (default: 20).",
     )
     parser.add_argument(
         "--sleep-seconds",
         type=float,
-        default=0.06,
+        default=float(os.environ.get("KALSHI_SCAN_SLEEP_SECONDS", "0.06")),
         help="Delay between API calls to stay below read rate limits (default: 0.06).",
     )
     parser.add_argument(
