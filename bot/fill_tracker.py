@@ -451,6 +451,20 @@ class FillTracker:
             for row in self.live_open_orders()
         )
 
+    def pending_notional_for_market(self, market_id: str, direction: str | None = None) -> float:
+        market_id_text = _safe_text(market_id)
+        if not market_id_text:
+            return 0.0
+        direction_text = _safe_text(direction) if direction is not None else ""
+        total = 0.0
+        for row in self.live_open_orders():
+            if _safe_text(row.get("market_id")) != market_id_text:
+                continue
+            if direction is not None and _safe_text(row.get("direction")) != direction_text:
+                continue
+            total += _safe_float(row.get("size_usd"), 0.0) or 0.0
+        return round(total, 2)
+
     def pending_market_ids(self) -> set[str]:
         return {
             _safe_text(row.get("market_id"))

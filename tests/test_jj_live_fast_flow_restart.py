@@ -51,6 +51,14 @@ class DummyState:
     def has_position(self, market_id: str) -> bool:
         return market_id in self.state["open_positions"]
 
+    def open_notional_for_market(self, market_id: str, direction: str | None = None) -> float:
+        payload = self.state["open_positions"].get(market_id)
+        if not isinstance(payload, dict):
+            return 0.0
+        if direction and str(payload.get("direction", "")) != str(direction):
+            return 0.0
+        return float(payload.get("size_usd", 0.0) or 0.0)
+
     def get_arb_budget_in_use_usd(self) -> float:
         return 0.0
 
