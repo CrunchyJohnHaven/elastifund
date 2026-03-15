@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from research.wallet_intelligence import smart_wallet_seed_builder as builder
 
 
@@ -89,7 +91,7 @@ def test_compute_wallet_metrics_handles_win_rate_dual_sided_and_recency() -> Non
     assert metrics.btc5_trades == 3
     assert metrics.unique_markets == 3
     assert metrics.resolved_trade_count == 3
-    assert metrics.estimated_win_rate == 2 / 3
+    assert metrics.estimated_win_rate == pytest.approx(2 / 3)
     # c1 has both effective outcomes, c2 has one side => 1 dual market / 2 total BTC5 markets
     assert metrics.dual_sided_rate == 0.5
     assert 0.0 < metrics.recency_score <= 1.0
@@ -135,7 +137,7 @@ def test_score_wallets_uses_dispatch_formula_weights() -> None:
         ),
     ]
 
-    ranked = builder.score_wallets(metrics, top_n=50)
+    ranked = builder.score_wallets(metrics=metrics)
     assert len(ranked) == 2
     # 2000 notional should have higher percentile than 1000 and rank first.
     assert ranked[0].address == "0xaaa0000000000000000000000000000000000000"
@@ -151,6 +153,7 @@ def test_score_wallets_uses_dispatch_formula_weights() -> None:
         + high.dual_sided_rate * 0.1
     )
     assert math.isclose(high.smart_score, expected, rel_tol=1e-9)
+    assert high.baseline_smart_score == high.smart_score
 
 
 def test_validate_elites_flags_missing_top10() -> None:
@@ -159,6 +162,7 @@ def test_validate_elites_flags_missing_top10() -> None:
             address="0x0000000000000000000000000000000000000001",
             rank=1,
             smart_score=0.9,
+            baseline_smart_score=0.9,
             estimated_win_rate=0.8,
             volume_rank_percentile=0.9,
             recency_score=0.9,
@@ -179,3 +183,77 @@ def test_validate_elites_flags_missing_top10() -> None:
     assert result["pass"] is False
     assert "gabagool22" in result["missing_top10"]
     assert "k9Q2mX4L8A7ZP3R" in result["missing_top10"]
+
+
+def test_wallet_match_ratio_and_query_fallback_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    wallet = "0x1111111111111111111111111111111111111111"
+    wrong_wallet = "0x2222222222222222222222222222222222222222"
+    right_rows = [_trade(wallet, condition_id="c1", side="BUY", outcome_index=0)]
+    wrong_rows = [_trade(wrong_wallet, condition_id="c1", side="BUY", outcome_index=0)]
+
+    ratio = builder.ApiClient._wallet_match_ratio(wallet, right_rows + wrong_rows)
+    assert ratio == 0.5
+
+    calls: list[str] = []
+
+    def fake_get_json(url: str, params: dict | None = None, retries: int = 3) -> list[dict]:
+        key = "user" if params and "user" in params else "proxyWallet"
+        calls.append(key)
+        if key == "user":
+            return wrong_rows
+        return right_rows
+
+    api = builder.ApiClient(min_interval_seconds=0.0)
+    monkeypatch.setattr(api, "get_json", fake_get_json)
+
+    out = api.fetch_wallet_trades(wallet=wallet, limit=50)
+    assert out == right_rows
+    assert calls == ["user", "proxyWallet"]
+
+
+def test_score_wallets_applies_elite_anchor_bonus() -> None:
+    elite_wallet = builder.ELITE_VALIDATION_WALLETS["gabagool22"]
+    baseline_metrics = [
+        builder.WalletMetrics(
+            address=elite_wallet,
+            total_trades=100,
+            btc5_trades=50,
+            unique_markets=10,
+            total_notional_usd=100.0,
+            avg_trade_notional_usd=1.0,
+            estimated_win_rate=0.45,
+            resolved_trade_count=50,
+            resolved_market_count=8,
+            btc5_specialization=0.5,
+            dual_sided_rate=0.1,
+            recency_score=0.5,
+            last_trade_ts=1_710_000_000,
+            cooccurrence_count=1,
+            source_tags=["known_seed"],
+        ),
+        builder.WalletMetrics(
+            address="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            total_trades=100,
+            btc5_trades=100,
+            unique_markets=10,
+            total_notional_usd=1000.0,
+            avg_trade_notional_usd=10.0,
+            estimated_win_rate=0.7,
+            resolved_trade_count=50,
+            resolved_market_count=8,
+            btc5_specialization=1.0,
+            dual_sided_rate=0.2,
+            recency_score=0.9,
+            last_trade_ts=1_710_000_000,
+            cooccurrence_count=1,
+            source_tags=["leaderboard_all"],
+        ),
+    ]
+
+    no_bonus = builder.score_wallets(metrics=baseline_metrics)
+    with_bonus = builder.score_wallets(metrics=baseline_metrics, elite_anchor_bonus=0.2)
+
+    no_bonus_elite = next(row for row in no_bonus if row.address == elite_wallet)
+    with_bonus_elite = next(row for row in with_bonus if row.address == elite_wallet)
+    assert with_bonus_elite.smart_score > no_bonus_elite.smart_score
+    assert with_bonus_elite.baseline_smart_score == no_bonus_elite.baseline_smart_score
