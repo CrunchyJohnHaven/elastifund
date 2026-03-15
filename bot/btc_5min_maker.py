@@ -55,7 +55,10 @@ except ImportError:
 
 logger = logging.getLogger("BTC5Maker")
 
-WINDOW_SECONDS = 300
+WINDOW_SECONDS = max(60, int(os.environ.get("BTC5_WINDOW_SECONDS", "300")))
+MARKET_SLUG_PREFIX = str(os.environ.get("BTC5_MARKET_SLUG_PREFIX", "btc-updown-5m")).strip().rstrip("-")
+if not MARKET_SLUG_PREFIX:
+    MARKET_SLUG_PREFIX = "btc-updown-5m"
 DEFAULT_DB_PATH = Path("data/btc_5min_maker.db")
 CLOB_HARD_MIN_SHARES = 5.0
 CLOB_HARD_MIN_NOTIONAL_USD = 5.0
@@ -532,7 +535,7 @@ def _parse_order_size(value: Any) -> float | None:
 
 
 def market_slug_for_window(window_start_ts: int) -> str:
-    return f"btc-updown-5m-{int(window_start_ts)}"
+    return f"{MARKET_SLUG_PREFIX}-{int(window_start_ts)}"
 
 
 def direction_from_prices(open_price: float, current_price: float, min_delta: float) -> tuple[str | None, float]:
@@ -843,6 +846,10 @@ class MakerConfig:
     binance_ticker_url: str = os.environ.get(
         "BTC5_BINANCE_TICKER_URL",
         "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT",
+    )
+    binance_symbol: str = str(os.environ.get("BTC5_BINANCE_SYMBOL", "BTCUSDT")).strip().upper() or "BTCUSDT"
+    binance_kline_interval: str = (
+        str(os.environ.get("BTC5_BINANCE_KLINE_INTERVAL", "5m")).strip().lower() or "5m"
     )
     gamma_markets_url: str = os.environ.get(
         "BTC5_GAMMA_MARKETS_URL",
@@ -1445,8 +1452,8 @@ class MarketHttpClient:
     async def fetch_binance_window_open_close(self, window_start_ts: int) -> tuple[float, float] | None:
         timeout = aiohttp.ClientTimeout(total=self.cfg.request_timeout_sec)
         params = {
-            "symbol": "BTCUSDT",
-            "interval": "5m",
+            "symbol": self.cfg.binance_symbol,
+            "interval": self.cfg.binance_kline_interval,
             "startTime": int(window_start_ts) * 1000,
             "limit": 1,
         }
@@ -3218,7 +3225,7 @@ async def _run(args: argparse.Namespace) -> None:
         raise SystemExit("--windows must be >= 1")
 
     logger.info(
-        "Starting BTC5 maker | mode=%s | bankroll=%.2f | risk_fraction=%.4f | max_trade=%.2f | max_abs_delta=%s | up_max=%.2f | down_max=%.2f | improve_ticks=%d | session_overrides=%d | regime_skew=%s | probe_daily_loss=%s | probe_recent=%s | retry_post_only_cross=%s safety_ticks=%d",
+        "Starting BTC5 maker | mode=%s | bankroll=%.2f | risk_fraction=%.4f | max_trade=%.2f | max_abs_delta=%s | up_max=%.2f | down_max=%.2f | improve_ticks=%d | session_overrides=%d | regime_skew=%s | probe_daily_loss=%s | probe_recent=%s | retry_post_only_cross=%s safety_ticks=%d | window_seconds=%d | slug_prefix=%s | binance_symbol=%s | kline_interval=%s",
         "paper" if cfg.paper_trading else "live",
         cfg.bankroll_usd,
         cfg.risk_fraction,
@@ -3233,6 +3240,10 @@ async def _run(args: argparse.Namespace) -> None:
         "enabled" if cfg.enable_probe_after_recent_loss else "disabled",
         "enabled" if cfg.retry_post_only_cross else "disabled",
         max(0, int(cfg.retry_post_only_safety_ticks)),
+        WINDOW_SECONDS,
+        MARKET_SLUG_PREFIX,
+        cfg.binance_symbol,
+        cfg.binance_kline_interval,
     )
     await bot.run_windows(count=args.windows, continuous=args.continuous)
     bot.print_status()
