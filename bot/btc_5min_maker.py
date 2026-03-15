@@ -543,8 +543,9 @@ def _parse_order_size(value: Any) -> float | None:
     return float(parsed)
 
 
-def market_slug_for_window(window_start_ts: int) -> str:
-    return f"btc-updown-5m-{int(window_start_ts)}"
+def market_slug_for_window(window_start_ts: int, slug_prefix: str = "") -> str:
+    prefix = slug_prefix or os.environ.get("BTC5_ASSET_SLUG_PREFIX", "btc")
+    return f"{prefix}-updown-5m-{int(window_start_ts)}"
 
 
 def direction_from_prices(open_price: float, current_price: float, min_delta: float) -> tuple[str | None, float]:
@@ -865,6 +866,7 @@ class MakerConfig:
         "BTC5_GAMMA_MARKETS_URL",
         "https://gamma-api.polymarket.com/markets",
     )
+    market_slug_prefix: str = os.environ.get("BTC5_ASSET_SLUG_PREFIX", "btc")
     clob_book_url: str = os.environ.get(
         "BTC5_CLOB_BOOK_URL",
         "https://clob.polymarket.com/book",
@@ -2472,7 +2474,7 @@ class BTC5MinMakerBot:
 
     async def _process_window(self, *, window_start_ts: int, http: MarketHttpClient) -> dict[str, Any]:
         window_end_ts = window_start_ts + WINDOW_SECONDS
-        slug = market_slug_for_window(window_start_ts)
+        slug = market_slug_for_window(window_start_ts, self.cfg.market_slug_prefix)
         session_bucket = _btc5_session_bucket(window_start_ts)
         capital_stage = 1
         effective_max_trade_usd = float(self._max_trade_for_stage(capital_stage))
