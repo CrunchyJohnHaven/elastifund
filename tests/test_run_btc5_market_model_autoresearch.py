@@ -63,6 +63,16 @@ def _candidate_source(surface: dict[str, object]) -> str:
     return runner._replace_mutation_surface(BASE_CANDIDATE_SOURCE, surface)
 
 
+def test_search_replace_patch_reconstructs_candidate_source() -> None:
+    surface = _poor_surface()
+    edit = runner._mutation_surface_search_replace(BASE_CANDIDATE_SOURCE, surface)
+    rebuilt = runner._apply_search_replace_edits(BASE_CANDIDATE_SOURCE, [edit])
+
+    assert edit["search"].startswith("MUTATION_SURFACE =")
+    assert edit["replace"].startswith("MUTATION_SURFACE =")
+    assert rebuilt == _candidate_source(surface)
+
+
 def _poor_surface() -> dict[str, object]:
     return {
         "model_name": "flat_baseline",
@@ -186,6 +196,9 @@ def test_runner_mutation_cycle_keeps_then_discards_and_only_overwrites_canonical
     assert sha256_file(incumbent_candidate) == first_row["candidate_hash"]
     assert sha256_file(incumbent_candidate) != incumbent_hash_before
     assert first_proposal["artifact_paths"]["proposal_candidate_py"] == str(first_candidate_artifact)
+    assert len(first_proposal["candidate_patch"]) == 1
+    assert "search" in first_proposal["candidate_patch"][0]
+    assert "replace" in first_proposal["candidate_patch"][0]
 
     first_packet = json.loads(Path(first_row["packet_json"]).read_text(encoding="utf-8"))
     assert first_packet["proposal_id"] == first_row["proposal_id"]
