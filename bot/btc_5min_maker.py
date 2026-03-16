@@ -94,6 +94,7 @@ CLOB_HARD_MIN_SHARES = 5.0
 CLOB_HARD_MIN_NOTIONAL_USD = 5.0
 PROBE_DEFAULT_UP_MAX_BUY_PRICE = 0.49
 PROBE_DEFAULT_DOWN_MAX_BUY_PRICE = 0.51
+PROBE_CONFIRMATION_MODE = "probe_confirmation_v2"
 ET_ZONE = ZoneInfo("America/New_York")
 LIVE_FILLED_STATUSES = {
     "live_filled",
@@ -604,6 +605,15 @@ def direction_from_prices(open_price: float, current_price: float, min_delta: fl
     if abs(delta) < min_delta:
         return None, delta
     return ("UP" if delta > 0 else "DOWN"), delta
+
+
+def _direction_from_delta(delta: Any, *, min_abs_delta: float = 0.0) -> str | None:
+    parsed = _safe_float(delta, None)
+    if parsed is None:
+        return None
+    if abs(parsed) < max(0.0, float(min_abs_delta)):
+        return None
+    return "UP" if parsed > 0 else "DOWN"
 
 
 def choose_maker_buy_price(
@@ -1122,6 +1132,7 @@ class TradeDB:
                     order_status TEXT NOT NULL,
                     filled INTEGER,
                     reason TEXT,
+                    risk_mode TEXT,
                     edge_tier TEXT,
                     sizing_reason_tags TEXT,
                     loss_cluster_suppressed INTEGER,
@@ -1157,6 +1168,7 @@ class TradeDB:
                 for row in conn.execute("PRAGMA table_info(window_trades)").fetchall()
             }
             for column_name, column_type in (
+                ("risk_mode", "TEXT"),
                 ("edge_tier", "TEXT"),
                 ("sizing_reason_tags", "TEXT"),
                 ("loss_cluster_suppressed", "INTEGER"),
@@ -1177,6 +1189,19 @@ class TradeDB:
                 (int(window_start_ts),),
             ).fetchone()
         return row is not None
+
+    def signal_for_window(self, *, window_start_ts: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT window_start_ts, direction, delta
+                FROM window_trades
+                WHERE window_start_ts = ?
+                LIMIT 1
+                """,
+                (int(window_start_ts),),
+            ).fetchone()
+        return dict(row) if row is not None else None
 
     def upsert_window(self, row: dict[str, Any]) -> None:
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -1200,6 +1225,7 @@ class TradeDB:
             "order_status": row.get("order_status", "unknown"),
             "filled": row.get("filled"),
             "reason": row.get("reason"),
+            "risk_mode": row.get("risk_mode"),
             "edge_tier": row.get("edge_tier"),
             "sizing_reason_tags": _serialize_json_list(row.get("sizing_reason_tags")),
             "loss_cluster_suppressed": (
@@ -1229,7 +1255,7 @@ class TradeDB:
                     window_start_ts, window_end_ts, slug, decision_ts, direction,
                     open_price, current_price, delta, book_imbalance, token_id, best_bid, best_ask,
                     order_price, trade_size_usd, shares, order_id, order_status,
-                    filled, reason, edge_tier, sizing_reason_tags, loss_cluster_suppressed,
+                    filled, reason, risk_mode, edge_tier, sizing_reason_tags, loss_cluster_suppressed,
                     session_policy_name, effective_stage, wallet_copy, wallet_count, wallet_notional,
                     resolved_side, won, pnl_usd,
                     created_at, updated_at
@@ -1237,7 +1263,7 @@ class TradeDB:
                     :window_start_ts, :window_end_ts, :slug, :decision_ts, :direction,
                     :open_price, :current_price, :delta, :book_imbalance, :token_id, :best_bid, :best_ask,
                     :order_price, :trade_size_usd, :shares, :order_id, :order_status,
-                    :filled, :reason, :edge_tier, :sizing_reason_tags, :loss_cluster_suppressed,
+                    :filled, :reason, :risk_mode, :edge_tier, :sizing_reason_tags, :loss_cluster_suppressed,
                     :session_policy_name, :effective_stage, :wallet_copy, :wallet_count, :wallet_notional,
                     :resolved_side, :won, :pnl_usd,
                     :created_at, :updated_at
@@ -1259,6 +1285,7 @@ class TradeDB:
                     order_status=excluded.order_status,
                     filled=excluded.filled,
                     reason=excluded.reason,
+                    risk_mode=excluded.risk_mode,
                     edge_tier=excluded.edge_tier,
                     sizing_reason_tags=excluded.sizing_reason_tags,
                     loss_cluster_suppressed=excluded.loss_cluster_suppressed,
@@ -2463,6 +2490,7 @@ class BTC5MinMakerBot:
         session_bucket = _btc5_session_bucket(window_start_ts)
         order_price_bucket = _btc5_price_bucket(order_price)
         delta_bucket = _btc5_delta_bucket(delta)
+        probe_mode_name = str((probe_mode or {}).get("mode") or "").strip()
         balanced_session_caps = self._session_override_has_balanced_caps(session_override)
         tags = _unique_tags(
             f"session_bucket={session_bucket}",
@@ -2475,6 +2503,7 @@ class BTC5MinMakerBot:
             f"recommended_live_stage={max(1, int(recommended_live_stage or effective_stage or 1))}",
             f"session_caps_balanced={'true' if balanced_session_caps else 'false'}",
             "probe_mode=on" if probe_mode else None,
+            f"risk_mode={probe_mode_name}" if probe_mode_name else None,
         )
 
         suppressed_direction = str((recent_regime or {}).get("suppressed_direction") or "").strip().upper()
@@ -2540,7 +2569,7 @@ class BTC5MinMakerBot:
                 }
 
 
-        if probe_mode:
+        if probe_mode_name == "probe":
             return {
                 "edge_tier": "exploratory",
                 "loss_cluster_suppressed": False,
@@ -3118,25 +3147,10 @@ class BTC5MinMakerBot:
         if not reasons:
             return None
 
-        effective_max_abs_delta = self.cfg.probe_max_abs_delta
-        if self.cfg.max_abs_delta is not None:
-            effective_max_abs_delta = (
-                min(float(self.cfg.max_abs_delta), float(effective_max_abs_delta))
-                if effective_max_abs_delta is not None
-                else float(self.cfg.max_abs_delta)
-            )
-
         return {
-            "mode": "probe",
+            "mode": PROBE_CONFIRMATION_MODE,
             "reason": _join_reasons(*reasons),
-            "min_delta": max(
-                float(self.cfg.min_delta),
-                float(self.cfg.min_delta) * max(1.0, float(self.cfg.probe_min_delta_multiplier)),
-            ),
-            "max_abs_delta": effective_max_abs_delta,
-            "quote_ticks": max(0, int(self.cfg.probe_quote_ticks)),
-            "up_max_buy_price": self._probe_max_buy_price("UP"),
-            "down_max_buy_price": self._probe_max_buy_price("DOWN"),
+            "requires_consecutive_signal": True,
             "recent_live_pnl_usd": recent_pnl,
             "recent_live_fills": len(recent_rows),
             "hard_daily_loss_hit": hard_daily_loss_hit,
@@ -3424,6 +3438,7 @@ class BTC5MinMakerBot:
         execution_drag_counts = self.db.recent_execution_drag(limit=40)
         capital_utilization_ratio = 0.0
         shadow_research_tiers = self._shadow_research_tiers()
+        risk_mode = "normal"
         session_override = active_session_guardrail_override(self.cfg, window_start_ts=window_start_ts)
         session_policy_name = session_override.session_name if session_override is not None else None
         session_reason = session_guardrail_reason(session_override, window_start_ts=window_start_ts)
@@ -3501,6 +3516,8 @@ class BTC5MinMakerBot:
                 payload["wallet_count"] = wallet_count
             if "wallet_notional" not in payload:
                 payload["wallet_notional"] = round(max(0.0, float(wallet_notional)), 4)
+            if "risk_mode" not in payload:
+                payload["risk_mode"] = risk_mode
             if "book_imbalance" not in payload:
                 payload["book_imbalance"] = book_imbalance
             if "decision_timing" not in payload:
@@ -3584,6 +3601,8 @@ class BTC5MinMakerBot:
                 payload["wallet_count"] = wallet_count
             if "wallet_notional" not in payload:
                 payload["wallet_notional"] = round(max(0.0, float(wallet_notional)), 4)
+            if "risk_mode" not in payload:
+                payload["risk_mode"] = risk_mode
             if "book_imbalance" not in payload:
                 payload["book_imbalance"] = book_imbalance
             if "decision_ts" not in payload:
@@ -3625,12 +3644,14 @@ class BTC5MinMakerBot:
             today_pnl=today_pnl,
             effective_daily_loss_limit_usd=effective_daily_loss_limit_usd,
         )
+        risk_mode = str(probe_mode.get("mode") or "normal") if probe_mode else "normal"
         sizing_reason_tags = _unique_tags(
             f"session_bucket={session_bucket}",
             f"session_policy_name={session_policy_name or 'none'}",
             f"effective_stage={capital_stage}",
             f"recommended_live_stage={recommended_live_stage}",
             "probe_mode=on" if probe_mode else "probe_mode=off",
+            f"risk_mode={risk_mode}",
             "probe_fresh_for_stage_upgrade=true" if probe_fresh_for_stage_upgrade else "probe_fresh_for_stage_upgrade=false",
             "cascade_signal_active=true" if cascade_signal.get("active") else "cascade_signal_active=false",
             _reason_tag("cascade_signal_direction", str(cascade_signal.get("direction") or "").strip().upper()),
@@ -3649,7 +3670,11 @@ class BTC5MinMakerBot:
             }
             _persist(row)
             return _result({"window_start_ts": window_start_ts, "status": row["order_status"], "today_pnl": today_pnl})
-        effective_min_delta = float(probe_mode["min_delta"]) if probe_mode else float(self.cfg.min_delta)
+        effective_min_delta = float(self.cfg.min_delta)
+        if probe_mode:
+            probe_min_delta = _safe_float(probe_mode.get("min_delta"), None)
+            if probe_min_delta is not None:
+                effective_min_delta = max(effective_min_delta, float(probe_min_delta))
         if session_override and session_override.min_delta is not None:
             effective_min_delta = max(effective_min_delta, float(session_override.min_delta))
         effective_max_abs_delta = (
@@ -3849,7 +3874,7 @@ class BTC5MinMakerBot:
                 "window_start_ts": window_start_ts,
                 "status": row["order_status"],
                 "delta": delta,
-                "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
+                "risk_mode": risk_mode,
                 "stage_gate_reason": stage_gate_reason,
             })
 
@@ -3874,9 +3899,93 @@ class BTC5MinMakerBot:
                 "window_start_ts": window_start_ts,
                 "status": row["order_status"],
                 "delta": delta,
-                "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
+                "risk_mode": risk_mode,
                 "stage_gate_reason": stage_gate_reason,
             })
+
+        if probe_mode and bool(probe_mode.get("requires_consecutive_signal")):
+            prior_window_start = int(window_start_ts) - int(WINDOW_SECONDS)
+            prior_signal = self.db.signal_for_window(window_start_ts=prior_window_start)
+            prior_delta = _safe_float((prior_signal or {}).get("delta"), None)
+            prior_direction = _direction_from_delta(prior_delta, min_abs_delta=effective_min_delta)
+            if prior_direction is None:
+                row = {
+                    "window_start_ts": window_start_ts,
+                    "window_end_ts": window_end_ts,
+                    "slug": slug,
+                    "direction": direction,
+                    "open_price": open_price,
+                    "current_price": current_price,
+                    "delta": delta,
+                    "order_status": "skip_probe_confirmation_pending",
+                    "reason": _join_reasons(
+                        probe_reason,
+                        session_reason,
+                        _reason_tag("probe_confirmation_prev_window", str(prior_window_start)),
+                        _reason_tag(
+                            "probe_confirmation_prev_delta",
+                            f"{prior_delta:.6f}" if prior_delta is not None else None,
+                        ),
+                        "probe_confirmation_missing_or_weak_prev_signal",
+                    ),
+                }
+                _persist(row)
+                return _result(
+                    {
+                        "window_start_ts": window_start_ts,
+                        "status": row["order_status"],
+                        "direction": direction,
+                        "delta": delta,
+                        "risk_mode": risk_mode,
+                    }
+                )
+            if prior_direction != direction:
+                row = {
+                    "window_start_ts": window_start_ts,
+                    "window_end_ts": window_end_ts,
+                    "slug": slug,
+                    "direction": direction,
+                    "open_price": open_price,
+                    "current_price": current_price,
+                    "delta": delta,
+                    "order_status": "skip_probe_confirmation_mismatch",
+                    "reason": _join_reasons(
+                        probe_reason,
+                        session_reason,
+                        _reason_tag("probe_confirmation_prev_window", str(prior_window_start)),
+                        _reason_tag("probe_confirmation_prev_direction", prior_direction),
+                        _reason_tag("probe_confirmation_current_direction", direction),
+                        _reason_tag(
+                            "probe_confirmation_prev_delta",
+                            f"{prior_delta:.6f}" if prior_delta is not None else None,
+                        ),
+                    ),
+                }
+                _persist(row)
+                return _result(
+                    {
+                        "window_start_ts": window_start_ts,
+                        "status": row["order_status"],
+                        "direction": direction,
+                        "delta": delta,
+                        "risk_mode": risk_mode,
+                    }
+                )
+            probe_reason = _join_reasons(
+                probe_reason,
+                _reason_tag("probe_confirmation_prev_direction", prior_direction),
+                _reason_tag("probe_confirmation_current_direction", direction),
+                _reason_tag(
+                    "probe_confirmation_prev_delta",
+                    f"{prior_delta:.6f}" if prior_delta is not None else None,
+                ),
+                "probe_confirmation_passed",
+            )
+            sizing_reason_tags = _unique_tags(
+                *sizing_reason_tags,
+                "probe_confirmation_passed",
+                f"probe_prev_direction={prior_direction}",
+            )
 
         normalized_direction = str(direction or "").strip().upper()
         if self.cfg.adaptive_enabled and normalized_direction in {"UP", "DOWN"}:
@@ -3909,7 +4018,7 @@ class BTC5MinMakerBot:
                         "status": row["order_status"],
                         "direction": direction,
                         "delta": delta,
-                        "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
+                        "risk_mode": risk_mode,
                     }
                 )
 
@@ -4116,7 +4225,7 @@ class BTC5MinMakerBot:
                         "status": row["order_status"],
                         "direction": direction,
                         "delta": delta,
-                        "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
+                        "risk_mode": risk_mode,
                         "regime_triggered": bool(recent_regime and recent_regime.get("triggered")),
                     }
                 )
@@ -4135,7 +4244,9 @@ class BTC5MinMakerBot:
             recent_regime=recent_regime,
         )
         if probe_mode:
-            quote_ticks = min(int(quote_ticks), int(probe_mode["quote_ticks"]))
+            probe_quote_ticks = probe_mode.get("quote_ticks")
+            if probe_quote_ticks is not None:
+                quote_ticks = min(int(quote_ticks), max(0, int(probe_quote_ticks)))
         if recent_regime and recent_regime.get("triggered"):
             favored = recent_regime.get("favored_direction") or "n/a"
             weaker = recent_regime.get("weaker_direction") or "n/a"
@@ -4148,9 +4259,13 @@ class BTC5MinMakerBot:
             regime_reason = _join_reasons(regime_reason, regime_quote_reason)
         mode_max_buy_price = effective_max_buy_price(self.cfg, direction, session_override=session_override)
         if probe_mode and direction == "UP":
-            mode_max_buy_price = min(mode_max_buy_price, float(probe_mode["up_max_buy_price"]))
+            probe_up_max_buy_price = _safe_float(probe_mode.get("up_max_buy_price"), None)
+            if probe_up_max_buy_price is not None:
+                mode_max_buy_price = min(mode_max_buy_price, float(probe_up_max_buy_price))
         elif probe_mode and direction == "DOWN":
-            mode_max_buy_price = min(mode_max_buy_price, float(probe_mode["down_max_buy_price"]))
+            probe_down_max_buy_price = _safe_float(probe_mode.get("down_max_buy_price"), None)
+            if probe_down_max_buy_price is not None:
+                mode_max_buy_price = min(mode_max_buy_price, float(probe_down_max_buy_price))
 
         order_price = choose_maker_buy_price(
             best_bid=best_bid,
@@ -4181,7 +4296,7 @@ class BTC5MinMakerBot:
                 "status": row["order_status"],
                 "quote_ticks": quote_ticks,
                 "regime_triggered": bool(recent_regime and recent_regime.get("triggered")),
-                "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
+                "risk_mode": risk_mode,
                 "stage_gate_reason": stage_gate_reason,
             })
 
@@ -4251,7 +4366,7 @@ class BTC5MinMakerBot:
                     "delta": delta,
                     "price": order_price,
                     "size_usd": 0.0,
-                    "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
+                    "risk_mode": risk_mode,
                     "quote_ticks": quote_ticks,
                 }
             )
@@ -4466,6 +4581,7 @@ class BTC5MinMakerBot:
             "filled": filled,
             "order_status": order_status,
             "reason": reason,
+            "risk_mode": risk_mode,
             "wallet_copy": int(wallet_copy_applied),
             "wallet_count": wallet_count,
             "wallet_notional": round(max(0.0, float(wallet_notional)), 4),
@@ -4483,7 +4599,7 @@ class BTC5MinMakerBot:
             "reason": reason,
             "quote_ticks": quote_ticks,
             "regime_triggered": bool(recent_regime and recent_regime.get("triggered")),
-            "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
+            "risk_mode": risk_mode,
             "placement_failure_attribution": placement_failure_attribution,
             "order_outcome_attribution": order_outcome_attribution,
             "stage_gate_reason": stage_gate_reason,
