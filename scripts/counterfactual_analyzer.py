@@ -570,8 +570,6 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     db_paths = _expand_db_paths(args.db_glob, args.db)
-    if not db_paths:
-        raise SystemExit("No DB files matched --db/--db-glob.")
 
     report = build_counterfactual_report(
         db_paths=db_paths,
@@ -580,6 +578,10 @@ def main() -> int:
         enable_binance_backfill=not bool(args.disable_binance_backfill),
         binance_timeout_seconds=max(1.0, float(args.binance_timeout_seconds)),
     )
+    if not db_paths:
+        report["summary_lines"] = [
+            "No DB files matched --db/--db-glob; report contains no analyzed windows."
+        ]
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report["overall"], indent=2))
