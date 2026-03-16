@@ -103,11 +103,11 @@ def test_run_cycle_triggers_pricing_evolution_even_with_low_fill_count(monkeypat
     )
     monkeypatch.setattr(autoresearch_loop, "_write_json", lambda path, payload: None)
 
-    def _fake_run_pricing_evolution(**kwargs):
+    def _fake_evolve_and_maybe_promote(**kwargs):
         called.update(kwargs)
         return {"status": "insufficient_data"}
 
-    monkeypatch.setattr(autoresearch_loop, "run_pricing_evolution", _fake_run_pricing_evolution)
+    monkeypatch.setattr(autoresearch_loop, "evolve_and_maybe_promote", _fake_evolve_and_maybe_promote)
 
     result = autoresearch_loop.run_cycle()
     assert result is None

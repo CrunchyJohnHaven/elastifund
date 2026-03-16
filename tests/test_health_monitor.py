@@ -9,6 +9,10 @@ from types import SimpleNamespace
 from bot.health_monitor import (
     HeartbeatWriter,
     build_telegram_sender,
+    check_cascade_active,
+    check_fill_rate_trend,
+    check_skip_spike,
+    check_streak_active,
     build_daily_summary_snapshot,
     evaluate_heartbeat,
     format_daily_summary,
@@ -454,6 +458,8 @@ def test_run_health_check_emits_skip_spike_alert_fill_rate_trend_and_morning_rep
     health_report_path = tmp_path / "health_report.json"
     morning_report_path = tmp_path / "morning_report.json"
     alert_log_path = tmp_path / "alerts.log"
+    cascade_signal_path = tmp_path / "cascade_signal.json"
+    streak_log_path = tmp_path / "streak_log.json"
     config_path = tmp_path / "multi_asset_slugs.json"
     btc_db_path = tmp_path / "btc_5min_maker.db"
     eth_db_path = tmp_path / "eth_5min_maker.db"
@@ -525,6 +531,22 @@ def test_run_health_check_emits_skip_spike_alert_fill_rate_trend_and_morning_rep
             }
         )
     )
+    cascade_signal_path.write_text(
+        json.dumps(
+            {
+                "active": True,
+                "updated_at": now.isoformat(),
+                "source": "instance5",
+            }
+        )
+    )
+    streak_log_path.write_text(
+        json.dumps(
+            {
+                "current_streak": {"length": 3, "direction": "up", "started_at": (now - timedelta(hours=1)).isoformat()},
+            }
+        )
+    )
 
     messages: list[str] = []
 
@@ -537,6 +559,8 @@ def test_run_health_check_emits_skip_spike_alert_fill_rate_trend_and_morning_rep
         morning_report_path=morning_report_path,
         multi_asset_config_path=config_path,
         alert_log_path=alert_log_path,
+        cascade_signal_path=cascade_signal_path,
+        streak_log_path=streak_log_path,
         skip_spike_reason="skip_bad_book",
         skip_spike_window=20,
         skip_spike_threshold=0.8,
@@ -547,7 +571,11 @@ def test_run_health_check_emits_skip_spike_alert_fill_rate_trend_and_morning_rep
     )
 
     assert "skip_spike_alert_sent" in result["actions"]
+    assert "fill_rate_trend_warning_logged" in result["actions"]
     assert result["multi_asset_snapshot"]["hourly_fill_rate"]["trend"]["status"] == "degrading"
+    assert result["monitor_checks"]["fill_rate_trend"]["status"] == "declining"
+    assert result["monitor_checks"]["cascade"]["status"] == "active"
+    assert result["monitor_checks"]["streak"]["status"] == "active"
     assert health_report_path.exists()
     assert morning_report_path.exists()
     assert alert_log_path.exists()
@@ -556,6 +584,11 @@ def test_run_health_check_emits_skip_spike_alert_fill_rate_trend_and_morning_rep
     morning_report = json.loads(morning_report_path.read_text())
     assert "OVERNIGHT SYSTEM STATUS" in morning_report["paste_ready_summary"]
     assert "Skip spike alerts" in morning_report["paste_ready_summary"]
+    assert "2h vs 24h fill rate" in morning_report["paste_ready_summary"]
+    assert "Cascade signal: active" in morning_report["paste_ready_summary"]
+    assert "Current streak: up x3" in morning_report["paste_ready_summary"]
+    assert morning_report["monitor_checks"]["cascade"]["status"] == "active"
+    assert morning_report["monitor_checks"]["streak"]["streak_length"] == 3
 
     second_result = run_health_check(
         heartbeat_path=heartbeat_path,
@@ -566,6 +599,8 @@ def test_run_health_check_emits_skip_spike_alert_fill_rate_trend_and_morning_rep
         morning_report_path=morning_report_path,
         multi_asset_config_path=config_path,
         alert_log_path=alert_log_path,
+        cascade_signal_path=cascade_signal_path,
+        streak_log_path=streak_log_path,
         skip_spike_reason="skip_bad_book",
         skip_spike_window=20,
         skip_spike_threshold=0.8,
@@ -575,3 +610,42 @@ def test_run_health_check_emits_skip_spike_alert_fill_rate_trend_and_morning_rep
         send_message=lambda message: messages.append(message) or True,
     )
     assert "skip_spike_alert_sent" not in second_result["actions"]
+
+
+def test_check_cascade_and_streak_graceful_missing(tmp_path: Path) -> None:
+    cascade_result = check_cascade_active(tmp_path / "missing_cascade.json")
+    streak_result = check_streak_active(tmp_path / "missing_streak.json")
+    assert cascade_result["status"] == "missing"
+    assert cascade_result["active"] is False
+    assert streak_result["status"] == "missing"
+    assert streak_result["active"] is False
+
+
+def test_check_skip_spike_and_fill_rate_trend_helpers() -> None:
+    snapshot = {
+        "assets": [
+            {
+                "asset": "btc",
+                "service": "btc-5min-maker.service",
+                "db_path": "/tmp/btc.db",
+                "skip_spike_reason": "skip_bad_book",
+                "recent_skip_window": 20,
+                "recent_skip_reason_count": 18,
+                "recent_skip_reason_ratio": 0.9,
+            }
+        ],
+        "fill_rate_comparison": {
+            "windows_last_2h": 10,
+            "fills_last_2h": 2,
+            "last_2h_fill_rate": 0.2,
+            "windows_last_24h": 100,
+            "fills_last_24h": 40,
+            "last_24h_fill_rate": 0.4,
+        },
+    }
+    skip_result = check_skip_spike(snapshot, reason="skip_bad_book", window_size=20, threshold=0.8)
+    trend_result = check_fill_rate_trend(snapshot)
+    assert skip_result["status"] == "alert"
+    assert len(skip_result["alerts"]) == 1
+    assert trend_result["status"] == "declining"
+    assert trend_result["declining"] is True
