@@ -66,6 +66,7 @@ class BucketStats:
     fills: int
     wins: int
     total_pnl_usd: float
+    pnl_per_fill: float
     win_rate: float
 
 
@@ -236,88 +237,94 @@ def _select_recent_fills(conn: sqlite3.Connection, *, max_rows: int) -> list[Fil
     return observations
 
 
-def _bucketize_fills(
-    fills: list[FillObservation],
+def _query_delta_pnl_buckets(
+    conn: sqlite3.Connection,
     *,
+    max_rows: int,
     bucket_width: float,
     min_bin_fills: int,
-    min_bin_win_rate: float,
 ) -> list[BucketStats]:
-    if not fills:
-        return []
-    buckets: dict[float, dict[str, float]] = {}
-    width = max(bucket_width, 1e-6)
-    for fill in fills:
-        lower = math.floor(fill.abs_delta / width) * width
-        upper = lower + width
-        acc = buckets.setdefault(lower, {"fills": 0.0, "wins": 0.0, "pnl": 0.0, "upper": upper})
-        acc["fills"] += 1.0
-        acc["wins"] += float(fill.won)
-        acc["pnl"] += float(fill.pnl_usd)
-
-    profitable: list[BucketStats] = []
-    for lower in sorted(buckets):
-        acc = buckets[lower]
-        fills_n = int(acc["fills"])
+    width = max(float(bucket_width), 1e-6)
+    sql = """
+        WITH recent_fills AS (
+            SELECT
+                ABS(CAST(delta AS REAL)) AS abs_delta,
+                CAST(COALESCE(pnl_usd, 0) AS REAL) AS pnl_usd,
+                LOWER(TRIM(COALESCE(CAST(won AS TEXT), ''))) AS won_text,
+                CAST(COALESCE(won, 0) AS REAL) AS won_num
+            FROM window_trades
+            WHERE delta IS NOT NULL
+              AND ABS(CAST(delta AS REAL)) > 0
+              AND (
+                LOWER(COALESCE(order_status, '')) LIKE '%filled%'
+                OR LOWER(COALESCE(order_status, '')) = 'live_partial_fill_cancelled'
+              )
+            ORDER BY rowid DESC
+            LIMIT ?
+        )
+        SELECT
+            CAST(abs_delta / ? AS INTEGER) AS bucket_idx,
+            COUNT(*) AS fills,
+            SUM(
+                CASE
+                    WHEN won_text IN ('won', 'win', 'true', 't', 'yes', 'y', '1') THEN 1
+                    WHEN won_text IN ('lost', 'lose', 'false', 'f', 'no', 'n', '0') THEN 0
+                    WHEN won_num > 0 THEN 1
+                    WHEN pnl_usd > 0 THEN 1
+                    ELSE 0
+                END
+            ) AS wins,
+            SUM(pnl_usd) AS total_pnl_usd
+        FROM recent_fills
+        GROUP BY bucket_idx
+        ORDER BY bucket_idx ASC
+    """
+    rows = conn.execute(sql, (int(max_rows), width)).fetchall()
+    buckets: list[BucketStats] = []
+    for row in rows:
+        bucket_idx = _safe_float(row["bucket_idx"])
+        fills_raw = _safe_float(row["fills"])
+        wins_raw = _safe_float(row["wins"])
+        total_pnl_raw = _safe_float(row["total_pnl_usd"])
+        if bucket_idx is None or fills_raw is None or total_pnl_raw is None:
+            continue
+        fills_n = int(fills_raw)
         if fills_n < int(min_bin_fills):
             continue
-        wins = int(acc["wins"])
-        total_pnl = float(acc["pnl"])
-        win_rate = wins / fills_n if fills_n > 0 else 0.0
-        if total_pnl <= 0:
-            continue
-        if win_rate < float(min_bin_win_rate):
-            continue
-        profitable.append(
+        wins_n = int(wins_raw or 0.0)
+        total_pnl = float(total_pnl_raw)
+        lower = float(bucket_idx) * width
+        upper = lower + width
+        pnl_per_fill = total_pnl / fills_n if fills_n > 0 else 0.0
+        win_rate = wins_n / fills_n if fills_n > 0 else 0.0
+        buckets.append(
             BucketStats(
                 lower=float(lower),
-                upper=float(acc["upper"]),
+                upper=float(upper),
                 fills=fills_n,
-                wins=wins,
+                wins=wins_n,
                 total_pnl_usd=total_pnl,
+                pnl_per_fill=pnl_per_fill,
                 win_rate=win_rate,
             )
         )
-    return profitable
+    return buckets
 
 
-def _pick_profitable_band(
-    profitable_buckets: list[BucketStats],
+def _pick_best_pnl_band(
+    buckets: list[BucketStats],
     *,
-    bucket_width: float,
+    min_bin_win_rate: float,
 ) -> tuple[float | None, float | None]:
-    if not profitable_buckets:
+    if not buckets:
         return None, None
-    by_lower = {bucket.lower: bucket for bucket in profitable_buckets}
-    sorted_lowers = sorted(by_lower)
-    center = max(
-        profitable_buckets,
-        key=lambda bucket: (bucket.total_pnl_usd, bucket.win_rate, bucket.fills),
+    filtered = [bucket for bucket in buckets if bucket.win_rate >= float(min_bin_win_rate)]
+    candidate_buckets = filtered if filtered else buckets
+    best = max(
+        candidate_buckets,
+        key=lambda bucket: (bucket.pnl_per_fill, bucket.total_pnl_usd, bucket.fills, bucket.win_rate),
     )
-    center_idx = sorted_lowers.index(center.lower)
-    selected = {center.lower}
-
-    idx = center_idx - 1
-    while idx >= 0:
-        cur = sorted_lowers[idx]
-        nxt = sorted_lowers[idx + 1]
-        if abs(nxt - cur - bucket_width) > max(bucket_width * 0.05, 1e-6):
-            break
-        selected.add(cur)
-        idx -= 1
-
-    idx = center_idx + 1
-    while idx < len(sorted_lowers):
-        prev = sorted_lowers[idx - 1]
-        cur = sorted_lowers[idx]
-        if abs(cur - prev - bucket_width) > max(bucket_width * 0.05, 1e-6):
-            break
-        selected.add(cur)
-        idx += 1
-
-    lower = min(selected)
-    upper = max(selected) + bucket_width
-    return float(lower), float(upper)
+    return float(best.lower), float(best.upper)
 
 
 def calibrate_asset(
@@ -354,13 +361,12 @@ def calibrate_asset(
             profitable_buckets=[],
         )
 
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
     try:
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
         abs_deltas = _select_recent_abs_deltas(conn, max_rows=max_window_rows)
         fills = _select_recent_fills(conn, max_rows=max_fill_rows)
     except sqlite3.Error:
-        conn.close()
         return AssetCalibration(
             asset=asset,
             db_path=str(db_path),
@@ -380,11 +386,9 @@ def calibrate_asset(
             reason="query_failed",
             profitable_buckets=[],
         )
-    finally:
-        conn.close()
-
     vol_q80 = _quantile(abs_deltas, 0.80)
     if vol_q80 is None:
+        conn.close()
         return AssetCalibration(
             asset=asset,
             db_path=str(db_path),
@@ -406,15 +410,22 @@ def calibrate_asset(
         )
 
     volatility_target = _clamp(vol_q80 * float(vol_multiplier), MIN_MAX_ABS_DELTA, MAX_MAX_ABS_DELTA)
-
     dynamic_width = max(0.0001, min(0.001, volatility_target / 6.0))
-    profitable_buckets = _bucketize_fills(
-        fills,
-        bucket_width=dynamic_width,
-        min_bin_fills=min_bin_fills,
+    try:
+        profitable_buckets = _query_delta_pnl_buckets(
+            conn,
+            max_rows=max_fill_rows,
+            bucket_width=dynamic_width,
+            min_bin_fills=min_bin_fills,
+        )
+    except sqlite3.Error:
+        profitable_buckets = []
+    finally:
+        conn.close()
+    band_lower, band_upper = _pick_best_pnl_band(
+        profitable_buckets,
         min_bin_win_rate=min_bin_win_rate,
     )
-    band_lower, band_upper = _pick_profitable_band(profitable_buckets, bucket_width=dynamic_width)
 
     profitability_target: float | None = None
     if band_upper is not None:
@@ -442,7 +453,7 @@ def calibrate_asset(
             profitable_buckets=profitable_buckets,
         )
 
-    target_max = volatility_target if profitability_target is None else min(volatility_target, profitability_target)
+    target_max = profitability_target if profitability_target is not None else volatility_target
     if current_max_abs_delta is not None and current_max_abs_delta > 0:
         max_up_step = max(0.0002, current_max_abs_delta * 0.25)
         max_down_step = max(0.0002, current_max_abs_delta * 0.35)
@@ -527,7 +538,7 @@ def run_calibration(
 ) -> dict[str, Any]:
     db_paths = _merge_path_overrides(DEFAULT_ASSET_DB_PATHS, asset_db_paths)
     env_paths = _merge_path_overrides(DEFAULT_ASSET_ENV_PATHS, asset_env_paths)
-    stage_env = _parse_env_file(state_env_path)
+    legacy_stage_env = _parse_env_file(state_env_path)
 
     calibrations: list[AssetCalibration] = []
     for asset in ASSET_ORDER:
@@ -537,9 +548,16 @@ def run_calibration(
         if not db_path.is_absolute():
             db_path = Path.cwd() / db_path
 
-        current_env = stage_env if asset == "btc" else _parse_env_file(env_paths.get(asset, Path()))
+        env_path = env_paths.get(asset)
+        if env_path is not None and not env_path.is_absolute():
+            env_path = Path.cwd() / env_path
+        current_env = _parse_env_file(env_path) if env_path is not None else {}
         current_max = _safe_float(current_env.get("BTC5_MAX_ABS_DELTA"))
         current_min = _safe_float(current_env.get("BTC5_MIN_DELTA"))
+        if current_max is None:
+            current_max = _safe_float(legacy_stage_env.get("BTC5_MAX_ABS_DELTA"))
+        if current_min is None:
+            current_min = _safe_float(legacy_stage_env.get("BTC5_MIN_DELTA"))
 
         calibration = calibrate_asset(
             asset=asset,
@@ -566,25 +584,17 @@ def run_calibration(
                 "BTC5_MIN_DELTA": _format_env_float(calibration.recommended_min_delta),
             }
 
-            if calibration.asset == "btc":
-                _upsert_env_values(
-                    state_env_path,
-                    updates,
-                    header_comment="state/btc5_capital_stage.env — delta calibrated",
-                )
-                writes.append({"asset": calibration.asset, "path": str(state_env_path)})
-            else:
-                env_path = env_paths.get(calibration.asset)
-                if env_path is None:
-                    continue
-                if not env_path.is_absolute():
-                    env_path = Path.cwd() / env_path
-                _upsert_env_values(
-                    env_path,
-                    updates,
-                    header_comment=f"{calibration.asset.upper()} 5m delta calibration overrides",
-                )
-                writes.append({"asset": calibration.asset, "path": str(env_path)})
+            env_path = env_paths.get(calibration.asset)
+            if env_path is None:
+                continue
+            if not env_path.is_absolute():
+                env_path = Path.cwd() / env_path
+            _upsert_env_values(
+                env_path,
+                updates,
+                header_comment=f"{calibration.asset.upper()} 5m delta calibration overrides",
+            )
+            writes.append({"asset": calibration.asset, "path": str(env_path)})
 
     report_payload = {
         "generated_at": _iso_utc_now(),
@@ -626,7 +636,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--state-env",
         type=Path,
         default=DEFAULT_STAGE_ENV_PATH,
-        help=f"Path to shared capital-stage env file (default: {DEFAULT_STAGE_ENV_PATH})",
+        help=(
+            "Legacy shared env fallback for missing per-asset keys "
+            f"(default: {DEFAULT_STAGE_ENV_PATH})"
+        ),
     )
     parser.add_argument(
         "--report",

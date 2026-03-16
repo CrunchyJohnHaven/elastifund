@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from bot.pricing_evolution import run_pricing_evolution
+from bot.pricing_evolution import evolve_and_maybe_promote
 
 logger = logging.getLogger("AutoresearchLoop")
 
@@ -335,25 +335,21 @@ def run_cycle() -> dict | None:
         f"Observed: {obs['total_fills']} fills, ${obs['total_pnl']} PnL, "
         f"{obs['win_rate']*100:.1f}% win rate"
     )
-    pricing_evolution_result: dict[str, Any] = {"status": "not_run"}
-    try:
-        pricing_evolution_result = run_pricing_evolution(
-            db_path=DB_PATH,
-            overrides_path=AUTORESEARCH_OVERRIDES_PATH,
-            lookback_hours=24,
-        )
-        selected = (pricing_evolution_result.get("selected_genome") or {}).get("genome_id")
-        logger.info(
-            "Pricing evolution status=%s mutations=%s selected=%s",
-            pricing_evolution_result.get("status"),
-            pricing_evolution_result.get("mutation_count"),
-            selected,
-        )
-    except Exception:
-        logger.exception("Pricing evolution failed; continuing base autoresearch cycle")
-        pricing_evolution_result = {"status": "error", "reason": "exception_during_pricing_evolution"}
-
     if obs["total_fills"] < 5:
+        pricing_evolution_result: dict[str, Any] = {"status": "not_run"}
+        try:
+            pricing_evolution_result = evolve_and_maybe_promote(
+                db_path=DB_PATH,
+                overrides_path=AUTORESEARCH_OVERRIDES_PATH,
+                lookback_hours=24,
+            )
+            logger.info(
+                "Pricing evolution status=%s generation=%s",
+                pricing_evolution_result.get("status"),
+                pricing_evolution_result.get("generation"),
+            )
+        except Exception:
+            logger.exception("Pricing evolution failed at cycle end (low-fill path)")
         logger.info("Not enough fills for hypothesis generation. Waiting.")
         return None
 
@@ -379,6 +375,22 @@ def run_cycle() -> dict | None:
             logger.info(f"  INCONCLUSIVE: {h.hypothesis_id} (shadow PnL: ${h.shadow_pnl})")
 
         results.append(asdict(h))
+
+    pricing_evolution_result = {"status": "not_run"}
+    try:
+        pricing_evolution_result = evolve_and_maybe_promote(
+            db_path=DB_PATH,
+            overrides_path=AUTORESEARCH_OVERRIDES_PATH,
+            lookback_hours=24,
+        )
+        logger.info(
+            "Pricing evolution status=%s generation=%s",
+            pricing_evolution_result.get("status"),
+            pricing_evolution_result.get("generation"),
+        )
+    except Exception:
+        logger.exception("Pricing evolution failed at cycle end")
+        pricing_evolution_result = {"status": "error", "reason": "exception_during_pricing_evolution"}
 
     output = {
         "cycle_time": datetime.now(timezone.utc).isoformat(),
