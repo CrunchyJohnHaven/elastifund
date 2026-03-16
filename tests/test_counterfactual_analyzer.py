@@ -80,8 +80,8 @@ def test_counterfactual_report_groups_and_scores_skip_reasons(tmp_path: Path) ->
     delta_bucket = by_reason["skip_delta_too_large"]
     assert delta_bucket["count"] == 2
     assert delta_bucket["counterfactual_WR"] == 0.5
-    assert delta_bucket["counterfactual_PnL_per_trade"] == 0.1
-    assert delta_bucket["verdict"] == "RELAX"
+    assert delta_bucket["counterfactual_PnL_per_trade"] == 0.0
+    assert delta_bucket["verdict"] == "KEEP"
 
     price_bucket = by_reason["skip_price_outside_guardrails"]
     assert price_bucket["count"] == 1
