@@ -1,6 +1,6 @@
 {
   "discovered": "2026-03-16",
-  "note": "BTC/ETH/SOL/XRP/DOGE 5-minute slug patterns verified against Gamma API on 2026-03-16. Same structure: 5-minute binary UP/DOWN resolved via Chainlink. Same CLOB, same maker flow.",
+  "note": "BTC/ETH/SOL/XRP/DOGE/BNB 5-minute slug patterns verified against Gamma API on 2026-03-16. Same structure: 5-minute binary UP/DOWN resolved via Chainlink. Same CLOB, same maker flow.",
   "assets": {
     "BTCUSDT": {
       "slug_pattern": "btc-updown-5m-{window_start_ts}",
@@ -60,6 +60,18 @@
       "service": "doge-5min-maker.service",
       "db": "data/doge_5min_maker.db",
       "strategy_env": "config/doge5_strategy.env",
+      "status": "paper"
+    },
+    "BNBUSDT": {
+      "slug_pattern": "bnb-updown-5m-{window_start_ts}",
+      "asset_slug_prefix": "bnb",
+      "binance_symbol": "BNBUSDT",
+      "binance_ws": "wss://stream.binance.com:9443/ws/bnbusdt@trade",
+      "binance_ticker_url": "https://api.binance.com/api/v3/ticker/price?symbol=BNBUSDT",
+      "daily_volume_usd": 1800,
+      "service": "bnb-5min-maker.service",
+      "db": "data/bnb_5min_maker.db",
+      "strategy_env": "config/bnb5_strategy.env",
       "status": "paper"
     }
   }
