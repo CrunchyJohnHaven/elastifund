@@ -941,6 +941,10 @@ class MakerConfig:
     paper_fill_probability: float = float(os.environ.get("BTC5_PAPER_FILL_PROBABILITY", "0.20"))
     clob_fee_rate_bps: int = int(os.environ.get("BTC5_CLOB_FEE_RATE_BPS", "0"))
     request_timeout_sec: float = float(os.environ.get("BTC5_REQUEST_TIMEOUT_SEC", "8"))
+    enable_resolution_poller: bool = _env_flag("BTC5_ENABLE_RESOLUTION_POLLER", True)
+    resolution_poll_interval_sec: float = float(os.environ.get("BTC5_RESOLUTION_POLL_INTERVAL_SEC", "30"))
+    resolution_poll_max_seconds: int = int(os.environ.get("BTC5_RESOLUTION_POLL_MAX_SECONDS", "300"))
+    resolution_poll_start_delay_sec: float = float(os.environ.get("BTC5_RESOLUTION_POLL_START_DELAY_SEC", "2"))
     adaptive_enabled: bool = _env_flag("BTC5_ENABLE_INLINE_ADAPTATION", True)
     adaptive_suppress_wr_threshold: float = float(
         os.environ.get("BTC5_ADAPT_SUPPRESS_WR_THRESHOLD", "0.85")
@@ -1151,6 +1155,8 @@ class TradeDB:
                     resolved_side TEXT,
                     won INTEGER,
                     pnl_usd REAL,
+                    resolved_ts INTEGER,
+                    time_to_resolution_sec REAL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -1252,6 +1258,8 @@ class TradeDB:
             "resolved_side": row.get("resolved_side"),
             "won": row.get("won"),
             "pnl_usd": row.get("pnl_usd"),
+            "resolved_ts": row.get("resolved_ts"),
+            "time_to_resolution_sec": row.get("time_to_resolution_sec"),
             "created_at": row.get("created_at") or now_iso,
             "updated_at": now_iso,
         }
@@ -1264,7 +1272,7 @@ class TradeDB:
                     order_price, trade_size_usd, shares, order_id, order_status,
                     filled, reason, risk_mode, edge_tier, sizing_reason_tags, loss_cluster_suppressed,
                     session_policy_name, effective_stage, wallet_copy, wallet_count, wallet_notional,
-                    resolved_side, won, pnl_usd,
+                    resolved_side, won, pnl_usd, resolved_ts, time_to_resolution_sec,
                     created_at, updated_at
                 ) VALUES (
                     :window_start_ts, :window_end_ts, :slug, :decision_ts, :direction,
@@ -1272,7 +1280,7 @@ class TradeDB:
                     :order_price, :trade_size_usd, :shares, :order_id, :order_status,
                     :filled, :reason, :risk_mode, :edge_tier, :sizing_reason_tags, :loss_cluster_suppressed,
                     :session_policy_name, :effective_stage, :wallet_copy, :wallet_count, :wallet_notional,
-                    :resolved_side, :won, :pnl_usd,
+                    :resolved_side, :won, :pnl_usd, :resolved_ts, :time_to_resolution_sec,
                     :created_at, :updated_at
                 )
                 ON CONFLICT(window_start_ts) DO UPDATE SET
@@ -1304,10 +1312,31 @@ class TradeDB:
                     resolved_side=excluded.resolved_side,
                     won=excluded.won,
                     pnl_usd=excluded.pnl_usd,
+                    resolved_ts=excluded.resolved_ts,
+                    time_to_resolution_sec=excluded.time_to_resolution_sec,
                     updated_at=excluded.updated_at
                 """,
                 payload,
             )
+
+    def resolution_snapshot(self, window_start_ts: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    window_start_ts,
+                    resolved_side,
+                    won,
+                    pnl_usd,
+                    resolved_ts,
+                    time_to_resolution_sec
+                FROM window_trades
+                WHERE window_start_ts = ?
+                LIMIT 1
+                """,
+                (int(window_start_ts),),
+            ).fetchone()
+        return dict(row) if row else None
 
     def unsettled_rows(self, max_window_start_ts: int) -> list[sqlite3.Row]:
         with self._connect() as conn:
@@ -2120,6 +2149,9 @@ class BTC5MinMakerBot:
         self.db = TradeDB(cfg.db_path)
         self.cache = BinancePriceCache()
         self.clob = CLOBExecutor(cfg)
+        self._resolution_poll_tasks: set[asyncio.Task[Any]] = set()
+        self._resolution_poll_windows: set[int] = set()
+        self._resolution_poller_runtime_enabled = False
         self.smart_wallet_feed = self._build_smart_wallet_feed()
         self._wallet_watch_started_windows: set[int] = set()
         self._rolling_fills_090: list[tuple[float, float, int]] = []
@@ -3326,12 +3358,90 @@ class BTC5MinMakerBot:
             ),
         }
 
+    def _spawn_resolution_poller(self, *, window_start_ts: int, window_end_ts: int) -> None:
+        if self.cfg.paper_trading or not self.cfg.enable_resolution_poller:
+            return
+        if not self._resolution_poller_runtime_enabled:
+            return
+        normalized_ws = int(window_start_ts)
+        if normalized_ws in self._resolution_poll_windows:
+            return
+        self._resolution_poll_windows.add(normalized_ws)
+        task = asyncio.create_task(
+            self._poll_resolution_until_resolved(
+                window_start_ts=normalized_ws,
+                window_end_ts=int(window_end_ts),
+            )
+        )
+        self._resolution_poll_tasks.add(task)
+
+        def _cleanup(done: asyncio.Task[Any]) -> None:
+            self._resolution_poll_tasks.discard(done)
+            self._resolution_poll_windows.discard(normalized_ws)
+            with contextlib.suppress(asyncio.CancelledError):
+                exc = done.exception()
+                if exc is not None:
+                    logger.warning("Resolution poller failed for window %s: %s", normalized_ws, exc)
+
+        task.add_done_callback(_cleanup)
+
+    async def _poll_resolution_until_resolved(self, *, window_start_ts: int, window_end_ts: int) -> None:
+        interval_sec = max(1.0, float(self.cfg.resolution_poll_interval_sec))
+        max_seconds = max(1, int(self.cfg.resolution_poll_max_seconds))
+        start_delay_sec = max(0.0, float(self.cfg.resolution_poll_start_delay_sec))
+        first_poll_at = float(window_end_ts) + start_delay_sec
+        if first_poll_at > time.time():
+            await asyncio.sleep(first_poll_at - time.time())
+        deadline = float(window_end_ts) + float(max_seconds)
+
+        timeout = aiohttp.ClientTimeout(total=self.cfg.request_timeout_sec)
+        attempts = 0
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            http = MarketHttpClient(self.cfg, session)
+            while True:
+                attempts += 1
+                await self._resolve_unsettled(http, through_window_start=int(window_start_ts))
+                snapshot = self.db.resolution_snapshot(int(window_start_ts))
+                resolved_side = str((snapshot or {}).get("resolved_side") or "").strip()
+                if resolved_side:
+                    latency = _safe_float((snapshot or {}).get("time_to_resolution_sec"), None)
+                    logger.info(
+                        "Resolution poller settled window=%s side=%s attempts=%d time_to_resolution_sec=%s",
+                        window_start_ts,
+                        resolved_side,
+                        attempts,
+                        "n/a" if latency is None else f"{float(latency):.1f}",
+                    )
+                    return
+                if time.time() >= deadline:
+                    break
+                await asyncio.sleep(min(interval_sec, max(0.0, deadline - time.time())))
+        logger.info(
+            "Resolution poller timed out window=%s attempts=%d max_seconds=%d",
+            window_start_ts,
+            attempts,
+            max_seconds,
+        )
+
+    async def _cancel_resolution_pollers(self) -> None:
+        if not self._resolution_poll_tasks:
+            return
+        tasks = list(self._resolution_poll_tasks)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._resolution_poll_tasks.clear()
+        self._resolution_poll_windows.clear()
+
     async def _resolve_unsettled(self, http: MarketHttpClient, through_window_start: int) -> None:
         rows = self.db.unsettled_rows(max_window_start_ts=through_window_start)
         for row in rows:
             kline = await http.fetch_binance_window_open_close(int(row["window_start_ts"]))
             if not kline:
                 continue
+            resolved_ts = int(time.time())
+            decision_ts = int(_safe_float(row["decision_ts"], row["window_end_ts"]) or row["window_end_ts"])
+            time_to_resolution_sec = max(0.0, float(resolved_ts - decision_ts))
             open_px, close_px = kline
             if close_px > open_px:
                 resolved_side = "UP"
@@ -3377,6 +3487,8 @@ class BTC5MinMakerBot:
                     "resolved_side": resolved_side,
                     "won": won,
                     "pnl_usd": pnl,
+                    "resolved_ts": resolved_ts,
+                    "time_to_resolution_sec": time_to_resolution_sec,
                 }
             )
             if (
@@ -4709,6 +4821,12 @@ class BTC5MinMakerBot:
             "wallet_notional": round(max(0.0, float(wallet_notional)), 4),
         }
         _persist(row)
+        if (
+            not self.cfg.paper_trading
+            and filled == 1
+            and _is_live_filled_status(order_status, filled)
+        ):
+            self._spawn_resolution_poller(window_start_ts=window_start_ts, window_end_ts=window_end_ts)
         return _result({
             "window_start_ts": window_start_ts,
             "status": order_status,
@@ -4744,6 +4862,7 @@ class BTC5MinMakerBot:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             http = MarketHttpClient(self.cfg, session)
             executed = 0
+            self._resolution_poller_runtime_enabled = True
 
             try:
                 while True:
@@ -4775,6 +4894,7 @@ class BTC5MinMakerBot:
                     if not continuous and executed >= count:
                         break
             finally:
+                self._resolution_poller_runtime_enabled = False
                 stop_event.set()
                 await asyncio.sleep(0)
                 for task in feed_tasks:
@@ -4891,7 +5011,7 @@ async def _run(args: argparse.Namespace) -> None:
         raise SystemExit("--windows must be >= 1")
 
     logger.info(
-        "Starting BTC5 maker | mode=%s | bankroll=%.2f | risk_fraction=%.4f | max_trade=%.2f | max_abs_delta=%s | up_max=%.2f | down_max=%.2f | improve_ticks=%d | session_overrides=%d | regime_skew=%s | probe_daily_loss=%s | probe_recent=%s | retry_post_only_cross=%s safety_ticks=%d | window_seconds=%d | entry_timing=T-%ss early=T-%ss | slug_prefix=%s | binance_symbol=%s | kline_interval=%s",
+        "Starting BTC5 maker | mode=%s | bankroll=%.2f | risk_fraction=%.4f | max_trade=%.2f | max_abs_delta=%s | up_max=%.2f | down_max=%.2f | improve_ticks=%d | session_overrides=%d | regime_skew=%s | probe_daily_loss=%s | probe_recent=%s | retry_post_only_cross=%s safety_ticks=%d | resolution_poller=%s interval_sec=%.1f max_sec=%d | window_seconds=%d | entry_timing=T-%ss early=T-%ss | slug_prefix=%s | binance_symbol=%s | kline_interval=%s",
         "paper" if cfg.paper_trading else "live",
         cfg.bankroll_usd,
         cfg.risk_fraction,
@@ -4906,6 +5026,9 @@ async def _run(args: argparse.Namespace) -> None:
         "enabled" if cfg.enable_probe_after_recent_loss else "disabled",
         "enabled" if cfg.retry_post_only_cross else "disabled",
         max(0, int(cfg.retry_post_only_safety_ticks)),
+        "enabled" if cfg.enable_resolution_poller else "disabled",
+        float(cfg.resolution_poll_interval_sec),
+        int(cfg.resolution_poll_max_seconds),
         WINDOW_SECONDS,
         int(cfg.entry_seconds_before_close),
         int(cfg.early_decision_sec),
