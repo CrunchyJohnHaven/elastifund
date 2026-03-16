@@ -101,6 +101,6 @@ def test_counterfactual_report_uses_last_known_ask_for_bad_book(tmp_path: Path) 
     assert bad_book_bucket["simulated_trades"] == 1
     assert bad_book_bucket["wins"] == 1
     assert bad_book_bucket["win_rate"] == 1.0
-    # Using the seeded directional ask=0.88: pnl = 5 * ((1/0.88) - 1) = 0.681818
-    assert bad_book_bucket["pnl_usd_total"] == 0.681818
+    # Fallback uses the latest directional ask seen before this window (0.50 here).
+    assert bad_book_bucket["pnl_usd_total"] == 5.0
     assert bad_book_bucket["ask_source_counts"]["last_known_directional_ask"] == 1
