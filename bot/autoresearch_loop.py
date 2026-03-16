@@ -24,6 +24,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from bot.pricing_evolution import run_pricing_evolution
+
 logger = logging.getLogger("AutoresearchLoop")
 
 BOT_DIR = Path(os.environ.get("POLYMARKET_BOT_DIR", "/home/ubuntu/polymarket-trading-bot"))
@@ -36,6 +38,9 @@ KELLY_RECOMMENDATION_PATH = Path(
         "BTC5_AUTORESEARCH_KELLY_PATH",
         str(BOT_DIR / "data" / "autoresearch_kelly_recommendation.json"),
     )
+)
+AUTORESEARCH_OVERRIDES_PATH = Path(
+    os.environ.get("BTC5_AUTORESEARCH_OVERRIDES_PATH", str(BOT_DIR / "config" / "autoresearch_overrides.json"))
 )
 PRICE_FLOOR_SWEEP = (0.85, 0.87, 0.88, 0.89, 0.90, 0.91, 0.92)
 PRICE_CAP_SWEEP = (0.93, 0.94, 0.95)
@@ -330,6 +335,23 @@ def run_cycle() -> dict | None:
         f"Observed: {obs['total_fills']} fills, ${obs['total_pnl']} PnL, "
         f"{obs['win_rate']*100:.1f}% win rate"
     )
+    pricing_evolution_result: dict[str, Any] = {"status": "not_run"}
+    try:
+        pricing_evolution_result = run_pricing_evolution(
+            db_path=DB_PATH,
+            overrides_path=AUTORESEARCH_OVERRIDES_PATH,
+            lookback_hours=24,
+        )
+        selected = (pricing_evolution_result.get("selected_genome") or {}).get("genome_id")
+        logger.info(
+            "Pricing evolution status=%s mutations=%s selected=%s",
+            pricing_evolution_result.get("status"),
+            pricing_evolution_result.get("mutation_count"),
+            selected,
+        )
+    except Exception:
+        logger.exception("Pricing evolution failed; continuing base autoresearch cycle")
+        pricing_evolution_result = {"status": "error", "reason": "exception_during_pricing_evolution"}
 
     if obs["total_fills"] < 5:
         logger.info("Not enough fills for hypothesis generation. Waiting.")
@@ -363,6 +385,7 @@ def run_cycle() -> dict | None:
         "observation": obs,
         "hypotheses": results,
         "kelly_recommendation": kelly_recommendation,
+        "pricing_evolution": pricing_evolution_result,
     }
     _write_json(RESULTS_PATH, output)
     logger.info(f"Results written to {RESULTS_PATH}")
