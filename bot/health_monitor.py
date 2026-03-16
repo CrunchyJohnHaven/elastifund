@@ -9,6 +9,7 @@ import os
 import shlex
 import sqlite3
 import subprocess
+from collections import defaultdict
 from datetime import date, datetime, time as dt_time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -23,6 +24,12 @@ DEFAULT_MONITOR_STATE_FILE = Path(
 )
 DEFAULT_DB_PATH = Path(os.environ.get("JJ_DB_FILE", "data/jj_trades.db"))
 DEFAULT_JJ_STATE_FILE = Path(os.environ.get("JJ_STATE_FILE", "jj_state.json"))
+DEFAULT_HEALTH_REPORT_FILE = Path(os.environ.get("JJ_HEALTH_REPORT_FILE", "data/health_report.json"))
+DEFAULT_MORNING_REPORT_FILE = Path(os.environ.get("JJ_MORNING_REPORT_FILE", "data/morning_report.json"))
+DEFAULT_ALERT_LOG_FILE = Path(os.environ.get("JJ_ALERT_LOG_FILE", "/tmp/elastifund_alerts.log"))
+DEFAULT_MULTI_ASSET_CONFIG_PATH = Path(
+    os.environ.get("JJ_MULTI_ASSET_CONFIG_PATH", "config/multi_asset_slugs.json")
+)
 DEFAULT_TIMEOUT_SECONDS = int(os.environ.get("JJ_HEARTBEAT_TIMEOUT_SECONDS", "600"))
 DEFAULT_RESTART_COOLDOWN_SECONDS = int(
     os.environ.get("JJ_HEALTH_RESTART_COOLDOWN_SECONDS", "900")
@@ -30,6 +37,11 @@ DEFAULT_RESTART_COOLDOWN_SECONDS = int(
 DEFAULT_SERVICE_NAME = os.environ.get("JJ_HEALTH_SERVICE_NAME", "jj-live.service").strip() or "jj-live.service"
 DEFAULT_DAILY_SUMMARY_HOUR_UTC = int(os.environ.get("JJ_DAILY_SUMMARY_HOUR_UTC", "0"))
 DEFAULT_DAILY_SUMMARY_MINUTE_UTC = int(os.environ.get("JJ_DAILY_SUMMARY_MINUTE_UTC", "0"))
+DEFAULT_SKIP_SPIKE_REASON = str(os.environ.get("JJ_SKIP_SPIKE_REASON", "skip_bad_book") or "skip_bad_book").strip().lower()
+DEFAULT_SKIP_SPIKE_WINDOW = int(os.environ.get("JJ_SKIP_SPIKE_WINDOW", "20"))
+DEFAULT_SKIP_SPIKE_THRESHOLD = float(os.environ.get("JJ_SKIP_SPIKE_THRESHOLD", "0.80"))
+DEFAULT_OVERNIGHT_HOURS = int(os.environ.get("JJ_OVERNIGHT_HOURS", "8"))
+DEFAULT_FILL_RATE_TREND_HOURS = int(os.environ.get("JJ_FILL_RATE_TREND_HOURS", "6"))
 ERROR_HISTORY_DAYS = 14
 
 
@@ -122,6 +134,7 @@ def load_monitor_state(path: Path = DEFAULT_MONITOR_STATE_FILE) -> dict[str, Any
     payload.setdefault("last_health_status", "unknown")
     payload.setdefault("last_restart_at", None)
     payload.setdefault("last_daily_summary_for_date", None)
+    payload.setdefault("skip_spike_alert_state", {})
     return payload
 
 
@@ -358,6 +371,440 @@ def _state_snapshot(path: Path) -> dict[str, Any]:
     }
 
 
+def _format_pct(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value * 100:.1f}%"
+
+
+def _append_alert_log(path: Path, message: str, *, now: datetime) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(f"[{now.isoformat()}] {message}\n")
+    except OSError:
+        return
+
+
+def _normalize_status(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _to_iso_hour(hour_epoch: int) -> str:
+    return datetime.fromtimestamp(int(hour_epoch), tz=timezone.utc).replace(minute=0, second=0, microsecond=0).isoformat()
+
+
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?",
+            (str(table_name),),
+        ).fetchone()
+    except sqlite3.Error:
+        return False
+    return row is not None
+
+
+def _load_multi_asset_targets(config_path: Path) -> list[dict[str, Any]]:
+    payload = _read_json(config_path, default={})
+    assets = payload.get("assets")
+    if not isinstance(assets, dict):
+        return []
+
+    targets: list[dict[str, Any]] = []
+    for symbol, raw_meta in assets.items():
+        if not isinstance(raw_meta, dict):
+            continue
+        db_raw = str(raw_meta.get("db") or "").strip()
+        if not db_raw:
+            continue
+        asset = str(raw_meta.get("asset_slug_prefix") or symbol or "").strip().lower()
+        if not asset:
+            continue
+        targets.append(
+            {
+                "asset": asset,
+                "symbol": str(symbol),
+                "service": str(raw_meta.get("service") or f"{asset}-5min-maker.service"),
+                "db_path": Path(db_raw),
+                "status": str(raw_meta.get("status") or ""),
+            }
+        )
+    return sorted(targets, key=lambda row: str(row.get("asset") or ""))
+
+
+def _classify_fill_rate_trend(hourly_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    rows = sorted(hourly_rows, key=lambda row: int(row.get("hour_epoch") or 0))
+    if len(rows) < 2:
+        return {
+            "status": "insufficient_data",
+            "delta": None,
+            "recent_average_fill_rate": None,
+            "prior_average_fill_rate": None,
+            "hours_covered": len(rows),
+        }
+
+    midpoint = max(1, len(rows) // 2)
+    prior = rows[:midpoint]
+    recent = rows[midpoint:]
+    if not recent:
+        recent = rows[-1:]
+    if not prior:
+        prior = rows[:-1]
+
+    prior_avg = sum(float(row.get("fill_rate") or 0.0) for row in prior) / len(prior)
+    recent_avg = sum(float(row.get("fill_rate") or 0.0) for row in recent) / len(recent)
+    delta = recent_avg - prior_avg
+    if delta > 0.02:
+        status = "improving"
+    elif delta < -0.02:
+        status = "degrading"
+    else:
+        status = "flat"
+    return {
+        "status": status,
+        "delta": round(delta, 4),
+        "recent_average_fill_rate": round(recent_avg, 4),
+        "prior_average_fill_rate": round(prior_avg, 4),
+        "hours_covered": len(rows),
+    }
+
+
+def build_multi_asset_health_snapshot(
+    *,
+    now: datetime,
+    config_path: Path = DEFAULT_MULTI_ASSET_CONFIG_PATH,
+    overnight_hours: int = DEFAULT_OVERNIGHT_HOURS,
+    trend_hours: int = DEFAULT_FILL_RATE_TREND_HOURS,
+    skip_spike_reason: str = DEFAULT_SKIP_SPIKE_REASON,
+    skip_spike_window: int = DEFAULT_SKIP_SPIKE_WINDOW,
+    skip_spike_threshold: float = DEFAULT_SKIP_SPIKE_THRESHOLD,
+) -> dict[str, Any]:
+    current_time = now.astimezone(timezone.utc)
+    overnight_cutoff_epoch = int((current_time - timedelta(hours=max(1, int(overnight_hours)))).timestamp())
+    trend_cutoff_epoch = int((current_time - timedelta(hours=max(2, int(trend_hours)))).timestamp())
+    tracked_reason = str(skip_spike_reason or "skip_bad_book").strip().lower()
+    window_size = max(1, int(skip_spike_window))
+    threshold = max(0.0, min(1.0, float(skip_spike_threshold)))
+
+    targets = _load_multi_asset_targets(config_path)
+    per_asset: list[dict[str, Any]] = []
+    overall_hourly: dict[int, dict[str, int]] = defaultdict(lambda: {"windows": 0, "fills": 0})
+    total_windows = 0
+    total_fills = 0
+    total_wins = 0
+    total_losses = 0
+    total_pnl = 0.0
+
+    for target in targets:
+        db_path = Path(target["db_path"])
+        entry: dict[str, Any] = {
+            "asset": str(target.get("asset") or ""),
+            "symbol": str(target.get("symbol") or ""),
+            "service": str(target.get("service") or ""),
+            "db_path": str(db_path),
+            "db_exists": db_path.exists(),
+            "windows": 0,
+            "fills": 0,
+            "wins": 0,
+            "losses": 0,
+            "fill_rate": None,
+            "win_rate": None,
+            "pnl_usd": 0.0,
+            "latest_decision_ts": None,
+            "latest_decision_at": None,
+            "recent_skip_window": 0,
+            "skip_spike_reason": tracked_reason,
+            "recent_skip_reason_count": 0,
+            "recent_skip_reason_ratio": None,
+            "skip_spike_triggered": False,
+            "top_skip_reasons": [],
+            "hourly_fill_rate": [],
+            "query_error": None,
+        }
+        if not db_path.exists():
+            per_asset.append(entry)
+            continue
+
+        conn: sqlite3.Connection | None = None
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            if not _table_exists(conn, "window_trades"):
+                entry["query_error"] = "missing_window_trades_table"
+                per_asset.append(entry)
+                continue
+
+            recent_skip_rows = conn.execute(
+                """
+                SELECT order_status
+                FROM window_trades
+                ORDER BY decision_ts DESC
+                LIMIT ?
+                """,
+                (window_size,),
+            ).fetchall()
+            recent_skip_window = len(recent_skip_rows)
+            recent_skip_reason_count = sum(
+                1 for row in recent_skip_rows if _normalize_status(row["order_status"]) == tracked_reason
+            )
+            recent_skip_reason_ratio = (
+                (recent_skip_reason_count / recent_skip_window) if recent_skip_window > 0 else None
+            )
+
+            overnight_row = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS windows,
+                    COALESCE(SUM(CASE WHEN LOWER(COALESCE(order_status, '')) = 'live_filled' THEN 1 ELSE 0 END), 0) AS fills,
+                    COALESCE(SUM(CASE WHEN LOWER(COALESCE(order_status, '')) = 'live_filled' AND won = 1 THEN 1 ELSE 0 END), 0) AS wins,
+                    COALESCE(SUM(CASE WHEN LOWER(COALESCE(order_status, '')) = 'live_filled' AND won = 0 THEN 1 ELSE 0 END), 0) AS losses,
+                    COALESCE(SUM(CASE WHEN LOWER(COALESCE(order_status, '')) = 'live_filled' THEN COALESCE(pnl_usd, 0) ELSE 0 END), 0) AS pnl_usd,
+                    MAX(decision_ts) AS latest_decision_ts
+                FROM window_trades
+                WHERE decision_ts >= ?
+                """,
+                (overnight_cutoff_epoch,),
+            ).fetchone()
+
+            top_skip_reasons = conn.execute(
+                """
+                SELECT
+                    LOWER(COALESCE(order_status, '')) AS status,
+                    COUNT(*) AS count
+                FROM window_trades
+                WHERE decision_ts >= ?
+                  AND LOWER(COALESCE(order_status, '')) LIKE 'skip_%'
+                GROUP BY status
+                ORDER BY count DESC
+                LIMIT 5
+                """,
+                (overnight_cutoff_epoch,),
+            ).fetchall()
+
+            hourly_rows = conn.execute(
+                """
+                SELECT
+                    CAST(decision_ts / 3600 AS INTEGER) * 3600 AS hour_epoch,
+                    COUNT(*) AS windows,
+                    COALESCE(SUM(CASE WHEN LOWER(COALESCE(order_status, '')) = 'live_filled' THEN 1 ELSE 0 END), 0) AS fills
+                FROM window_trades
+                WHERE decision_ts >= ?
+                GROUP BY hour_epoch
+                ORDER BY hour_epoch ASC
+                """,
+                (trend_cutoff_epoch,),
+            ).fetchall()
+
+            windows = _coerce_int(overnight_row["windows"] if overnight_row else 0, 0)
+            fills = _coerce_int(overnight_row["fills"] if overnight_row else 0, 0)
+            wins = _coerce_int(overnight_row["wins"] if overnight_row else 0, 0)
+            losses = _coerce_int(overnight_row["losses"] if overnight_row else 0, 0)
+            pnl_usd = float(_coerce_float(overnight_row["pnl_usd"] if overnight_row else 0.0, 0.0) or 0.0)
+            latest_decision_ts = _coerce_int(overnight_row["latest_decision_ts"] if overnight_row else 0, 0)
+            hourly_fill_rate: list[dict[str, Any]] = []
+            for row in hourly_rows:
+                hour_epoch = _coerce_int(row["hour_epoch"], 0)
+                hour_windows = _coerce_int(row["windows"], 0)
+                hour_fills = _coerce_int(row["fills"], 0)
+                if hour_windows <= 0:
+                    continue
+                fill_rate = hour_fills / hour_windows
+                hourly_fill_rate.append(
+                    {
+                        "hour_epoch": hour_epoch,
+                        "hour_start_utc": _to_iso_hour(hour_epoch),
+                        "windows": hour_windows,
+                        "fills": hour_fills,
+                        "fill_rate": round(fill_rate, 4),
+                    }
+                )
+                overall_hourly[hour_epoch]["windows"] += hour_windows
+                overall_hourly[hour_epoch]["fills"] += hour_fills
+
+            fill_rate = (fills / windows) if windows > 0 else None
+            win_rate = (wins / fills) if fills > 0 else None
+            latest_decision_at = (
+                datetime.fromtimestamp(latest_decision_ts, tz=timezone.utc).isoformat()
+                if latest_decision_ts > 0
+                else None
+            )
+
+            entry.update(
+                {
+                    "windows": windows,
+                    "fills": fills,
+                    "wins": wins,
+                    "losses": losses,
+                    "fill_rate": round(fill_rate, 4) if fill_rate is not None else None,
+                    "win_rate": round(win_rate, 4) if win_rate is not None else None,
+                    "pnl_usd": round(pnl_usd, 4),
+                    "latest_decision_ts": latest_decision_ts if latest_decision_ts > 0 else None,
+                    "latest_decision_at": latest_decision_at,
+                    "recent_skip_window": recent_skip_window,
+                    "recent_skip_reason_count": recent_skip_reason_count,
+                    "recent_skip_reason_ratio": (
+                        round(recent_skip_reason_ratio, 4) if recent_skip_reason_ratio is not None else None
+                    ),
+                    "skip_spike_triggered": (
+                        recent_skip_window >= window_size
+                        and recent_skip_reason_ratio is not None
+                        and recent_skip_reason_ratio > threshold
+                    ),
+                    "top_skip_reasons": [
+                        {"status": str(row["status"] or ""), "count": _coerce_int(row["count"], 0)}
+                        for row in top_skip_reasons
+                    ],
+                    "hourly_fill_rate": hourly_fill_rate,
+                }
+            )
+
+            total_windows += windows
+            total_fills += fills
+            total_wins += wins
+            total_losses += losses
+            total_pnl += pnl_usd
+        except sqlite3.Error as exc:
+            entry["query_error"] = str(exc)
+        finally:
+            if conn is not None:
+                conn.close()
+        per_asset.append(entry)
+
+    overall_hourly_rows: list[dict[str, Any]] = []
+    for hour_epoch, bucket in sorted(overall_hourly.items()):
+        windows = int(bucket["windows"])
+        fills = int(bucket["fills"])
+        if windows <= 0:
+            continue
+        overall_hourly_rows.append(
+            {
+                "hour_epoch": int(hour_epoch),
+                "hour_start_utc": _to_iso_hour(int(hour_epoch)),
+                "windows": windows,
+                "fills": fills,
+                "fill_rate": round(fills / windows, 4),
+            }
+        )
+    trend = _classify_fill_rate_trend(overall_hourly_rows)
+    overall_fill_rate = (total_fills / total_windows) if total_windows > 0 else None
+    overall_win_rate = (total_wins / total_fills) if total_fills > 0 else None
+
+    active_spike_alerts = [
+        {
+            "asset": asset.get("asset"),
+            "service": asset.get("service"),
+            "skip_reason": tracked_reason,
+            "ratio": asset.get("recent_skip_reason_ratio"),
+            "window": asset.get("recent_skip_window"),
+            "count": asset.get("recent_skip_reason_count"),
+        }
+        for asset in per_asset
+        if bool(asset.get("skip_spike_triggered"))
+    ]
+
+    return {
+        "generated_at": current_time.isoformat(),
+        "config_path": str(config_path),
+        "overnight_hours": max(1, int(overnight_hours)),
+        "trend_hours": max(2, int(trend_hours)),
+        "skip_spike_reason": tracked_reason,
+        "skip_spike_window": window_size,
+        "skip_spike_threshold": round(threshold, 4),
+        "assets": per_asset,
+        "overall": {
+            "assets_monitored": len(per_asset),
+            "windows": total_windows,
+            "fills": total_fills,
+            "wins": total_wins,
+            "losses": total_losses,
+            "fill_rate": round(overall_fill_rate, 4) if overall_fill_rate is not None else None,
+            "win_rate": round(overall_win_rate, 4) if overall_win_rate is not None else None,
+            "pnl_usd": round(total_pnl, 4),
+        },
+        "hourly_fill_rate": {
+            "buckets": overall_hourly_rows,
+            "trend": trend,
+        },
+        "active_skip_spike_alerts": active_spike_alerts,
+    }
+
+
+def build_morning_report(
+    *,
+    checked_at: datetime,
+    evaluation: dict[str, Any],
+    service_name: str,
+    actions: list[str],
+    multi_asset_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    overall = dict(multi_asset_snapshot.get("overall") or {})
+    trend = dict((multi_asset_snapshot.get("hourly_fill_rate") or {}).get("trend") or {})
+    skip_alerts = list(multi_asset_snapshot.get("active_skip_spike_alerts") or [])
+    asset_rows = list(multi_asset_snapshot.get("assets") or [])
+    paste_lines = [
+        "OVERNIGHT SYSTEM STATUS",
+        f"Generated: {checked_at.isoformat()}",
+        f"Health: {evaluation.get('status', 'unknown')} ({evaluation.get('reason', 'unknown')})",
+        f"Service: {service_name}",
+        (
+            f"Overnight windows/fills: {overall.get('fills', 0)}/{overall.get('windows', 0)} "
+            f"({ _format_pct(_coerce_float(overall.get('fill_rate'))) })"
+        ),
+        (
+            f"Overnight fill WR: {_format_pct(_coerce_float(overall.get('win_rate')))} | "
+            f"PnL: ${_coerce_float(overall.get('pnl_usd'), 0.0) or 0.0:+.2f}"
+        ),
+        (
+            "Hourly fill-rate trend: "
+            f"{trend.get('status', 'insufficient_data')} "
+            f"(recent={_format_pct(_coerce_float(trend.get('recent_average_fill_rate')))}, "
+            f"prior={_format_pct(_coerce_float(trend.get('prior_average_fill_rate')))}, "
+            f"delta={_format_pct(_coerce_float(trend.get('delta')))})"
+        ),
+    ]
+    if skip_alerts:
+        paste_lines.append(
+            "Skip spike alerts: "
+            + ", ".join(
+                f"{item.get('asset')} {_format_pct(_coerce_float(item.get('ratio')))}"
+                for item in skip_alerts
+            )
+        )
+    else:
+        paste_lines.append("Skip spike alerts: none")
+
+    for asset in asset_rows:
+        paste_lines.append(
+            (
+                f"- {str(asset.get('asset') or '').upper()}: "
+                f"fills {asset.get('fills', 0)}/{asset.get('windows', 0)} "
+                f"({_format_pct(_coerce_float(asset.get('fill_rate')))}), "
+                f"WR {_format_pct(_coerce_float(asset.get('win_rate')))}, "
+                f"PnL ${_coerce_float(asset.get('pnl_usd'), 0.0) or 0.0:+.2f}, "
+                f"{asset.get('skip_spike_reason')} "
+                f"{_format_pct(_coerce_float(asset.get('recent_skip_reason_ratio')))}"
+            )
+        )
+
+    return {
+        "generated_at": checked_at.isoformat(),
+        "health": {
+            "status": evaluation.get("status"),
+            "reason": evaluation.get("reason"),
+            "cycle_number": evaluation.get("cycle_number"),
+            "age_seconds": evaluation.get("age_seconds"),
+        },
+        "service_name": service_name,
+        "actions": list(actions),
+        "overview": overall,
+        "hourly_fill_rate_trend": trend,
+        "skip_spike_alerts": skip_alerts,
+        "assets": asset_rows,
+        "paste_ready_summary": "\n".join(paste_lines),
+    }
+
+
 def build_daily_summary_snapshot(
     *,
     target_date: date,
@@ -561,6 +1008,15 @@ def run_health_check(
     send_daily_summary: bool = False,
     daily_summary_hour_utc: int = DEFAULT_DAILY_SUMMARY_HOUR_UTC,
     daily_summary_minute_utc: int = DEFAULT_DAILY_SUMMARY_MINUTE_UTC,
+    health_report_path: Path = DEFAULT_HEALTH_REPORT_FILE,
+    morning_report_path: Path = DEFAULT_MORNING_REPORT_FILE,
+    multi_asset_config_path: Path = DEFAULT_MULTI_ASSET_CONFIG_PATH,
+    alert_log_path: Path = DEFAULT_ALERT_LOG_FILE,
+    skip_spike_reason: str = DEFAULT_SKIP_SPIKE_REASON,
+    skip_spike_window: int = DEFAULT_SKIP_SPIKE_WINDOW,
+    skip_spike_threshold: float = DEFAULT_SKIP_SPIKE_THRESHOLD,
+    overnight_hours: int = DEFAULT_OVERNIGHT_HOURS,
+    fill_rate_trend_hours: int = DEFAULT_FILL_RATE_TREND_HOURS,
     now: datetime | None = None,
     send_message: Callable[[str], bool] | None = None,
     restart_func: Callable[..., dict[str, Any]] | None = None,
@@ -651,6 +1107,61 @@ def run_health_check(
             monitor_state["last_daily_summary_for_date"] = target_date.isoformat()
             actions.append("daily_summary_sent")
 
+    multi_asset_snapshot = build_multi_asset_health_snapshot(
+        now=current_time,
+        config_path=multi_asset_config_path,
+        overnight_hours=overnight_hours,
+        trend_hours=fill_rate_trend_hours,
+        skip_spike_reason=skip_spike_reason,
+        skip_spike_window=skip_spike_window,
+        skip_spike_threshold=skip_spike_threshold,
+    )
+    previous_skip_spike_state = dict(monitor_state.get("skip_spike_alert_state") or {})
+    next_skip_spike_state: dict[str, bool] = {}
+    for asset_summary in list(multi_asset_snapshot.get("assets") or []):
+        asset = str(asset_summary.get("asset") or "")
+        if not asset:
+            continue
+        is_triggered = bool(asset_summary.get("skip_spike_triggered"))
+        was_triggered = bool(previous_skip_spike_state.get(asset))
+        if is_triggered and not was_triggered:
+            ratio = _coerce_float(asset_summary.get("recent_skip_reason_ratio"))
+            window = _coerce_int(asset_summary.get("recent_skip_window"), 0)
+            count = _coerce_int(asset_summary.get("recent_skip_reason_count"), 0)
+            reason = str(asset_summary.get("skip_spike_reason") or skip_spike_reason)
+            alert_text = (
+                "JJ HEALTH ALERT\n"
+                f"Skip spike detected for {asset.upper()}\n"
+                f"Reason: {reason}\n"
+                f"Ratio: {_format_pct(ratio)} ({count}/{window})\n"
+                f"DB: {asset_summary.get('db_path')}"
+            )
+            _notify(alert_text)
+            _append_alert_log(alert_log_path, alert_text.replace("\n", " | "), now=current_time)
+            actions.append("skip_spike_alert_sent")
+        next_skip_spike_state[asset] = is_triggered
+    monitor_state["skip_spike_alert_state"] = next_skip_spike_state
+
+    morning_report = build_morning_report(
+        checked_at=current_time,
+        evaluation=evaluation,
+        service_name=service_name,
+        actions=actions,
+        multi_asset_snapshot=multi_asset_snapshot,
+    )
+    health_report = {
+        "checked_at": current_time.isoformat(),
+        "status": evaluation["status"],
+        "evaluation": evaluation,
+        "actions": actions,
+        "restart_result": restart_result,
+        "daily_summary": summary_snapshot,
+        "multi_asset_snapshot": multi_asset_snapshot,
+        "morning_summary": morning_report.get("paste_ready_summary"),
+    }
+    _write_json(health_report_path, health_report)
+    _write_json(morning_report_path, morning_report)
+
     monitor_state["last_health_status"] = evaluation["status"]
     monitor_state["last_checked_at"] = current_time.isoformat()
     _write_json(state_path, monitor_state)
@@ -665,6 +1176,10 @@ def run_health_check(
         "restart_result": restart_result,
         "daily_summary": summary_snapshot,
         "daily_summary_target_date": target_date.isoformat() if target_date is not None else None,
+        "health_report_path": str(health_report_path),
+        "morning_report_path": str(morning_report_path),
+        "multi_asset_snapshot": multi_asset_snapshot,
+        "morning_report": morning_report,
     }
 
 
@@ -674,6 +1189,10 @@ def main() -> int:
     parser.add_argument("--state-file", default=str(DEFAULT_MONITOR_STATE_FILE))
     parser.add_argument("--db-path", default=str(DEFAULT_DB_PATH))
     parser.add_argument("--jj-state-file", default=str(DEFAULT_JJ_STATE_FILE))
+    parser.add_argument("--health-report-file", default=str(DEFAULT_HEALTH_REPORT_FILE))
+    parser.add_argument("--morning-report-file", default=str(DEFAULT_MORNING_REPORT_FILE))
+    parser.add_argument("--multi-asset-config", default=str(DEFAULT_MULTI_ASSET_CONFIG_PATH))
+    parser.add_argument("--alert-log-file", default=str(DEFAULT_ALERT_LOG_FILE))
     parser.add_argument("--timeout-seconds", type=int, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--auto-restart", action="store_true")
     parser.add_argument("--service-name", default=DEFAULT_SERVICE_NAME)
@@ -694,6 +1213,11 @@ def main() -> int:
         type=int,
         default=DEFAULT_DAILY_SUMMARY_MINUTE_UTC,
     )
+    parser.add_argument("--skip-spike-reason", default=DEFAULT_SKIP_SPIKE_REASON)
+    parser.add_argument("--skip-spike-window", type=int, default=DEFAULT_SKIP_SPIKE_WINDOW)
+    parser.add_argument("--skip-spike-threshold", type=float, default=DEFAULT_SKIP_SPIKE_THRESHOLD)
+    parser.add_argument("--overnight-hours", type=int, default=DEFAULT_OVERNIGHT_HOURS)
+    parser.add_argument("--fill-rate-trend-hours", type=int, default=DEFAULT_FILL_RATE_TREND_HOURS)
     args = parser.parse_args()
 
     result = run_health_check(
@@ -701,6 +1225,10 @@ def main() -> int:
         state_path=Path(args.state_file),
         db_path=Path(args.db_path),
         jj_state_path=Path(args.jj_state_file),
+        health_report_path=Path(args.health_report_file),
+        morning_report_path=Path(args.morning_report_file),
+        multi_asset_config_path=Path(args.multi_asset_config),
+        alert_log_path=Path(args.alert_log_file),
         timeout_seconds=args.timeout_seconds,
         auto_restart=args.auto_restart,
         service_name=args.service_name,
@@ -709,6 +1237,11 @@ def main() -> int:
         send_daily_summary=args.send_daily_summary,
         daily_summary_hour_utc=args.daily_summary_hour_utc,
         daily_summary_minute_utc=args.daily_summary_minute_utc,
+        skip_spike_reason=args.skip_spike_reason,
+        skip_spike_window=args.skip_spike_window,
+        skip_spike_threshold=args.skip_spike_threshold,
+        overnight_hours=args.overnight_hours,
+        fill_rate_trend_hours=args.fill_rate_trend_hours,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0

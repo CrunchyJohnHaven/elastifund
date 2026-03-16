@@ -106,6 +106,7 @@ ACTIONABLE_ORDER_STATUSES = {
 KELLY_QUALIFY_MIN_ENTRY_PRICE = 0.90
 KELLY_ROLLING_MAX_FILLS = 200
 KELLY_MAX_FRACTION = 0.15
+EARLY_DECISION_MIN_DELTA_MULTIPLIER = 2.0
 VALIDATED_STRONG_PRICE_BUCKETS = frozenset({"<0.49", "0.49"})
 OBSERVED_BTC5_LOSS_CLUSTERS = frozenset(
     {
@@ -926,6 +927,7 @@ class MakerConfig:
     min_buy_price: float = float(os.environ.get("BTC5_MIN_BUY_PRICE", "0.90"))
     tick_size: float = float(os.environ.get("BTC5_TICK_SIZE", "0.01"))
     entry_seconds_before_close: int = int(os.environ.get("BTC5_ENTRY_SECONDS_BEFORE_CLOSE", "10"))
+    early_decision_sec: int = int(os.environ.get("BTC5_EARLY_DECISION_SEC", "180"))
     cancel_seconds_before_close: int = int(os.environ.get("BTC5_CANCEL_SECONDS_BEFORE_CLOSE", "2"))
     daily_loss_limit_usd: float = float(os.environ.get("BTC5_DAILY_LOSS_LIMIT_USD", "247"))
     enable_probe_after_daily_loss: bool = _env_flag("BTC5_ENABLE_PROBE_AFTER_DAILY_LOSS", True)
@@ -964,6 +966,13 @@ class MakerConfig:
     binance_symbol: str = os.environ.get("BTC5_ASSET_BINANCE_SYMBOL", "BTCUSDT")
     binance_kline_interval: str = os.environ.get("BTC5_BINANCE_KLINE_INTERVAL", f"{WINDOW_MINUTES}m")
     binance_ws_url: str = os.environ.get("BTC5_BINANCE_WS_URL", "wss://stream.binance.com:9443/ws/btcusdt@trade")
+    binance_depth_ws_url: str = os.environ.get(
+        "BTC5_BINANCE_DEPTH_WS_URL",
+        "wss://stream.binance.com:9443/ws/btcusdt@depth5@100ms",
+    )
+    depth_confirmation_enabled: bool = _env_flag("BTC5_DEPTH_CONFIRMATION_ENABLED", True)
+    depth_confirmation_threshold: float = float(os.environ.get("BTC5_DEPTH_CONFIRMATION_THRESHOLD", "0.30"))
+    depth_imbalance_max_age_sec: int = int(os.environ.get("BTC5_DEPTH_IMBALANCE_MAX_AGE_SEC", "5"))
     binance_klines_url: str = os.environ.get(
         "BTC5_BINANCE_KLINES_URL",
         "https://api.binance.com/api/v3/klines",
@@ -993,6 +1002,15 @@ class MakerConfig:
         self.binance_kline_interval = (
             str(self.binance_kline_interval or f"{WINDOW_MINUTES}m").strip().lower() or f"{WINDOW_MINUTES}m"
         )
+        self.binance_depth_ws_url = str(self.binance_depth_ws_url or "").strip()
+        if not self.binance_depth_ws_url:
+            self.binance_depth_ws_url = (
+                f"wss://stream.binance.com:9443/ws/{self.binance_symbol.lower()}@depth5@100ms"
+            )
+        self.entry_seconds_before_close = max(1, int(self.entry_seconds_before_close))
+        self.cancel_seconds_before_close = max(0, int(self.cancel_seconds_before_close))
+        self.early_decision_sec = max(self.entry_seconds_before_close, int(self.early_decision_sec))
+        self.early_decision_sec = min(self.early_decision_sec, max(1, WINDOW_SECONDS - 1))
         self.session_guardrail_overrides = load_session_guardrail_overrides(
             inline_json=self.session_policy_json,
             path_value=self.session_policy_path,
@@ -1021,6 +1039,8 @@ class MakerConfig:
         self.adaptive_max_risk_fraction = max(float(self.risk_fraction), float(self.adaptive_max_risk_fraction))
         self.sell_early_min_profit_price = max(0.0, float(self.sell_early_min_profit_price))
         self.sell_early_max_candidates = max(0, int(self.sell_early_max_candidates))
+        self.depth_confirmation_threshold = max(0.0, min(1.0, float(self.depth_confirmation_threshold)))
+        self.depth_imbalance_max_age_sec = max(1, int(self.depth_imbalance_max_age_sec))
 
     @property
     def effective_max_trade_usd(self) -> float:
@@ -1115,6 +1135,7 @@ class TradeDB:
                     open_price REAL,
                     current_price REAL,
                     delta REAL,
+                    book_imbalance REAL,
                     token_id TEXT,
                     best_bid REAL,
                     best_ask REAL,
@@ -1170,6 +1191,7 @@ class TradeDB:
                 ("wallet_count", "INTEGER"),
                 ("wallet_notional", "REAL"),
                 ("realized_pnl_usd", "REAL"),
+                ("book_imbalance", "REAL"),
             ):
                 if column_name not in existing:
                     conn.execute(f"ALTER TABLE window_trades ADD COLUMN {column_name} {column_type}")
@@ -1193,6 +1215,7 @@ class TradeDB:
             "open_price": row.get("open_price"),
             "current_price": row.get("current_price"),
             "delta": row.get("delta"),
+            "book_imbalance": row.get("book_imbalance"),
             "token_id": row.get("token_id"),
             "best_bid": row.get("best_bid"),
             "best_ask": row.get("best_ask"),
@@ -1231,7 +1254,7 @@ class TradeDB:
                 """
                 INSERT INTO window_trades (
                     window_start_ts, window_end_ts, slug, decision_ts, direction,
-                    open_price, current_price, delta, token_id, best_bid, best_ask,
+                    open_price, current_price, delta, book_imbalance, token_id, best_bid, best_ask,
                     order_price, trade_size_usd, shares, order_id, order_status,
                     filled, reason, edge_tier, sizing_reason_tags, loss_cluster_suppressed,
                     session_policy_name, effective_stage, wallet_copy, wallet_count, wallet_notional,
@@ -1240,7 +1263,7 @@ class TradeDB:
                     created_at, updated_at
                 ) VALUES (
                     :window_start_ts, :window_end_ts, :slug, :decision_ts, :direction,
-                    :open_price, :current_price, :delta, :token_id, :best_bid, :best_ask,
+                    :open_price, :current_price, :delta, :book_imbalance, :token_id, :best_bid, :best_ask,
                     :order_price, :trade_size_usd, :shares, :order_id, :order_status,
                     :filled, :reason, :edge_tier, :sizing_reason_tags, :loss_cluster_suppressed,
                     :session_policy_name, :effective_stage, :wallet_copy, :wallet_count, :wallet_notional,
@@ -1254,6 +1277,7 @@ class TradeDB:
                     open_price=excluded.open_price,
                     current_price=excluded.current_price,
                     delta=excluded.delta,
+                    book_imbalance=excluded.book_imbalance,
                     token_id=excluded.token_id,
                     best_bid=excluded.best_bid,
                     best_ask=excluded.best_ask,
@@ -1713,6 +1737,7 @@ class TradeDB:
 class BinancePriceCache:
     def __init__(self, maxlen: int = 6000):
         self._ticks: deque[tuple[int, float]] = deque(maxlen=maxlen)
+        self._depth_imbalances: deque[tuple[int, float]] = deque(maxlen=maxlen)
         self._lock = asyncio.Lock()
 
     async def add_tick(self, ts_sec: int, price: float) -> None:
@@ -1724,6 +1749,62 @@ class BinancePriceCache:
             if not self._ticks:
                 return None
             return self._ticks[-1]
+
+    @staticmethod
+    def _extract_depth_volume(levels: Any) -> float:
+        if not isinstance(levels, list):
+            return 0.0
+        total = 0.0
+        for level in levels:
+            qty = None
+            if isinstance(level, (list, tuple)) and len(level) >= 2:
+                qty = _safe_float(level[1], None)
+            elif isinstance(level, dict):
+                qty = _safe_float(
+                    level.get("q")
+                    or level.get("qty")
+                    or level.get("quantity")
+                    or level.get("size"),
+                    None,
+                )
+            if qty is None or qty <= 0:
+                continue
+            total += float(qty)
+        return float(total)
+
+    @classmethod
+    def compute_book_imbalance(cls, bids: Any, asks: Any) -> float | None:
+        bid_volume = cls._extract_depth_volume(bids)
+        ask_volume = cls._extract_depth_volume(asks)
+        denom = bid_volume + ask_volume
+        if denom <= 1e-12:
+            return None
+        imbalance = (bid_volume - ask_volume) / denom
+        return max(-1.0, min(1.0, float(imbalance)))
+
+    async def add_depth_snapshot(self, ts_sec: int, bids: Any, asks: Any) -> None:
+        imbalance = self.compute_book_imbalance(bids, asks)
+        if imbalance is None:
+            return
+        async with self._lock:
+            self._depth_imbalances.append((int(ts_sec), float(imbalance)))
+
+    async def latest_depth(self) -> tuple[int, float] | None:
+        async with self._lock:
+            if not self._depth_imbalances:
+                return None
+            return self._depth_imbalances[-1]
+
+    async def latest_book_imbalance(self, *, max_age_sec: int | None = None) -> float | None:
+        latest_depth = await self.latest_depth()
+        if latest_depth is None:
+            return None
+        ts_sec, imbalance = latest_depth
+        if max_age_sec is not None and max_age_sec > 0:
+            age_sec = max(0.0, time.time() - float(ts_sec))
+            if age_sec > float(max_age_sec):
+                return None
+        return float(imbalance)
 
     async def open_price_for_window(self, window_start_ts: int) -> float | None:
         upper = window_start_ts + 30
@@ -1770,6 +1851,45 @@ class BinanceTradeFeed:
                         await self.cache.add_tick(ts, float(price))
             except Exception as exc:
                 logger.warning("Binance WS reconnect in %.1fs (%s)", backoff, exc)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2.0, 30.0)
+
+
+class BinanceDepthFeed:
+    def __init__(self, ws_url: str, cache: BinancePriceCache):
+        self.ws_url = ws_url
+        self.cache = cache
+
+    async def run(self, stop_event: asyncio.Event) -> None:
+        if websockets is None:
+            logger.warning("websockets package missing; Binance depth stream disabled")
+            return
+        backoff = 1.0
+        while not stop_event.is_set():
+            try:
+                async with websockets.connect(self.ws_url, ping_interval=20, ping_timeout=10) as ws:
+                    logger.info("Connected to Binance depth stream")
+                    backoff = 1.0
+                    async for raw in ws:
+                        if stop_event.is_set():
+                            break
+                        try:
+                            payload = json.loads(raw)
+                        except json.JSONDecodeError:
+                            continue
+                        if not isinstance(payload, dict):
+                            continue
+                        bids = payload.get("b")
+                        asks = payload.get("a")
+                        if not isinstance(bids, list) or not isinstance(asks, list):
+                            continue
+                        event_ms = _safe_float(payload.get("E"), None)
+                        if event_ms is None:
+                            event_ms = _safe_float(payload.get("T"), None)
+                        ts = int(event_ms // 1000) if event_ms is not None else int(time.time())
+                        await self.cache.add_depth_snapshot(ts, bids, asks)
+            except Exception as exc:
+                logger.warning("Binance depth WS reconnect in %.1fs (%s)", backoff, exc)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2.0, 30.0)
 
@@ -2604,6 +2724,65 @@ class BTC5MinMakerBot:
                 "edge_tier=standard",
             ),
         }
+
+    def _apply_depth_confirmation(
+        self,
+        *,
+        edge_tier: str,
+        direction: str,
+        book_imbalance: float | None,
+        sizing_reason_tags: list[str],
+    ) -> tuple[str, list[str]]:
+        base_tier = str(edge_tier or "standard").strip().lower() or "standard"
+        tags = _unique_tags(*sizing_reason_tags)
+        if not self.cfg.depth_confirmation_enabled:
+            return base_tier, _unique_tags(*tags, "depth_confirmation=disabled")
+        if book_imbalance is None:
+            return base_tier, _unique_tags(*tags, "depth_confirmation=missing")
+
+        threshold = max(0.0, float(self.cfg.depth_confirmation_threshold))
+        imbalance = max(-1.0, min(1.0, float(book_imbalance)))
+        tags = _unique_tags(
+            *tags,
+            f"book_imbalance={imbalance:.4f}",
+            f"depth_threshold={threshold:.2f}",
+        )
+
+        if abs(imbalance) < threshold:
+            return base_tier, _unique_tags(*tags, "depth_confirmation=neutral")
+
+        normalized_direction = str(direction or "").strip().upper()
+        is_agree = (normalized_direction == "UP" and imbalance > 0) or (
+            normalized_direction == "DOWN" and imbalance < 0
+        )
+        if is_agree:
+            boosted_tier = {
+                "suppressed": "suppressed",
+                "exploratory": "standard",
+                "standard": "strong_validated",
+                "strong_validated": "strong_validated",
+            }.get(base_tier, base_tier)
+            if boosted_tier != base_tier:
+                return boosted_tier, _unique_tags(
+                    *tags,
+                    "depth_confirmation=agree",
+                    f"depth_edge_tier_upgrade={base_tier}_to_{boosted_tier}",
+                )
+            return boosted_tier, _unique_tags(*tags, "depth_confirmation=agree")
+
+        downgraded_tier = {
+            "suppressed": "suppressed",
+            "exploratory": "exploratory",
+            "standard": "exploratory",
+            "strong_validated": "standard",
+        }.get(base_tier, base_tier)
+        if downgraded_tier != base_tier:
+            return downgraded_tier, _unique_tags(
+                *tags,
+                "depth_confirmation=disagree",
+                f"depth_edge_tier_downgrade={base_tier}_to_{downgraded_tier}",
+            )
+        return downgraded_tier, _unique_tags(*tags, "depth_confirmation=disagree")
 
     def _hydrate_rolling_kelly_state(self) -> None:
         rows = self.db.recent_kelly_qualified_fills(
@@ -3470,6 +3649,7 @@ class BTC5MinMakerBot:
             "partial": 0,
             "realized_pnl_usd": 0.0,
         }
+        book_imbalance: float | None = None
         sizing_reason_tags: list[str] = _unique_tags(
             f"session_bucket={session_bucket}",
             f"session_policy_name={session_policy_name or 'none'}",
@@ -3477,6 +3657,9 @@ class BTC5MinMakerBot:
             f"recommended_live_stage={recommended_live_stage}",
         )
         loss_cluster_suppressed = False
+        decision_timing = "late"
+        decision_ts = int(time.time())
+        early_fallback_reason: str | None = None
 
         def _result(payload: dict[str, Any]) -> dict[str, Any]:
             if "capital_stage" not in payload:
@@ -3537,6 +3720,12 @@ class BTC5MinMakerBot:
                 payload["wallet_notional"] = round(max(0.0, float(wallet_notional)), 4)
             if "sell_early" not in payload:
                 payload["sell_early"] = dict(sell_early_summary)
+            if "book_imbalance" not in payload:
+                payload["book_imbalance"] = book_imbalance
+            if "decision_timing" not in payload:
+                payload["decision_timing"] = decision_timing
+            if "early_fallback_reason" not in payload:
+                payload["early_fallback_reason"] = early_fallback_reason
             kelly_metrics = self._rolling_kelly_metrics()
             kelly_plan = self._graduated_kelly_risk_plan()
             if "kelly_sample_count_090" not in payload:
@@ -3569,10 +3758,21 @@ class BTC5MinMakerBot:
 
         def _persist(row: dict[str, Any]) -> None:
             payload = dict(row)
+            timing_tags = _unique_tags(
+                _reason_tag("decision_timing", decision_timing),
+                _reason_tag("early_fallback_reason", early_fallback_reason),
+            )
             if "edge_tier" not in payload:
                 payload["edge_tier"] = edge_tier
             if "sizing_reason_tags" not in payload:
                 payload["sizing_reason_tags"] = list(sizing_reason_tags)
+            existing_sizing_tags = payload.get("sizing_reason_tags")
+            if isinstance(existing_sizing_tags, list):
+                payload["sizing_reason_tags"] = _unique_tags(*existing_sizing_tags, *timing_tags)
+            elif isinstance(existing_sizing_tags, str):
+                payload["sizing_reason_tags"] = _unique_tags(*parse_json_list(existing_sizing_tags), *timing_tags)
+            else:
+                payload["sizing_reason_tags"] = _unique_tags(*timing_tags)
             if "loss_cluster_suppressed" not in payload:
                 payload["loss_cluster_suppressed"] = loss_cluster_suppressed
             if "session_policy_name" not in payload:
@@ -3585,6 +3785,15 @@ class BTC5MinMakerBot:
                 payload["wallet_count"] = wallet_count
             if "wallet_notional" not in payload:
                 payload["wallet_notional"] = round(max(0.0, float(wallet_notional)), 4)
+            if "book_imbalance" not in payload:
+                payload["book_imbalance"] = book_imbalance
+            if "decision_ts" not in payload:
+                payload["decision_ts"] = decision_ts
+            payload["reason"] = _join_reasons(
+                payload.get("reason"),
+                _reason_tag("decision_timing", decision_timing),
+                _reason_tag("early_fallback_reason", early_fallback_reason),
+            )
             self.db.upsert_window(payload)
 
         if self.db.window_exists(window_start_ts):
@@ -3659,7 +3868,93 @@ class BTC5MinMakerBot:
                 )
         probe_reason = probe_mode.get("reason") if probe_mode else None
 
-        open_price, current_price = await self._get_open_and_current_price(window_start_ts=window_start_ts, http=http)
+        prefetched_open_price: float | None = None
+        prefetched_current_price: float | None = None
+        prefetched_direction: str | None = None
+        prefetched_delta: float | None = None
+        prefetched_market: dict[str, Any] | None = None
+        prefetched_token_id: str | None = None
+        prefetched_book: dict[str, Any] | None = None
+        prefetched_best_bid: float | None = None
+        prefetched_best_ask: float | None = None
+        late_decision_ts = float(window_end_ts - int(self.cfg.entry_seconds_before_close))
+        early_decision_ts = float(window_end_ts - int(self.cfg.early_decision_sec))
+        early_decision_enabled = int(self.cfg.early_decision_sec) > int(self.cfg.entry_seconds_before_close)
+        now_ts = time.time()
+        if early_decision_enabled and early_decision_ts <= now_ts < late_decision_ts:
+            early_min_delta = max(
+                float(effective_min_delta),
+                float(effective_min_delta) * EARLY_DECISION_MIN_DELTA_MULTIPLIER,
+            )
+            early_open_price, early_current_price = await self._get_open_and_current_price(
+                window_start_ts=window_start_ts,
+                http=http,
+            )
+            if not early_open_price or not early_current_price:
+                early_fallback_reason = "missing_price"
+            else:
+                early_direction, early_delta = direction_from_prices(
+                    early_open_price,
+                    early_current_price,
+                    early_min_delta,
+                )
+                if early_direction is None:
+                    early_fallback_reason = "delta_too_small"
+                elif effective_max_abs_delta is not None and abs(early_delta) > effective_max_abs_delta:
+                    early_fallback_reason = "delta_too_large"
+                else:
+                    early_market = await http.fetch_market_by_slug(slug)
+                    if not early_market:
+                        early_fallback_reason = "market_not_found"
+                    else:
+                        early_token_id = choose_token_id_for_direction(early_market, early_direction)
+                        if not early_token_id:
+                            early_fallback_reason = "token_not_found"
+                        else:
+                            early_book = await http.fetch_book(early_token_id)
+                            if not early_book:
+                                early_fallback_reason = "no_book"
+                            else:
+                                early_best_bid, early_best_ask = http.top_of_book(early_book)
+                                early_book_failure, _ = _classify_book_quotes(early_best_bid, early_best_ask)
+                                if early_book_failure is not None:
+                                    early_fallback_reason = f"bad_book_{early_book_failure}"
+                                else:
+                                    decision_timing = "early"
+                                    decision_ts = int(time.time())
+                                    effective_min_delta = float(early_min_delta)
+                                    prefetched_open_price = early_open_price
+                                    prefetched_current_price = early_current_price
+                                    prefetched_direction = early_direction
+                                    prefetched_delta = early_delta
+                                    prefetched_market = early_market
+                                    prefetched_token_id = early_token_id
+                                    prefetched_book = early_book
+                                    prefetched_best_bid = early_best_bid
+                                    prefetched_best_ask = early_best_ask
+                                    logger.info(
+                                        "Early decision activated for window %s at T-%ss (delta=%.6f)",
+                                        window_start_ts,
+                                        int(self.cfg.early_decision_sec),
+                                        abs(early_delta),
+                                    )
+            if decision_timing != "early":
+                wait = max(0.0, late_decision_ts - time.time())
+                if wait > 0:
+                    logger.info(
+                        "Early decision fallback (%s); waiting %.1fs for T-%ss window %s",
+                        early_fallback_reason or "unknown",
+                        wait,
+                        int(self.cfg.entry_seconds_before_close),
+                        window_start_ts,
+                    )
+                    await asyncio.sleep(wait)
+                decision_ts = int(time.time())
+
+        if prefetched_open_price is not None and prefetched_current_price is not None:
+            open_price, current_price = prefetched_open_price, prefetched_current_price
+        else:
+            open_price, current_price = await self._get_open_and_current_price(window_start_ts=window_start_ts, http=http)
         if not open_price or not current_price:
             row = {
                 "window_start_ts": window_start_ts,
@@ -3673,7 +3968,14 @@ class BTC5MinMakerBot:
             _persist(row)
             return _result({"window_start_ts": window_start_ts, "status": row["order_status"]})
 
-        direction, delta = direction_from_prices(open_price, current_price, effective_min_delta)
+        if prefetched_direction is not None and prefetched_delta is not None:
+            direction, delta = prefetched_direction, prefetched_delta
+        else:
+            direction, delta = direction_from_prices(open_price, current_price, effective_min_delta)
+        depth_imbalance = await self.cache.latest_book_imbalance(
+            max_age_sec=self.cfg.depth_imbalance_max_age_sec,
+        )
+        book_imbalance = float(depth_imbalance) if depth_imbalance is not None else None
         if self.cfg.enable_wallet_copy and self.smart_wallet_feed:
             await self._ensure_wallet_copy_watch(window_start_ts=window_start_ts, http=http)
             try:
@@ -3705,6 +4007,16 @@ class BTC5MinMakerBot:
                 ):
                     direction = consensus_direction
                     wallet_copy_applied = True
+        sizing_reason_tags = _unique_tags(
+            *sizing_reason_tags,
+            f"decision_timing={decision_timing}",
+            (
+                f"early_min_delta_multiplier={EARLY_DECISION_MIN_DELTA_MULTIPLIER:.1f}x"
+                if decision_timing == "early"
+                else None
+            ),
+            _reason_tag("early_fallback_reason", early_fallback_reason),
+        )
 
         if direction is None and self.cfg.enable_spread_capture:
             # Spread-capture mode: bypass delta gate when BTC is flat.
@@ -3804,7 +4116,7 @@ class BTC5MinMakerBot:
         directional_mode = str((recent_regime or {}).get("directional_mode") or "two_sided")
         suppressed_direction = str((recent_regime or {}).get("suppressed_direction") or "").strip().upper() or None
         quote_ticks: int | None = None
-        market = await http.fetch_market_by_slug(slug)
+        market = prefetched_market if prefetched_market is not None else await http.fetch_market_by_slug(slug)
         if not market:
             row = {
                 "window_start_ts": window_start_ts,
@@ -3820,7 +4132,11 @@ class BTC5MinMakerBot:
             _persist(row)
             return _result({"window_start_ts": window_start_ts, "status": row["order_status"]})
 
-        token_id = choose_token_id_for_direction(market, direction)
+        token_id = (
+            prefetched_token_id
+            if prefetched_token_id and prefetched_direction == direction
+            else choose_token_id_for_direction(market, direction)
+        )
         if not token_id:
             row = {
                 "window_start_ts": window_start_ts,
@@ -3841,7 +4157,11 @@ class BTC5MinMakerBot:
             favored = recent_regime.get("favored_direction") or "n/a"
             weaker = recent_regime.get("weaker_direction") or "n/a"
             regime_reason = f"recent_regime favored={favored} weaker={weaker} directional_mode={directional_mode}"
-        book = await http.fetch_book(token_id)
+        book = (
+            prefetched_book
+            if prefetched_book is not None and prefetched_token_id == token_id and prefetched_direction == direction
+            else await http.fetch_book(token_id)
+        )
         if not book:
             row = {
                 "window_start_ts": window_start_ts,
@@ -3871,7 +4191,10 @@ class BTC5MinMakerBot:
                 }
             )
 
-        best_bid, best_ask = http.top_of_book(book)
+        if prefetched_book is not None and book is prefetched_book and prefetched_best_bid is not None and prefetched_best_ask is not None:
+            best_bid, best_ask = prefetched_best_bid, prefetched_best_ask
+        else:
+            best_bid, best_ask = http.top_of_book(book)
         book_failure_attribution, book_detail = _classify_book_quotes(best_bid, best_ask)
         if book_failure_attribution is not None:
             row = {
@@ -4033,6 +4356,12 @@ class BTC5MinMakerBot:
         edge_tier = str(edge_profile.get("edge_tier") or "standard")
         loss_cluster_suppressed = bool(edge_profile.get("loss_cluster_suppressed"))
         sizing_reason_tags = list(edge_profile.get("sizing_reason_tags") or sizing_reason_tags)
+        edge_tier, sizing_reason_tags = self._apply_depth_confirmation(
+            edge_tier=edge_tier,
+            direction=direction,
+            book_imbalance=book_imbalance,
+            sizing_reason_tags=sizing_reason_tags,
+        )
         size_plan = self._trade_size_for_edge_tier(
             edge_tier=edge_tier,
             effective_max_trade_usd=effective_max_trade_usd,
@@ -4320,8 +4649,12 @@ class BTC5MinMakerBot:
 
     async def run_windows(self, *, count: int, continuous: bool) -> None:
         stop_event = asyncio.Event()
-        feed = BinanceTradeFeed(self.cfg.binance_ws_url, self.cache)
-        feed_task = asyncio.create_task(feed.run(stop_event))
+        trade_feed = BinanceTradeFeed(self.cfg.binance_ws_url, self.cache)
+        depth_feed = BinanceDepthFeed(self.cfg.binance_depth_ws_url, self.cache)
+        feed_tasks = [
+            asyncio.create_task(trade_feed.run(stop_event)),
+            asyncio.create_task(depth_feed.run(stop_event)),
+        ]
 
         timeout = aiohttp.ClientTimeout(total=self.cfg.request_timeout_sec)
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -4332,14 +4665,23 @@ class BTC5MinMakerBot:
                 while True:
                     now = time.time()
                     ws = current_window_start(now)
-                    decision_ts = ws + WINDOW_SECONDS - self.cfg.entry_seconds_before_close
+                    decision_seconds_before_close = max(
+                        int(self.cfg.entry_seconds_before_close),
+                        int(self.cfg.early_decision_sec),
+                    )
+                    decision_ts = ws + WINDOW_SECONDS - decision_seconds_before_close
                     if now > decision_ts + 1:
                         ws += WINDOW_SECONDS
-                        decision_ts = ws + WINDOW_SECONDS - self.cfg.entry_seconds_before_close
+                        decision_ts = ws + WINDOW_SECONDS - decision_seconds_before_close
                     await self._ensure_wallet_copy_watch(window_start_ts=ws, http=http)
                     wait = max(0.0, decision_ts - time.time())
                     if wait > 0:
-                        logger.info("Waiting %.1fs until decision time for window %s", wait, ws)
+                        logger.info(
+                            "Waiting %.1fs until decision time (T-%ss) for window %s",
+                            wait,
+                            decision_seconds_before_close,
+                            ws,
+                        )
                         await asyncio.sleep(wait)
 
                     summary = await self._process_window(window_start_ts=ws, http=http)
@@ -4351,9 +4693,11 @@ class BTC5MinMakerBot:
             finally:
                 stop_event.set()
                 await asyncio.sleep(0)
-                feed_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await feed_task
+                for task in feed_tasks:
+                    task.cancel()
+                for task in feed_tasks:
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
 
         # Resolve the most recent completed window if possible.
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -4463,7 +4807,7 @@ async def _run(args: argparse.Namespace) -> None:
         raise SystemExit("--windows must be >= 1")
 
     logger.info(
-        "Starting BTC5 maker | mode=%s | bankroll=%.2f | risk_fraction=%.4f | max_trade=%.2f | max_abs_delta=%s | up_max=%.2f | down_max=%.2f | improve_ticks=%d | session_overrides=%d | regime_skew=%s | probe_daily_loss=%s | probe_recent=%s | retry_post_only_cross=%s safety_ticks=%d | window_seconds=%d | slug_prefix=%s | binance_symbol=%s | kline_interval=%s",
+        "Starting BTC5 maker | mode=%s | bankroll=%.2f | risk_fraction=%.4f | max_trade=%.2f | max_abs_delta=%s | up_max=%.2f | down_max=%.2f | improve_ticks=%d | session_overrides=%d | regime_skew=%s | probe_daily_loss=%s | probe_recent=%s | retry_post_only_cross=%s safety_ticks=%d | window_seconds=%d | entry_timing=T-%ss early=T-%ss | slug_prefix=%s | binance_symbol=%s | kline_interval=%s",
         "paper" if cfg.paper_trading else "live",
         cfg.bankroll_usd,
         cfg.risk_fraction,
@@ -4479,6 +4823,8 @@ async def _run(args: argparse.Namespace) -> None:
         "enabled" if cfg.retry_post_only_cross else "disabled",
         max(0, int(cfg.retry_post_only_safety_ticks)),
         WINDOW_SECONDS,
+        int(cfg.entry_seconds_before_close),
+        int(cfg.early_decision_sec),
         MARKET_SLUG_PREFIX,
         cfg.binance_symbol,
         cfg.binance_kline_interval,
