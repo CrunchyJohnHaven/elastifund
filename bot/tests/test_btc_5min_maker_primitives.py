@@ -484,6 +484,37 @@ def test_trade_size_for_edge_tier_uses_graduated_kelly_ramp() -> None:
     assert "kelly_mode=quarter_kelly" in size_plan_kelly["sizing_reason_tags"]
 
 
+def test_trade_size_for_edge_tier_applies_cascade_boost_when_enabled() -> None:
+    cfg = MakerConfig(bankroll_usd=1_400.0)
+    bot = BTC5MinMakerBot(cfg)
+
+    wins = 24
+    losses = 1
+    entry = 0.92
+    bot._rolling_fills_090 = ([(1.0, entry, 1)] * wins) + ([(-1.0, entry, 0)] * losses)
+    bot._rolling_wr = wins / (wins + losses)
+    bot._rolling_avg_entry = entry
+    bot._rolling_kelly_fraction = bot._compute_kelly_fraction(
+        n_fills=wins + losses,
+        win_rate=bot._rolling_wr,
+        avg_entry=entry,
+    )
+
+    baseline = bot._trade_size_for_edge_tier(
+        edge_tier="standard",
+        effective_max_trade_usd=500.0,
+        cascade_boost=False,
+    )
+    boosted = bot._trade_size_for_edge_tier(
+        edge_tier="standard",
+        effective_max_trade_usd=500.0,
+        cascade_boost=True,
+    )
+    assert boosted["target_size_usd"] > baseline["target_size_usd"]
+    assert boosted["target_size_usd"] <= 392.0
+    assert "cascade_boost=True" in boosted["sizing_reason_tags"]
+
+
 def test_trade_db_persists_rolling_kelly_stats(tmp_path: Path) -> None:
     db_path = tmp_path / "btc5.db"
     cfg = MakerConfig(db_path=db_path)
