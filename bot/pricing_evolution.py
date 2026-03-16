@@ -1,12 +1,4 @@
-"""Evolutionary parameter search for BTC5 autoresearch cycles.
-
-Each cycle:
-1) Loads the current active genome (or builds a genesis baseline from env).
-2) Generates bounded parameter mutations (5-10 by default).
-3) Scores each genome on a 24h counterfactual replay of live fills.
-4) Promotes the best genome to config/autoresearch_overrides.json.
-5) Appends lineage metadata for auditability.
-"""
+"""DISPATCH_110 pricing evolution engine for BTC5 autoresearch."""
 
 from __future__ import annotations
 
@@ -14,7 +6,7 @@ import json
 import os
 import random
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -23,22 +15,40 @@ MIN_BUY_FLOOR = 0.85
 MAX_BUY_CAP = 0.98
 MAX_RISK_FRACTION = 0.33
 
-DEFAULT_MUTATION_COUNT_MIN = 5
-DEFAULT_MUTATION_COUNT_MAX = 10
+POPULATION_SIZE = 10
+SURVIVOR_COUNT = 3
+CHILD_COUNT = 7
+MUTATION_PROBABILITY = 0.30
+MUTATION_FACTOR = 0.10
 DEFAULT_LOOKBACK_HOURS = 24
 LINEAGE_LIMIT = 200
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_DB_PATH = Path(
+    os.environ.get("BTC5_DB_PATH", str(REPO_ROOT / "data" / "btc_5min_maker.db"))
+)
+DEFAULT_OVERRIDES_PATH = Path(
+    os.environ.get(
+        "BTC5_AUTORESEARCH_OVERRIDES_PATH",
+        str(REPO_ROOT / "config" / "autoresearch_overrides.json"),
+    )
+)
+DEFAULT_POPULATION_PATH = Path(
+    os.environ.get(
+        "BTC5_PRICING_POPULATION_PATH",
+        str(REPO_ROOT / "data" / "pricing_population.json"),
+    )
+)
 
-@dataclass(frozen=True)
-class GenomeScore:
-    genome_id: str
-    parent_genome_id: str
-    params: dict[str, float]
-    pnl_usd: float
-    fills: int
-    win_rate: float
-    score: float
-    mutation_notes: list[str]
+
+@dataclass
+class ParameterGenome:
+    min_buy_price: float
+    max_buy_price: float
+    min_delta: float
+    max_delta: float
+    generation: int = 0
+    fitness: float = 0.0
 
 
 def _now_iso() -> str:
@@ -52,217 +62,466 @@ def _safe_float(value: Any, default: float) -> float:
         return float(default)
 
 
-def _round_price(value: float) -> float:
-    return round(float(value), 2)
+def _normalize_side(value: Any) -> str:
+    return str(value or "").strip().upper()
 
 
-def _round_delta(value: float) -> float:
-    return round(float(value), 6)
-
-
-def _round_risk(value: float) -> float:
-    return round(float(value), 4)
-
-
-def _enforce_bounds(raw_params: dict[str, Any]) -> dict[str, float]:
-    min_buy = _round_price(max(MIN_BUY_FLOOR, _safe_float(raw_params.get("BTC5_MIN_BUY_PRICE"), 0.90)))
-    down_cap = _round_price(min(MAX_BUY_CAP, _safe_float(raw_params.get("BTC5_DOWN_MAX_BUY_PRICE"), 0.95)))
-    up_cap = _round_price(min(MAX_BUY_CAP, _safe_float(raw_params.get("BTC5_UP_MAX_BUY_PRICE"), down_cap)))
-    max_abs_delta = _round_delta(max(0.0001, _safe_float(raw_params.get("BTC5_MAX_ABS_DELTA"), 0.005)))
-    risk_fraction = _round_risk(min(MAX_RISK_FRACTION, max(0.0, _safe_float(raw_params.get("BTC5_RISK_FRACTION"), 0.02))))
-
-    if down_cap < min_buy:
-        down_cap = min_buy
-    if up_cap < min_buy:
-        up_cap = min_buy
-
-    return {
-        "BTC5_MIN_BUY_PRICE": min_buy,
-        "BTC5_DOWN_MAX_BUY_PRICE": down_cap,
-        "BTC5_UP_MAX_BUY_PRICE": up_cap,
-        "BTC5_MAX_ABS_DELTA": max_abs_delta,
-        "BTC5_RISK_FRACTION": risk_fraction,
-    }
+def _bounded_genome(genome: ParameterGenome) -> ParameterGenome:
+    min_buy = round(max(MIN_BUY_FLOOR, float(genome.min_buy_price)), 4)
+    max_buy = round(min(MAX_BUY_CAP, float(genome.max_buy_price)), 4)
+    if max_buy < min_buy:
+        max_buy = min_buy
+    min_delta = max(0.0, float(genome.min_delta))
+    max_delta = max(min_delta, float(genome.max_delta))
+    return ParameterGenome(
+        min_buy_price=min_buy,
+        max_buy_price=max_buy,
+        min_delta=round(min_delta, 6),
+        max_delta=round(max_delta, 6),
+        generation=max(0, int(genome.generation)),
+        fitness=round(float(genome.fitness), 6),
+    )
 
 
 def _load_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        raw = json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
         return {}
-    return raw if isinstance(raw, dict) else {}
+    return payload if isinstance(payload, dict) else {}
 
 
-def _load_current_genome(overrides_path: Path) -> tuple[str, dict[str, float], dict[str, Any]]:
-    payload = _load_json(overrides_path)
-    params_raw = payload.get("params", {})
-    active = payload.get("active_genome", {})
-    genome_id = str(active.get("genome_id") or "genesis")
-
-    if not isinstance(params_raw, dict):
-        params_raw = {}
-    baseline_from_env = {
-        "BTC5_MIN_BUY_PRICE": os.environ.get("BTC5_MIN_BUY_PRICE", "0.90"),
-        "BTC5_DOWN_MAX_BUY_PRICE": os.environ.get("BTC5_DOWN_MAX_BUY_PRICE", "0.95"),
-        "BTC5_UP_MAX_BUY_PRICE": os.environ.get("BTC5_UP_MAX_BUY_PRICE", os.environ.get("BTC5_DOWN_MAX_BUY_PRICE", "0.95")),
-        "BTC5_MAX_ABS_DELTA": os.environ.get("BTC5_MAX_ABS_DELTA", "0.005"),
-        "BTC5_RISK_FRACTION": os.environ.get("BTC5_RISK_FRACTION", "0.02"),
-    }
-    merged_params = dict(baseline_from_env)
-    merged_params.update(params_raw)
-    return genome_id, _enforce_bounds(merged_params), payload
+def _save_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2))
 
 
-def _load_replay_rows(*, db_path: Path, lookback_hours: int) -> list[sqlite3.Row]:
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=max(1, int(lookback_hours)))).isoformat()
-    rows = conn.execute(
-        """
-        SELECT direction, order_price, pnl_usd, won, delta, created_at
-        FROM window_trades
-        WHERE order_status = 'live_filled'
-          AND created_at > ?
-        ORDER BY created_at ASC
-        """,
-        (cutoff,),
-    ).fetchall()
-    conn.close()
-    return rows
-
-
-def _score_genome(*, genome_id: str, parent_genome_id: str, params: dict[str, float], rows: list[sqlite3.Row], mutation_notes: list[str]) -> GenomeScore:
-    pnl = 0.0
-    fills = 0
-    wins = 0
-    min_buy = float(params["BTC5_MIN_BUY_PRICE"])
-    down_cap = float(params["BTC5_DOWN_MAX_BUY_PRICE"])
-    up_cap = float(params["BTC5_UP_MAX_BUY_PRICE"])
-    max_abs_delta = float(params["BTC5_MAX_ABS_DELTA"])
-
-    for row in rows:
-        side = str(row["direction"] or "").strip().upper()
-        price = _safe_float(row["order_price"], 0.0)
-        delta = abs(_safe_float(row["delta"], 0.0))
-        trade_pnl = _safe_float(row["pnl_usd"], 0.0)
-        won = int(_safe_float(row["won"], 0.0))
-
-        if price < min_buy:
-            continue
-        if side == "DOWN" and price > down_cap:
-            continue
-        if side == "UP" and price > up_cap:
-            continue
-        if delta > max_abs_delta:
-            continue
-
-        fills += 1
-        pnl += trade_pnl
-        if won == 1:
-            wins += 1
-
-    win_rate = (wins / fills) if fills else 0.0
-    # Prioritize realized replay PnL; tiny tie-breakers favor healthier samples.
-    score = round(pnl + (win_rate * 0.05) + (fills * 0.001), 6)
-    return GenomeScore(
-        genome_id=genome_id,
-        parent_genome_id=parent_genome_id,
-        params=params,
-        pnl_usd=round(pnl, 4),
-        fills=fills,
-        win_rate=round(win_rate, 6),
-        score=score,
-        mutation_notes=mutation_notes,
+def _genome_from_row(raw: dict[str, Any]) -> ParameterGenome:
+    return _bounded_genome(
+        ParameterGenome(
+            min_buy_price=_safe_float(raw.get("min_buy_price"), 0.90),
+            max_buy_price=_safe_float(raw.get("max_buy_price"), 0.95),
+            min_delta=_safe_float(raw.get("min_delta"), 0.0003),
+            max_delta=_safe_float(raw.get("max_delta"), 0.005),
+            generation=int(_safe_float(raw.get("generation"), 0)),
+            fitness=_safe_float(raw.get("fitness"), 0.0),
+        )
     )
 
 
-def _mutate(parent_params: dict[str, float], *, rng: random.Random, child_idx: int) -> tuple[dict[str, float], list[str]]:
-    params = dict(parent_params)
-    notes: list[str] = []
-
-    floor_shift = rng.choice([-0.02, -0.01, 0.0, 0.01, 0.02])
-    cap_shift = rng.choice([-0.02, -0.01, 0.0, 0.01, 0.02])
-    delta_shift = rng.choice([-0.001, -0.0005, 0.0, 0.0005, 0.001, 0.0015])
-    risk_shift = rng.choice([-0.02, -0.01, 0.0, 0.01, 0.02])
-
-    params["BTC5_MIN_BUY_PRICE"] = _safe_float(params["BTC5_MIN_BUY_PRICE"], 0.90) + floor_shift
-    if floor_shift != 0.0:
-        notes.append(f"min_buy_shift={floor_shift:+.3f}")
-
-    params["BTC5_DOWN_MAX_BUY_PRICE"] = _safe_float(params["BTC5_DOWN_MAX_BUY_PRICE"], 0.95) + cap_shift
-    if cap_shift != 0.0:
-        notes.append(f"down_cap_shift={cap_shift:+.3f}")
-
-    # Keep UP cap close but not necessarily identical to DOWN cap.
-    params["BTC5_UP_MAX_BUY_PRICE"] = _safe_float(params["BTC5_UP_MAX_BUY_PRICE"], 0.95) + cap_shift + rng.choice([-0.01, 0.0, 0.01])
-    if cap_shift != 0.0:
-        notes.append("up_cap_coupled_to_down_cap=true")
-
-    params["BTC5_MAX_ABS_DELTA"] = _safe_float(params["BTC5_MAX_ABS_DELTA"], 0.005) + delta_shift
-    if delta_shift != 0.0:
-        notes.append(f"max_abs_delta_shift={delta_shift:+.6f}")
-
-    # Allow risk_fraction exploration with a strict hard ceiling.
-    params["BTC5_RISK_FRACTION"] = _safe_float(params["BTC5_RISK_FRACTION"], 0.02) + risk_shift
-    if risk_shift != 0.0:
-        notes.append(f"risk_fraction_shift={risk_shift:+.3f}")
-
-    bounded = _enforce_bounds(params)
-    if not notes:
-        notes.append(f"child_{child_idx}_identity_mutation")
-    return bounded, notes
+def _baseline_genome() -> ParameterGenome:
+    return _bounded_genome(
+        ParameterGenome(
+            min_buy_price=_safe_float(os.environ.get("BTC5_MIN_BUY_PRICE"), 0.90),
+            max_buy_price=_safe_float(
+                os.environ.get("BTC5_DOWN_MAX_BUY_PRICE", os.environ.get("BTC5_UP_MAX_BUY_PRICE")),
+                0.95,
+            ),
+            min_delta=_safe_float(os.environ.get("BTC5_MIN_DELTA"), 0.0003),
+            max_delta=_safe_float(os.environ.get("BTC5_MAX_ABS_DELTA"), 0.005),
+            generation=0,
+            fitness=0.0,
+        )
+    )
 
 
-def _choose_best(scored: list[GenomeScore]) -> GenomeScore:
-    return max(scored, key=lambda item: (item.score, item.pnl_usd, item.win_rate, item.fills))
+def mutate(
+    parent: ParameterGenome,
+    *,
+    rng: random.Random | None = None,
+    generation: int | None = None,
+) -> ParameterGenome:
+    """Perturb each parameter by +/-10% with 30% probability."""
+
+    prng = rng or random.Random()
+    next_generation = parent.generation + 1 if generation is None else int(generation)
+    values = {
+        "min_buy_price": float(parent.min_buy_price),
+        "max_buy_price": float(parent.max_buy_price),
+        "min_delta": float(parent.min_delta),
+        "max_delta": float(parent.max_delta),
+    }
+    for key in values:
+        if prng.random() < MUTATION_PROBABILITY:
+            multiplier = 1.0 + (MUTATION_FACTOR if prng.random() < 0.5 else -MUTATION_FACTOR)
+            values[key] *= multiplier
+    return _bounded_genome(
+        ParameterGenome(
+            min_buy_price=values["min_buy_price"],
+            max_buy_price=values["max_buy_price"],
+            min_delta=values["min_delta"],
+            max_delta=values["max_delta"],
+            generation=next_generation,
+            fitness=0.0,
+        )
+    )
 
 
-def _persist_promotion(*, overrides_path: Path, prior_payload: dict[str, Any], promoted: GenomeScore, mutation_count: int, replay_rows: int, lookback_hours: int, cycle_started_at: str) -> None:
-    payload = dict(prior_payload)
-    lineage = payload.get("lineage", [])
+def _crossover(
+    parent_a: ParameterGenome,
+    parent_b: ParameterGenome,
+    *,
+    rng: random.Random,
+    generation: int,
+) -> ParameterGenome:
+    return _bounded_genome(
+        ParameterGenome(
+            min_buy_price=parent_a.min_buy_price if rng.random() < 0.5 else parent_b.min_buy_price,
+            max_buy_price=parent_a.max_buy_price if rng.random() < 0.5 else parent_b.max_buy_price,
+            min_delta=parent_a.min_delta if rng.random() < 0.5 else parent_b.min_delta,
+            max_delta=parent_a.max_delta if rng.random() < 0.5 else parent_b.max_delta,
+            generation=generation,
+            fitness=0.0,
+        )
+    )
+
+
+def _extract_price(row: dict[str, Any]) -> float | None:
+    for key in ("order_price", "best_ask", "current_price", "best_bid"):
+        value = row.get(key)
+        if value is None:
+            continue
+        price = _safe_float(value, -1.0)
+        if price > 0:
+            return price
+    return None
+
+
+def _would_trade(genome: ParameterGenome, row: dict[str, Any]) -> bool:
+    price = _extract_price(row)
+    if price is None:
+        return False
+    delta = abs(_safe_float(row.get("delta"), 0.0))
+    return (
+        genome.min_buy_price <= price <= genome.max_buy_price
+        and genome.min_delta <= delta <= genome.max_delta
+    )
+
+
+def _fill_outcome(row: dict[str, Any]) -> bool | None:
+    won = row.get("won")
+    if won is not None and str(won) != "":
+        try:
+            return int(won) == 1
+        except (TypeError, ValueError):
+            pass
+    pnl = row.get("pnl_usd")
+    if pnl is not None:
+        pnl_value = _safe_float(pnl, 0.0)
+        if pnl_value != 0.0:
+            return pnl_value > 0.0
+    resolved_side = _normalize_side(row.get("resolved_side"))
+    direction = _normalize_side(row.get("direction"))
+    if resolved_side in {"UP", "DOWN"} and direction in {"UP", "DOWN"}:
+        return direction == resolved_side
+    return None
+
+
+def evaluate_fitness(
+    genome: ParameterGenome,
+    fills: list[dict[str, Any]],
+    skips: list[dict[str, Any]],
+) -> float:
+    """Counterfactual fitness = (wins - losses) / total trades."""
+
+    counterfactual_wins = 0
+    counterfactual_losses = 0
+
+    for row in fills:
+        if not _would_trade(genome, row):
+            continue
+        outcome = _fill_outcome(row)
+        if outcome is None:
+            continue
+        if outcome:
+            counterfactual_wins += 1
+        else:
+            counterfactual_losses += 1
+
+    for row in skips:
+        resolved_side = _normalize_side(row.get("resolved_side"))
+        direction = _normalize_side(row.get("direction"))
+        if resolved_side not in {"UP", "DOWN"} or direction not in {"UP", "DOWN"}:
+            continue
+        if not _would_trade(genome, row):
+            continue
+        if direction == resolved_side:
+            counterfactual_wins += 1
+        else:
+            counterfactual_losses += 1
+
+    total = counterfactual_wins + counterfactual_losses
+    if total <= 0:
+        return 0.0
+    return round((counterfactual_wins - counterfactual_losses) / total, 6)
+
+
+def _load_population(
+    *,
+    population_path: Path,
+    rng: random.Random,
+) -> list[ParameterGenome]:
+    payload = _load_json(population_path)
+    raw_population = payload.get("population")
+    genomes: list[ParameterGenome] = []
+    if isinstance(raw_population, list):
+        for item in raw_population:
+            if isinstance(item, dict):
+                genomes.append(_genome_from_row(item))
+    if not genomes:
+        base = _baseline_genome()
+        genomes = [base]
+        while len(genomes) < POPULATION_SIZE:
+            genomes.append(mutate(base, rng=rng, generation=0))
+    elif len(genomes) < POPULATION_SIZE:
+        base = genomes[0]
+        while len(genomes) < POPULATION_SIZE:
+            genomes.append(mutate(base, rng=rng, generation=base.generation))
+    else:
+        genomes = genomes[:POPULATION_SIZE]
+    return genomes
+
+
+def _persist_population(
+    *,
+    population: list[ParameterGenome],
+    population_path: Path,
+    generation: int,
+) -> None:
+    _save_json(
+        population_path,
+        {
+            "updated_at": _now_iso(),
+            "generation": int(generation),
+            "population": [asdict(_bounded_genome(item)) for item in population],
+        },
+    )
+
+
+def _load_observations(
+    *,
+    db_path: Path,
+    lookback_hours: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not db_path.exists():
+        return [], []
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        table_columns = {
+            str(row["name"]) for row in conn.execute("PRAGMA table_info(window_trades)").fetchall()
+        }
+        if not table_columns:
+            return [], []
+
+        expected = (
+            "direction",
+            "order_price",
+            "best_ask",
+            "best_bid",
+            "current_price",
+            "delta",
+            "won",
+            "pnl_usd",
+            "resolved_side",
+            "order_status",
+            "created_at",
+        )
+        selected_columns = [
+            column if column in table_columns else f"NULL AS {column}" for column in expected
+        ]
+        where_parts = ["1=1"]
+        params: list[Any] = []
+        if "created_at" in table_columns:
+            cutoff = (
+                datetime.now(timezone.utc) - timedelta(hours=max(1, int(lookback_hours)))
+            ).isoformat()
+            where_parts.append("created_at > ?")
+            params.append(cutoff)
+        if "order_status" in table_columns:
+            where_parts.append("(order_status = 'live_filled' OR LOWER(order_status) LIKE 'skip_%')")
+        query = (
+            f"SELECT {', '.join(selected_columns)} FROM window_trades "
+            f"WHERE {' AND '.join(where_parts)} "
+            "ORDER BY created_at ASC"
+        )
+        rows = [dict(row) for row in conn.execute(query, params).fetchall()]
+    finally:
+        conn.close()
+
+    fills = [row for row in rows if str(row.get("order_status") or "").strip().lower() == "live_filled"]
+    skips = [row for row in rows if str(row.get("order_status") or "").strip().lower().startswith("skip_")]
+    return fills, skips
+
+
+def evolve_generation(
+    *,
+    db_path: str | Path = DEFAULT_DB_PATH,
+    population_path: str | Path = DEFAULT_POPULATION_PATH,
+    lookback_hours: int = DEFAULT_LOOKBACK_HOURS,
+    rng_seed: int | None = None,
+) -> dict[str, Any]:
+    """Rank by fitness, keep top 3, and generate 7 children."""
+
+    prng = random.Random(rng_seed if rng_seed is not None else int(datetime.now(timezone.utc).timestamp()))
+    db_path_obj = Path(db_path)
+    population_path_obj = Path(population_path)
+
+    fills, skips = _load_observations(db_path=db_path_obj, lookback_hours=lookback_hours)
+    if not fills and not skips:
+        return {
+            "status": "insufficient_data",
+            "replay_rows": 0,
+            "fills_considered": 0,
+            "skips_considered": 0,
+            "generation": None,
+        }
+
+    current_population = _load_population(population_path=population_path_obj, rng=prng)
+    scored_population = [
+        _bounded_genome(
+            ParameterGenome(
+                min_buy_price=g.min_buy_price,
+                max_buy_price=g.max_buy_price,
+                min_delta=g.min_delta,
+                max_delta=g.max_delta,
+                generation=g.generation,
+                fitness=evaluate_fitness(g, fills, skips),
+            )
+        )
+        for g in current_population
+    ]
+    scored_population.sort(key=lambda item: item.fitness, reverse=True)
+
+    survivors = scored_population[:SURVIVOR_COUNT]
+    next_generation = max(item.generation for item in survivors) + 1
+    children: list[ParameterGenome] = []
+    while len(children) < CHILD_COUNT:
+        if len(survivors) >= 2:
+            parent_a, parent_b = prng.sample(survivors, 2)
+        else:
+            parent_a = survivors[0]
+            parent_b = survivors[0]
+        crossover_child = _crossover(parent_a, parent_b, rng=prng, generation=next_generation)
+        child = mutate(crossover_child, rng=prng, generation=next_generation)
+        child.fitness = evaluate_fitness(child, fills, skips)
+        children.append(_bounded_genome(child))
+
+    next_population = survivors + children
+    next_population.sort(key=lambda item: item.fitness, reverse=True)
+    _persist_population(
+        population=next_population,
+        population_path=population_path_obj,
+        generation=next_generation,
+    )
+
+    return {
+        "status": "evolved",
+        "generation": next_generation,
+        "replay_rows": len(fills) + len(skips),
+        "fills_considered": len(fills),
+        "skips_considered": len(skips),
+        "best_genome": asdict(next_population[0]),
+        "survivor_genomes": [asdict(item) for item in survivors],
+    }
+
+
+def _promote_genome(
+    *,
+    genome: ParameterGenome,
+    overrides_path: Path,
+    lookback_hours: int,
+    replay_rows: int,
+) -> dict[str, Any]:
+    payload = _load_json(overrides_path)
+    params_raw = payload.get("params")
+    params = dict(params_raw) if isinstance(params_raw, dict) else {}
+    bounded = _bounded_genome(genome)
+    risk_fraction = min(
+        MAX_RISK_FRACTION,
+        max(
+            0.0,
+            _safe_float(
+                params.get("BTC5_RISK_FRACTION", os.environ.get("BTC5_RISK_FRACTION", "0.02")),
+                0.02,
+            ),
+        ),
+    )
+
+    params.update(
+        {
+            "BTC5_MIN_BUY_PRICE": round(bounded.min_buy_price, 4),
+            "BTC5_DOWN_MAX_BUY_PRICE": round(bounded.max_buy_price, 4),
+            "BTC5_UP_MAX_BUY_PRICE": round(bounded.max_buy_price, 4),
+            "BTC5_MIN_DELTA": round(bounded.min_delta, 6),
+            "BTC5_MAX_ABS_DELTA": round(bounded.max_delta, 6),
+            "BTC5_RISK_FRACTION": round(risk_fraction, 4),
+        }
+    )
+
+    lineage = payload.get("lineage")
     if not isinstance(lineage, list):
         lineage = []
-
-    lineage_entry = {
-        "promoted_at": _now_iso(),
-        "genome_id": promoted.genome_id,
-        "parent_genome_id": promoted.parent_genome_id,
-        "score": promoted.score,
-        "pnl_usd": promoted.pnl_usd,
-        "fills": promoted.fills,
-        "win_rate": promoted.win_rate,
-        "mutation_notes": promoted.mutation_notes,
-        "cycle_started_at": cycle_started_at,
-        "lookback_hours": int(lookback_hours),
-        "mutation_count": int(mutation_count),
-        "replay_rows": int(replay_rows),
-    }
-    lineage.append(lineage_entry)
+    promoted_at = _now_iso()
+    lineage.append(
+        {
+            "promoted_at": promoted_at,
+            "generation": int(bounded.generation),
+            "fitness": round(float(bounded.fitness), 6),
+            "lookback_hours": int(lookback_hours),
+            "replay_rows": int(replay_rows),
+            "genome": asdict(bounded),
+        }
+    )
 
     payload["promotion_stage"] = "validated"
-    payload["params"] = promoted.params
+    payload["params"] = params
     payload["active_genome"] = {
-        "genome_id": promoted.genome_id,
-        "parent_genome_id": promoted.parent_genome_id,
-        "score": promoted.score,
-        "pnl_usd": promoted.pnl_usd,
-        "fills": promoted.fills,
-        "win_rate": promoted.win_rate,
-        "promoted_at": lineage_entry["promoted_at"],
+        "genome_id": f"generation_{bounded.generation}",
+        "generation": int(bounded.generation),
+        "fitness": round(float(bounded.fitness), 6),
+        "promoted_at": promoted_at,
     }
     payload["lineage"] = lineage[-LINEAGE_LIMIT:]
     payload["last_evolution_cycle"] = {
-        "cycle_started_at": cycle_started_at,
+        "promoted_at": promoted_at,
+        "generation": int(bounded.generation),
+        "fitness": round(float(bounded.fitness), 6),
         "lookback_hours": int(lookback_hours),
-        "mutation_count": int(mutation_count),
         "replay_rows": int(replay_rows),
-        "selected_genome_id": promoted.genome_id,
     }
+    _save_json(overrides_path, payload)
+    return payload
 
-    overrides_path.parent.mkdir(parents=True, exist_ok=True)
-    overrides_path.write_text(json.dumps(payload, indent=2))
+
+def evolve_and_maybe_promote(
+    *,
+    db_path: str | Path = DEFAULT_DB_PATH,
+    overrides_path: str | Path = DEFAULT_OVERRIDES_PATH,
+    population_path: str | Path = DEFAULT_POPULATION_PATH,
+    lookback_hours: int = DEFAULT_LOOKBACK_HOURS,
+    rng_seed: int | None = None,
+) -> dict[str, Any]:
+    evolution = evolve_generation(
+        db_path=db_path,
+        population_path=population_path,
+        lookback_hours=lookback_hours,
+        rng_seed=rng_seed,
+    )
+    if evolution.get("status") != "evolved":
+        return evolution
+
+    champion = _genome_from_row(dict(evolution.get("best_genome") or {}))
+    _promote_genome(
+        genome=champion,
+        overrides_path=Path(overrides_path),
+        lookback_hours=int(lookback_hours),
+        replay_rows=int(evolution.get("replay_rows", 0)),
+    )
+    evolution["status"] = "promoted"
+    return evolution
 
 
 def run_pricing_evolution(
@@ -273,90 +532,40 @@ def run_pricing_evolution(
     mutation_count: int | None = None,
     rng_seed: int | None = None,
 ) -> dict[str, Any]:
-    """Run one bounded evolution cycle and promote the best genome."""
+    """Compatibility wrapper used by existing autoresearch callers."""
 
-    db_path_obj = Path(db_path)
-    overrides_path_obj = Path(overrides_path)
-    if rng_seed is None:
-        rng_seed = int(datetime.now(timezone.utc).timestamp())
-    rng = random.Random(rng_seed)
-    cycle_started_at = _now_iso()
-
-    parent_genome_id, parent_params, payload = _load_current_genome(overrides_path_obj)
-    if mutation_count is None:
-        mutation_count = rng.randint(DEFAULT_MUTATION_COUNT_MIN, DEFAULT_MUTATION_COUNT_MAX)
-    mutation_count = max(DEFAULT_MUTATION_COUNT_MIN, min(DEFAULT_MUTATION_COUNT_MAX, int(mutation_count)))
-
-    rows = _load_replay_rows(db_path=db_path_obj, lookback_hours=lookback_hours)
-    if not rows:
+    result = evolve_and_maybe_promote(
+        db_path=db_path,
+        overrides_path=overrides_path,
+        lookback_hours=lookback_hours,
+        rng_seed=rng_seed,
+    )
+    if result.get("status") != "promoted":
         return {
             "status": "insufficient_data",
-            "reason": "no_live_filled_rows_in_lookback",
+            "reason": "no_counterfactual_rows_in_lookback",
             "lookback_hours": int(lookback_hours),
-            "mutation_count": int(mutation_count),
-            "replay_rows": 0,
+            "mutation_count": int(mutation_count) if mutation_count is not None else CHILD_COUNT,
+            "replay_rows": int(result.get("replay_rows", 0)),
         }
 
-    scored: list[GenomeScore] = [
-        _score_genome(
-            genome_id=parent_genome_id,
-            parent_genome_id=parent_genome_id,
-            params=parent_params,
-            rows=rows,
-            mutation_notes=["baseline_parent_genome"],
-        )
-    ]
-
-    for idx in range(mutation_count):
-        child_params, notes = _mutate(parent_params, rng=rng, child_idx=idx + 1)
-        child_id = f"g_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{idx + 1}"
-        scored.append(
-            _score_genome(
-                genome_id=child_id,
-                parent_genome_id=parent_genome_id,
-                params=child_params,
-                rows=rows,
-                mutation_notes=notes,
-            )
-        )
-
-    winner = _choose_best(scored)
-    _persist_promotion(
-        overrides_path=overrides_path_obj,
-        prior_payload=payload,
-        promoted=winner,
-        mutation_count=mutation_count,
-        replay_rows=len(rows),
-        lookback_hours=lookback_hours,
-        cycle_started_at=cycle_started_at,
-    )
-
-    top_candidates = sorted(scored, key=lambda item: (item.score, item.pnl_usd, item.fills), reverse=True)[:3]
+    selected = dict(result.get("best_genome") or {})
     return {
         "status": "promoted",
         "lookback_hours": int(lookback_hours),
-        "mutation_count": int(mutation_count),
-        "replay_rows": len(rows),
-        "seed": int(rng_seed),
-        "parent_genome_id": parent_genome_id,
+        "mutation_count": int(mutation_count) if mutation_count is not None else CHILD_COUNT,
+        "replay_rows": int(result.get("replay_rows", 0)),
         "selected_genome": {
-            "genome_id": winner.genome_id,
-            "parent_genome_id": winner.parent_genome_id,
-            "score": winner.score,
-            "pnl_usd": winner.pnl_usd,
-            "fills": winner.fills,
-            "win_rate": winner.win_rate,
-            "params": winner.params,
-            "mutation_notes": winner.mutation_notes,
+            "genome_id": f"generation_{selected.get('generation', 0)}",
+            "fitness": float(selected.get("fitness", 0.0)),
+            "fills": int(result.get("fills_considered", 0)),
+            "params": {
+                "BTC5_MIN_BUY_PRICE": float(selected.get("min_buy_price", 0.0)),
+                "BTC5_DOWN_MAX_BUY_PRICE": float(selected.get("max_buy_price", 0.0)),
+                "BTC5_UP_MAX_BUY_PRICE": float(selected.get("max_buy_price", 0.0)),
+                "BTC5_MIN_DELTA": float(selected.get("min_delta", 0.0)),
+                "BTC5_MAX_ABS_DELTA": float(selected.get("max_delta", 0.0)),
+            },
         },
-        "top_candidates": [
-            {
-                "genome_id": g.genome_id,
-                "score": g.score,
-                "pnl_usd": g.pnl_usd,
-                "fills": g.fills,
-                "win_rate": g.win_rate,
-            }
-            for g in top_candidates
-        ],
+        "top_candidates": list(result.get("survivor_genomes") or []),
     }
