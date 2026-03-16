@@ -944,6 +944,13 @@ class MakerConfig:
     binance_symbol: str = os.environ.get("BTC5_ASSET_BINANCE_SYMBOL", "BTCUSDT")
     binance_kline_interval: str = os.environ.get("BTC5_BINANCE_KLINE_INTERVAL", f"{WINDOW_MINUTES}m")
     binance_ws_url: str = os.environ.get("BTC5_BINANCE_WS_URL", "wss://stream.binance.com:9443/ws/btcusdt@trade")
+    binance_depth_ws_url: str = os.environ.get(
+        "BTC5_BINANCE_DEPTH_WS_URL",
+        "wss://stream.binance.com:9443/ws/btcusdt@depth5@100ms",
+    )
+    depth_confirmation_enabled: bool = _env_flag("BTC5_DEPTH_CONFIRMATION_ENABLED", True)
+    depth_confirmation_threshold: float = float(os.environ.get("BTC5_DEPTH_CONFIRMATION_THRESHOLD", "0.30"))
+    depth_imbalance_max_age_sec: int = int(os.environ.get("BTC5_DEPTH_IMBALANCE_MAX_AGE_SEC", "5"))
     binance_klines_url: str = os.environ.get(
         "BTC5_BINANCE_KLINES_URL",
         "https://api.binance.com/api/v3/klines",
@@ -973,6 +980,11 @@ class MakerConfig:
         self.binance_kline_interval = (
             str(self.binance_kline_interval or f"{WINDOW_MINUTES}m").strip().lower() or f"{WINDOW_MINUTES}m"
         )
+        self.binance_depth_ws_url = str(self.binance_depth_ws_url or "").strip()
+        if not self.binance_depth_ws_url:
+            self.binance_depth_ws_url = (
+                f"wss://stream.binance.com:9443/ws/{self.binance_symbol.lower()}@depth5@100ms"
+            )
         self.entry_seconds_before_close = max(1, int(self.entry_seconds_before_close))
         self.cancel_seconds_before_close = max(0, int(self.cancel_seconds_before_close))
         self.early_decision_sec = max(self.entry_seconds_before_close, int(self.early_decision_sec))
@@ -1003,6 +1015,8 @@ class MakerConfig:
         self.adaptive_suppress_duration_sec = max(60, int(self.adaptive_suppress_duration_sec))
         self.adaptive_size_raise_increment = max(0.0, float(self.adaptive_size_raise_increment))
         self.adaptive_max_risk_fraction = max(float(self.risk_fraction), float(self.adaptive_max_risk_fraction))
+        self.depth_confirmation_threshold = max(0.0, min(1.0, float(self.depth_confirmation_threshold)))
+        self.depth_imbalance_max_age_sec = max(1, int(self.depth_imbalance_max_age_sec))
 
     @property
     def effective_max_trade_usd(self) -> float:
@@ -1097,6 +1111,7 @@ class TradeDB:
                     open_price REAL,
                     current_price REAL,
                     delta REAL,
+                    book_imbalance REAL,
                     token_id TEXT,
                     best_bid REAL,
                     best_ask REAL,
@@ -1150,6 +1165,7 @@ class TradeDB:
                 ("wallet_copy", "INTEGER"),
                 ("wallet_count", "INTEGER"),
                 ("wallet_notional", "REAL"),
+                ("book_imbalance", "REAL"),
             ):
                 if column_name not in existing:
                     conn.execute(f"ALTER TABLE window_trades ADD COLUMN {column_name} {column_type}")
@@ -1173,6 +1189,7 @@ class TradeDB:
             "open_price": row.get("open_price"),
             "current_price": row.get("current_price"),
             "delta": row.get("delta"),
+            "book_imbalance": row.get("book_imbalance"),
             "token_id": row.get("token_id"),
             "best_bid": row.get("best_bid"),
             "best_ask": row.get("best_ask"),
@@ -1210,7 +1227,7 @@ class TradeDB:
                 """
                 INSERT INTO window_trades (
                     window_start_ts, window_end_ts, slug, decision_ts, direction,
-                    open_price, current_price, delta, token_id, best_bid, best_ask,
+                    open_price, current_price, delta, book_imbalance, token_id, best_bid, best_ask,
                     order_price, trade_size_usd, shares, order_id, order_status,
                     filled, reason, edge_tier, sizing_reason_tags, loss_cluster_suppressed,
                     session_policy_name, effective_stage, wallet_copy, wallet_count, wallet_notional,
@@ -1218,7 +1235,7 @@ class TradeDB:
                     created_at, updated_at
                 ) VALUES (
                     :window_start_ts, :window_end_ts, :slug, :decision_ts, :direction,
-                    :open_price, :current_price, :delta, :token_id, :best_bid, :best_ask,
+                    :open_price, :current_price, :delta, :book_imbalance, :token_id, :best_bid, :best_ask,
                     :order_price, :trade_size_usd, :shares, :order_id, :order_status,
                     :filled, :reason, :edge_tier, :sizing_reason_tags, :loss_cluster_suppressed,
                     :session_policy_name, :effective_stage, :wallet_copy, :wallet_count, :wallet_notional,
@@ -1231,6 +1248,7 @@ class TradeDB:
                     open_price=excluded.open_price,
                     current_price=excluded.current_price,
                     delta=excluded.delta,
+                    book_imbalance=excluded.book_imbalance,
                     token_id=excluded.token_id,
                     best_bid=excluded.best_bid,
                     best_ask=excluded.best_ask,
@@ -1661,6 +1679,7 @@ class TradeDB:
 class BinancePriceCache:
     def __init__(self, maxlen: int = 6000):
         self._ticks: deque[tuple[int, float]] = deque(maxlen=maxlen)
+        self._depth_imbalances: deque[tuple[int, float]] = deque(maxlen=maxlen)
         self._lock = asyncio.Lock()
 
     async def add_tick(self, ts_sec: int, price: float) -> None:
@@ -1672,6 +1691,62 @@ class BinancePriceCache:
             if not self._ticks:
                 return None
             return self._ticks[-1]
+
+    @staticmethod
+    def _extract_depth_volume(levels: Any) -> float:
+        if not isinstance(levels, list):
+            return 0.0
+        total = 0.0
+        for level in levels:
+            qty = None
+            if isinstance(level, (list, tuple)) and len(level) >= 2:
+                qty = _safe_float(level[1], None)
+            elif isinstance(level, dict):
+                qty = _safe_float(
+                    level.get("q")
+                    or level.get("qty")
+                    or level.get("quantity")
+                    or level.get("size"),
+                    None,
+                )
+            if qty is None or qty <= 0:
+                continue
+            total += float(qty)
+        return float(total)
+
+    @classmethod
+    def compute_book_imbalance(cls, bids: Any, asks: Any) -> float | None:
+        bid_volume = cls._extract_depth_volume(bids)
+        ask_volume = cls._extract_depth_volume(asks)
+        denom = bid_volume + ask_volume
+        if denom <= 1e-12:
+            return None
+        imbalance = (bid_volume - ask_volume) / denom
+        return max(-1.0, min(1.0, float(imbalance)))
+
+    async def add_depth_snapshot(self, ts_sec: int, bids: Any, asks: Any) -> None:
+        imbalance = self.compute_book_imbalance(bids, asks)
+        if imbalance is None:
+            return
+        async with self._lock:
+            self._depth_imbalances.append((int(ts_sec), float(imbalance)))
+
+    async def latest_depth(self) -> tuple[int, float] | None:
+        async with self._lock:
+            if not self._depth_imbalances:
+                return None
+            return self._depth_imbalances[-1]
+
+    async def latest_book_imbalance(self, *, max_age_sec: int | None = None) -> float | None:
+        latest_depth = await self.latest_depth()
+        if latest_depth is None:
+            return None
+        ts_sec, imbalance = latest_depth
+        if max_age_sec is not None and max_age_sec > 0:
+            age_sec = max(0.0, time.time() - float(ts_sec))
+            if age_sec > float(max_age_sec):
+                return None
+        return float(imbalance)
 
     async def open_price_for_window(self, window_start_ts: int) -> float | None:
         upper = window_start_ts + 30
@@ -1718,6 +1793,45 @@ class BinanceTradeFeed:
                         await self.cache.add_tick(ts, float(price))
             except Exception as exc:
                 logger.warning("Binance WS reconnect in %.1fs (%s)", backoff, exc)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2.0, 30.0)
+
+
+class BinanceDepthFeed:
+    def __init__(self, ws_url: str, cache: BinancePriceCache):
+        self.ws_url = ws_url
+        self.cache = cache
+
+    async def run(self, stop_event: asyncio.Event) -> None:
+        if websockets is None:
+            logger.warning("websockets package missing; Binance depth stream disabled")
+            return
+        backoff = 1.0
+        while not stop_event.is_set():
+            try:
+                async with websockets.connect(self.ws_url, ping_interval=20, ping_timeout=10) as ws:
+                    logger.info("Connected to Binance depth stream")
+                    backoff = 1.0
+                    async for raw in ws:
+                        if stop_event.is_set():
+                            break
+                        try:
+                            payload = json.loads(raw)
+                        except json.JSONDecodeError:
+                            continue
+                        if not isinstance(payload, dict):
+                            continue
+                        bids = payload.get("b")
+                        asks = payload.get("a")
+                        if not isinstance(bids, list) or not isinstance(asks, list):
+                            continue
+                        event_ms = _safe_float(payload.get("E"), None)
+                        if event_ms is None:
+                            event_ms = _safe_float(payload.get("T"), None)
+                        ts = int(event_ms // 1000) if event_ms is not None else int(time.time())
+                        await self.cache.add_depth_snapshot(ts, bids, asks)
+            except Exception as exc:
+                logger.warning("Binance depth WS reconnect in %.1fs (%s)", backoff, exc)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2.0, 30.0)
 
@@ -2510,6 +2624,65 @@ class BTC5MinMakerBot:
             ),
         }
 
+    def _apply_depth_confirmation(
+        self,
+        *,
+        edge_tier: str,
+        direction: str,
+        book_imbalance: float | None,
+        sizing_reason_tags: list[str],
+    ) -> tuple[str, list[str]]:
+        base_tier = str(edge_tier or "standard").strip().lower() or "standard"
+        tags = _unique_tags(*sizing_reason_tags)
+        if not self.cfg.depth_confirmation_enabled:
+            return base_tier, _unique_tags(*tags, "depth_confirmation=disabled")
+        if book_imbalance is None:
+            return base_tier, _unique_tags(*tags, "depth_confirmation=missing")
+
+        threshold = max(0.0, float(self.cfg.depth_confirmation_threshold))
+        imbalance = max(-1.0, min(1.0, float(book_imbalance)))
+        tags = _unique_tags(
+            *tags,
+            f"book_imbalance={imbalance:.4f}",
+            f"depth_threshold={threshold:.2f}",
+        )
+
+        if abs(imbalance) < threshold:
+            return base_tier, _unique_tags(*tags, "depth_confirmation=neutral")
+
+        normalized_direction = str(direction or "").strip().upper()
+        is_agree = (normalized_direction == "UP" and imbalance > 0) or (
+            normalized_direction == "DOWN" and imbalance < 0
+        )
+        if is_agree:
+            boosted_tier = {
+                "suppressed": "suppressed",
+                "exploratory": "standard",
+                "standard": "strong_validated",
+                "strong_validated": "strong_validated",
+            }.get(base_tier, base_tier)
+            if boosted_tier != base_tier:
+                return boosted_tier, _unique_tags(
+                    *tags,
+                    "depth_confirmation=agree",
+                    f"depth_edge_tier_upgrade={base_tier}_to_{boosted_tier}",
+                )
+            return boosted_tier, _unique_tags(*tags, "depth_confirmation=agree")
+
+        downgraded_tier = {
+            "suppressed": "suppressed",
+            "exploratory": "exploratory",
+            "standard": "exploratory",
+            "strong_validated": "standard",
+        }.get(base_tier, base_tier)
+        if downgraded_tier != base_tier:
+            return downgraded_tier, _unique_tags(
+                *tags,
+                "depth_confirmation=disagree",
+                f"depth_edge_tier_downgrade={base_tier}_to_{downgraded_tier}",
+            )
+        return downgraded_tier, _unique_tags(*tags, "depth_confirmation=disagree")
+
     def _hydrate_rolling_kelly_state(self) -> None:
         rows = self.db.recent_kelly_qualified_fills(
             min_entry_price=KELLY_QUALIFY_MIN_ENTRY_PRICE,
@@ -3259,6 +3432,7 @@ class BTC5MinMakerBot:
         wallet_copy_applied = False
         wallet_count = 0
         wallet_notional = 0.0
+        book_imbalance: float | None = None
         sizing_reason_tags: list[str] = _unique_tags(
             f"session_bucket={session_bucket}",
             f"session_policy_name={session_policy_name or 'none'}",
@@ -3327,6 +3501,8 @@ class BTC5MinMakerBot:
                 payload["wallet_count"] = wallet_count
             if "wallet_notional" not in payload:
                 payload["wallet_notional"] = round(max(0.0, float(wallet_notional)), 4)
+            if "book_imbalance" not in payload:
+                payload["book_imbalance"] = book_imbalance
             if "decision_timing" not in payload:
                 payload["decision_timing"] = decision_timing
             if "early_fallback_reason" not in payload:
@@ -3408,6 +3584,8 @@ class BTC5MinMakerBot:
                 payload["wallet_count"] = wallet_count
             if "wallet_notional" not in payload:
                 payload["wallet_notional"] = round(max(0.0, float(wallet_notional)), 4)
+            if "book_imbalance" not in payload:
+                payload["book_imbalance"] = book_imbalance
             if "decision_ts" not in payload:
                 payload["decision_ts"] = decision_ts
             payload["reason"] = _join_reasons(
@@ -3595,6 +3773,10 @@ class BTC5MinMakerBot:
             direction, delta = prefetched_direction, prefetched_delta
         else:
             direction, delta = direction_from_prices(open_price, current_price, effective_min_delta)
+        depth_imbalance = await self.cache.latest_book_imbalance(
+            max_age_sec=self.cfg.depth_imbalance_max_age_sec,
+        )
+        book_imbalance = float(depth_imbalance) if depth_imbalance is not None else None
         if self.cfg.enable_wallet_copy and self.smart_wallet_feed:
             await self._ensure_wallet_copy_watch(window_start_ts=window_start_ts, http=http)
             try:
@@ -4019,6 +4201,12 @@ class BTC5MinMakerBot:
         edge_tier = str(edge_profile.get("edge_tier") or "standard")
         loss_cluster_suppressed = bool(edge_profile.get("loss_cluster_suppressed"))
         sizing_reason_tags = list(edge_profile.get("sizing_reason_tags") or sizing_reason_tags)
+        edge_tier, sizing_reason_tags = self._apply_depth_confirmation(
+            edge_tier=edge_tier,
+            direction=direction,
+            book_imbalance=book_imbalance,
+            sizing_reason_tags=sizing_reason_tags,
+        )
         size_plan = self._trade_size_for_edge_tier(
             edge_tier=edge_tier,
             effective_max_trade_usd=effective_max_trade_usd,
@@ -4307,8 +4495,12 @@ class BTC5MinMakerBot:
 
     async def run_windows(self, *, count: int, continuous: bool) -> None:
         stop_event = asyncio.Event()
-        feed = BinanceTradeFeed(self.cfg.binance_ws_url, self.cache)
-        feed_task = asyncio.create_task(feed.run(stop_event))
+        trade_feed = BinanceTradeFeed(self.cfg.binance_ws_url, self.cache)
+        depth_feed = BinanceDepthFeed(self.cfg.binance_depth_ws_url, self.cache)
+        feed_tasks = [
+            asyncio.create_task(trade_feed.run(stop_event)),
+            asyncio.create_task(depth_feed.run(stop_event)),
+        ]
 
         timeout = aiohttp.ClientTimeout(total=self.cfg.request_timeout_sec)
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -4347,9 +4539,11 @@ class BTC5MinMakerBot:
             finally:
                 stop_event.set()
                 await asyncio.sleep(0)
-                feed_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await feed_task
+                for task in feed_tasks:
+                    task.cancel()
+                for task in feed_tasks:
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
 
         # Resolve the most recent completed window if possible.
         async with aiohttp.ClientSession(timeout=timeout) as session:
