@@ -75,6 +75,14 @@ def _window_seconds_from_env(default: int = 300) -> int:
 
 WINDOW_SECONDS = _window_seconds_from_env()
 WINDOW_MINUTES = max(1, WINDOW_SECONDS // 60)
+ASSET_SLUG_PREFIX = str(os.environ.get("BTC5_ASSET_SLUG_PREFIX", "btc")).strip().rstrip("-")
+if not ASSET_SLUG_PREFIX:
+    ASSET_SLUG_PREFIX = "btc"
+MARKET_SLUG_PREFIX = str(
+    os.environ.get("BTC5_MARKET_SLUG_PREFIX", f"{ASSET_SLUG_PREFIX}-updown-{WINDOW_MINUTES}m")
+).strip().rstrip("-")
+if not MARKET_SLUG_PREFIX:
+    MARKET_SLUG_PREFIX = f"{ASSET_SLUG_PREFIX}-updown-{WINDOW_MINUTES}m"
 DEFAULT_DB_PATH = Path("data/btc_5min_maker.db")
 DEFAULT_ADAPTATION_LOG_PATH = Path("data/adaptation_log.json")
 CLOB_HARD_MIN_SHARES = 5.0
@@ -564,10 +572,20 @@ def market_slug_for_window(
     *,
     window_seconds: int | None = None,
 ) -> str:
-    prefix = slug_prefix or os.environ.get("BTC5_ASSET_SLUG_PREFIX", "btc")
     span_seconds = int(window_seconds) if window_seconds is not None else WINDOW_SECONDS
     window_minutes = max(1, span_seconds // 60)
-    return f"{prefix}-updown-{window_minutes}m-{int(window_start_ts)}"
+    prefix = str(slug_prefix or "").strip().rstrip("-")
+    explicit_full_prefix = os.environ.get("BTC5_MARKET_SLUG_PREFIX") not in (None, "")
+    if not prefix:
+        # Keep window_seconds overrides deterministic for tests/backfills unless an
+        # explicit full slug prefix is configured at runtime.
+        if window_seconds is not None and not explicit_full_prefix:
+            prefix = ASSET_SLUG_PREFIX
+        else:
+            prefix = MARKET_SLUG_PREFIX
+    if "-updown-" not in prefix:
+        prefix = f"{prefix}-updown-{window_minutes}m"
+    return f"{prefix}-{int(window_start_ts)}"
 
 
 def direction_from_prices(open_price: float, current_price: float, min_delta: float) -> tuple[str | None, float]:
@@ -924,11 +942,15 @@ class MakerConfig:
         "BTC5_BINANCE_TICKER_URL",
         "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT",
     )
+    binance_symbol: str = str(os.environ.get("BTC5_BINANCE_SYMBOL", "BTCUSDT")).strip().upper() or "BTCUSDT"
+    binance_kline_interval: str = (
+        str(os.environ.get("BTC5_BINANCE_KLINE_INTERVAL", "5m")).strip().lower() or "5m"
+    )
     gamma_markets_url: str = os.environ.get(
         "BTC5_GAMMA_MARKETS_URL",
         "https://gamma-api.polymarket.com/markets",
     )
-    market_slug_prefix: str = os.environ.get("BTC5_ASSET_SLUG_PREFIX", "btc")
+    market_slug_prefix: str = os.environ.get("BTC5_MARKET_SLUG_PREFIX", MARKET_SLUG_PREFIX)
     clob_book_url: str = os.environ.get(
         "BTC5_CLOB_BOOK_URL",
         "https://clob.polymarket.com/book",
@@ -2068,7 +2090,9 @@ class BTC5MinMakerBot:
             return
         if window_start_ts in self._wallet_watch_started_windows:
             return
-        market = await http.fetch_market_by_slug(market_slug_for_window(window_start_ts))
+        market = await http.fetch_market_by_slug(
+            market_slug_for_window(window_start_ts, self.cfg.market_slug_prefix)
+        )
         condition_id = _extract_condition_id(market)
         if not condition_id:
             return
@@ -3817,7 +3841,7 @@ async def _run(args: argparse.Namespace) -> None:
         raise SystemExit("--windows must be >= 1")
 
     logger.info(
-        "Starting BTC5 maker | mode=%s | bankroll=%.2f | risk_fraction=%.4f | max_trade=%.2f | max_abs_delta=%s | up_max=%.2f | down_max=%.2f | improve_ticks=%d | session_overrides=%d | regime_skew=%s | probe_daily_loss=%s | probe_recent=%s | retry_post_only_cross=%s safety_ticks=%d",
+        "Starting BTC5 maker | mode=%s | bankroll=%.2f | risk_fraction=%.4f | max_trade=%.2f | max_abs_delta=%s | up_max=%.2f | down_max=%.2f | improve_ticks=%d | session_overrides=%d | regime_skew=%s | probe_daily_loss=%s | probe_recent=%s | retry_post_only_cross=%s safety_ticks=%d | window_seconds=%d | slug_prefix=%s | binance_symbol=%s | kline_interval=%s",
         "paper" if cfg.paper_trading else "live",
         cfg.bankroll_usd,
         cfg.risk_fraction,
@@ -3832,6 +3856,10 @@ async def _run(args: argparse.Namespace) -> None:
         "enabled" if cfg.enable_probe_after_recent_loss else "disabled",
         "enabled" if cfg.retry_post_only_cross else "disabled",
         max(0, int(cfg.retry_post_only_safety_ticks)),
+        WINDOW_SECONDS,
+        MARKET_SLUG_PREFIX,
+        cfg.binance_symbol,
+        cfg.binance_kline_interval,
     )
     await bot.run_windows(count=args.windows, continuous=args.continuous)
     bot.print_status()
