@@ -27,6 +27,8 @@ DEFAULT_JJ_STATE_FILE = Path(os.environ.get("JJ_STATE_FILE", "jj_state.json"))
 DEFAULT_HEALTH_REPORT_FILE = Path(os.environ.get("JJ_HEALTH_REPORT_FILE", "data/health_report.json"))
 DEFAULT_MORNING_REPORT_FILE = Path(os.environ.get("JJ_MORNING_REPORT_FILE", "data/morning_report.json"))
 DEFAULT_ALERT_LOG_FILE = Path(os.environ.get("JJ_ALERT_LOG_FILE", "/tmp/elastifund_alerts.log"))
+DEFAULT_CASCADE_SIGNAL_FILE = Path(os.environ.get("JJ_CASCADE_SIGNAL_FILE", "data/cascade_signal.json"))
+DEFAULT_STREAK_LOG_FILE = Path(os.environ.get("JJ_STREAK_LOG_FILE", "data/streak_log.json"))
 DEFAULT_MULTI_ASSET_CONFIG_PATH = Path(
     os.environ.get("JJ_MULTI_ASSET_CONFIG_PATH", "config/multi_asset_slugs.json")
 )
@@ -394,6 +396,43 @@ def _to_iso_hour(hour_epoch: int) -> str:
     return datetime.fromtimestamp(int(hour_epoch), tz=timezone.utc).replace(minute=0, second=0, microsecond=0).isoformat()
 
 
+def _read_optional_json(path: Path) -> tuple[dict[str, Any], str]:
+    if not path.exists():
+        return {}, "missing"
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}, "unreadable"
+    if not isinstance(raw, dict):
+        return {}, "invalid_shape"
+    return raw, "ok"
+
+
+def _first_present_bool(payload: dict[str, Any], keys: tuple[str, ...]) -> bool | None:
+    for key in keys:
+        if key not in payload:
+            continue
+        value = payload.get(key)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "1", "yes", "on", "active", "enabled", "triggered"}:
+                return True
+            if normalized in {"false", "0", "no", "off", "inactive", "disabled"}:
+                return False
+    return None
+
+
+def _safe_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
     try:
         row = conn.execute(
@@ -470,6 +509,168 @@ def _classify_fill_rate_trend(hourly_rows: list[dict[str, Any]]) -> dict[str, An
     }
 
 
+def check_skip_spike(
+    multi_asset_snapshot: dict[str, Any],
+    *,
+    reason: str = DEFAULT_SKIP_SPIKE_REASON,
+    window_size: int = DEFAULT_SKIP_SPIKE_WINDOW,
+    threshold: float = DEFAULT_SKIP_SPIKE_THRESHOLD,
+) -> dict[str, Any]:
+    tracked_reason = str(reason or "skip_bad_book").strip().lower()
+    required_window = max(1, int(window_size))
+    max_ratio = max(0.0, min(1.0, float(threshold)))
+    alerts: list[dict[str, Any]] = []
+    for asset in list(multi_asset_snapshot.get("assets") or []):
+        asset_reason = str(asset.get("skip_spike_reason") or "").strip().lower()
+        reason_matches = asset_reason == tracked_reason
+        recent_window = _coerce_int(asset.get("recent_skip_window"), 0)
+        ratio = _coerce_float(asset.get("recent_skip_reason_ratio"))
+        if not reason_matches or ratio is None:
+            continue
+        if recent_window < required_window or ratio <= max_ratio:
+            continue
+        alerts.append(
+            {
+                "asset": str(asset.get("asset") or ""),
+                "service": str(asset.get("service") or ""),
+                "db_path": str(asset.get("db_path") or ""),
+                "skip_reason": tracked_reason,
+                "ratio": round(ratio, 4),
+                "window": recent_window,
+                "count": _coerce_int(asset.get("recent_skip_reason_count"), 0),
+            }
+        )
+    return {
+        "status": "alert" if alerts else "ok",
+        "skip_reason": tracked_reason,
+        "window_size": required_window,
+        "threshold": round(max_ratio, 4),
+        "alerts": alerts,
+    }
+
+
+def check_fill_rate_trend(multi_asset_snapshot: dict[str, Any]) -> dict[str, Any]:
+    comparison = dict(multi_asset_snapshot.get("fill_rate_comparison") or {})
+    last_2h = _coerce_float(comparison.get("last_2h_fill_rate"))
+    last_24h = _coerce_float(comparison.get("last_24h_fill_rate"))
+    if last_2h is None or last_24h is None:
+        return {
+            "status": "insufficient_data",
+            "declining": False,
+            "last_2h_fill_rate": last_2h,
+            "last_24h_fill_rate": last_24h,
+            "delta": None,
+            "windows_last_2h": _coerce_int(comparison.get("windows_last_2h"), 0),
+            "windows_last_24h": _coerce_int(comparison.get("windows_last_24h"), 0),
+        }
+    delta = last_2h - last_24h
+    declining = delta < 0.0
+    return {
+        "status": "declining" if declining else "stable_or_improving",
+        "declining": declining,
+        "last_2h_fill_rate": round(last_2h, 4),
+        "last_24h_fill_rate": round(last_24h, 4),
+        "delta": round(delta, 4),
+        "windows_last_2h": _coerce_int(comparison.get("windows_last_2h"), 0),
+        "windows_last_24h": _coerce_int(comparison.get("windows_last_24h"), 0),
+    }
+
+
+def check_cascade_active(cascade_signal_path: Path = DEFAULT_CASCADE_SIGNAL_FILE) -> dict[str, Any]:
+    payload, read_status = _read_optional_json(cascade_signal_path)
+    if read_status != "ok":
+        return {
+            "status": read_status,
+            "active": False,
+            "path": str(cascade_signal_path),
+            "checked_at": utc_now().isoformat(),
+            "updated_at": None,
+            "raw": {},
+        }
+    active = _first_present_bool(
+        payload,
+        (
+            "active",
+            "is_active",
+            "enabled",
+            "cascade_active",
+            "signal_active",
+            "triggered",
+            "cascade_execution_enabled",
+        ),
+    )
+    if active is None:
+        status_value = str(payload.get("status") or "").strip().lower()
+        if status_value:
+            active = status_value in {"active", "enabled", "on", "triggered"}
+        else:
+            block_reasons = list(payload.get("block_reasons") or [])
+            intents = list(payload.get("intents") or [])
+            active = bool(intents) and not block_reasons
+    updated_at = (
+        payload.get("updated_at")
+        or payload.get("generated_at")
+        or payload.get("timestamp")
+        or payload.get("checked_at")
+        or None
+    )
+    return {
+        "status": "active" if active else "inactive",
+        "active": bool(active),
+        "path": str(cascade_signal_path),
+        "checked_at": utc_now().isoformat(),
+        "updated_at": str(updated_at) if updated_at is not None else None,
+        "raw": payload,
+    }
+
+
+def check_streak_active(streak_log_path: Path = DEFAULT_STREAK_LOG_FILE) -> dict[str, Any]:
+    payload, read_status = _read_optional_json(streak_log_path)
+    if read_status != "ok":
+        return {
+            "status": read_status,
+            "active": False,
+            "path": str(streak_log_path),
+            "checked_at": utc_now().isoformat(),
+            "streak_length": 0,
+            "direction": None,
+            "started_at": None,
+            "raw": {},
+        }
+
+    streak_length = _safe_int(payload.get("streak_length"))
+    if streak_length is None:
+        streak_length = _safe_int(payload.get("length"))
+    if streak_length is None:
+        streak_length = _safe_int(payload.get("current_streak"))
+    current_streak = payload.get("current_streak")
+    if streak_length is None and isinstance(current_streak, dict):
+        streak_length = _safe_int(
+            current_streak.get("length")
+            if "length" in current_streak
+            else current_streak.get("count")
+        )
+    if streak_length is None:
+        streak_length = 0
+    active_hint = _first_present_bool(payload, ("active", "is_active", "enabled"))
+    active = bool(active_hint) if active_hint is not None else streak_length > 0
+    direction = payload.get("direction")
+    started_at = payload.get("started_at")
+    if isinstance(current_streak, dict):
+        direction = direction if direction is not None else current_streak.get("direction")
+        started_at = started_at if started_at is not None else current_streak.get("started_at")
+    return {
+        "status": "active" if active and streak_length > 0 else "inactive",
+        "active": bool(active and streak_length > 0),
+        "path": str(streak_log_path),
+        "checked_at": utc_now().isoformat(),
+        "streak_length": max(0, int(streak_length)),
+        "direction": str(direction) if direction is not None else None,
+        "started_at": str(started_at) if started_at is not None else None,
+        "raw": payload,
+    }
+
+
 def build_multi_asset_health_snapshot(
     *,
     now: datetime,
@@ -486,6 +687,8 @@ def build_multi_asset_health_snapshot(
     tracked_reason = str(skip_spike_reason or "skip_bad_book").strip().lower()
     window_size = max(1, int(skip_spike_window))
     threshold = max(0.0, min(1.0, float(skip_spike_threshold)))
+    last_2h_cutoff_epoch = int((current_time - timedelta(hours=2)).timestamp())
+    last_24h_cutoff_epoch = int((current_time - timedelta(hours=24)).timestamp())
 
     targets = _load_multi_asset_targets(config_path)
     per_asset: list[dict[str, Any]] = []
@@ -495,6 +698,10 @@ def build_multi_asset_health_snapshot(
     total_wins = 0
     total_losses = 0
     total_pnl = 0.0
+    total_windows_last_2h = 0
+    total_fills_last_2h = 0
+    total_windows_last_24h = 0
+    total_fills_last_24h = 0
 
     for target in targets:
         db_path = Path(target["db_path"])
@@ -520,6 +727,12 @@ def build_multi_asset_health_snapshot(
             "skip_spike_triggered": False,
             "top_skip_reasons": [],
             "hourly_fill_rate": [],
+            "windows_last_2h": 0,
+            "fills_last_2h": 0,
+            "fill_rate_last_2h": None,
+            "windows_last_24h": 0,
+            "fills_last_24h": 0,
+            "fill_rate_last_24h": None,
             "query_error": None,
         }
         if not db_path.exists():
@@ -595,6 +808,26 @@ def build_multi_asset_health_snapshot(
                 """,
                 (trend_cutoff_epoch,),
             ).fetchall()
+            fill_rate_last_2h_row = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS windows,
+                    COALESCE(SUM(CASE WHEN LOWER(COALESCE(order_status, '')) = 'live_filled' THEN 1 ELSE 0 END), 0) AS fills
+                FROM window_trades
+                WHERE decision_ts >= ?
+                """,
+                (last_2h_cutoff_epoch,),
+            ).fetchone()
+            fill_rate_last_24h_row = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS windows,
+                    COALESCE(SUM(CASE WHEN LOWER(COALESCE(order_status, '')) = 'live_filled' THEN 1 ELSE 0 END), 0) AS fills
+                FROM window_trades
+                WHERE decision_ts >= ?
+                """,
+                (last_24h_cutoff_epoch,),
+            ).fetchone()
 
             windows = _coerce_int(overnight_row["windows"] if overnight_row else 0, 0)
             fills = _coerce_int(overnight_row["fills"] if overnight_row else 0, 0)
@@ -602,6 +835,12 @@ def build_multi_asset_health_snapshot(
             losses = _coerce_int(overnight_row["losses"] if overnight_row else 0, 0)
             pnl_usd = float(_coerce_float(overnight_row["pnl_usd"] if overnight_row else 0.0, 0.0) or 0.0)
             latest_decision_ts = _coerce_int(overnight_row["latest_decision_ts"] if overnight_row else 0, 0)
+            windows_last_2h = _coerce_int(fill_rate_last_2h_row["windows"] if fill_rate_last_2h_row else 0, 0)
+            fills_last_2h = _coerce_int(fill_rate_last_2h_row["fills"] if fill_rate_last_2h_row else 0, 0)
+            windows_last_24h = _coerce_int(fill_rate_last_24h_row["windows"] if fill_rate_last_24h_row else 0, 0)
+            fills_last_24h = _coerce_int(fill_rate_last_24h_row["fills"] if fill_rate_last_24h_row else 0, 0)
+            fill_rate_last_2h = (fills_last_2h / windows_last_2h) if windows_last_2h > 0 else None
+            fill_rate_last_24h = (fills_last_24h / windows_last_24h) if windows_last_24h > 0 else None
             hourly_fill_rate: list[dict[str, Any]] = []
             for row in hourly_rows:
                 hour_epoch = _coerce_int(row["hour_epoch"], 0)
@@ -656,6 +895,12 @@ def build_multi_asset_health_snapshot(
                         for row in top_skip_reasons
                     ],
                     "hourly_fill_rate": hourly_fill_rate,
+                    "windows_last_2h": windows_last_2h,
+                    "fills_last_2h": fills_last_2h,
+                    "fill_rate_last_2h": round(fill_rate_last_2h, 4) if fill_rate_last_2h is not None else None,
+                    "windows_last_24h": windows_last_24h,
+                    "fills_last_24h": fills_last_24h,
+                    "fill_rate_last_24h": round(fill_rate_last_24h, 4) if fill_rate_last_24h is not None else None,
                 }
             )
 
@@ -664,6 +909,10 @@ def build_multi_asset_health_snapshot(
             total_wins += wins
             total_losses += losses
             total_pnl += pnl_usd
+            total_windows_last_2h += windows_last_2h
+            total_fills_last_2h += fills_last_2h
+            total_windows_last_24h += windows_last_24h
+            total_fills_last_24h += fills_last_24h
         except sqlite3.Error as exc:
             entry["query_error"] = str(exc)
         finally:
@@ -689,6 +938,10 @@ def build_multi_asset_health_snapshot(
     trend = _classify_fill_rate_trend(overall_hourly_rows)
     overall_fill_rate = (total_fills / total_windows) if total_windows > 0 else None
     overall_win_rate = (total_wins / total_fills) if total_fills > 0 else None
+    overall_fill_rate_last_2h = (total_fills_last_2h / total_windows_last_2h) if total_windows_last_2h > 0 else None
+    overall_fill_rate_last_24h = (
+        (total_fills_last_24h / total_windows_last_24h) if total_windows_last_24h > 0 else None
+    )
 
     active_spike_alerts = [
         {
@@ -726,6 +979,23 @@ def build_multi_asset_health_snapshot(
             "buckets": overall_hourly_rows,
             "trend": trend,
         },
+        "fill_rate_comparison": {
+            "windows_last_2h": total_windows_last_2h,
+            "fills_last_2h": total_fills_last_2h,
+            "last_2h_fill_rate": (
+                round(overall_fill_rate_last_2h, 4) if overall_fill_rate_last_2h is not None else None
+            ),
+            "windows_last_24h": total_windows_last_24h,
+            "fills_last_24h": total_fills_last_24h,
+            "last_24h_fill_rate": (
+                round(overall_fill_rate_last_24h, 4) if overall_fill_rate_last_24h is not None else None
+            ),
+            "delta": (
+                round(overall_fill_rate_last_2h - overall_fill_rate_last_24h, 4)
+                if overall_fill_rate_last_2h is not None and overall_fill_rate_last_24h is not None
+                else None
+            ),
+        },
         "active_skip_spike_alerts": active_spike_alerts,
     }
 
@@ -737,10 +1007,15 @@ def build_morning_report(
     service_name: str,
     actions: list[str],
     multi_asset_snapshot: dict[str, Any],
+    checks: dict[str, Any],
 ) -> dict[str, Any]:
     overall = dict(multi_asset_snapshot.get("overall") or {})
     trend = dict((multi_asset_snapshot.get("hourly_fill_rate") or {}).get("trend") or {})
-    skip_alerts = list(multi_asset_snapshot.get("active_skip_spike_alerts") or [])
+    skip_alert = dict(checks.get("skip_spike") or {})
+    skip_alerts = list(skip_alert.get("alerts") or [])
+    fill_rate_trend = dict(checks.get("fill_rate_trend") or {})
+    cascade = dict(checks.get("cascade") or {})
+    streak = dict(checks.get("streak") or {})
     asset_rows = list(multi_asset_snapshot.get("assets") or [])
     paste_lines = [
         "OVERNIGHT SYSTEM STATUS",
@@ -762,7 +1037,22 @@ def build_morning_report(
             f"prior={_format_pct(_coerce_float(trend.get('prior_average_fill_rate')))}, "
             f"delta={_format_pct(_coerce_float(trend.get('delta')))})"
         ),
+        (
+            "2h vs 24h fill rate: "
+            f"{_format_pct(_coerce_float(fill_rate_trend.get('last_2h_fill_rate')))} vs "
+            f"{_format_pct(_coerce_float(fill_rate_trend.get('last_24h_fill_rate')))} "
+            f"(delta={_format_pct(_coerce_float(fill_rate_trend.get('delta')))}, "
+            f"status={fill_rate_trend.get('status', 'unknown')})"
+        ),
+        f"Cascade signal: {cascade.get('status', 'unknown')}",
     ]
+    if bool(streak.get("active")):
+        paste_lines.append(
+            "Current streak: "
+            f"{streak.get('direction') or 'unknown'} x{_coerce_int(streak.get('streak_length'), 0)}"
+        )
+    else:
+        paste_lines.append("Current streak: none")
     if skip_alerts:
         paste_lines.append(
             "Skip spike alerts: "
@@ -786,6 +1076,37 @@ def build_morning_report(
                 f"{_format_pct(_coerce_float(asset.get('recent_skip_reason_ratio')))}"
             )
         )
+    paste_lines.extend(
+        [
+            "",
+            "SESSION_BRIEF",
+            (
+                f"- Health: {evaluation.get('status', 'unknown')} "
+                f"({evaluation.get('reason', 'unknown')}) cycle={evaluation.get('cycle_number', 0)}"
+            ),
+            (
+                "- Fill trend 2h/24h: "
+                f"{_format_pct(_coerce_float(fill_rate_trend.get('last_2h_fill_rate')))} / "
+                f"{_format_pct(_coerce_float(fill_rate_trend.get('last_24h_fill_rate')))} "
+                f"({fill_rate_trend.get('status', 'unknown')})"
+            ),
+            (
+                "- Skip spike: "
+                f"{skip_alert.get('status', 'unknown')} "
+                f"({len(skip_alerts)} asset alerts)"
+            ),
+            (
+                "- Cascade: "
+                f"{cascade.get('status', 'unknown')}"
+            ),
+            (
+                "- Streak: "
+                f"{'active' if bool(streak.get('active')) else 'none'} "
+                f"{str(streak.get('direction') or '').upper()} "
+                f"x{_coerce_int(streak.get('streak_length'), 0)}"
+            ),
+        ]
+    )
 
     return {
         "generated_at": checked_at.isoformat(),
@@ -799,6 +1120,7 @@ def build_morning_report(
         "actions": list(actions),
         "overview": overall,
         "hourly_fill_rate_trend": trend,
+        "monitor_checks": checks,
         "skip_spike_alerts": skip_alerts,
         "assets": asset_rows,
         "paste_ready_summary": "\n".join(paste_lines),
@@ -1012,6 +1334,8 @@ def run_health_check(
     morning_report_path: Path = DEFAULT_MORNING_REPORT_FILE,
     multi_asset_config_path: Path = DEFAULT_MULTI_ASSET_CONFIG_PATH,
     alert_log_path: Path = DEFAULT_ALERT_LOG_FILE,
+    cascade_signal_path: Path = DEFAULT_CASCADE_SIGNAL_FILE,
+    streak_log_path: Path = DEFAULT_STREAK_LOG_FILE,
     skip_spike_reason: str = DEFAULT_SKIP_SPIKE_REASON,
     skip_spike_window: int = DEFAULT_SKIP_SPIKE_WINDOW,
     skip_spike_threshold: float = DEFAULT_SKIP_SPIKE_THRESHOLD,
@@ -1116,13 +1440,41 @@ def run_health_check(
         skip_spike_window=skip_spike_window,
         skip_spike_threshold=skip_spike_threshold,
     )
+    skip_spike_check = check_skip_spike(
+        multi_asset_snapshot,
+        reason=skip_spike_reason,
+        window_size=skip_spike_window,
+        threshold=skip_spike_threshold,
+    )
+    fill_rate_trend_check = check_fill_rate_trend(multi_asset_snapshot)
+    cascade_check = check_cascade_active(cascade_signal_path)
+    streak_check = check_streak_active(streak_log_path)
+    check_results = {
+        "skip_spike": skip_spike_check,
+        "fill_rate_trend": fill_rate_trend_check,
+        "cascade": cascade_check,
+        "streak": streak_check,
+    }
+
+    if bool(fill_rate_trend_check.get("declining")):
+        fill_rate_warning = (
+            "JJ HEALTH WARNING\n"
+            "Fill rate is declining (2h vs 24h)\n"
+            f"2h: {_format_pct(_coerce_float(fill_rate_trend_check.get('last_2h_fill_rate')))}\n"
+            f"24h: {_format_pct(_coerce_float(fill_rate_trend_check.get('last_24h_fill_rate')))}\n"
+            f"Delta: {_format_pct(_coerce_float(fill_rate_trend_check.get('delta')))}"
+        )
+        _append_alert_log(alert_log_path, fill_rate_warning.replace("\n", " | "), now=current_time)
+        _notify(fill_rate_warning)
+        actions.append("fill_rate_trend_warning_logged")
+
     previous_skip_spike_state = dict(monitor_state.get("skip_spike_alert_state") or {})
     next_skip_spike_state: dict[str, bool] = {}
     for asset_summary in list(multi_asset_snapshot.get("assets") or []):
         asset = str(asset_summary.get("asset") or "")
         if not asset:
             continue
-        is_triggered = bool(asset_summary.get("skip_spike_triggered"))
+        is_triggered = any(asset == str(alert.get("asset") or "") for alert in skip_spike_check.get("alerts", []))
         was_triggered = bool(previous_skip_spike_state.get(asset))
         if is_triggered and not was_triggered:
             ratio = _coerce_float(asset_summary.get("recent_skip_reason_ratio"))
@@ -1148,6 +1500,7 @@ def run_health_check(
         service_name=service_name,
         actions=actions,
         multi_asset_snapshot=multi_asset_snapshot,
+        checks=check_results,
     )
     health_report = {
         "checked_at": current_time.isoformat(),
@@ -1156,6 +1509,7 @@ def run_health_check(
         "actions": actions,
         "restart_result": restart_result,
         "daily_summary": summary_snapshot,
+        "monitor_checks": check_results,
         "multi_asset_snapshot": multi_asset_snapshot,
         "morning_summary": morning_report.get("paste_ready_summary"),
     }
@@ -1178,6 +1532,7 @@ def run_health_check(
         "daily_summary_target_date": target_date.isoformat() if target_date is not None else None,
         "health_report_path": str(health_report_path),
         "morning_report_path": str(morning_report_path),
+        "monitor_checks": check_results,
         "multi_asset_snapshot": multi_asset_snapshot,
         "morning_report": morning_report,
     }
@@ -1193,6 +1548,8 @@ def main() -> int:
     parser.add_argument("--morning-report-file", default=str(DEFAULT_MORNING_REPORT_FILE))
     parser.add_argument("--multi-asset-config", default=str(DEFAULT_MULTI_ASSET_CONFIG_PATH))
     parser.add_argument("--alert-log-file", default=str(DEFAULT_ALERT_LOG_FILE))
+    parser.add_argument("--cascade-signal-file", default=str(DEFAULT_CASCADE_SIGNAL_FILE))
+    parser.add_argument("--streak-log-file", default=str(DEFAULT_STREAK_LOG_FILE))
     parser.add_argument("--timeout-seconds", type=int, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--auto-restart", action="store_true")
     parser.add_argument("--service-name", default=DEFAULT_SERVICE_NAME)
@@ -1229,6 +1586,8 @@ def main() -> int:
         morning_report_path=Path(args.morning_report_file),
         multi_asset_config_path=Path(args.multi_asset_config),
         alert_log_path=Path(args.alert_log_file),
+        cascade_signal_path=Path(args.cascade_signal_file),
+        streak_log_path=Path(args.streak_log_file),
         timeout_seconds=args.timeout_seconds,
         auto_restart=args.auto_restart,
         service_name=args.service_name,
