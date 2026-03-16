@@ -69,7 +69,35 @@ def test_calibrate_asset_shrinks_toward_profitable_band(tmp_path: Path) -> None:
     assert 0.0 < result.recommended_min_delta < result.recommended_max_abs_delta
 
 
-def test_run_calibration_writes_stage_and_asset_envs(tmp_path: Path) -> None:
+def test_calibrate_asset_targets_best_pnl_per_fill_band(tmp_path: Path) -> None:
+    db_path = tmp_path / "data" / "btc_5min_maker.db"
+    _make_db(db_path)
+    rows: list[tuple[float, str, float, int]] = []
+    rows.extend([(0.0020, "live_filled", 1.0, 1)] * 24)  # higher total pnl, weaker pnl/fill
+    rows.extend([(0.0050, "live_filled", 3.0, 1)] * 8)   # lower total pnl, best pnl/fill
+    _insert_rows(db_path, rows)
+
+    result = calibrate_asset(
+        asset="btc",
+        db_path=db_path,
+        current_max_abs_delta=0.0090,
+        current_min_delta=0.0003,
+        max_fill_rows=300,
+        max_window_rows=400,
+        min_fill_rows=20,
+        min_bin_fills=4,
+        min_bin_win_rate=0.55,
+        vol_multiplier=1.35,
+    )
+
+    assert result.status == "updated"
+    assert result.profitable_band_lower is not None
+    assert result.profitable_band_upper is not None
+    assert 0.0049 <= result.profitable_band_lower <= 0.0051
+    assert result.profitable_band_upper > result.profitable_band_lower
+
+
+def test_run_calibration_writes_per_asset_envs(tmp_path: Path) -> None:
     state_env = tmp_path / "state" / "btc5_capital_stage.env"
     state_env.parent.mkdir(parents=True, exist_ok=True)
     state_env.write_text("BTC5_MAX_ABS_DELTA=0.005\nBTC5_MIN_DELTA=0.0003\n", encoding="utf-8")
@@ -100,11 +128,13 @@ def test_run_calibration_writes_stage_and_asset_envs(tmp_path: Path) -> None:
     )
 
     stage_text = state_env.read_text(encoding="utf-8")
+    btc_text = btc_env.read_text(encoding="utf-8")
     eth_text = eth_env.read_text(encoding="utf-8")
 
-    assert "BTC5_MAX_ABS_DELTA=" in stage_text
-    assert "BTC5_MIN_DELTA=" in stage_text
-    assert "BTC5_PROBE_MAX_ABS_DELTA=" in stage_text
+    assert stage_text == "BTC5_MAX_ABS_DELTA=0.005\nBTC5_MIN_DELTA=0.0003\n"
+    assert "BTC5_MAX_ABS_DELTA=" in btc_text
+    assert "BTC5_MIN_DELTA=" in btc_text
+    assert "BTC5_PROBE_MAX_ABS_DELTA=" in btc_text
     assert "BTC5_MAX_ABS_DELTA=" in eth_text
     assert "BTC5_MIN_DELTA=" in eth_text
     assert "BTC5_PROBE_MAX_ABS_DELTA=" in eth_text
