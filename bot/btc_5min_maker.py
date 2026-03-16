@@ -58,6 +58,11 @@ try:
 except Exception:  # pragma: no cover - optional dependency during staged rollout
     SmartWalletFeed = None  # type: ignore[assignment]
 
+try:
+    from bot.cascade_max import record_cascade_event, run_cascade_detection
+except Exception:  # pragma: no cover - optional dependency during staged rollout
+    from cascade_max import record_cascade_event, run_cascade_detection  # type: ignore
+
 logger = logging.getLogger("BTC5Maker")
 
 def _window_seconds_from_env(default: int = 300) -> int:
@@ -2838,6 +2843,7 @@ class BTC5MinMakerBot:
         *,
         edge_tier: str,
         effective_max_trade_usd: float,
+        cascade_boost: bool = False,
     ) -> dict[str, Any]:
         stage_cap_usd = round(max(0.0, float(effective_max_trade_usd)), 2)
         risk_plan = self._graduated_kelly_risk_plan()
@@ -2847,9 +2853,15 @@ class BTC5MinMakerBot:
         )
         adaptive_risk_fraction = max(0.0, min(KELLY_MAX_FRACTION, float(self._adaptive_risk_fraction())))
         adaptive_boost = max(0.0, adaptive_risk_fraction - float(self.cfg.risk_fraction))
+        cascade_multiplier = 2.5 if cascade_boost else 1.0
+        cascade_risk_fraction_cap = 0.30 if cascade_boost else KELLY_MAX_FRACTION
         effective_risk_fraction = max(
             0.0,
-            min(KELLY_MAX_FRACTION, kelly_risk_fraction + adaptive_boost),
+            min(cascade_risk_fraction_cap, (kelly_risk_fraction + adaptive_boost) * cascade_multiplier),
+        )
+        cascade_size_cap_usd = min(round(max(0.0, float(self.cfg.bankroll_usd)) * 0.30, 2), 392.0)
+        effective_size_cap_usd = (
+            min(stage_cap_usd, cascade_size_cap_usd) if cascade_boost else stage_cap_usd
         )
         kelly_n = int(_safe_float(risk_plan.get("n_fills"), 0.0) or 0)
         kelly_wr = float(_safe_float(risk_plan.get("win_rate"), 0.0) or 0.0)
@@ -2863,25 +2875,30 @@ class BTC5MinMakerBot:
             f"kelly_risk_fraction={kelly_risk_fraction:.4f}",
             f"adaptive_risk_boost={adaptive_boost:.4f}",
             f"effective_risk_fraction={effective_risk_fraction:.4f}",
+            f"cascade_multiplier={cascade_multiplier:.2f}x",
+            f"cascade_risk_fraction_cap={cascade_risk_fraction_cap:.4f}",
+            f"cascade_size_cap_usd={cascade_size_cap_usd:.2f}",
+            "cascade_boost=True" if cascade_boost else "cascade_boost=False",
         )
         standard_size_usd = calc_trade_size_usd(
             self.cfg.bankroll_usd,
             effective_risk_fraction,
-            stage_cap_usd,
+            effective_size_cap_usd,
         )
         if edge_tier == "strong_validated":
             return {
-                "target_size_usd": stage_cap_usd,
-                "size_cap_usd": stage_cap_usd,
+                "target_size_usd": effective_size_cap_usd,
+                "size_cap_usd": effective_size_cap_usd,
                 "sizing_reason_tags": _unique_tags(
                     "sizing_mode=full_stage_cap",
                     f"stage_cap_usd={stage_cap_usd:.2f}",
+                    f"effective_size_cap_usd={effective_size_cap_usd:.2f}",
                     f"standard_size_usd={standard_size_usd:.2f}",
                     *kelly_tags,
                 ),
             }
         if edge_tier == "exploratory":
-            exploratory_cap_usd = round(stage_cap_usd * 0.5, 2)
+            exploratory_cap_usd = round(effective_size_cap_usd * 0.5, 2)
             exploratory_size_usd = calc_trade_size_usd(
                 self.cfg.bankroll_usd,
                 effective_risk_fraction * 0.5,
@@ -2893,6 +2910,7 @@ class BTC5MinMakerBot:
                 "sizing_reason_tags": _unique_tags(
                     "sizing_mode=exploratory_half_cap",
                     f"stage_cap_usd={stage_cap_usd:.2f}",
+                    f"effective_size_cap_usd={effective_size_cap_usd:.2f}",
                     f"exploratory_cap_usd={exploratory_cap_usd:.2f}",
                     f"standard_size_usd={standard_size_usd:.2f}",
                     *kelly_tags,
@@ -2901,10 +2919,11 @@ class BTC5MinMakerBot:
         if edge_tier == "standard":
             return {
                 "target_size_usd": standard_size_usd,
-                "size_cap_usd": stage_cap_usd,
+                "size_cap_usd": effective_size_cap_usd,
                 "sizing_reason_tags": _unique_tags(
                     "sizing_mode=standard_risk_fraction",
                     f"stage_cap_usd={stage_cap_usd:.2f}",
+                    f"effective_size_cap_usd={effective_size_cap_usd:.2f}",
                     f"standard_size_usd={standard_size_usd:.2f}",
                     *kelly_tags,
                 ),
@@ -3391,6 +3410,17 @@ class BTC5MinMakerBot:
         stage_blockers: list[str] = []
         probe_freshness_hours: float | None = None
         probe_fresh_for_stage_upgrade = False
+        cascade_signal: dict[str, Any] = {"active": False}
+        cascade_gate: dict[str, Any] = {
+            "cascade_boost_candidate": False,
+            "cascade_boost_live_enabled": False,
+            "cascade_boost_apply": False,
+            "detection_count": 0,
+            "shadow_resolved_count": 0,
+            "shadow_win_rate": None,
+            "live_boost_enabled_next": False,
+        }
+        cascade_boost_apply = False
         execution_drag_counts = self.db.recent_execution_drag(limit=40)
         capital_utilization_ratio = 0.0
         shadow_research_tiers = self._shadow_research_tiers()
@@ -3477,6 +3507,24 @@ class BTC5MinMakerBot:
                 payload["decision_timing"] = decision_timing
             if "early_fallback_reason" not in payload:
                 payload["early_fallback_reason"] = early_fallback_reason
+            if "cascade_signal_active" not in payload:
+                payload["cascade_signal_active"] = bool(cascade_signal.get("active"))
+            if "cascade_signal_direction" not in payload:
+                payload["cascade_signal_direction"] = cascade_signal.get("direction")
+            if "cascade_boost_candidate" not in payload:
+                payload["cascade_boost_candidate"] = bool(cascade_gate.get("cascade_boost_candidate"))
+            if "cascade_boost_live_enabled" not in payload:
+                payload["cascade_boost_live_enabled"] = bool(cascade_gate.get("cascade_boost_live_enabled"))
+            if "cascade_boost_apply" not in payload:
+                payload["cascade_boost_apply"] = bool(cascade_gate.get("cascade_boost_apply"))
+            if "cascade_detection_count" not in payload:
+                payload["cascade_detection_count"] = int(_safe_float(cascade_gate.get("detection_count"), 0.0) or 0)
+            if "cascade_shadow_resolved_count" not in payload:
+                payload["cascade_shadow_resolved_count"] = int(
+                    _safe_float(cascade_gate.get("shadow_resolved_count"), 0.0) or 0
+                )
+            if "cascade_shadow_win_rate" not in payload:
+                payload["cascade_shadow_win_rate"] = _safe_float(cascade_gate.get("shadow_win_rate"), None)
             kelly_metrics = self._rolling_kelly_metrics()
             kelly_plan = self._graduated_kelly_risk_plan()
             if "kelly_sample_count_090" not in payload:
@@ -3552,6 +3600,11 @@ class BTC5MinMakerBot:
 
         # Resolve prior windows first so daily PnL gate uses latest info.
         await self._resolve_unsettled(http, through_window_start=window_start_ts - WINDOW_SECONDS)
+        try:
+            cascade_signal = run_cascade_detection(window_start_ts=window_start_ts)
+        except Exception as exc:
+            logger.warning("Cascade signal detection failed for %s: %s", window_start_ts, exc)
+            cascade_signal = {"active": False}
 
         today_pnl = self.db.today_realized_pnl()
         stage_controls = self._capital_stage_controls(today_pnl=today_pnl)
@@ -3579,6 +3632,8 @@ class BTC5MinMakerBot:
             f"recommended_live_stage={recommended_live_stage}",
             "probe_mode=on" if probe_mode else "probe_mode=off",
             "probe_fresh_for_stage_upgrade=true" if probe_fresh_for_stage_upgrade else "probe_fresh_for_stage_upgrade=false",
+            "cascade_signal_active=true" if cascade_signal.get("active") else "cascade_signal_active=false",
+            _reason_tag("cascade_signal_direction", str(cascade_signal.get("direction") or "").strip().upper()),
         )
         hard_daily_loss_hit = today_pnl <= -abs(effective_daily_loss_limit_usd)
         if hard_daily_loss_hit and probe_mode is None:
@@ -3974,6 +4029,50 @@ class BTC5MinMakerBot:
                 }
             )
 
+        try:
+            cascade_gate = record_cascade_event(
+                window_start_ts=window_start_ts,
+                cascade_signal=cascade_signal,
+                bot_direction=direction,
+                bot_delta=delta,
+                best_ask=best_ask,
+            )
+        except Exception as exc:
+            logger.warning("Cascade event logging failed for %s: %s", window_start_ts, exc)
+            cascade_gate = {
+                "cascade_boost_candidate": False,
+                "cascade_boost_live_enabled": False,
+                "cascade_boost_apply": False,
+                "detection_count": 0,
+                "shadow_resolved_count": 0,
+                "shadow_win_rate": None,
+                "live_boost_enabled_next": False,
+            }
+        cascade_boost_apply = bool(cascade_gate.get("cascade_boost_apply"))
+        cascade_shadow_wr = _safe_float(cascade_gate.get("shadow_win_rate"), None)
+        sizing_reason_tags = _unique_tags(
+            *sizing_reason_tags,
+            "cascade_boost_candidate=true"
+            if cascade_gate.get("cascade_boost_candidate")
+            else "cascade_boost_candidate=false",
+            "cascade_boost_live_enabled=true"
+            if cascade_gate.get("cascade_boost_live_enabled")
+            else "cascade_boost_live_enabled=false",
+            f"cascade_detection_count={int(_safe_float(cascade_gate.get('detection_count'), 0.0) or 0)}",
+            f"cascade_shadow_resolved_count={int(_safe_float(cascade_gate.get('shadow_resolved_count'), 0.0) or 0)}",
+            (
+                f"cascade_shadow_wr={float(cascade_shadow_wr):.4f}"
+                if cascade_shadow_wr is not None
+                else "cascade_shadow_wr=unavailable"
+            ),
+            "cascade_boost=True" if cascade_boost_apply else None,
+            (
+                "cascade_boost=shadow_only"
+                if cascade_gate.get("cascade_boost_candidate") and not cascade_boost_apply
+                else None
+            ),
+        )
+
         if suppressed_direction and direction == suppressed_direction:
             direction_suppression_min_price_exempt = max(0.0, float(self.cfg.direction_suppression_min_price_exempt))
             if best_ask < direction_suppression_min_price_exempt - 1e-9:
@@ -4111,6 +4210,7 @@ class BTC5MinMakerBot:
         size_plan = self._trade_size_for_edge_tier(
             edge_tier=edge_tier,
             effective_max_trade_usd=effective_max_trade_usd,
+            cascade_boost=cascade_boost_apply,
         )
         size_usd = float(size_plan.get("target_size_usd") or 0.0)
         size_cap_usd = float(size_plan.get("size_cap_usd") or 0.0)
