@@ -58,6 +58,14 @@ try:
 except Exception:  # pragma: no cover - optional dependency during staged rollout
     SmartWalletFeed = None  # type: ignore[assignment]
 
+try:
+    from bot.multi_asset_arb import load_asset_confirmation
+except Exception:  # pragma: no cover - optional dependency during staged rollout
+    try:
+        from multi_asset_arb import load_asset_confirmation  # type: ignore
+    except Exception:  # pragma: no cover - optional dependency during staged rollout
+        load_asset_confirmation = None  # type: ignore[assignment]
+
 logger = logging.getLogger("BTC5Maker")
 
 def _window_seconds_from_env(default: int = 300) -> int:
@@ -933,6 +941,13 @@ class MakerConfig:
     adaptation_log_path: Path = Path(
         os.environ.get("BTC5_ADAPTATION_LOG_PATH", str(DEFAULT_ADAPTATION_LOG_PATH))
     )
+    enable_cross_asset_confirmation: bool = _env_flag("BTC5_ENABLE_CROSS_ASSET_CONFIRMATION", True)
+    cross_asset_signals_path: Path = Path(
+        os.environ.get("BTC5_CROSS_ASSET_SIGNALS_PATH", "data/cross_asset_signals.json")
+    )
+    cross_asset_signal_max_age_sec: int = int(os.environ.get("BTC5_CROSS_ASSET_SIGNAL_MAX_AGE_SEC", "900"))
+    cross_asset_min_confidence: float = float(os.environ.get("BTC5_CROSS_ASSET_MIN_CONFIDENCE", "0.55"))
+    cross_asset_edge_boost: float = float(os.environ.get("BTC5_CROSS_ASSET_EDGE_BOOST", "0.15"))
 
     binance_symbol: str = os.environ.get("BTC5_ASSET_BINANCE_SYMBOL", "BTCUSDT")
     binance_kline_interval: str = os.environ.get("BTC5_BINANCE_KLINE_INTERVAL", f"{WINDOW_MINUTES}m")
@@ -992,6 +1007,10 @@ class MakerConfig:
         self.adaptive_suppress_duration_sec = max(60, int(self.adaptive_suppress_duration_sec))
         self.adaptive_size_raise_increment = max(0.0, float(self.adaptive_size_raise_increment))
         self.adaptive_max_risk_fraction = max(float(self.risk_fraction), float(self.adaptive_max_risk_fraction))
+        self.cross_asset_signals_path = Path(self.cross_asset_signals_path)
+        self.cross_asset_signal_max_age_sec = max(60, int(self.cross_asset_signal_max_age_sec))
+        self.cross_asset_min_confidence = max(0.0, min(1.0, float(self.cross_asset_min_confidence)))
+        self.cross_asset_edge_boost = max(0.0, min(1.0, float(self.cross_asset_edge_boost)))
 
     @property
     def effective_max_trade_usd(self) -> float:
@@ -2032,6 +2051,42 @@ class BTC5MinMakerBot:
             logger.warning("Failed to initialize smart wallet feed: %s", exc)
             return None
 
+    def _cross_asset_confirmation(self, *, direction: str) -> dict[str, Any] | None:
+        if not self.cfg.enable_cross_asset_confirmation:
+            return None
+        if load_asset_confirmation is None:
+            return None
+        normalized_direction = str(direction or "").strip().upper()
+        if normalized_direction not in {"UP", "DOWN"}:
+            return None
+        try:
+            return load_asset_confirmation(
+                signals_path=self.cfg.cross_asset_signals_path,
+                asset_symbol=self.cfg.binance_symbol,
+                direction=normalized_direction,
+                max_age_seconds=self.cfg.cross_asset_signal_max_age_sec,
+                min_confidence=self.cfg.cross_asset_min_confidence,
+            )
+        except Exception as exc:
+            logger.warning("Cross-asset confirmation read failed: %s", exc)
+            return None
+
+    def _edge_score_with_cross_asset(
+        self,
+        *,
+        base_score: float,
+        cross_asset_confirmation: dict[str, Any] | None,
+    ) -> float:
+        score = max(0.0, min(1.0, float(base_score)))
+        if not cross_asset_confirmation:
+            return round(score, 6)
+        confidence = max(
+            0.0,
+            min(1.0, float(_safe_float(cross_asset_confirmation.get("confidence"), 0.0) or 0.0)),
+        )
+        boost = float(self.cfg.cross_asset_edge_boost) * confidence
+        return round(min(1.0, score + boost), 6)
+
     def _adaptive_risk_fraction(self) -> float:
         if not self.cfg.adaptive_enabled:
             return float(self.cfg.risk_fraction)
@@ -2332,6 +2387,7 @@ class BTC5MinMakerBot:
         recommended_live_stage: int,
         recent_regime: dict[str, Any] | None,
         probe_mode: dict[str, Any] | None,
+        cross_asset_confirmation: dict[str, Any] | None,
     ) -> dict[str, Any]:
         dt_et = _window_dt_et(window_start_ts)
         et_hour = dt_et.hour if dt_et is not None else None
@@ -2339,6 +2395,19 @@ class BTC5MinMakerBot:
         order_price_bucket = _btc5_price_bucket(order_price)
         delta_bucket = _btc5_delta_bucket(delta)
         balanced_session_caps = self._session_override_has_balanced_caps(session_override)
+        cross_asset_confidence = float(_safe_float((cross_asset_confirmation or {}).get("confidence"), 0.0) or 0.0)
+        cross_asset_leader = str((cross_asset_confirmation or {}).get("leader") or "").strip()
+        cross_asset_lag = int(_safe_float((cross_asset_confirmation or {}).get("lag_minutes"), 0.0) or 0)
+        cross_asset_tags = (
+            _unique_tags(
+                "cross_asset_confirmation=true",
+                f"cross_asset_confidence={cross_asset_confidence:.3f}",
+                f"cross_asset_leader={cross_asset_leader}" if cross_asset_leader else None,
+                f"cross_asset_lag_minutes={cross_asset_lag}" if cross_asset_lag > 0 else None,
+            )
+            if cross_asset_confirmation
+            else _unique_tags("cross_asset_confirmation=false")
+        )
         tags = _unique_tags(
             f"session_bucket={session_bucket}",
             f"session_policy_name={session_policy_name or 'none'}",
@@ -2350,7 +2419,14 @@ class BTC5MinMakerBot:
             f"recommended_live_stage={max(1, int(recommended_live_stage or effective_stage or 1))}",
             f"session_caps_balanced={'true' if balanced_session_caps else 'false'}",
             "probe_mode=on" if probe_mode else None,
+            *cross_asset_tags,
         )
+
+        def _edge_score(base_score: float) -> float:
+            return self._edge_score_with_cross_asset(
+                base_score=base_score,
+                cross_asset_confirmation=cross_asset_confirmation,
+            )
 
         suppressed_direction = str((recent_regime or {}).get("suppressed_direction") or "").strip().upper()
         if suppressed_direction and str(direction or "").strip().upper() == suppressed_direction:
@@ -2372,6 +2448,7 @@ class BTC5MinMakerBot:
                     "order_price_bucket": order_price_bucket,
                     "delta_bucket": delta_bucket,
                     "session_bucket": session_bucket,
+                    "edge_score": _edge_score(0.0),
                     "sizing_reason_tags": _unique_tags(
                         *tags,
                         "recent_regime_one_sided_guardrail",
@@ -2404,6 +2481,7 @@ class BTC5MinMakerBot:
                     "order_price_bucket": order_price_bucket,
                     "delta_bucket": delta_bucket,
                     "session_bucket": session_bucket,
+                    "edge_score": _edge_score(0.0),
                     "sizing_reason_tags": _unique_tags(
                         *tags,
                         "observed_loss_cluster_guardrail",
@@ -2422,6 +2500,7 @@ class BTC5MinMakerBot:
                 "order_price_bucket": order_price_bucket,
                 "delta_bucket": delta_bucket,
                 "session_bucket": session_bucket,
+                "edge_score": _edge_score(0.35),
                 "sizing_reason_tags": _unique_tags(
                     *tags,
                     "probe_feedback_guardrail",
@@ -2440,6 +2519,7 @@ class BTC5MinMakerBot:
                 "order_price_bucket": order_price_bucket,
                 "delta_bucket": delta_bucket,
                 "session_bucket": session_bucket,
+                "edge_score": _edge_score(0.85),
                 "sizing_reason_tags": _unique_tags(
                     *tags,
                     "validated_session_hour_et_09",
@@ -2460,6 +2540,7 @@ class BTC5MinMakerBot:
                 "order_price_bucket": order_price_bucket,
                 "delta_bucket": delta_bucket,
                 "session_bucket": session_bucket,
+                "edge_score": _edge_score(0.85),
                 "sizing_reason_tags": _unique_tags(
                     *tags,
                     "validated_session_hour_et_11",
@@ -2476,6 +2557,7 @@ class BTC5MinMakerBot:
                 "order_price_bucket": order_price_bucket,
                 "delta_bucket": delta_bucket,
                 "session_bucket": session_bucket,
+                "edge_score": _edge_score(0.35),
                 "sizing_reason_tags": _unique_tags(
                     *tags,
                     (
@@ -2493,6 +2575,7 @@ class BTC5MinMakerBot:
             "order_price_bucket": order_price_bucket,
             "delta_bucket": delta_bucket,
             "session_bucket": session_bucket,
+            "edge_score": _edge_score(0.55),
             "sizing_reason_tags": _unique_tags(
                 *tags,
                 "edge_tier=standard",
@@ -2659,6 +2742,7 @@ class BTC5MinMakerBot:
         *,
         edge_tier: str,
         effective_max_trade_usd: float,
+        edge_score: float = 0.0,
     ) -> dict[str, Any]:
         stage_cap_usd = round(max(0.0, float(effective_max_trade_usd)), 2)
         risk_plan = self._graduated_kelly_risk_plan()
@@ -2685,6 +2769,7 @@ class BTC5MinMakerBot:
             f"adaptive_risk_boost={adaptive_boost:.4f}",
             f"effective_risk_fraction={effective_risk_fraction:.4f}",
         )
+        edge_score = max(0.0, min(1.0, float(edge_score)))
         standard_size_usd = calc_trade_size_usd(
             self.cfg.bankroll_usd,
             effective_risk_fraction,
@@ -2708,25 +2793,49 @@ class BTC5MinMakerBot:
                 effective_risk_fraction * 0.5,
                 exploratory_cap_usd,
             )
+            exploratory_base_score = 0.35
+            exploratory_boost_ratio = max(0.0, edge_score - exploratory_base_score) / max(
+                1e-6,
+                (1.0 - exploratory_base_score),
+            )
+            exploratory_size_multiplier = 1.0 + (0.15 * exploratory_boost_ratio)
+            boosted_exploratory_size_usd = min(
+                exploratory_cap_usd,
+                round(exploratory_size_usd * exploratory_size_multiplier, 2),
+            )
             return {
-                "target_size_usd": exploratory_size_usd,
+                "target_size_usd": boosted_exploratory_size_usd,
                 "size_cap_usd": exploratory_cap_usd,
                 "sizing_reason_tags": _unique_tags(
                     "sizing_mode=exploratory_half_cap",
                     f"stage_cap_usd={stage_cap_usd:.2f}",
                     f"exploratory_cap_usd={exploratory_cap_usd:.2f}",
                     f"standard_size_usd={standard_size_usd:.2f}",
+                    f"edge_score={edge_score:.4f}",
+                    f"edge_size_multiplier={exploratory_size_multiplier:.4f}",
                     *kelly_tags,
                 ),
             }
         if edge_tier == "standard":
+            standard_base_score = 0.55
+            standard_boost_ratio = max(0.0, edge_score - standard_base_score) / max(
+                1e-6,
+                (1.0 - standard_base_score),
+            )
+            standard_size_multiplier = 1.0 + (0.25 * standard_boost_ratio)
+            boosted_standard_size_usd = min(
+                stage_cap_usd,
+                round(standard_size_usd * standard_size_multiplier, 2),
+            )
             return {
-                "target_size_usd": standard_size_usd,
+                "target_size_usd": boosted_standard_size_usd,
                 "size_cap_usd": stage_cap_usd,
                 "sizing_reason_tags": _unique_tags(
                     "sizing_mode=standard_risk_fraction",
                     f"stage_cap_usd={stage_cap_usd:.2f}",
                     f"standard_size_usd={standard_size_usd:.2f}",
+                    f"edge_score={edge_score:.4f}",
+                    f"edge_size_multiplier={standard_size_multiplier:.4f}",
                     *kelly_tags,
                 ),
             }
@@ -3220,9 +3329,11 @@ class BTC5MinMakerBot:
         session_reason = session_guardrail_reason(session_override, window_start_ts=window_start_ts)
         recent_regime: dict[str, Any] | None = None
         edge_tier = "suppressed"
+        edge_score = 0.0
         wallet_copy_applied = False
         wallet_count = 0
         wallet_notional = 0.0
+        cross_asset_confirmation: dict[str, Any] | None = None
         sizing_reason_tags: list[str] = _unique_tags(
             f"session_bucket={session_bucket}",
             f"session_policy_name={session_policy_name or 'none'}",
@@ -3264,6 +3375,8 @@ class BTC5MinMakerBot:
                 payload["session_policy_name"] = session_policy_name
             if "edge_tier" not in payload:
                 payload["edge_tier"] = edge_tier
+            if "edge_score" not in payload:
+                payload["edge_score"] = round(float(edge_score), 6)
             if "sizing_reason_tags" not in payload:
                 payload["sizing_reason_tags"] = list(sizing_reason_tags)
             if "loss_cluster_suppressed" not in payload:
@@ -3288,6 +3401,19 @@ class BTC5MinMakerBot:
                 payload["wallet_count"] = wallet_count
             if "wallet_notional" not in payload:
                 payload["wallet_notional"] = round(max(0.0, float(wallet_notional)), 4)
+            if "cross_asset_confirmation" not in payload:
+                payload["cross_asset_confirmation"] = cross_asset_confirmation is not None
+            if "cross_asset_confidence" not in payload:
+                payload["cross_asset_confidence"] = round(
+                    float(_safe_float((cross_asset_confirmation or {}).get("confidence"), 0.0) or 0.0),
+                    6,
+                )
+            if "cross_asset_leader" not in payload:
+                payload["cross_asset_leader"] = (cross_asset_confirmation or {}).get("leader")
+            if "cross_asset_lag_minutes" not in payload:
+                payload["cross_asset_lag_minutes"] = int(
+                    _safe_float((cross_asset_confirmation or {}).get("lag_minutes"), 0.0) or 0
+                ) or None
             kelly_metrics = self._rolling_kelly_metrics()
             kelly_plan = self._graduated_kelly_risk_plan()
             if "kelly_sample_count_090" not in payload:
@@ -3546,6 +3672,24 @@ class BTC5MinMakerBot:
                     }
                 )
 
+        cross_asset_confirmation = self._cross_asset_confirmation(direction=direction)
+        if cross_asset_confirmation:
+            sizing_reason_tags = _unique_tags(
+                *sizing_reason_tags,
+                "cross_asset_confirmation=true",
+                f"cross_asset_confidence={float(_safe_float(cross_asset_confirmation.get('confidence'), 0.0) or 0.0):.3f}",
+                (
+                    f"cross_asset_leader={str(cross_asset_confirmation.get('leader') or '').strip()}"
+                    if str(cross_asset_confirmation.get("leader") or "").strip()
+                    else None
+                ),
+                (
+                    f"cross_asset_lag_minutes={int(_safe_float(cross_asset_confirmation.get('lag_minutes'), 0.0) or 0)}"
+                    if int(_safe_float(cross_asset_confirmation.get("lag_minutes"), 0.0) or 0) > 0
+                    else None
+                ),
+            )
+
         recent_regime = self._recent_direction_regime()
         directional_mode = str((recent_regime or {}).get("directional_mode") or "two_sided")
         suppressed_direction = str((recent_regime or {}).get("suppressed_direction") or "").strip().upper() or None
@@ -3775,13 +3919,16 @@ class BTC5MinMakerBot:
             recommended_live_stage=recommended_live_stage,
             recent_regime=recent_regime,
             probe_mode=probe_mode,
+            cross_asset_confirmation=cross_asset_confirmation,
         )
         edge_tier = str(edge_profile.get("edge_tier") or "standard")
+        edge_score = float(_safe_float(edge_profile.get("edge_score"), 0.0) or 0.0)
         loss_cluster_suppressed = bool(edge_profile.get("loss_cluster_suppressed"))
         sizing_reason_tags = list(edge_profile.get("sizing_reason_tags") or sizing_reason_tags)
         size_plan = self._trade_size_for_edge_tier(
             edge_tier=edge_tier,
             effective_max_trade_usd=effective_max_trade_usd,
+            edge_score=edge_score,
         )
         size_usd = float(size_plan.get("target_size_usd") or 0.0)
         size_cap_usd = float(size_plan.get("size_cap_usd") or 0.0)
