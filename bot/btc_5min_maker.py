@@ -1759,6 +1759,7 @@ class BTC5MinMakerBot:
         self._adaptive_direction_suppress_meta: dict[str, dict[str, Any]] = {}
         self._adaptive_risk_fraction_boost = 0.0
         self._last_adaptive_size_raise_window: int | None = None
+        self._restore_adaptation_state()
 
     def _load_smart_wallet_addresses(self) -> list[str]:
         path = self.cfg.smart_wallets_path
@@ -1885,6 +1886,50 @@ class BTC5MinMakerBot:
         data["events"] = events[-500:]
         data["last_updated"] = datetime.now(timezone.utc).isoformat()
         path.write_text(json.dumps(data, indent=2))
+
+    def _restore_adaptation_state(self) -> None:
+        if not self.cfg.adaptive_enabled:
+            return
+        path = Path(self.cfg.adaptation_log_path)
+        if not path.exists():
+            return
+        try:
+            payload = json.loads(path.read_text())
+        except Exception:
+            return
+        events = payload.get("events") if isinstance(payload, dict) else payload
+        if not isinstance(events, list):
+            return
+        now_ts = time.time()
+        max_extra = max(0.0, float(self.cfg.adaptive_max_risk_fraction) - float(self.cfg.risk_fraction))
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            event_type = str(event.get("event_type") or "").strip()
+            if event_type == "direction_auto_suppressed":
+                direction = str(event.get("direction") or "").strip().upper()
+                suppress_until = _safe_float(event.get("suppress_until_ts"), 0.0) or 0.0
+                if direction in {"UP", "DOWN"} and suppress_until > now_ts:
+                    self._adaptive_direction_suppress_until[direction] = max(
+                        float(self._adaptive_direction_suppress_until.get(direction, 0.0)),
+                        float(suppress_until),
+                    )
+                    self._adaptive_direction_suppress_meta[direction] = {
+                        "window_fills": int(_safe_float(event.get("window_fills"), 0.0) or 0),
+                        "win_rate": float(_safe_float(event.get("win_rate"), 0.0) or 0.0),
+                        "avg_entry_price": float(_safe_float(event.get("avg_entry_price"), 0.0) or 0.0),
+                        "rolling_pnl_usd": float(_safe_float(event.get("rolling_pnl_usd"), 0.0) or 0.0),
+                        "trigger_window_start_ts": int(
+                            _safe_float(event.get("trigger_window_start_ts"), 0.0) or 0
+                        ),
+                    }
+            elif event_type == "size_risk_fraction_increased":
+                boost = _safe_float(event.get("adaptive_boost"), None)
+                if boost is not None:
+                    self._adaptive_risk_fraction_boost = max(
+                        float(self._adaptive_risk_fraction_boost),
+                        min(max_extra, float(boost)),
+                    )
 
     def _apply_inline_adaptation(
         self,
