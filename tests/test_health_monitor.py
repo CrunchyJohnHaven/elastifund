@@ -9,6 +9,10 @@ from types import SimpleNamespace
 from bot.health_monitor import (
     HeartbeatWriter,
     build_telegram_sender,
+    check_cascade_active,
+    check_fill_rate_trend,
+    check_skip_spike,
+    check_streak_active,
     build_daily_summary_snapshot,
     evaluate_heartbeat,
     format_daily_summary,
@@ -38,6 +42,48 @@ def _create_monitor_db(path: Path) -> None:
             resolved_at TEXT
         );
         """
+    )
+    conn.commit()
+    conn.close()
+
+
+def _create_window_trades_db(path: Path, rows: list[dict[str, object]]) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE window_trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            window_start_ts INTEGER,
+            decision_ts INTEGER,
+            order_status TEXT,
+            pnl_usd REAL,
+            won INTEGER,
+            created_at TEXT
+        );
+        """
+    )
+    conn.executemany(
+        """
+        INSERT INTO window_trades (
+            window_start_ts,
+            decision_ts,
+            order_status,
+            pnl_usd,
+            won,
+            created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                int(row["window_start_ts"]),
+                int(row["decision_ts"]),
+                str(row["order_status"]),
+                row.get("pnl_usd"),
+                row.get("won"),
+                str(row["created_at"]),
+            )
+            for row in rows
+        ],
     )
     conn.commit()
     conn.close()
@@ -404,3 +450,202 @@ def test_run_health_check_dedupes_restart_and_daily_summary(tmp_path: Path) -> N
     monitor_state = json.loads(state_path.read_text())
     assert monitor_state["last_daily_summary_for_date"] == "2026-03-08"
     assert monitor_state["last_health_status"] == "stale"
+
+
+def test_run_health_check_emits_skip_spike_alert_fill_rate_trend_and_morning_report(tmp_path: Path) -> None:
+    heartbeat_path = tmp_path / "heartbeat.json"
+    state_path = tmp_path / "monitor_state.json"
+    health_report_path = tmp_path / "health_report.json"
+    morning_report_path = tmp_path / "morning_report.json"
+    alert_log_path = tmp_path / "alerts.log"
+    cascade_signal_path = tmp_path / "cascade_signal.json"
+    streak_log_path = tmp_path / "streak_log.json"
+    config_path = tmp_path / "multi_asset_slugs.json"
+    btc_db_path = tmp_path / "btc_5min_maker.db"
+    eth_db_path = tmp_path / "eth_5min_maker.db"
+    now = datetime(2026, 3, 16, 8, 0, tzinfo=timezone.utc)
+
+    heartbeat_path.write_text(
+        json.dumps(
+            {
+                "status": "running",
+                "cycle_number": 811,
+                "profile_name": "maker_velocity_live",
+                "runtime_mode": "live",
+                "paper_mode": False,
+                "last_cycle_completed_at": (now - timedelta(minutes=3)).isoformat(),
+            }
+        )
+    )
+
+    btc_rows: list[dict[str, object]] = []
+    for idx in range(20):
+        decision_ts = int((now - timedelta(minutes=idx + 1)).timestamp())
+        is_fill = idx >= 17
+        btc_rows.append(
+            {
+                "window_start_ts": decision_ts,
+                "decision_ts": decision_ts,
+                "order_status": "live_filled" if is_fill else "skip_bad_book",
+                "pnl_usd": 1.0 if is_fill else 0.0,
+                "won": 1 if is_fill else None,
+                "created_at": datetime.fromtimestamp(decision_ts, tz=timezone.utc).isoformat(),
+            }
+        )
+    _create_window_trades_db(btc_db_path, btc_rows)
+
+    eth_rows: list[dict[str, object]] = []
+    for hour_index in range(6):
+        for window_index in range(4):
+            decision_at = now - timedelta(hours=6 - hour_index, minutes=window_index * 10)
+            in_recent_half = hour_index >= 3
+            is_fill = (not in_recent_half) and window_index < 2
+            decision_ts = int(decision_at.timestamp())
+            eth_rows.append(
+                {
+                    "window_start_ts": decision_ts,
+                    "decision_ts": decision_ts,
+                    "order_status": "live_filled" if is_fill else "skip_delta_too_large",
+                    "pnl_usd": 0.6 if is_fill else 0.0,
+                    "won": 1 if is_fill else None,
+                    "created_at": decision_at.isoformat(),
+                }
+            )
+    _create_window_trades_db(eth_db_path, eth_rows)
+
+    config_path.write_text(
+        json.dumps(
+            {
+                "assets": {
+                    "BTCUSDT": {
+                        "asset_slug_prefix": "btc",
+                        "service": "btc-5min-maker.service",
+                        "db": str(btc_db_path),
+                    },
+                    "ETHUSDT": {
+                        "asset_slug_prefix": "eth",
+                        "service": "eth-5min-maker.service",
+                        "db": str(eth_db_path),
+                    },
+                }
+            }
+        )
+    )
+    cascade_signal_path.write_text(
+        json.dumps(
+            {
+                "active": True,
+                "updated_at": now.isoformat(),
+                "source": "instance5",
+            }
+        )
+    )
+    streak_log_path.write_text(
+        json.dumps(
+            {
+                "current_streak": {"length": 3, "direction": "up", "started_at": (now - timedelta(hours=1)).isoformat()},
+            }
+        )
+    )
+
+    messages: list[str] = []
+
+    result = run_health_check(
+        heartbeat_path=heartbeat_path,
+        state_path=state_path,
+        timeout_seconds=600,
+        auto_restart=False,
+        health_report_path=health_report_path,
+        morning_report_path=morning_report_path,
+        multi_asset_config_path=config_path,
+        alert_log_path=alert_log_path,
+        cascade_signal_path=cascade_signal_path,
+        streak_log_path=streak_log_path,
+        skip_spike_reason="skip_bad_book",
+        skip_spike_window=20,
+        skip_spike_threshold=0.8,
+        overnight_hours=8,
+        fill_rate_trend_hours=6,
+        now=now,
+        send_message=lambda message: messages.append(message) or True,
+    )
+
+    assert "skip_spike_alert_sent" in result["actions"]
+    assert "fill_rate_trend_warning_logged" in result["actions"]
+    assert result["multi_asset_snapshot"]["hourly_fill_rate"]["trend"]["status"] == "degrading"
+    assert result["monitor_checks"]["fill_rate_trend"]["status"] == "declining"
+    assert result["monitor_checks"]["cascade"]["status"] == "active"
+    assert result["monitor_checks"]["streak"]["status"] == "active"
+    assert health_report_path.exists()
+    assert morning_report_path.exists()
+    assert alert_log_path.exists()
+    assert any("Skip spike detected for BTC" in message for message in messages)
+
+    morning_report = json.loads(morning_report_path.read_text())
+    assert "OVERNIGHT SYSTEM STATUS" in morning_report["paste_ready_summary"]
+    assert "Skip spike alerts" in morning_report["paste_ready_summary"]
+    assert "2h vs 24h fill rate" in morning_report["paste_ready_summary"]
+    assert "Cascade signal: active" in morning_report["paste_ready_summary"]
+    assert "Current streak: up x3" in morning_report["paste_ready_summary"]
+    assert morning_report["monitor_checks"]["cascade"]["status"] == "active"
+    assert morning_report["monitor_checks"]["streak"]["streak_length"] == 3
+
+    second_result = run_health_check(
+        heartbeat_path=heartbeat_path,
+        state_path=state_path,
+        timeout_seconds=600,
+        auto_restart=False,
+        health_report_path=health_report_path,
+        morning_report_path=morning_report_path,
+        multi_asset_config_path=config_path,
+        alert_log_path=alert_log_path,
+        cascade_signal_path=cascade_signal_path,
+        streak_log_path=streak_log_path,
+        skip_spike_reason="skip_bad_book",
+        skip_spike_window=20,
+        skip_spike_threshold=0.8,
+        overnight_hours=8,
+        fill_rate_trend_hours=6,
+        now=now + timedelta(minutes=5),
+        send_message=lambda message: messages.append(message) or True,
+    )
+    assert "skip_spike_alert_sent" not in second_result["actions"]
+
+
+def test_check_cascade_and_streak_graceful_missing(tmp_path: Path) -> None:
+    cascade_result = check_cascade_active(tmp_path / "missing_cascade.json")
+    streak_result = check_streak_active(tmp_path / "missing_streak.json")
+    assert cascade_result["status"] == "missing"
+    assert cascade_result["active"] is False
+    assert streak_result["status"] == "missing"
+    assert streak_result["active"] is False
+
+
+def test_check_skip_spike_and_fill_rate_trend_helpers() -> None:
+    snapshot = {
+        "assets": [
+            {
+                "asset": "btc",
+                "service": "btc-5min-maker.service",
+                "db_path": "/tmp/btc.db",
+                "skip_spike_reason": "skip_bad_book",
+                "recent_skip_window": 20,
+                "recent_skip_reason_count": 18,
+                "recent_skip_reason_ratio": 0.9,
+            }
+        ],
+        "fill_rate_comparison": {
+            "windows_last_2h": 10,
+            "fills_last_2h": 2,
+            "last_2h_fill_rate": 0.2,
+            "windows_last_24h": 100,
+            "fills_last_24h": 40,
+            "last_24h_fill_rate": 0.4,
+        },
+    }
+    skip_result = check_skip_spike(snapshot, reason="skip_bad_book", window_size=20, threshold=0.8)
+    trend_result = check_fill_rate_trend(snapshot)
+    assert skip_result["status"] == "alert"
+    assert len(skip_result["alerts"]) == 1
+    assert trend_result["status"] == "declining"
+    assert trend_result["declining"] is True
