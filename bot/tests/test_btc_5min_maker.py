@@ -2047,7 +2047,7 @@ async def test_process_window_enters_probe_mode_after_recent_live_loss(
     bot.clob = FakeCLOB()
 
     start = current_window_start(time.time()) - (8 * 300)
-    for idx in range(4):
+    for idx in range(6):
         ws = start + (idx * 300)
         bot.db.upsert_window(
             {
@@ -2079,17 +2079,18 @@ async def test_process_window_enters_probe_mode_after_recent_live_loss(
     result = await bot._process_window(window_start_ts=window_start_ts, http=ProbeBookHTTP())
 
     assert result["status"] == "live_cancelled_unfilled"
-    assert result["risk_mode"] == "probe"
+    assert result["risk_mode"] == "probe_confirmation_v2"
     assert result["price"] == pytest.approx(0.48)
 
     with bot.db._connect() as conn:
         row = conn.execute(
-            "SELECT order_price, reason, order_status FROM window_trades WHERE window_start_ts = ?",
+            "SELECT order_price, reason, order_status, risk_mode FROM window_trades WHERE window_start_ts = ?",
             (window_start_ts,),
         ).fetchone()
     assert row["order_price"] == pytest.approx(0.48)
     assert "probe_recent_live_pnl" in (row["reason"] or "")
     assert row["order_status"] == "live_cancelled_unfilled"
+    assert row["risk_mode"] == "probe_confirmation_v2"
 
 
 @pytest.mark.asyncio
@@ -2191,19 +2192,35 @@ async def test_process_window_uses_probe_mode_after_daily_loss(
     )
 
     window_start_ts = current_window_start(time.time()) - (2 * 300)
+    prev_ws = window_start_ts - 300
+    bot.db.upsert_window(
+        {
+            "window_start_ts": prev_ws,
+            "window_end_ts": prev_ws + 300,
+            "slug": market_slug_for_window(prev_ws),
+            "decision_ts": prev_ws + 290,
+            "direction": "UP",
+            "open_price": 100.0,
+            "current_price": 100.05,
+            "delta": 0.0005,
+            "order_status": "skip_probe_seed",
+            "reason": "seed_probe_confirmation",
+        }
+    )
     result = await bot._process_window(window_start_ts=window_start_ts, http=ProbeBookHTTP())
 
     assert result["status"] == "live_cancelled_unfilled"
-    assert result["risk_mode"] == "probe"
+    assert result["risk_mode"] == "probe_confirmation_v2"
 
     with bot.db._connect() as conn:
         row = conn.execute(
-            "SELECT order_price, reason, order_status FROM window_trades WHERE window_start_ts = ?",
+            "SELECT order_price, reason, order_status, risk_mode FROM window_trades WHERE window_start_ts = ?",
             (window_start_ts,),
         ).fetchone()
     assert row["order_price"] == pytest.approx(0.48)
     assert "probe_daily_loss" in (row["reason"] or "")
     assert row["order_status"] == "live_cancelled_unfilled"
+    assert row["risk_mode"] == "probe_confirmation_v2"
 
 
 def test_status_summary_includes_intraday_live_summary(tmp_path: Path) -> None:
