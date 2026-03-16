@@ -2120,6 +2120,61 @@ class BTC5MinMakerBot:
         frac = graduated_risk_fraction(n, wr, avg_entry, self.cfg.risk_fraction)
         return frac, n, wr, avg_entry
 
+    # ------------------------------------------------------------------
+    # Inline adaptive direction suppression (self-improving loop)
+    # ------------------------------------------------------------------
+    _adaptive_suppress_until: dict[str, float] = {}  # direction -> timestamp
+
+    def _inline_adaptive_check(self, direction: str, now_ts: float) -> str | None:
+        """Check if direction should be adaptively suppressed.
+        Returns skip reason string or None if OK to trade.
+        Auto-suppresses a direction for 1 hour if its trailing WR drops
+        below 80% with at least 5 recent fills. Auto-clears after timeout."""
+        suppress_ts = self._adaptive_suppress_until.get(direction, 0.0)
+        if now_ts < suppress_ts:
+            return f"adaptive_suppress_{direction}_until_{int(suppress_ts)}"
+        # Check trailing direction WR
+        try:
+            rows = self.db.recent_live_filled(limit=20)
+        except Exception:
+            return None
+        dir_fills = [r for r in rows if r.get("direction", "").upper() == direction.upper()
+                     and _safe_float(r.get("order_price"), 0) >= 0.90]
+        if len(dir_fills) < 5:
+            return None
+        wins = sum(1 for r in dir_fills if r.get("won") == 1)
+        wr = wins / len(dir_fills)
+        if wr < 0.80:
+            self._adaptive_suppress_until[direction] = now_ts + 3600  # 1 hour
+            logger.warning(
+                "ADAPTIVE SUPPRESS %s: WR=%.1f%% on %d fills, suppressed for 1h",
+                direction, wr * 100, len(dir_fills),
+            )
+            self._append_adaptation_event({
+                "type": "direction_suppress",
+                "direction": direction,
+                "win_rate": round(wr, 4),
+                "n_fills": len(dir_fills),
+                "until_ts": now_ts + 3600,
+                "ts": now_ts,
+            })
+            return f"adaptive_suppress_{direction}_wr_{wr:.2f}"
+        return None
+
+    def _append_adaptation_event(self, event: dict) -> None:
+        """Append adaptation event to log file."""
+        import json as _json
+        log_path = Path("data/adaptation_log.json")
+        try:
+            existing = _json.loads(log_path.read_text()) if log_path.exists() else []
+        except Exception:
+            existing = []
+        existing.append(event)
+        # Keep last 500 events
+        if len(existing) > 500:
+            existing = existing[-500:]
+        log_path.write_text(_json.dumps(existing, indent=2))
+
     def _trade_size_for_edge_tier(
         self,
         *,
@@ -3011,6 +3066,28 @@ class BTC5MinMakerBot:
                     "directional_mode": ar_dir_mode,
                 })
 
+        # Inline adaptive direction suppression (self-improving loop).
+        adaptive_skip = self._inline_adaptive_check(direction, time.time())
+        if adaptive_skip:
+            row = {
+                "window_start_ts": window_start_ts,
+                "window_end_ts": window_end_ts,
+                "slug": slug,
+                "direction": direction,
+                "open_price": open_price,
+                "current_price": current_price,
+                "delta": delta,
+                "order_status": "skip_adaptive_suppress",
+                "reason": adaptive_skip,
+            }
+            _persist(row)
+            return _result({
+                "window_start_ts": window_start_ts,
+                "status": "skip_adaptive_suppress",
+                "direction": direction,
+                "adaptive_reason": adaptive_skip,
+            })
+
         # Direction-asymmetric delta gate: require higher conviction for weaker direction.
         direction_min_delta = (
             _safe_float(autoresearch_overrides.get("BTC5_UP_MIN_DELTA"), None)
@@ -3192,7 +3269,27 @@ class BTC5MinMakerBot:
                 }
             )
 
-        book = await http.fetch_book(token_id)
+        # Book fetch with retry — reduces skip_bad_book from transient gaps.
+        book_retry_max = int(os.environ.get("BTC5_BOOK_RETRY_MAX", "2"))
+        book_retry_delay = float(os.environ.get("BTC5_BOOK_RETRY_DELAY_SEC", "2.0"))
+        book = None
+        best_bid, best_ask = None, None
+        book_failure_attribution, book_detail = None, None
+        for _book_attempt in range(book_retry_max):
+            book = await http.fetch_book(token_id)
+            if not book:
+                if _book_attempt < book_retry_max - 1:
+                    await asyncio.sleep(book_retry_delay)
+                    continue
+                break
+            best_bid, best_ask = http.top_of_book(book)
+            book_failure_attribution, book_detail = _classify_book_quotes(best_bid, best_ask)
+            if book_failure_attribution is None:
+                break  # Good book — proceed.
+            if _book_attempt < book_retry_max - 1:
+                await asyncio.sleep(book_retry_delay)
+                book_failure_attribution, book_detail = None, None
+
         if not book:
             row = {
                 "window_start_ts": window_start_ts,
@@ -3222,8 +3319,6 @@ class BTC5MinMakerBot:
                 }
             )
 
-        best_bid, best_ask = http.top_of_book(book)
-        book_failure_attribution, book_detail = _classify_book_quotes(best_bid, best_ask)
         if book_failure_attribution is not None:
             row = {
                 "window_start_ts": window_start_ts,

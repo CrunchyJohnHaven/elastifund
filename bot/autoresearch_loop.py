@@ -28,6 +28,7 @@ DB_PATH = Path("/home/ubuntu/polymarket-trading-bot/data/btc_5min_maker.db")
 RESULTS_PATH = Path("/home/ubuntu/polymarket-trading-bot/data/autoresearch_results.json")
 OVERRIDES_PATH = Path("/home/ubuntu/polymarket-trading-bot/config/autoresearch_overrides.json")
 TRACKING_PATH = Path("/home/ubuntu/polymarket-trading-bot/data/autoresearch_tracking.json")
+KELLY_REC_PATH = Path("/home/ubuntu/polymarket-trading-bot/data/autoresearch_kelly_recommendation.json")
 
 # Pipeline constants.
 TRIAL_HOURS = 12           # Faster iteration: evaluate trials every 12h.
@@ -41,6 +42,17 @@ DIRECTION_MIN_FILLS = 3
 # Risk-adjusted scoring.
 MIN_PNL_PER_FILL_USD = 0.05   # Minimum EV per fill to consider positive.
 SHARPE_LOOKBACK_FILLS = 20
+
+# Hard bounds — enforced on any hypothesis before deployment.
+HARD_BOUNDS = {
+    "BTC5_MIN_BUY_PRICE": {"min": 0.85},   # Below 0.85 is negative PnL per replay.
+    "BTC5_MAX_BUY_PRICE": {"max": 0.95},    # Above 0.95 payoff is too thin.
+    "BTC5_RISK_FRACTION": {"max": 0.33},
+}
+
+# Price sweep grid for systematic hypothesis generation.
+PRICE_SWEEP_MIN_PRICES = [0.87, 0.88, 0.89, 0.90, 0.91, 0.92]
+PRICE_SWEEP_MAX_PRICES = [0.93, 0.94, 0.95]
 
 
 @dataclass
@@ -495,6 +507,45 @@ def generate_hypotheses(obs: dict, velocity: dict) -> list[Hypothesis]:
                     policy_family="delta_range",
                 ))
 
+    return hypotheses
+
+
+def _generate_price_sweep_hypotheses() -> list[Hypothesis]:
+    """Generate systematic price parameter sweep hypotheses.
+
+    Produces one hypothesis per (MIN_BUY_PRICE, MAX_BUY_PRICE) combination
+    from the sweep grid. Each is a separate arm for shadow evaluation.
+    All values are clamped to HARD_BOUNDS before emission.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    hypotheses: list[Hypothesis] = []
+    for min_px in PRICE_SWEEP_MIN_PRICES:
+        for max_px in PRICE_SWEEP_MAX_PRICES:
+            if min_px >= max_px:
+                continue  # Invalid: floor must be below ceiling.
+            # Enforce hard bounds at generation time.
+            clamped_min = max(min_px, HARD_BOUNDS["BTC5_MIN_BUY_PRICE"]["min"])
+            clamped_max = min(max_px, HARD_BOUNDS["BTC5_MAX_BUY_PRICE"]["max"])
+            if clamped_min >= clamped_max:
+                continue
+            h_id = f"h_price_sweep_min{clamped_min:.2f}_max{clamped_max:.2f}_{now[:10]}"
+            hypotheses.append(Hypothesis(
+                hypothesis_id=h_id,
+                description=(
+                    f"Price sweep: MIN_BUY={clamped_min:.2f}, "
+                    f"MAX_BUY={clamped_max:.2f}"
+                ),
+                params={
+                    "BTC5_MIN_BUY_PRICE": clamped_min,
+                    "BTC5_MAX_BUY_PRICE": clamped_max,
+                },
+                predicted_improvement=0.0,  # Unknown a priori; backtest will fill.
+                confidence=0.3,  # Low prior — sweep is exploratory.
+                live_pnl_at_generation=0.0,
+                created_at=now,
+                policy_family="price_sweep",
+            ))
+    logger.info("Generated %d price sweep hypotheses", len(hypotheses))
     return hypotheses
 
 
@@ -1004,8 +1055,30 @@ def _compute_win_rate_since(since_iso: str) -> float:
     return round(wins / total, 3) if total > 0 else 0.0
 
 
+def _enforce_hard_bounds(params: dict) -> dict:
+    """Clamp hypothesis params to HARD_BOUNDS. Returns clamped copy."""
+    clamped = dict(params)
+    for key, bounds in HARD_BOUNDS.items():
+        if key not in clamped:
+            continue
+        val = clamped[key]
+        if "min" in bounds and val < bounds["min"]:
+            logger.warning(
+                "HARD_BOUND: %s=%.4f clamped to min %.4f", key, val, bounds["min"],
+            )
+            clamped[key] = bounds["min"]
+        if "max" in bounds and val > bounds["max"]:
+            logger.warning(
+                "HARD_BOUND: %s=%.4f clamped to max %.4f", key, val, bounds["max"],
+            )
+            clamped[key] = bounds["max"]
+    return clamped
+
+
 def promote_hypothesis(hypothesis: Hypothesis) -> None:
     """Write hypothesis params to override file for the bot to read."""
+    # Enforce hard bounds before any deployment.
+    hypothesis.params = _enforce_hard_bounds(hypothesis.params)
     override = {
         "promoted_at": datetime.now(timezone.utc).isoformat(),
         "hypothesis_id": hypothesis.hypothesis_id,
@@ -1427,6 +1500,91 @@ def _clear_stale_trials() -> list[str]:
     return actions
 
 
+# ---------------------------------------------------------------------------
+# Kelly recommendation helpers
+# ---------------------------------------------------------------------------
+
+def compute_kelly_fraction(win_rate: float, avg_entry: float) -> float:
+    """Compute quarter-Kelly fraction for binary markets.
+
+    Kelly f* = (p*b - q) / b  where b = (1 - avg_entry) / avg_entry, q = 1 - p.
+    Returns quarter-Kelly (f*/4) clamped to [0, HARD_BOUNDS max].
+    """
+    if avg_entry <= 0 or avg_entry >= 1 or win_rate <= 0:
+        return 0.0
+    b = (1.0 - avg_entry) / avg_entry
+    q = 1.0 - win_rate
+    full_kelly = (win_rate * b - q) / b
+    if full_kelly <= 0:
+        return 0.0
+    quarter = full_kelly / 4.0
+    max_rf = HARD_BOUNDS.get("BTC5_RISK_FRACTION", {}).get("max", 0.33)
+    return round(min(quarter, max_rf), 6)
+
+
+def graduated_risk_fraction(
+    n: int, win_rate: float, avg_entry: float, min_fraction: float = 0.05,
+) -> float:
+    """Scale Kelly fraction down when sample size is small.
+
+    Below 30 fills, linearly interpolate between min_fraction and full
+    quarter-Kelly. This prevents over-betting on noisy early data.
+    """
+    qk = compute_kelly_fraction(win_rate, avg_entry)
+    if qk <= 0:
+        return 0.0
+    if n >= 30:
+        return qk
+    # Linear ramp: at n=0 use min_fraction, at n=30 use full quarter-Kelly.
+    ramp = max(0.0, min(1.0, n / 30.0))
+    return round(min_fraction + ramp * (qk - min_fraction), 6)
+
+
+def _write_kelly_recommendation(obs: dict) -> None:
+    """Compute and persist Kelly recommendation from cycle observation data."""
+    n = obs.get("total_fills", 0)
+    wr = obs.get("win_rate", 0.0)
+
+    # Compute average entry price from segments.
+    segments = obs.get("segments", {})
+    price_data = segments.get("by_price_bucket", {})
+    if price_data:
+        total_fills_px = sum(v.get("fills", 0) for v in price_data.values())
+        if total_fills_px > 0:
+            avg_entry = sum(
+                float(k) * v.get("fills", 0) for k, v in price_data.items()
+            ) / total_fills_px
+        else:
+            avg_entry = 0.0
+    else:
+        avg_entry = 0.0
+
+    qk = compute_kelly_fraction(wr, avg_entry)
+    rec_rf = graduated_risk_fraction(n, wr, avg_entry, 0.05)
+
+    # Assume bankroll from observation PnL context (use 400 as default if unknown).
+    bankroll = 400.0  # Conservative default; overridden by live wallet data.
+
+    kelly_data = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "n_qualifying": n,
+        "win_rate": round(wr, 4),
+        "avg_entry": round(avg_entry, 4),
+        "quarter_kelly": qk,
+        "recommended_risk_fraction": rec_rf,
+        "recommended_trade_size_usd": round(bankroll * rec_rf, 2),
+        "bankroll_assumed": bankroll,
+    }
+
+    KELLY_REC_PATH.parent.mkdir(parents=True, exist_ok=True)
+    KELLY_REC_PATH.write_text(json.dumps(kelly_data, indent=2))
+    logger.info(
+        "Kelly recommendation: n=%d, wr=%.1f%%, avg_entry=%.2f, "
+        "quarter_kelly=%.4f, rec_rf=%.4f, trade_size=$%.2f",
+        n, wr * 100, avg_entry, qk, rec_rf, kelly_data["recommended_trade_size_usd"],
+    )
+
+
 def run_cycle() -> dict:
     """Full autoresearch cycle: observe → hypothesize → backtest → rank → promote."""
     logger.info("=== Autoresearch v3 cycle start ===")
@@ -1477,6 +1635,8 @@ def run_cycle() -> dict:
     decay_h = detect_performance_decay(obs)
     if decay_h:
         hypotheses.append(decay_h)
+    # Price parameter sweep hypotheses (systematic grid search).
+    hypotheses.extend(_generate_price_sweep_hypotheses())
 
     if not hypotheses:
         logger.info("No hypotheses generated (insufficient data)")
@@ -1780,6 +1940,10 @@ def run_cycle() -> dict:
     RESULTS_PATH.parent.mkdir(parents=True, exist_ok=True)
     RESULTS_PATH.write_text(json.dumps(output, indent=2, default=str))
     logger.info("Results written to %s", RESULTS_PATH)
+
+    # Step 15: Kelly recommendation from cycle observation data.
+    _write_kelly_recommendation(obs)
+
     logger.info("=== Autoresearch v3 cycle complete ===")
     return output
 
