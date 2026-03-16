@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 from bot import autoresearch_loop
@@ -79,3 +80,37 @@ def test_validate_params_applies_hard_bounds_and_logs_guardrails() -> None:
     assert any(event["reason"] == "below_hard_min" for event in events)
     assert any(event["reason"] == "above_hard_max" for event in events)
     assert any(event["reason"] == "directional_mode_invalid" for event in events)
+
+
+def test_run_cycle_triggers_pricing_evolution_even_with_low_fill_count(monkeypatch) -> None:
+    called: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        autoresearch_loop,
+        "build_kelly_recommendation",
+        lambda: {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "n_qualifying_fills": 0,
+            "win_rate": 0.0,
+            "recommended_kelly_fraction": 0.0,
+            "recommended_trade_size_usd": 0.0,
+        },
+    )
+    monkeypatch.setattr(
+        autoresearch_loop,
+        "observe_recent_performance",
+        lambda hours=24: {"total_fills": 0, "total_pnl": 0.0, "win_rate": 0.0, "segments": {}},
+    )
+    monkeypatch.setattr(autoresearch_loop, "_write_json", lambda path, payload: None)
+
+    def _fake_run_pricing_evolution(**kwargs):
+        called.update(kwargs)
+        return {"status": "insufficient_data"}
+
+    monkeypatch.setattr(autoresearch_loop, "run_pricing_evolution", _fake_run_pricing_evolution)
+
+    result = autoresearch_loop.run_cycle()
+    assert result is None
+    assert called["db_path"] == autoresearch_loop.DB_PATH
+    assert called["overrides_path"] == autoresearch_loop.AUTORESEARCH_OVERRIDES_PATH
+    assert called["lookback_hours"] == 24
