@@ -3333,10 +3333,21 @@ class BTC5MinMakerBot:
 
         def _persist(row: dict[str, Any]) -> None:
             payload = dict(row)
+            timing_tags = _unique_tags(
+                _reason_tag("decision_timing", decision_timing),
+                _reason_tag("early_fallback_reason", early_fallback_reason),
+            )
             if "edge_tier" not in payload:
                 payload["edge_tier"] = edge_tier
             if "sizing_reason_tags" not in payload:
                 payload["sizing_reason_tags"] = list(sizing_reason_tags)
+            existing_sizing_tags = payload.get("sizing_reason_tags")
+            if isinstance(existing_sizing_tags, list):
+                payload["sizing_reason_tags"] = _unique_tags(*existing_sizing_tags, *timing_tags)
+            elif isinstance(existing_sizing_tags, str):
+                payload["sizing_reason_tags"] = _unique_tags(*parse_json_list(existing_sizing_tags), *timing_tags)
+            else:
+                payload["sizing_reason_tags"] = _unique_tags(*timing_tags)
             if "loss_cluster_suppressed" not in payload:
                 payload["loss_cluster_suppressed"] = loss_cluster_suppressed
             if "session_policy_name" not in payload:
