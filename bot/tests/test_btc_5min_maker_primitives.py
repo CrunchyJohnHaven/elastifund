@@ -696,3 +696,41 @@ def test_capital_stage_controls_block_stage_upgrade_when_probe_is_stale(tmp_path
     assert controls["probe_fresh_for_stage_upgrade"] is False
     assert "stage_upgrade_probe_stale" in controls["stage_blockers"]
     assert "capped_to_stage_1" in controls["stage_gate_reason"]
+
+
+def test_classify_edge_tier_boosts_edge_score_with_cross_asset_confirmation(tmp_path: Path) -> None:
+    cfg = MakerConfig(
+        db_path=tmp_path / "btc5.db",
+        cross_asset_edge_boost=0.2,
+    )
+    bot = BTC5MinMakerBot(cfg)
+    ws = _ts(2026, 3, 11, 12, 5)
+    base = bot._classify_edge_tier(
+        window_start_ts=ws,
+        direction="DOWN",
+        delta=0.0008,
+        order_price=0.92,
+        session_override=None,
+        session_policy_name=None,
+        effective_stage=1,
+        recommended_live_stage=1,
+        recent_regime=None,
+        probe_mode=None,
+        cross_asset_confirmation=None,
+    )
+    boosted = bot._classify_edge_tier(
+        window_start_ts=ws,
+        direction="DOWN",
+        delta=0.0008,
+        order_price=0.92,
+        session_override=None,
+        session_policy_name=None,
+        effective_stage=1,
+        recommended_live_stage=1,
+        recent_regime=None,
+        probe_mode=None,
+        cross_asset_confirmation={"confidence": 0.75, "leader": "BTCUSDT", "lag_minutes": 1},
+    )
+    assert base["edge_tier"] == "standard"
+    assert boosted["edge_tier"] == "standard"
+    assert float(boosted["edge_score"]) > float(base["edge_score"])
