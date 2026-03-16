@@ -144,8 +144,8 @@ async def test_process_window_emits_capital_stage_fields(
     assert result["advantage_tier"] == "stage_3_live_ready"
     assert result["probe_fresh_for_stage_upgrade"] is True
     assert result["shadow_research_tiers"]["shadow_100"]["size_usd"] == pytest.approx(100.0)
-    assert result["shadow_research_tiers"]["shadow_300"]["size_usd"] == pytest.approx(200.0)
-    assert result["shadow_research_tiers"]["shadow_300"]["max_trade_usd"] == pytest.approx(300.0)
+    assert result["shadow_research_tiers"]["shadow_200"]["size_usd"] == pytest.approx(200.0)
+    assert result["shadow_research_tiers"]["shadow_200"]["max_trade_usd"] == pytest.approx(200.0)
     assert result["capital_utilization_ratio"] > 0.0
 
 
