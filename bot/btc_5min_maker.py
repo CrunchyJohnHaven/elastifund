@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_FLOOR
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
 import aiohttp
@@ -53,10 +53,20 @@ try:
 except ImportError:
     from polymarket_clob import build_authenticated_clob_client, parse_signature_type  # type: ignore
 
+try:
+    from bot.smart_wallet_feed import SmartWalletFeed
+except Exception:  # pragma: no cover - optional dependency during staged rollout
+    SmartWalletFeed = None  # type: ignore[assignment]
+
 logger = logging.getLogger("BTC5Maker")
 
 WINDOW_SECONDS = max(60, int(os.environ.get("BTC5_WINDOW_SECONDS", "300")))
-MARKET_SLUG_PREFIX = str(os.environ.get("BTC5_MARKET_SLUG_PREFIX", "btc-updown-5m")).strip().rstrip("-")
+MARKET_SLUG_PREFIX = str(
+    os.environ.get(
+        "BTC5_MARKET_SLUG_PREFIX",
+        f"{os.environ.get('BTC5_ASSET_SLUG_PREFIX', 'btc')}-updown-5m",
+    )
+).strip().rstrip("-")
 if not MARKET_SLUG_PREFIX:
     MARKET_SLUG_PREFIX = "btc-updown-5m"
 DEFAULT_DB_PATH = Path("data/btc_5min_maker.db")
@@ -205,6 +215,13 @@ def parse_json_list(value: Any) -> list[Any]:
         except json.JSONDecodeError:
             return []
     return []
+
+
+def _extract_condition_id(raw: Mapping[str, Any] | None) -> str:
+    if not isinstance(raw, Mapping):
+        return ""
+    value = raw.get("conditionId") or raw.get("condition_id") or raw.get("market_id") or raw.get("id")
+    return str(value or "").strip()
 
 
 def _normalized_env_optional_float(value: Any) -> float | None:
@@ -534,8 +551,13 @@ def _parse_order_size(value: Any) -> float | None:
     return float(parsed)
 
 
-def market_slug_for_window(window_start_ts: int) -> str:
-    return f"{MARKET_SLUG_PREFIX}-{int(window_start_ts)}"
+def market_slug_for_window(window_start_ts: int, slug_prefix: str = "") -> str:
+    prefix = str(slug_prefix or "").strip().rstrip("-")
+    if not prefix:
+        prefix = MARKET_SLUG_PREFIX
+    if "-" not in prefix:
+        prefix = f"{prefix}-updown-5m"
+    return f"{prefix}-{int(window_start_ts)}"
 
 
 def direction_from_prices(open_price: float, current_price: float, min_delta: float) -> tuple[str | None, float]:
@@ -791,6 +813,11 @@ class MakerConfig:
     stage_order_failed_rate_limit: float = float(os.environ.get("BTC5_STAGE_ORDER_FAILED_RATE_LIMIT", "0.25"))
     min_trade_usd: float = float(os.environ.get("BTC5_MIN_TRADE_USD", "5.00"))
     min_delta: float = float(os.environ.get("BTC5_MIN_DELTA", "0.0003"))
+    enable_wallet_copy: bool = _env_flag("BTC5_ENABLE_WALLET_COPY", False)
+    wallet_copy_override_delta: float = float(os.environ.get("BTC5_WALLET_COPY_OVERRIDE_DELTA", "0.0005"))
+    wallet_copy_min_wallets: int = int(os.environ.get("BTC5_WALLET_COPY_MIN_WALLETS", "3"))
+    wallet_copy_min_notional: float = float(os.environ.get("BTC5_WALLET_COPY_MIN_NOTIONAL", "200"))
+    smart_wallets_path: Path = Path(os.environ.get("BTC5_SMART_WALLETS_PATH", "config/smart_wallets.json"))
     enable_spread_capture: bool = _env_flag("BTC5_ENABLE_SPREAD_CAPTURE", False)
     max_abs_delta: float | None = _optional_env_float("BTC5_MAX_ABS_DELTA")
     maker_improve_ticks: int = int(os.environ.get("BTC5_MAKER_IMPROVE_TICKS", "1"))
@@ -817,6 +844,12 @@ class MakerConfig:
     ).lower() in {"1", "true", "yes"}
     regime_one_sided_min_pnl_gap_usd: float = float(
         os.environ.get("BTC5_REGIME_ONE_SIDED_MIN_PNL_GAP_USD", "30.0")
+    )
+    direction_suppression_min_price_exempt: float = float(
+        os.environ.get("BTC5_DIRECTION_SUPPRESSION_MIN_PRICE_EXEMPT", "0.90")
+    )
+    loss_cluster_min_price_exempt: float = float(
+        os.environ.get("BTC5_LOSS_CLUSTER_MIN_PRICE_EXEMPT", "0.90")
     )
     min_buy_price: float = float(os.environ.get("BTC5_MIN_BUY_PRICE", "0.90"))
     tick_size: float = float(os.environ.get("BTC5_TICK_SIZE", "0.01"))
@@ -855,6 +888,7 @@ class MakerConfig:
         "BTC5_GAMMA_MARKETS_URL",
         "https://gamma-api.polymarket.com/markets",
     )
+    market_slug_prefix: str = os.environ.get("BTC5_MARKET_SLUG_PREFIX", MARKET_SLUG_PREFIX)
     clob_book_url: str = os.environ.get(
         "BTC5_CLOB_BOOK_URL",
         "https://clob.polymarket.com/book",
@@ -874,6 +908,14 @@ class MakerConfig:
             self.stage2_daily_loss_limit_usd = float(self.daily_loss_limit_usd)
         if self.stage3_daily_loss_limit_usd is None:
             self.stage3_daily_loss_limit_usd = float(self.daily_loss_limit_usd)
+        self.direction_suppression_min_price_exempt = max(
+            0.0,
+            min(1.0, float(self.direction_suppression_min_price_exempt)),
+        )
+        self.loss_cluster_min_price_exempt = max(
+            0.0,
+            min(1.0, float(self.loss_cluster_min_price_exempt)),
+        )
 
     @property
     def effective_max_trade_usd(self) -> float:
@@ -983,6 +1025,9 @@ class TradeDB:
                     loss_cluster_suppressed INTEGER,
                     session_policy_name TEXT,
                     effective_stage INTEGER,
+                    wallet_copy INTEGER,
+                    wallet_count INTEGER,
+                    wallet_notional REAL,
                     resolved_side TEXT,
                     won INTEGER,
                     pnl_usd REAL,
@@ -1003,6 +1048,9 @@ class TradeDB:
                 ("loss_cluster_suppressed", "INTEGER"),
                 ("session_policy_name", "TEXT"),
                 ("effective_stage", "INTEGER"),
+                ("wallet_copy", "INTEGER"),
+                ("wallet_count", "INTEGER"),
+                ("wallet_notional", "REAL"),
             ):
                 if column_name not in existing:
                     conn.execute(f"ALTER TABLE window_trades ADD COLUMN {column_name} {column_type}")
@@ -1045,6 +1093,13 @@ class TradeDB:
             ),
             "session_policy_name": row.get("session_policy_name"),
             "effective_stage": row.get("effective_stage"),
+            "wallet_copy": (
+                None
+                if row.get("wallet_copy") is None
+                else int(bool(row.get("wallet_copy")))
+            ),
+            "wallet_count": row.get("wallet_count"),
+            "wallet_notional": row.get("wallet_notional"),
             "resolved_side": row.get("resolved_side"),
             "won": row.get("won"),
             "pnl_usd": row.get("pnl_usd"),
@@ -1059,14 +1114,16 @@ class TradeDB:
                     open_price, current_price, delta, token_id, best_bid, best_ask,
                     order_price, trade_size_usd, shares, order_id, order_status,
                     filled, reason, edge_tier, sizing_reason_tags, loss_cluster_suppressed,
-                    session_policy_name, effective_stage, resolved_side, won, pnl_usd,
+                    session_policy_name, effective_stage, wallet_copy, wallet_count, wallet_notional,
+                    resolved_side, won, pnl_usd,
                     created_at, updated_at
                 ) VALUES (
                     :window_start_ts, :window_end_ts, :slug, :decision_ts, :direction,
                     :open_price, :current_price, :delta, :token_id, :best_bid, :best_ask,
                     :order_price, :trade_size_usd, :shares, :order_id, :order_status,
                     :filled, :reason, :edge_tier, :sizing_reason_tags, :loss_cluster_suppressed,
-                    :session_policy_name, :effective_stage, :resolved_side, :won, :pnl_usd,
+                    :session_policy_name, :effective_stage, :wallet_copy, :wallet_count, :wallet_notional,
+                    :resolved_side, :won, :pnl_usd,
                     :created_at, :updated_at
                 )
                 ON CONFLICT(window_start_ts) DO UPDATE SET
@@ -1090,6 +1147,9 @@ class TradeDB:
                     loss_cluster_suppressed=excluded.loss_cluster_suppressed,
                     session_policy_name=excluded.session_policy_name,
                     effective_stage=excluded.effective_stage,
+                    wallet_copy=excluded.wallet_copy,
+                    wallet_count=excluded.wallet_count,
+                    wallet_notional=excluded.wallet_notional,
                     resolved_side=excluded.resolved_side,
                     won=excluded.won,
                     pnl_usd=excluded.pnl_usd,
@@ -1642,6 +1702,88 @@ class BTC5MinMakerBot:
         self.db = TradeDB(cfg.db_path)
         self.cache = BinancePriceCache()
         self.clob = CLOBExecutor(cfg)
+        self.smart_wallet_feed = self._build_smart_wallet_feed()
+        self._wallet_watch_started_windows: set[int] = set()
+
+    def _load_smart_wallet_addresses(self) -> list[str]:
+        path = self.cfg.smart_wallets_path
+        if not path.exists():
+            return []
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("Failed to load smart wallets from %s: %s", path, exc)
+            return []
+        wallets: list[str] = []
+        if isinstance(raw, list):
+            for item in raw:
+                if isinstance(item, str) and item.strip():
+                    wallets.append(item.strip())
+                elif isinstance(item, dict):
+                    address = str(item.get("address") or item.get("wallet") or "").strip()
+                    if address:
+                        wallets.append(address)
+        elif isinstance(raw, dict):
+            values = raw.get("wallets")
+            if isinstance(values, list):
+                for item in values:
+                    if isinstance(item, str) and item.strip():
+                        wallets.append(item.strip())
+                    elif isinstance(item, dict):
+                        address = str(item.get("address") or item.get("wallet") or "").strip()
+                        if address:
+                            wallets.append(address)
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for wallet in wallets:
+            normalized = wallet.lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            deduped.append(wallet)
+        return deduped
+
+    def _build_smart_wallet_feed(self) -> Any:
+        if not self.cfg.enable_wallet_copy:
+            return None
+        if SmartWalletFeed is None:
+            logger.warning("BTC5 wallet-copy enabled but bot.smart_wallet_feed is unavailable")
+            return None
+        wallets = self._load_smart_wallet_addresses()
+        try:
+            return SmartWalletFeed(wallets)
+        except TypeError:
+            # Compatibility with module variants that expose a no-arg constructor.
+            try:
+                return SmartWalletFeed()
+            except Exception as exc:
+                logger.warning("Failed to initialize smart wallet feed: %s", exc)
+                return None
+        except Exception as exc:
+            logger.warning("Failed to initialize smart wallet feed: %s", exc)
+            return None
+
+    async def _ensure_wallet_copy_watch(self, *, window_start_ts: int, http: MarketHttpClient) -> None:
+        if not (self.cfg.enable_wallet_copy and self.smart_wallet_feed):
+            return
+        if window_start_ts in self._wallet_watch_started_windows:
+            return
+        market = await http.fetch_market_by_slug(
+            market_slug_for_window(window_start_ts, self.cfg.market_slug_prefix)
+        )
+        condition_id = _extract_condition_id(market)
+        if not condition_id:
+            return
+        starter = getattr(self.smart_wallet_feed, "start_background_watch", None)
+        if not callable(starter):
+            return
+        try:
+            maybe_task = starter(condition_id=condition_id, window_start_ts=window_start_ts)
+            if inspect.isawaitable(maybe_task):
+                await maybe_task
+            self._wallet_watch_started_windows.add(window_start_ts)
+        except Exception as exc:
+            logger.warning("Wallet-copy watch start failed for %s: %s", condition_id[:12], exc)
 
     def _recent_direction_regime(self) -> dict[str, Any] | None:
         if not self.cfg.enable_recent_regime_skew:
@@ -1743,19 +1885,31 @@ class BTC5MinMakerBot:
 
         suppressed_direction = str((recent_regime or {}).get("suppressed_direction") or "").strip().upper()
         if suppressed_direction and str(direction or "").strip().upper() == suppressed_direction:
-            return {
-                "edge_tier": "suppressed",
-                "loss_cluster_suppressed": True,
-                "order_price_bucket": order_price_bucket,
-                "delta_bucket": delta_bucket,
-                "session_bucket": session_bucket,
-                "sizing_reason_tags": _unique_tags(
+            direction_suppression_min_price_exempt = max(
+                0.0,
+                float(self.cfg.direction_suppression_min_price_exempt),
+            )
+            if order_price >= direction_suppression_min_price_exempt - 1e-9:
+                tags = _unique_tags(
                     *tags,
-                    "recent_regime_one_sided_guardrail",
+                    "recent_regime_one_sided_guardrail_bypassed_high_price",
                     f"suppressed_direction={suppressed_direction}",
-                    "edge_tier=suppressed",
-                ),
-            }
+                    f"direction_suppression_min_price_exempt={direction_suppression_min_price_exempt:.2f}",
+                )
+            else:
+                return {
+                    "edge_tier": "suppressed",
+                    "loss_cluster_suppressed": True,
+                    "order_price_bucket": order_price_bucket,
+                    "delta_bucket": delta_bucket,
+                    "session_bucket": session_bucket,
+                    "sizing_reason_tags": _unique_tags(
+                        *tags,
+                        "recent_regime_one_sided_guardrail",
+                        f"suppressed_direction={suppressed_direction}",
+                        "edge_tier=suppressed",
+                    ),
+                }
 
         loss_cluster = self._loss_cluster_match(
             window_start_ts=window_start_ts,
@@ -1764,21 +1918,33 @@ class BTC5MinMakerBot:
             delta=delta,
         )
         if loss_cluster is not None:
-            return {
-                "edge_tier": "suppressed",
-                "loss_cluster_suppressed": True,
-                "order_price_bucket": order_price_bucket,
-                "delta_bucket": delta_bucket,
-                "session_bucket": session_bucket,
-                "sizing_reason_tags": _unique_tags(
+            loss_cluster_min_price_exempt = max(0.0, float(self.cfg.loss_cluster_min_price_exempt))
+            if order_price >= loss_cluster_min_price_exempt - 1e-9:
+                tags = _unique_tags(
                     *tags,
-                    "observed_loss_cluster_guardrail",
+                    "observed_loss_cluster_guardrail_bypassed_high_price",
                     f"loss_cluster_session={loss_cluster['session_name']}",
                     f"loss_cluster_price_bucket={loss_cluster['price_bucket']}",
                     f"loss_cluster_delta_bucket={loss_cluster['delta_bucket']}",
-                    "edge_tier=suppressed",
-                ),
-            }
+                    f"loss_cluster_min_price_exempt={loss_cluster_min_price_exempt:.2f}",
+                )
+            else:
+                return {
+                    "edge_tier": "suppressed",
+                    "loss_cluster_suppressed": True,
+                    "order_price_bucket": order_price_bucket,
+                    "delta_bucket": delta_bucket,
+                    "session_bucket": session_bucket,
+                    "sizing_reason_tags": _unique_tags(
+                        *tags,
+                        "observed_loss_cluster_guardrail",
+                        f"loss_cluster_session={loss_cluster['session_name']}",
+                        f"loss_cluster_price_bucket={loss_cluster['price_bucket']}",
+                        f"loss_cluster_delta_bucket={loss_cluster['delta_bucket']}",
+                        "edge_tier=suppressed",
+                    ),
+                }
+
 
         if probe_mode:
             return {
@@ -2364,7 +2530,7 @@ class BTC5MinMakerBot:
 
     async def _process_window(self, *, window_start_ts: int, http: MarketHttpClient) -> dict[str, Any]:
         window_end_ts = window_start_ts + WINDOW_SECONDS
-        slug = market_slug_for_window(window_start_ts)
+        slug = market_slug_for_window(window_start_ts, self.cfg.market_slug_prefix)
         session_bucket = _btc5_session_bucket(window_start_ts)
         capital_stage = 1
         effective_max_trade_usd = float(self._max_trade_for_stage(capital_stage))
@@ -2383,6 +2549,9 @@ class BTC5MinMakerBot:
         session_reason = session_guardrail_reason(session_override, window_start_ts=window_start_ts)
         recent_regime: dict[str, Any] | None = None
         edge_tier = "suppressed"
+        wallet_copy_applied = False
+        wallet_count = 0
+        wallet_notional = 0.0
         sizing_reason_tags: list[str] = _unique_tags(
             f"session_bucket={session_bucket}",
             f"session_policy_name={session_policy_name or 'none'}",
@@ -2442,6 +2611,12 @@ class BTC5MinMakerBot:
                 payload["placement_failure_attribution"] = None
             if "order_outcome_attribution" not in payload:
                 payload["order_outcome_attribution"] = None
+            if "wallet_copy" not in payload:
+                payload["wallet_copy"] = wallet_copy_applied
+            if "wallet_count" not in payload:
+                payload["wallet_count"] = wallet_count
+            if "wallet_notional" not in payload:
+                payload["wallet_notional"] = round(max(0.0, float(wallet_notional)), 4)
             return payload
 
         def _persist(row: dict[str, Any]) -> None:
@@ -2456,6 +2631,12 @@ class BTC5MinMakerBot:
                 payload["session_policy_name"] = session_policy_name
             if "effective_stage" not in payload:
                 payload["effective_stage"] = capital_stage
+            if "wallet_copy" not in payload:
+                payload["wallet_copy"] = int(wallet_copy_applied)
+            if "wallet_count" not in payload:
+                payload["wallet_count"] = wallet_count
+            if "wallet_notional" not in payload:
+                payload["wallet_notional"] = round(max(0.0, float(wallet_notional)), 4)
             self.db.upsert_window(payload)
 
         if self.db.window_exists(window_start_ts):
@@ -2540,6 +2721,38 @@ class BTC5MinMakerBot:
             return _result({"window_start_ts": window_start_ts, "status": row["order_status"]})
 
         direction, delta = direction_from_prices(open_price, current_price, effective_min_delta)
+        if self.cfg.enable_wallet_copy and self.smart_wallet_feed:
+            await self._ensure_wallet_copy_watch(window_start_ts=window_start_ts, http=http)
+            try:
+                consensus = await self.smart_wallet_feed.get_cached_consensus(window_start_ts)
+            except Exception as exc:
+                logger.warning("Wallet-copy consensus fetch failed for %s: %s", window_start_ts, exc)
+                consensus = None
+            if consensus is not None:
+                wallet_count = int(getattr(consensus, "smart_wallet_count", 0) or 0)
+                wallet_notional = float(getattr(consensus, "combined_notional_usd", 0.0) or 0.0)
+                consensus_direction = str(getattr(consensus, "direction", "")).strip().upper()
+                strong_fn = getattr(consensus, "strong", None)
+                if callable(strong_fn):
+                    try:
+                        consensus_strong = bool(strong_fn())
+                    except Exception:
+                        consensus_strong = False
+                else:
+                    consensus_strong = False
+                meets_thresholds = (
+                    wallet_count >= max(1, int(self.cfg.wallet_copy_min_wallets))
+                    and wallet_notional >= max(0.0, float(self.cfg.wallet_copy_min_notional))
+                )
+                if (
+                    consensus_direction in {"UP", "DOWN"}
+                    and consensus_strong
+                    and meets_thresholds
+                    and (direction is None or abs(delta) < self.cfg.wallet_copy_override_delta)
+                ):
+                    direction = consensus_direction
+                    wallet_copy_applied = True
+
         if direction is None and self.cfg.enable_spread_capture:
             # Spread-capture mode: bypass delta gate when BTC is flat.
             # Alternate UP/DOWN each window for statistical neutrality.
@@ -2640,46 +2853,6 @@ class BTC5MinMakerBot:
             favored = recent_regime.get("favored_direction") or "n/a"
             weaker = recent_regime.get("weaker_direction") or "n/a"
             regime_reason = f"recent_regime favored={favored} weaker={weaker} directional_mode={directional_mode}"
-        if suppressed_direction and direction == suppressed_direction:
-            edge_tier = "suppressed"
-            loss_cluster_suppressed = True
-            sizing_reason_tags = _unique_tags(
-                *sizing_reason_tags,
-                f"direction={direction}",
-                f"delta_bucket={_btc5_delta_bucket(delta)}",
-                "recent_regime_one_sided_guardrail",
-                f"suppressed_direction={suppressed_direction}",
-                "edge_tier=suppressed",
-            )
-            row = {
-                "window_start_ts": window_start_ts,
-                "window_end_ts": window_end_ts,
-                "slug": slug,
-                "direction": direction,
-                "open_price": open_price,
-                "current_price": current_price,
-                "delta": delta,
-                "token_id": token_id,
-                "order_status": "skip_direction_suppressed",
-                "reason": _join_reasons(
-                    probe_reason,
-                    session_reason,
-                    regime_reason,
-                    _reason_tag("suppressed_direction", suppressed_direction),
-                ),
-            }
-            _persist(row)
-            return _result(
-                {
-                    "window_start_ts": window_start_ts,
-                    "status": row["order_status"],
-                    "direction": direction,
-                    "delta": delta,
-                    "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
-                    "regime_triggered": bool(recent_regime and recent_regime.get("triggered")),
-                }
-            )
-
         book = await http.fetch_book(token_id)
         if not book:
             row = {
@@ -2744,6 +2917,61 @@ class BTC5MinMakerBot:
                 }
             )
 
+        if suppressed_direction and direction == suppressed_direction:
+            direction_suppression_min_price_exempt = max(0.0, float(self.cfg.direction_suppression_min_price_exempt))
+            if best_ask < direction_suppression_min_price_exempt - 1e-9:
+                edge_tier = "suppressed"
+                loss_cluster_suppressed = True
+                sizing_reason_tags = _unique_tags(
+                    *sizing_reason_tags,
+                    f"direction={direction}",
+                    f"delta_bucket={_btc5_delta_bucket(delta)}",
+                    "recent_regime_one_sided_guardrail",
+                    f"suppressed_direction={suppressed_direction}",
+                    "edge_tier=suppressed",
+                )
+                row = {
+                    "window_start_ts": window_start_ts,
+                    "window_end_ts": window_end_ts,
+                    "slug": slug,
+                    "direction": direction,
+                    "open_price": open_price,
+                    "current_price": current_price,
+                    "delta": delta,
+                    "token_id": token_id,
+                    "best_bid": best_bid,
+                    "best_ask": best_ask,
+                    "order_status": "skip_direction_suppressed",
+                    "reason": _join_reasons(
+                        probe_reason,
+                        session_reason,
+                        regime_reason,
+                        _reason_tag("suppressed_direction", suppressed_direction),
+                        _reason_tag(
+                            "direction_suppression_min_price_exempt",
+                            f"{direction_suppression_min_price_exempt:.2f}",
+                        ),
+                    ),
+                }
+                _persist(row)
+                return _result(
+                    {
+                        "window_start_ts": window_start_ts,
+                        "status": row["order_status"],
+                        "direction": direction,
+                        "delta": delta,
+                        "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
+                        "regime_triggered": bool(recent_regime and recent_regime.get("triggered")),
+                    }
+                )
+            regime_reason = _join_reasons(
+                regime_reason,
+                (
+                    "recent_regime_suppression_bypassed_high_price"
+                    f" ask={best_ask:.2f} threshold={direction_suppression_min_price_exempt:.2f}"
+                ),
+            )
+
         quote_ticks = effective_quote_ticks(
             self.cfg,
             direction,
@@ -2755,12 +2983,13 @@ class BTC5MinMakerBot:
         if recent_regime and recent_regime.get("triggered"):
             favored = recent_regime.get("favored_direction") or "n/a"
             weaker = recent_regime.get("weaker_direction") or "n/a"
-            regime_reason = (
+            regime_quote_reason = (
                 f"recent_regime favored={favored} weaker={weaker} "
                 f"{direction}_quote_ticks={quote_ticks}"
             )
             if recent_regime.get("one_sided_triggered"):
-                regime_reason = f"{regime_reason} suppressed_direction={suppressed_direction}"
+                regime_quote_reason = f"{regime_quote_reason} suppressed_direction={suppressed_direction}"
+            regime_reason = _join_reasons(regime_reason, regime_quote_reason)
         mode_max_buy_price = effective_max_buy_price(self.cfg, direction, session_override=session_override)
         if probe_mode and direction == "UP":
             mode_max_buy_price = min(mode_max_buy_price, float(probe_mode["up_max_buy_price"]))
@@ -3074,6 +3303,9 @@ class BTC5MinMakerBot:
             "filled": filled,
             "order_status": order_status,
             "reason": reason,
+            "wallet_copy": int(wallet_copy_applied),
+            "wallet_count": wallet_count,
+            "wallet_notional": round(max(0.0, float(wallet_notional)), 4),
         }
         _persist(row)
         return _result({
@@ -3093,6 +3325,9 @@ class BTC5MinMakerBot:
             "order_outcome_attribution": order_outcome_attribution,
             "stage_gate_reason": stage_gate_reason,
             "capital_utilization_ratio": round(max(0.0, float(capital_utilization_ratio)), 6),
+            "wallet_copy": wallet_copy_applied,
+            "wallet_count": wallet_count,
+            "wallet_notional": round(max(0.0, float(wallet_notional)), 4),
         })
 
     async def run_windows(self, *, count: int, continuous: bool) -> None:
@@ -3113,6 +3348,7 @@ class BTC5MinMakerBot:
                     if now > decision_ts + 1:
                         ws += WINDOW_SECONDS
                         decision_ts = ws + WINDOW_SECONDS - self.cfg.entry_seconds_before_close
+                    await self._ensure_wallet_copy_watch(window_start_ts=ws, http=http)
                     wait = max(0.0, decision_ts - time.time())
                     if wait > 0:
                         logger.info("Waiting %.1fs until decision time for window %s", wait, ws)
@@ -3142,6 +3378,7 @@ class BTC5MinMakerBot:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             http = MarketHttpClient(self.cfg, session)
             ws = current_window_start()
+            await self._ensure_wallet_copy_watch(window_start_ts=ws, http=http)
             return await self._process_window(window_start_ts=ws, http=http)
 
     def live_summary(self) -> dict[str, Any]:

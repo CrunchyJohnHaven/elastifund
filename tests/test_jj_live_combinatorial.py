@@ -88,6 +88,29 @@ class TestJJLiveCombinatorialState(unittest.TestCase):
             self.assertEqual(pos["source_components"], ["llm", "wallet_flow"])
             self.assertEqual(pos["source_count"], 2)
 
+    def test_open_notional_for_market_respects_direction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state = JJState(state_file=Path(tmp) / "jj_state.json")
+            state.record_trade(
+                market_id="mkt-1",
+                question="Will the bill pass?",
+                direction="buy_yes",
+                price=0.40,
+                size_usd=1.25,
+                edge=0.12,
+                confidence=0.70,
+                order_id="ord-1",
+                source="llm",
+                source_combo="llm",
+                source_components=["llm"],
+                source_count=1,
+            )
+
+            self.assertAlmostEqual(state.open_notional_for_market("mkt-1"), 1.25)
+            self.assertAlmostEqual(state.open_notional_for_market("mkt-1", "buy_yes"), 1.25)
+            self.assertAlmostEqual(state.open_notional_for_market("mkt-1", "buy_no"), 0.0)
+            self.assertAlmostEqual(state.open_notional_for_market("missing"), 0.0)
+
 
 class TestJJLiveCombinatorialDatabase(unittest.TestCase):
     def test_trade_database_summarizes_combinatorial_rows(self) -> None:

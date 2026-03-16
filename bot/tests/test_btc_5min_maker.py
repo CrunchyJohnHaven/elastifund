@@ -1264,6 +1264,7 @@ async def test_process_window_suppresses_weaker_direction_when_one_sided_regime_
         regime_weaker_direction_quote_ticks=0,
         enable_recent_regime_one_sided_guardrail=True,
         regime_one_sided_min_pnl_gap_usd=30.0,
+        direction_suppression_min_price_exempt=1.0,
     )
     bot = BTC5MinMakerBot(cfg)
 
@@ -1292,6 +1293,99 @@ async def test_process_window_suppresses_weaker_direction_when_one_sided_regime_
         ).fetchone()
     assert row["order_status"] == "skip_direction_suppressed"
     assert "suppressed_direction=UP" in (row["reason"] or "")
+
+
+@pytest.mark.asyncio
+async def test_process_window_bypasses_direction_suppression_for_high_price(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=True,
+        db_path=tmp_path / "btc5.db",
+        min_delta=0.0003,
+        max_buy_price=0.95,
+        up_max_buy_price=0.95,
+        down_max_buy_price=0.95,
+        min_buy_price=0.45,
+        tick_size=0.01,
+        enable_recent_regime_skew=True,
+        recent_regime_fills=12,
+        regime_min_fills_per_direction=5,
+        regime_min_pnl_gap_usd=20.0,
+        regime_weaker_direction_quote_ticks=0,
+        enable_recent_regime_one_sided_guardrail=True,
+        regime_one_sided_min_pnl_gap_usd=30.0,
+        direction_suppression_min_price_exempt=0.90,
+        paper_fill_probability=1.0,
+    )
+    bot = BTC5MinMakerBot(cfg)
+
+    async def fake_resolve(http, through_window_start: int) -> None:
+        return None
+
+    async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
+        return 100.0, 100.05
+
+    monkeypatch.setattr(bot, "_resolve_unsettled", fake_resolve)
+    monkeypatch.setattr(bot, "_get_open_and_current_price", fake_prices)
+
+    window_start_ts = current_window_start(time.time()) - (2 * 300)
+    _seed_strong_recent_regime(bot, window_start_ts=window_start_ts)
+    result = await bot._process_window(window_start_ts=window_start_ts, http=_DummyHTTP())
+
+    assert result["status"] == "paper_filled"
+    assert result["suppressed_direction"] == "UP"
+    assert result["loss_cluster_suppressed"] is False
+
+
+@pytest.mark.asyncio
+async def test_process_window_bypasses_loss_cluster_when_price_is_exempt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=True,
+        db_path=tmp_path / "btc5.db",
+        bankroll_usd=250.0,
+        risk_fraction=0.01,
+        max_trade_usd=2.50,
+        min_trade_usd=0.25,
+        min_delta=0.0,
+        max_buy_price=0.95,
+        up_max_buy_price=0.95,
+        down_max_buy_price=0.95,
+        min_buy_price=0.45,
+        tick_size=0.01,
+        loss_cluster_min_price_exempt=0.49,
+        paper_fill_probability=1.0,
+    )
+    bot = BTC5MinMakerBot(cfg)
+
+    async def fake_resolve(http, through_window_start: int) -> None:
+        return None
+
+    async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
+        return 100.0, 99.995
+
+    class _DownBookHTTP(_DummyHTTP):
+        async def fetch_book(self, token_id: str) -> dict:
+            assert token_id == "tok-down"
+            return {
+                "bids": [{"price": 0.49, "size": 50}],
+                "asks": [{"price": 0.51, "size": 50}],
+            }
+
+    monkeypatch.setattr(bot, "_resolve_unsettled", fake_resolve)
+    monkeypatch.setattr(bot, "_get_open_and_current_price", fake_prices)
+
+    window_start_ts = _ts(2026, 3, 9, 9, 35)
+    result = await bot._process_window(window_start_ts=window_start_ts, http=_DownBookHTTP())
+
+    assert result["status"] == "paper_filled"
+    assert result["direction"] == "DOWN"
+    assert result["price"] == pytest.approx(0.5)
+    assert result["loss_cluster_suppressed"] is False
 
 
 @pytest.mark.asyncio
