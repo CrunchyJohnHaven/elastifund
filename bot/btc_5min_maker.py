@@ -655,6 +655,30 @@ def choose_maker_buy_price(
     return price
 
 
+def choose_maker_sell_price(
+    *,
+    best_bid: float | None,
+    best_ask: float | None,
+    min_price: float,
+    tick_size: float,
+    aggression_ticks: int = 1,
+) -> float | None:
+    if best_bid is None:
+        return None
+    if best_bid < 0.0 or best_bid > 1.0:
+        return None
+    tick = max(1e-6, float(tick_size))
+    min_valid = _round_down_to_tick(max(0.0, min(1.0, float(min_price))), tick)
+    candidate = _round_down_to_tick(best_bid + (max(1, int(aggression_ticks)) * tick), tick)
+    if best_ask is not None and best_ask > best_bid:
+        candidate = min(candidate, _round_down_to_tick(best_ask, tick))
+    price = max(min_valid, candidate)
+    price = _round_down_to_tick(min(1.0, price), tick)
+    if price <= best_bid + 1e-9:
+        return None
+    return price
+
+
 def effective_max_buy_price(
     cfg: "MakerConfig",
     direction: str,
@@ -915,6 +939,9 @@ class MakerConfig:
     probe_down_max_buy_price: float | None = _optional_env_float("BTC5_PROBE_DOWN_MAX_BUY_PRICE")
     retry_post_only_cross: bool = _env_flag("BTC5_RETRY_POST_ONLY_CROSS", True)
     retry_post_only_safety_ticks: int = int(os.environ.get("BTC5_RETRY_POST_ONLY_SAFETY_TICKS", "1"))
+    enable_sell_early: bool = _env_flag("BTC5_ENABLE_SELL_EARLY", True)
+    sell_early_min_profit_price: float = float(os.environ.get("BTC5_SELL_EARLY_MIN_PROFIT_PRICE", "0.0"))
+    sell_early_max_candidates: int = int(os.environ.get("BTC5_SELL_EARLY_MAX_CANDIDATES", "5"))
     paper_fill_probability: float = float(os.environ.get("BTC5_PAPER_FILL_PROBABILITY", "0.20"))
     clob_fee_rate_bps: int = int(os.environ.get("BTC5_CLOB_FEE_RATE_BPS", "0"))
     request_timeout_sec: float = float(os.environ.get("BTC5_REQUEST_TIMEOUT_SEC", "8"))
@@ -992,6 +1019,8 @@ class MakerConfig:
         self.adaptive_suppress_duration_sec = max(60, int(self.adaptive_suppress_duration_sec))
         self.adaptive_size_raise_increment = max(0.0, float(self.adaptive_size_raise_increment))
         self.adaptive_max_risk_fraction = max(float(self.risk_fraction), float(self.adaptive_max_risk_fraction))
+        self.sell_early_min_profit_price = max(0.0, float(self.sell_early_min_profit_price))
+        self.sell_early_max_candidates = max(0, int(self.sell_early_max_candidates))
 
     @property
     def effective_max_trade_usd(self) -> float:
@@ -1104,6 +1133,7 @@ class TradeDB:
                     wallet_copy INTEGER,
                     wallet_count INTEGER,
                     wallet_notional REAL,
+                    realized_pnl_usd REAL,
                     resolved_side TEXT,
                     won INTEGER,
                     pnl_usd REAL,
@@ -1139,6 +1169,7 @@ class TradeDB:
                 ("wallet_copy", "INTEGER"),
                 ("wallet_count", "INTEGER"),
                 ("wallet_notional", "REAL"),
+                ("realized_pnl_usd", "REAL"),
             ):
                 if column_name not in existing:
                     conn.execute(f"ALTER TABLE window_trades ADD COLUMN {column_name} {column_type}")
@@ -1188,6 +1219,7 @@ class TradeDB:
             ),
             "wallet_count": row.get("wallet_count"),
             "wallet_notional": row.get("wallet_notional"),
+            "realized_pnl_usd": row.get("realized_pnl_usd"),
             "resolved_side": row.get("resolved_side"),
             "won": row.get("won"),
             "pnl_usd": row.get("pnl_usd"),
@@ -1203,6 +1235,7 @@ class TradeDB:
                     order_price, trade_size_usd, shares, order_id, order_status,
                     filled, reason, edge_tier, sizing_reason_tags, loss_cluster_suppressed,
                     session_policy_name, effective_stage, wallet_copy, wallet_count, wallet_notional,
+                    realized_pnl_usd,
                     resolved_side, won, pnl_usd,
                     created_at, updated_at
                 ) VALUES (
@@ -1211,6 +1244,7 @@ class TradeDB:
                     :order_price, :trade_size_usd, :shares, :order_id, :order_status,
                     :filled, :reason, :edge_tier, :sizing_reason_tags, :loss_cluster_suppressed,
                     :session_policy_name, :effective_stage, :wallet_copy, :wallet_count, :wallet_notional,
+                    :realized_pnl_usd,
                     :resolved_side, :won, :pnl_usd,
                     :created_at, :updated_at
                 )
@@ -1238,6 +1272,7 @@ class TradeDB:
                     wallet_copy=excluded.wallet_copy,
                     wallet_count=excluded.wallet_count,
                     wallet_notional=excluded.wallet_notional,
+                    realized_pnl_usd=excluded.realized_pnl_usd,
                     resolved_side=excluded.resolved_side,
                     won=excluded.won,
                     pnl_usd=excluded.pnl_usd,
@@ -1257,6 +1292,34 @@ class TradeDB:
                 ORDER BY window_start_ts ASC
                 """,
                 (int(max_window_start_ts),),
+            ).fetchall()
+        return rows
+
+    def open_live_positions(
+        self,
+        *,
+        max_window_start_ts: int,
+        limit: int,
+    ) -> list[sqlite3.Row]:
+        capped_limit = max(0, int(limit))
+        if capped_limit <= 0:
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM window_trades
+                WHERE window_start_ts <= ?
+                  AND resolved_side IS NULL
+                  AND filled = 1
+                  AND shares > 0
+                  AND token_id IS NOT NULL
+                  AND order_price IS NOT NULL
+                  AND direction IN ('UP', 'DOWN')
+                ORDER BY window_start_ts ASC
+                LIMIT ?
+                """,
+                (int(max_window_start_ts), capped_limit),
             ).fetchall()
         return rows
 
@@ -1880,6 +1943,49 @@ class CLOBExecutor:
             "price": round(price, 2),
             "size": _round_up(shares, 2),
             "side": BUY,
+        }
+
+        signed = client.create_order(OrderArgs(**kwargs))
+        try:
+            resp = client.post_order(signed, OrderType.GTC, post_only=True)
+        except TypeError as exc:
+            raise RuntimeError(
+                "py_clob_client.post_order must support post_only=True for maker-only execution; "
+                "upgrade the client dependency"
+            ) from exc
+
+        if isinstance(resp, dict):
+            order_id = str(resp.get("orderID") or resp.get("id") or "").strip() or None
+            status = str(resp.get("status") or resp.get("orderStatus") or "").strip().lower() or None
+            error_msg = str(resp.get("errorMsg") or resp.get("error") or "").strip() or None
+            success = not bool(resp.get("error")) and bool(order_id)
+            return PlacementResult(
+                order_id=order_id,
+                success=success,
+                status=status,
+                error_msg=error_msg,
+                raw=resp,
+            )
+        return PlacementResult(
+            order_id=None,
+            success=bool(resp),
+            status=None,
+            raw={"response": resp},
+        )
+
+    def place_post_only_sell(self, token_id: str, price: float, shares: float) -> PlacementResult:
+        client = self.ensure_client()
+        try:
+            from py_clob_client.clob_types import OrderArgs, OrderType
+            from py_clob_client.order_builder.constants import SELL
+        except Exception as exc:  # pragma: no cover - runtime dependency
+            raise RuntimeError("py_clob_client imports unavailable at order time") from exc
+
+        kwargs: dict[str, Any] = {
+            "token_id": token_id,
+            "price": round(price, 2),
+            "size": _round_up(shares, 2),
+            "side": SELL,
         }
 
         signed = client.create_order(OrderArgs(**kwargs))
@@ -3079,15 +3185,17 @@ class BTC5MinMakerBot:
             direction = str(row["direction"] or "")
             order_price = _safe_float(row["order_price"], 0.0) or 0.0
             shares = _safe_float(row["shares"], 0.0) or 0.0
+            realized_pnl_usd = _safe_float(row["realized_pnl_usd"], 0.0) or 0.0
             pnl = None
             won = None
 
             if filled == 1 and direction in {"UP", "DOWN"} and resolved_side in {"UP", "DOWN"}:
                 won = 1 if direction == resolved_side else 0
-                pnl = round(shares * (1.0 - order_price), 6) if won else round(-shares * order_price, 6)
+                settlement_pnl = round(shares * (1.0 - order_price), 6) if won else round(-shares * order_price, 6)
+                pnl = round(realized_pnl_usd + settlement_pnl, 6)
             elif filled == 0:
                 won = 0
-                pnl = 0.0
+                pnl = round(realized_pnl_usd, 6)
 
             self.db.upsert_window(
                 {
@@ -3109,6 +3217,7 @@ class BTC5MinMakerBot:
                     "order_status": row["order_status"],
                     "filled": row["filled"],
                     "reason": row["reason"],
+                    "realized_pnl_usd": realized_pnl_usd,
                     "resolved_side": resolved_side,
                     "won": won,
                     "pnl_usd": pnl,
@@ -3199,6 +3308,135 @@ class BTC5MinMakerBot:
             return "live_cancelled_unfilled", 0, 0.0, None, "cancel_before_fill"
         return "live_cancel_unknown", None, None, "order_status_unavailable", None
 
+    async def _sell_early_open_positions(
+        self,
+        *,
+        window_start_ts: int,
+        window_end_ts: int,
+        http: MarketHttpClient,
+    ) -> dict[str, Any]:
+        summary = {
+            "enabled": bool(self.cfg.enable_sell_early and not self.cfg.paper_trading),
+            "checked": 0,
+            "eligible": 0,
+            "attempted": 0,
+            "closed": 0,
+            "partial": 0,
+            "realized_pnl_usd": 0.0,
+        }
+        if self.cfg.paper_trading or not self.cfg.enable_sell_early:
+            return summary
+        if not hasattr(self.clob, "place_post_only_sell"):
+            return summary
+
+        open_rows = self.db.open_live_positions(
+            max_window_start_ts=int(window_start_ts) - WINDOW_SECONDS,
+            limit=self.cfg.sell_early_max_candidates,
+        )
+        for sql_row in open_rows:
+            row = dict(sql_row)
+            summary["checked"] += 1
+            token_id = str(row.get("token_id") or "").strip()
+            entry_price = _safe_float(row.get("order_price"), None)
+            shares = _safe_float(row.get("shares"), None)
+            if not token_id or entry_price is None or shares is None or shares <= 0:
+                continue
+            summary["eligible"] += 1
+
+            book = await http.fetch_book(token_id)
+            if not isinstance(book, dict):
+                continue
+            best_bid, best_ask = http.top_of_book(book)
+            if best_bid is None:
+                continue
+            if best_bid <= entry_price + self.cfg.sell_early_min_profit_price:
+                continue
+
+            min_sell_price = entry_price + max(float(self.cfg.tick_size), self.cfg.sell_early_min_profit_price)
+            sell_price = choose_maker_sell_price(
+                best_bid=best_bid,
+                best_ask=best_ask,
+                min_price=min_sell_price,
+                tick_size=self.cfg.tick_size,
+                aggression_ticks=1,
+            )
+            if sell_price is None:
+                continue
+
+            summary["attempted"] += 1
+            try:
+                placement = self.clob.place_post_only_sell(token_id=token_id, price=sell_price, shares=shares)
+            except Exception as exc:
+                logger.warning("Sell-early placement failed for %s: %s", token_id[:12], exc)
+                continue
+            if not placement.success or not placement.order_id:
+                continue
+
+            (
+                sell_status,
+                sell_filled,
+                sold_shares,
+                reconcile_reason,
+                _sell_outcome_attribution,
+            ) = await self._reconcile_live_order(
+                order_id=placement.order_id,
+                requested_shares=shares,
+                window_end_ts=window_end_ts,
+            )
+            if sell_filled != 1 or sold_shares is None or sold_shares <= 0:
+                continue
+
+            sold = min(float(shares), max(0.0, float(sold_shares)))
+            if sold <= 0:
+                continue
+            realized_increment = round((float(sell_price) - float(entry_price)) * sold, 4)
+            prior_realized = _safe_float(row.get("realized_pnl_usd"), 0.0) or 0.0
+            updated_realized = round(prior_realized + realized_increment, 4)
+            remaining_shares = _round_down(max(0.0, float(shares) - sold), 2)
+
+            updated = dict(row)
+            updated["best_bid"] = best_bid
+            updated["best_ask"] = best_ask
+            updated["realized_pnl_usd"] = updated_realized
+            updated["reason"] = _join_reasons(
+                row.get("reason"),
+                _reason_tag("sell_early_status", sell_status),
+                _reason_tag("sell_early_price", f"{sell_price:.2f}"),
+                _reason_tag("sell_early_shares", f"{sold:.2f}"),
+                _reason_tag("sell_early_realized_pnl", f"{realized_increment:.4f}"),
+                reconcile_reason,
+            )
+            if remaining_shares <= 0:
+                updated["shares"] = 0.0
+                updated["trade_size_usd"] = 0.0
+                updated["order_status"] = "live_exited_early"
+                updated["resolved_side"] = "EARLY_EXIT"
+                updated["won"] = 1 if updated_realized > 0 else 0
+                updated["pnl_usd"] = updated_realized
+                self.db.upsert_window(updated)
+                summary["closed"] += 1
+                if updated["won"] in {0, 1}:
+                    self._record_resolved_fill_for_kelly(
+                        won=int(updated["won"]),
+                        pnl_usd=float(updated_realized),
+                        entry_price=float(entry_price),
+                        window_start_ts=int(updated["window_start_ts"]),
+                    )
+            else:
+                updated["shares"] = remaining_shares
+                updated["trade_size_usd"] = round(remaining_shares * float(entry_price), 4)
+                updated["resolved_side"] = None
+                updated["won"] = None
+                updated["pnl_usd"] = None
+                self.db.upsert_window(updated)
+                summary["partial"] += 1
+
+            summary["realized_pnl_usd"] = round(
+                float(summary["realized_pnl_usd"]) + float(realized_increment),
+                4,
+            )
+        return summary
+
     async def _process_window(self, *, window_start_ts: int, http: MarketHttpClient) -> dict[str, Any]:
         window_end_ts = window_start_ts + WINDOW_SECONDS
         slug = market_slug_for_window(window_start_ts, self.cfg.market_slug_prefix)
@@ -3223,6 +3461,15 @@ class BTC5MinMakerBot:
         wallet_copy_applied = False
         wallet_count = 0
         wallet_notional = 0.0
+        sell_early_summary: dict[str, Any] = {
+            "enabled": bool(self.cfg.enable_sell_early and not self.cfg.paper_trading),
+            "checked": 0,
+            "eligible": 0,
+            "attempted": 0,
+            "closed": 0,
+            "partial": 0,
+            "realized_pnl_usd": 0.0,
+        }
         sizing_reason_tags: list[str] = _unique_tags(
             f"session_bucket={session_bucket}",
             f"session_policy_name={session_policy_name or 'none'}",
@@ -3288,6 +3535,8 @@ class BTC5MinMakerBot:
                 payload["wallet_count"] = wallet_count
             if "wallet_notional" not in payload:
                 payload["wallet_notional"] = round(max(0.0, float(wallet_notional)), 4)
+            if "sell_early" not in payload:
+                payload["sell_early"] = dict(sell_early_summary)
             kelly_metrics = self._rolling_kelly_metrics()
             kelly_plan = self._graduated_kelly_risk_plan()
             if "kelly_sample_count_090" not in payload:
@@ -3343,6 +3592,11 @@ class BTC5MinMakerBot:
 
         # Resolve prior windows first so daily PnL gate uses latest info.
         await self._resolve_unsettled(http, through_window_start=window_start_ts - WINDOW_SECONDS)
+        sell_early_summary = await self._sell_early_open_positions(
+            window_start_ts=window_start_ts,
+            window_end_ts=window_end_ts,
+            http=http,
+        )
 
         today_pnl = self.db.today_realized_pnl()
         stage_controls = self._capital_stage_controls(today_pnl=today_pnl)

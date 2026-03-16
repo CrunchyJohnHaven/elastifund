@@ -24,6 +24,7 @@ from bot.btc_5min_maker import (  # noqa: E402
     calc_trade_size_usd,
     clob_min_order_size,
     choose_maker_buy_price,
+    choose_maker_sell_price,
     choose_token_id_for_direction,
     current_window_start,
     deterministic_fill,

@@ -77,6 +77,24 @@ def test_choose_maker_buy_price_skips_when_post_only_band_falls_below_min_price(
     )
 
 
+def test_choose_maker_sell_price_requires_profit_and_stays_maker() -> None:
+    price = choose_maker_sell_price(
+        best_bid=0.99,
+        best_ask=None,
+        min_price=0.95,
+        tick_size=0.01,
+    )
+    assert price == pytest.approx(1.0)
+
+    no_edge = choose_maker_sell_price(
+        best_bid=0.94,
+        best_ask=0.95,
+        min_price=0.95,
+        tick_size=0.01,
+    )
+    assert no_edge is None
+
+
 def test_transient_request_error_detection_identifies_network_flake_text() -> None:
     assert _is_transient_request_error_text("PolyApiException[status_code=None, error_message=Request exception!]")
     assert _is_transient_request_error_text("HTTP timeout while submitting order")
