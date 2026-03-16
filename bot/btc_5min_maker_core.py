@@ -68,7 +68,21 @@ except Exception:  # pragma: no cover - fallback keeps runtime summaries resilie
 
 logger = logging.getLogger("BTC5Maker")
 
-WINDOW_SECONDS = 300
+def _window_seconds_from_env(default: int = 300) -> int:
+    raw = os.environ.get("BTC5_WINDOW_SECONDS")
+    if raw in (None, ""):
+        return int(default)
+    try:
+        parsed = int(float(raw))
+    except (TypeError, ValueError):
+        return int(default)
+    if parsed < 60 or parsed % 60 != 0:
+        return int(default)
+    return int(parsed)
+
+
+WINDOW_SECONDS = _window_seconds_from_env()
+WINDOW_MINUTES = max(1, WINDOW_SECONDS // 60)
 DEFAULT_DB_PATH = Path("data/btc_5min_maker.db")
 CLOB_HARD_MIN_SHARES = 5.0
 CLOB_HARD_MIN_NOTIONAL_USD = 5.0
@@ -588,9 +602,16 @@ def _parse_order_size(value: Any) -> float | None:
     return float(parsed)
 
 
-def market_slug_for_window(window_start_ts: int, slug_prefix: str = "") -> str:
+def market_slug_for_window(
+    window_start_ts: int,
+    slug_prefix: str = "",
+    *,
+    window_seconds: int | None = None,
+) -> str:
     prefix = slug_prefix or os.environ.get("BTC5_ASSET_SLUG_PREFIX", "btc")
-    return f"{prefix}-updown-5m-{int(window_start_ts)}"
+    span_seconds = int(window_seconds) if window_seconds is not None else WINDOW_SECONDS
+    window_minutes = max(1, span_seconds // 60)
+    return f"{prefix}-updown-{window_minutes}m-{int(window_start_ts)}"
 
 
 def direction_from_prices(open_price: float, current_price: float, min_delta: float) -> tuple[str | None, float]:
@@ -612,6 +633,9 @@ def analyze_maker_buy_price(
     aggression_ticks: int = 1,
     post_only_safety_ticks: int = 0,
     defensive_shade_ticks: int = 0,
+    wide_spread_ticks: int = 10,
+    wide_spread_min_ask: float = 0.90,
+    wide_spread_max_ask: float = 0.95,
 ) -> dict[str, Any]:
     analysis: dict[str, Any] = {
         "price": None,
@@ -647,10 +671,21 @@ def analyze_maker_buy_price(
 
     quote_ticks = max(0, int(aggression_ticks))
     defensive_ticks = max(0, int(defensive_shade_ticks))
-    candidate = _round_down_to_tick(
-        best_bid + ((quote_ticks - safety_ticks - defensive_ticks) * tick_size),
-        tick_size,
-    )
+    spread_ticks = int((best_ask - best_bid) / tick_size) if tick_size > 0 else 0
+    if (
+        spread_ticks > max(0, int(wide_spread_ticks))
+        and best_ask >= float(wide_spread_min_ask)
+        and best_ask <= float(wide_spread_max_ask)
+    ):
+        candidate = _round_down_to_tick(
+            best_ask - ((1 + safety_ticks) * tick_size),
+            tick_size,
+        )
+    else:
+        candidate = _round_down_to_tick(
+            best_bid + ((quote_ticks - safety_ticks - defensive_ticks) * tick_size),
+            tick_size,
+        )
     analysis["candidate_price"] = candidate
     price = min(max(candidate, min_valid), max_valid)
     if price >= best_ask:
@@ -672,6 +707,9 @@ def choose_maker_buy_price(
     aggression_ticks: int = 1,
     post_only_safety_ticks: int = 0,
     defensive_shade_ticks: int = 0,
+    wide_spread_ticks: int = 10,
+    wide_spread_min_ask: float = 0.90,
+    wide_spread_max_ask: float = 0.95,
 ) -> float | None:
     analysis = analyze_maker_buy_price(
         best_bid=best_bid,
@@ -682,6 +720,9 @@ def choose_maker_buy_price(
         aggression_ticks=aggression_ticks,
         post_only_safety_ticks=post_only_safety_ticks,
         defensive_shade_ticks=defensive_shade_ticks,
+        wide_spread_ticks=wide_spread_ticks,
+        wide_spread_min_ask=wide_spread_min_ask,
+        wide_spread_max_ask=wide_spread_max_ask,
     )
     return _safe_float(analysis.get("price"), None)
 
@@ -1001,6 +1042,8 @@ class MakerConfig:
     clob_fee_rate_bps: int = int(os.environ.get("BTC5_CLOB_FEE_RATE_BPS", "0"))
     request_timeout_sec: float = float(os.environ.get("BTC5_REQUEST_TIMEOUT_SEC", "8"))
 
+    binance_symbol: str = os.environ.get("BTC5_ASSET_BINANCE_SYMBOL", "BTCUSDT")
+    binance_kline_interval: str = os.environ.get("BTC5_BINANCE_KLINE_INTERVAL", f"{WINDOW_MINUTES}m")
     binance_ws_url: str = os.environ.get("BTC5_BINANCE_WS_URL", "wss://stream.binance.com:9443/ws/btcusdt@trade")
     binance_klines_url: str = os.environ.get(
         "BTC5_BINANCE_KLINES_URL",
@@ -1812,8 +1855,8 @@ class MarketHttpClient:
     async def fetch_binance_window_open_close(self, window_start_ts: int) -> tuple[float, float] | None:
         timeout = aiohttp.ClientTimeout(total=self.cfg.request_timeout_sec)
         params = {
-            "symbol": "BTCUSDT",
-            "interval": "5m",
+            "symbol": self.cfg.binance_symbol,
+            "interval": self.cfg.binance_kline_interval,
             "startTime": int(window_start_ts) * 1000,
             "limit": 1,
         }

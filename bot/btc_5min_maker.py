@@ -787,6 +787,47 @@ def calc_trade_size_usd(bankroll_usd: float, risk_fraction: float, max_trade_usd
     return round(min(bankroll_usd * risk_fraction, max_trade_usd), 2)
 
 
+# ---------------------------------------------------------------------------
+# Graduated Kelly sizing — increases risk fraction as fill count grows
+# ---------------------------------------------------------------------------
+KELLY_QUALIFY_MIN_ENTRY = 0.90
+KELLY_MAX_FRACTION = 0.33
+
+
+def compute_kelly_fraction(win_rate: float, avg_entry: float) -> float:
+    """Quarter-Kelly for binary markets. Returns fraction of bankroll to bet."""
+    if win_rate <= 0 or avg_entry <= 0 or avg_entry >= 1.0:
+        return 0.0
+    b = (1.0 - avg_entry) / avg_entry  # payoff ratio
+    q = 1.0 - win_rate
+    kelly_f = (win_rate * b - q) / b
+    if kelly_f <= 0:
+        return 0.0
+    quarter_kelly = kelly_f * 0.25
+    return min(quarter_kelly, KELLY_MAX_FRACTION)
+
+
+def graduated_risk_fraction(
+    n_qualifying_fills: int,
+    win_rate: float,
+    avg_entry: float,
+    base_fraction: float = 0.02,
+) -> float:
+    """Ramp risk fraction based on sample size:
+    N < 15:  base (2%)
+    N 15-30: 5%
+    N 30-50: 10%
+    N >= 50: quarter-Kelly from observed stats, capped at 33%
+    """
+    if n_qualifying_fills < 15:
+        return base_fraction
+    if n_qualifying_fills < 30:
+        return 0.05
+    if n_qualifying_fills < 50:
+        return 0.10
+    return max(base_fraction, compute_kelly_fraction(win_rate, avg_entry))
+
+
 def deterministic_fill(window_start_ts: int, fill_probability: float) -> bool:
     p = max(0.0, min(1.0, fill_probability))
     digest = hashlib.sha256(str(window_start_ts).encode("utf-8")).hexdigest()
@@ -2060,6 +2101,25 @@ class BTC5MinMakerBot:
             ),
         }
 
+    def _graduated_risk_fraction(self) -> tuple[float, int, float, float]:
+        """Compute graduated Kelly risk fraction from DB fills at 0.90+."""
+        try:
+            rows = self.db.recent_live_filled(limit=200)
+        except Exception:
+            return self.cfg.risk_fraction, 0, 0.0, 0.0
+        qualifying = [
+            r for r in rows
+            if _safe_float(r.get("order_price"), 0.0) >= KELLY_QUALIFY_MIN_ENTRY
+        ]
+        n = len(qualifying)
+        if n == 0:
+            return self.cfg.risk_fraction, 0, 0.0, 0.0
+        wins = sum(1 for r in qualifying if r.get("won") == 1)
+        wr = wins / n
+        avg_entry = sum(_safe_float(r.get("order_price"), 0.93) for r in qualifying) / n
+        frac = graduated_risk_fraction(n, wr, avg_entry, self.cfg.risk_fraction)
+        return frac, n, wr, avg_entry
+
     def _trade_size_for_edge_tier(
         self,
         *,
@@ -2067,11 +2127,13 @@ class BTC5MinMakerBot:
         effective_max_trade_usd: float,
     ) -> dict[str, Any]:
         stage_cap_usd = round(max(0.0, float(effective_max_trade_usd)), 2)
+        kelly_frac, kelly_n, kelly_wr, kelly_avg_entry = self._graduated_risk_fraction()
         standard_size_usd = calc_trade_size_usd(
             self.cfg.bankroll_usd,
-            self.cfg.risk_fraction,
+            kelly_frac,
             stage_cap_usd,
         )
+        kelly_tag = f"kelly_frac={kelly_frac:.4f},kelly_n={kelly_n},kelly_wr={kelly_wr:.3f}"
         if edge_tier == "strong_validated":
             return {
                 "target_size_usd": stage_cap_usd,
@@ -2080,6 +2142,7 @@ class BTC5MinMakerBot:
                     "sizing_mode=full_stage_cap",
                     f"stage_cap_usd={stage_cap_usd:.2f}",
                     f"standard_size_usd={standard_size_usd:.2f}",
+                    kelly_tag,
                 ),
             }
         if edge_tier == "exploratory":
@@ -2126,6 +2189,7 @@ class BTC5MinMakerBot:
                     "sizing_mode=standard_risk_fraction",
                     f"stage_cap_usd={stage_cap_usd:.2f}",
                     f"standard_size_usd={standard_size_usd:.2f}",
+                    kelly_tag,
                 ),
             }
         return {

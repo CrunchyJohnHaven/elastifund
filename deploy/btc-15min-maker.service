@@ -1,0 +1,23 @@
+[Unit]
+Description=BTC 15-Minute Maker Bot (Instance H)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/polymarket-trading-bot
+Environment="PYTHONPATH=/home/ubuntu/polymarket-trading-bot:/home/ubuntu/polymarket-trading-bot/bot:/home/ubuntu/polymarket-trading-bot/polymarket-bot" "BTC5_WINDOW_SECONDS=900" "BTC5_MARKET_SLUG_PREFIX=btc-updown-15m" "BTC5_BINANCE_SYMBOL=BTCUSDT" "BTC5_BINANCE_WS_URL=wss://stream.binance.com:9443/ws/btcusdt@trade" "BTC5_BINANCE_TICKER_URL=https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT" "BTC5_BINANCE_KLINE_INTERVAL=15m" "BTC5_DB_PATH=data/btc_15min_maker.db"
+EnvironmentFile=-/home/ubuntu/polymarket-trading-bot/config/crypto15_strategy.env
+EnvironmentFile=-/home/ubuntu/polymarket-trading-bot/state/btc5_autoresearch.env
+EnvironmentFile=-/home/ubuntu/polymarket-trading-bot/state/btc5_capital_stage.env
+EnvironmentFile=/home/ubuntu/polymarket-trading-bot/.env
+ExecStart=/usr/bin/python3 bot/btc_5min_maker.py --continuous --live
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=btc15maker
+
+[Install]
+WantedBy=multi-user.target
