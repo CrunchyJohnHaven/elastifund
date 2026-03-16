@@ -58,6 +58,11 @@ try:
 except Exception:  # pragma: no cover - optional dependency during staged rollout
     SmartWalletFeed = None  # type: ignore[assignment]
 
+try:
+    from bot.momentum_detector import MomentumDetector
+except Exception:  # pragma: no cover - optional dependency during staged rollout
+    MomentumDetector = None  # type: ignore[assignment]
+
 logger = logging.getLogger("BTC5Maker")
 
 def _window_seconds_from_env(default: int = 300) -> int:
@@ -933,6 +938,17 @@ class MakerConfig:
     adaptation_log_path: Path = Path(
         os.environ.get("BTC5_ADAPTATION_LOG_PATH", str(DEFAULT_ADAPTATION_LOG_PATH))
     )
+    enable_momentum_persistence: bool = _env_flag("BTC5_ENABLE_MOMENTUM_PERSISTENCE", True)
+    momentum_state_path: Path = Path(os.environ.get("BTC5_MOMENTUM_STATE_PATH", "data/momentum_state.json"))
+    momentum_lookback_windows: int = int(os.environ.get("BTC5_MOMENTUM_LOOKBACK_WINDOWS", "96"))
+    momentum_streak_min_windows: int = int(os.environ.get("BTC5_MOMENTUM_STREAK_MIN_WINDOWS", "3"))
+    momentum_reversal_boost_windows: int = int(os.environ.get("BTC5_MOMENTUM_REVERSAL_BOOST_WINDOWS", "2"))
+    momentum_favored_min_delta_multiplier: float = float(
+        os.environ.get("BTC5_MOMENTUM_FAVORED_DELTA_MULTIPLIER", "0.8")
+    )
+    momentum_opposed_min_delta_multiplier: float = float(
+        os.environ.get("BTC5_MOMENTUM_OPPOSED_DELTA_MULTIPLIER", "1.2")
+    )
 
     binance_symbol: str = os.environ.get("BTC5_ASSET_BINANCE_SYMBOL", "BTCUSDT")
     binance_kline_interval: str = os.environ.get("BTC5_BINANCE_KLINE_INTERVAL", f"{WINDOW_MINUTES}m")
@@ -992,6 +1008,11 @@ class MakerConfig:
         self.adaptive_suppress_duration_sec = max(60, int(self.adaptive_suppress_duration_sec))
         self.adaptive_size_raise_increment = max(0.0, float(self.adaptive_size_raise_increment))
         self.adaptive_max_risk_fraction = max(float(self.risk_fraction), float(self.adaptive_max_risk_fraction))
+        self.momentum_lookback_windows = max(4, int(self.momentum_lookback_windows))
+        self.momentum_streak_min_windows = max(2, int(self.momentum_streak_min_windows))
+        self.momentum_reversal_boost_windows = max(1, int(self.momentum_reversal_boost_windows))
+        self.momentum_favored_min_delta_multiplier = max(0.01, float(self.momentum_favored_min_delta_multiplier))
+        self.momentum_opposed_min_delta_multiplier = max(0.01, float(self.momentum_opposed_min_delta_multiplier))
 
     @property
     def effective_max_trade_usd(self) -> float:
@@ -1962,6 +1983,7 @@ class BTC5MinMakerBot:
         self.cache = BinancePriceCache()
         self.clob = CLOBExecutor(cfg)
         self.smart_wallet_feed = self._build_smart_wallet_feed()
+        self.momentum_detector = self._build_momentum_detector()
         self._wallet_watch_started_windows: set[int] = set()
         self._rolling_fills_090: list[tuple[float, float, int]] = []
         self._rolling_wr: float = 0.0
@@ -2030,6 +2052,27 @@ class BTC5MinMakerBot:
                 return None
         except Exception as exc:
             logger.warning("Failed to initialize smart wallet feed: %s", exc)
+            return None
+
+    def _build_momentum_detector(self) -> Any:
+        if not self.cfg.enable_momentum_persistence:
+            return None
+        if MomentumDetector is None:
+            logger.warning("BTC5 momentum enabled but bot.momentum_detector is unavailable")
+            return None
+        try:
+            return MomentumDetector(
+                db_path=self.cfg.db_path,
+                state_path=self.cfg.momentum_state_path,
+                asset_symbol=self.cfg.binance_symbol,
+                lookback_windows=self.cfg.momentum_lookback_windows,
+                streak_min_windows=self.cfg.momentum_streak_min_windows,
+                reversal_boost_windows=self.cfg.momentum_reversal_boost_windows,
+                favored_min_delta_multiplier=self.cfg.momentum_favored_min_delta_multiplier,
+                opposed_min_delta_multiplier=self.cfg.momentum_opposed_min_delta_multiplier,
+            )
+        except Exception as exc:
+            logger.warning("Failed to initialize momentum detector: %s", exc)
             return None
 
     def _adaptive_risk_fraction(self) -> float:
@@ -3223,6 +3266,14 @@ class BTC5MinMakerBot:
         wallet_copy_applied = False
         wallet_count = 0
         wallet_notional = 0.0
+        momentum_snapshot: Any | None = None
+        momentum_mode = "disabled"
+        momentum_favored_direction: str | None = None
+        momentum_streak_direction: str | None = None
+        momentum_streak_length = 0
+        momentum_windows_since_break: int | None = None
+        momentum_min_delta_multiplier = 1.0
+        momentum_reason: str | None = None
         sizing_reason_tags: list[str] = _unique_tags(
             f"session_bucket={session_bucket}",
             f"session_policy_name={session_policy_name or 'none'}",
@@ -3276,6 +3327,18 @@ class BTC5MinMakerBot:
                 )
             if "suppressed_direction" not in payload:
                 payload["suppressed_direction"] = (recent_regime or {}).get("suppressed_direction")
+            if "momentum_mode" not in payload:
+                payload["momentum_mode"] = momentum_mode
+            if "momentum_favored_direction" not in payload:
+                payload["momentum_favored_direction"] = momentum_favored_direction
+            if "momentum_streak_direction" not in payload:
+                payload["momentum_streak_direction"] = momentum_streak_direction
+            if "momentum_streak_length" not in payload:
+                payload["momentum_streak_length"] = int(momentum_streak_length)
+            if "momentum_windows_since_break" not in payload:
+                payload["momentum_windows_since_break"] = momentum_windows_since_break
+            if "momentum_min_delta_multiplier" not in payload:
+                payload["momentum_min_delta_multiplier"] = round(float(momentum_min_delta_multiplier), 6)
             if "book_failure_attribution" not in payload:
                 payload["book_failure_attribution"] = None
             if "placement_failure_attribution" not in payload:
@@ -3359,6 +3422,25 @@ class BTC5MinMakerBot:
         probe_fresh_for_stage_upgrade = bool(stage_controls.get("probe_fresh_for_stage_upgrade"))
         execution_drag_counts = dict(stage_controls.get("execution_drag_counts") or execution_drag_counts)
         shadow_research_tiers = dict(stage_controls.get("shadow_research_tiers") or shadow_research_tiers)
+        if self.momentum_detector is not None:
+            try:
+                momentum_snapshot = self.momentum_detector.update(as_of_window_start_ts=window_start_ts)
+                momentum_mode = str(getattr(momentum_snapshot, "mode", "neutral") or "neutral")
+                momentum_favored_direction = (
+                    str(getattr(momentum_snapshot, "favored_direction", "")).strip().upper() or None
+                )
+                momentum_streak_direction = (
+                    str(getattr(momentum_snapshot, "streak_direction", "")).strip().upper() or None
+                )
+                momentum_streak_length = int(getattr(momentum_snapshot, "streak_length", 0) or 0)
+                raw_windows_since_break = getattr(momentum_snapshot, "windows_since_break", None)
+                momentum_windows_since_break = (
+                    int(raw_windows_since_break) if raw_windows_since_break is not None else None
+                )
+            except Exception as exc:
+                logger.warning("Momentum detector update failed for window %s: %s", window_start_ts, exc)
+                momentum_mode = "error"
+                momentum_reason = "momentum_update_failed"
         probe_mode = self._probe_mode(
             today_pnl=today_pnl,
             effective_daily_loss_limit_usd=effective_daily_loss_limit_usd,
@@ -3419,6 +3501,30 @@ class BTC5MinMakerBot:
             _persist(row)
             return _result({"window_start_ts": window_start_ts, "status": row["order_status"]})
 
+        direction_hint: str | None = None
+        raw_delta = (current_price - open_price) / open_price if open_price > 0 else 0.0
+        if raw_delta > 0:
+            direction_hint = "UP"
+        elif raw_delta < 0:
+            direction_hint = "DOWN"
+        if momentum_snapshot is not None and direction_hint in {"UP", "DOWN"}:
+            momentum_min_delta_multiplier = float(momentum_snapshot.min_delta_multiplier_for_direction(direction_hint))
+            if abs(momentum_min_delta_multiplier - 1.0) > 1e-9:
+                effective_min_delta = float(effective_min_delta) * float(momentum_min_delta_multiplier)
+                momentum_reason = _reason_tag(
+                    "momentum",
+                    (
+                        f"mode={momentum_mode} favored={momentum_favored_direction or 'none'} "
+                        f"direction={direction_hint} multiplier={momentum_min_delta_multiplier:.3f}"
+                    ),
+                )
+                sizing_reason_tags = _unique_tags(
+                    *sizing_reason_tags,
+                    f"momentum_mode={momentum_mode}",
+                    f"momentum_favored_direction={momentum_favored_direction or 'none'}",
+                    f"momentum_delta_multiplier={momentum_min_delta_multiplier:.3f}",
+                )
+
         direction, delta = direction_from_prices(open_price, current_price, effective_min_delta)
         if self.cfg.enable_wallet_copy and self.smart_wallet_feed:
             await self._ensure_wallet_copy_watch(window_start_ts=window_start_ts, http=http)
@@ -3474,6 +3580,7 @@ class BTC5MinMakerBot:
                 "reason": _join_reasons(
                     probe_reason,
                     session_reason,
+                    momentum_reason,
                     f"abs(delta)={abs(delta):.6f} < {effective_min_delta:.6f}",
                 ),
             }
@@ -3499,6 +3606,7 @@ class BTC5MinMakerBot:
                 "reason": _join_reasons(
                     probe_reason,
                     session_reason,
+                    momentum_reason,
                     f"abs(delta)={abs(delta):.6f} > {effective_max_abs_delta:.6f}",
                 ),
             }
@@ -3900,6 +4008,7 @@ class BTC5MinMakerBot:
         reason: str | None = _join_reasons(
             probe_reason,
             session_reason,
+            momentum_reason,
             regime_reason,
             _reason_tag("edge_tier", edge_tier),
         )
