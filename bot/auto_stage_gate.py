@@ -1,96 +1,104 @@
 #!/usr/bin/env python3
-"""Automated capital stage-gate updates for multi-asset maker lanes."""
+"""Automatic stage-gate controls for 5-minute maker sleeves.
+
+DISPATCH_110 Bot 4:
+- Read fills from all 6 asset DBs.
+- Compute aggregate fills / WR / consecutive losses / cumulative PnL.
+- Promote BTC stage sizing when aggregate thresholds are met.
+- De-risk per-asset sizing after 5 consecutive losses.
+- Halt trading when CLOB balance drops below 50% of configured bankroll.
+- Persist every decision to data/stage_gate_log.json.
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-DEFAULT_STATE_ENV_PATH = Path("state/btc5_capital_stage.env")
+try:
+    from dotenv import load_dotenv
+except Exception:  # pragma: no cover - optional in tests.
+    load_dotenv = None
+
+
+ASSET_ORDER: tuple[str, ...] = ("btc", "eth", "sol", "bnb", "doge", "xrp")
+
+DEFAULT_ASSET_DB_PATHS: dict[str, Path] = {
+    "btc": Path("data/btc_5min_maker.db"),
+    "eth": Path("data/eth_5min_maker.db"),
+    "sol": Path("data/sol_5min_maker.db"),
+    "bnb": Path("data/bnb_5min_maker.db"),
+    "doge": Path("data/doge_5min_maker.db"),
+    "xrp": Path("data/xrp_5min_maker.db"),
+}
+
+DEFAULT_ASSET_ENV_PATHS: dict[str, Path] = {
+    "btc": Path("config/btc5_strategy.env"),
+    "eth": Path("config/eth5_strategy.env"),
+    "sol": Path("config/sol5_strategy.env"),
+    "bnb": Path("config/bnb5_strategy.env"),
+    "doge": Path("config/doge5_strategy.env"),
+    "xrp": Path("config/xrp5_strategy.env"),
+}
+
+DEFAULT_STAGE_ENV_PATH = Path("state/btc5_capital_stage.env")
+DEFAULT_MULTI_ASSET_CONFIG_PATH = Path("config/multi_asset_slugs.json")
+DEFAULT_BALANCE_JSON_PATH = Path("config/remote_cycle_status.json")
 DEFAULT_STAGE_GATE_LOG_PATH = Path("data/stage_gate_log.json")
-DEFAULT_DATA_DIR = Path("data")
-DEFAULT_LOOKBACK_HOURS = 0.0
-DEFAULT_ASSETS = ("btc", "eth", "sol", "bnb", "doge", "xrp")
-MAX_LOG_EVENTS = 500
+
+STAGE1_MAX_TRADE_KEY = "BTC5_STAGE1_MAX_TRADE_USD"
+GENERIC_MAX_TRADE_KEY = "BTC5_MAX_TRADE_USD"
+DAILY_LOSS_LIMIT_KEY = "BTC5_DAILY_LOSS_LIMIT_USD"
+BANKROLL_KEY = "BTC5_BANKROLL_USD"
+
+HUMAN_CONFIRMATION_KEYS: tuple[str, ...] = (
+    "BTC5_HUMAN_CONFIRMED_MAX_TRADE_ABOVE_500",
+    "BTC5_ALLOW_MAX_TRADE_ABOVE_500",
+)
+
+MAX_TRADE_WITHOUT_CONFIRMATION = 500.0
 
 
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+def _iso_utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
-def _safe_float(value: Any, default: float = 0.0) -> float:
+def _safe_float(value: Any, default: float | None = None) -> float | None:
     try:
-        if value in (None, ""):
-            return float(default)
+        if value is None:
+            return default
         return float(value)
     except (TypeError, ValueError):
-        return float(default)
+        return default
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
     try:
-        if value in (None, ""):
-            return int(default)
+        if value is None:
+            return default
         return int(value)
     except (TypeError, ValueError):
-        return int(default)
+        return default
 
 
-def _parse_bool_int(value: Any) -> int | None:
-    if value is None:
-        return None
-    text = str(value).strip().lower()
-    if text in {"1", "true", "yes", "won"}:
-        return 1
-    if text in {"0", "false", "no", "lost"}:
-        return 0
-    try:
-        numeric = int(float(text))
-    except (TypeError, ValueError):
-        return None
-    if numeric not in {0, 1}:
-        return None
-    return numeric
+def _is_truthy(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on", "y"}
 
 
-def _parse_iso_datetime(value: Any) -> datetime | None:
-    text = str(value or "").strip()
-    if not text:
-        return None
-    normalized = text[:-1] + "+00:00" if text.endswith("Z") else text
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+def _format_env_float(value: float) -> str:
+    rounded = round(float(value), 6)
+    return f"{rounded:.6f}".rstrip("0").rstrip(".")
 
 
-def _load_json(path: Path) -> dict[str, Any]:
+def _parse_env_file(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def _read_env_kv(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
-    if not path.exists():
-        return values
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -99,56 +107,102 @@ def _read_env_kv(path: Path) -> dict[str, str]:
         key = key.strip()
         if not key:
             continue
-        values[key] = value.strip().strip('"').strip("'")
+        values[key] = value.strip()
     return values
 
 
-def _update_env_file(path: Path, updates: dict[str, str]) -> None:
-    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+def _upsert_env_values(path: Path, updates: dict[str, str], *, header_comment: str | None = None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    original_lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     out_lines: list[str] = []
-    replaced: set[str] = set()
-    for raw_line in lines:
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in raw_line:
+    seen: set[str] = set()
+
+    if not original_lines and header_comment:
+        out_lines.append(f"# {header_comment}")
+        out_lines.append(f"# generated_at={_iso_utc_now()}")
+
+    for raw_line in original_lines:
+        if "=" not in raw_line or raw_line.lstrip().startswith("#"):
             out_lines.append(raw_line)
             continue
-        key, _ = raw_line.split("=", 1)
-        normalized_key = key.strip()
-        if normalized_key in updates:
-            out_lines.append(f"{normalized_key}={updates[normalized_key]}")
-            replaced.add(normalized_key)
+        key, _value = raw_line.split("=", 1)
+        key = key.strip()
+        if key in updates:
+            out_lines.append(f"{key}={updates[key]}")
+            seen.add(key)
         else:
             out_lines.append(raw_line)
-    for key, value in updates.items():
-        if key in replaced:
-            continue
-        out_lines.append(f"{key}={value}")
-    if not out_lines:
-        out_lines = [f"{key}={value}" for key, value in updates.items()]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+
+    for key in sorted(updates):
+        if key not in seen:
+            out_lines.append(f"{key}={updates[key]}")
+
+    path.write_text("\n".join(out_lines).rstrip() + "\n", encoding="utf-8")
 
 
-def _infer_asset_name(db_path: Path) -> str:
-    stem = db_path.stem.lower()
-    for token in DEFAULT_ASSETS:
-        if token in stem:
-            return token
-    return stem
-
-
-def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+def _load_json(path: Path, default: Any) -> Any:
+    if not path.exists():
+        return default
     try:
-        rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
-    except sqlite3.Error:
-        return set()
-    return {str(row[1]) for row in rows}
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+def _write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _parse_key_value_paths(values: list[str] | None, *, arg_name: str) -> dict[str, Path]:
+    parsed: dict[str, Path] = {}
+    for raw in values or []:
+        if "=" not in raw:
+            raise ValueError(f"{arg_name} entry must be asset=path, got: {raw!r}")
+        asset, path = raw.split("=", 1)
+        asset = asset.strip().lower()
+        if not asset:
+            raise ValueError(f"{arg_name} entry has empty asset: {raw!r}")
+        parsed[asset] = Path(path.strip())
+    return parsed
+
+
+def _merge_path_overrides(defaults: dict[str, Path], overrides: dict[str, Path] | None) -> dict[str, Path]:
+    merged = dict(defaults)
+    for asset, path in (overrides or {}).items():
+        merged[asset.lower()] = path
+    return merged
+
+
+def _load_paths_from_multi_asset_config(config_path: Path) -> tuple[dict[str, Path], dict[str, Path]]:
+    db_paths = dict(DEFAULT_ASSET_DB_PATHS)
+    env_paths = dict(DEFAULT_ASSET_ENV_PATHS)
+    payload = _load_json(config_path, default={})
+    if not isinstance(payload, dict):
+        return db_paths, env_paths
+    assets = payload.get("assets")
+    if not isinstance(assets, dict):
+        return db_paths, env_paths
+
+    for _symbol, raw_meta in assets.items():
+        if not isinstance(raw_meta, dict):
+            continue
+        asset = str(raw_meta.get("asset_slug_prefix") or "").strip().lower()
+        if asset not in ASSET_ORDER:
+            continue
+        db_raw = str(raw_meta.get("db") or "").strip()
+        env_raw = str(raw_meta.get("strategy_env") or "").strip()
+        if db_raw:
+            db_paths[asset] = Path(db_raw)
+        if env_raw:
+            env_paths[asset] = Path(env_raw)
+    return db_paths, env_paths
 
 
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
     try:
         row = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?",
             (table_name,),
         ).fetchone()
     except sqlite3.Error:
@@ -156,401 +210,514 @@ def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
     return row is not None
 
 
-@dataclass(frozen=True)
-class FillRecord:
-    asset: str
-    db_path: str
-    won: int
-    pnl_usd: float
-    sort_key: float
-    created_at: str | None
+def _coerce_won(won_value: Any, *, pnl_usd: float) -> int:
+    if isinstance(won_value, bool):
+        return 1 if won_value else 0
+    if isinstance(won_value, (int, float)):
+        return 1 if float(won_value) > 0 else 0
+    text = str(won_value or "").strip().lower()
+    if text in {"won", "win", "true", "t", "yes", "y", "1"}:
+        return 1
+    if text in {"lost", "lose", "false", "f", "no", "n", "0"}:
+        return 0
+    return 1 if pnl_usd > 0.0 else 0
 
 
-@dataclass(frozen=True)
-class StageGateMetrics:
-    fills: int
-    wins: int
-    losses: int
-    win_rate: float
-    total_pnl_usd: float
-    consecutive_losses: int
-    by_asset: dict[str, dict[str, Any]]
-    db_paths_scanned: list[str]
-    lookback_hours: float
-
-
-@dataclass(frozen=True)
-class StageGateDecision:
-    action: str
-    reason: str
-    current_max_trade_usd: float
-    target_max_trade_usd: float
-    applied_max_trade_usd: float
-    bankroll_usd: float
-    risk_fraction: float
-    risk_cap_usd: float
-    balance_usd: float
-    halted: bool
-    safeguards: list[str]
-
-
-def _row_sort_key(row: sqlite3.Row, columns: set[str], fallback: int) -> float:
-    if "decision_ts" in columns:
-        decision_ts = _safe_float(row["decision_ts"], 0.0)
-        if decision_ts > 0:
-            return decision_ts
-    if "window_start_ts" in columns:
-        window_start_ts = _safe_float(row["window_start_ts"], 0.0)
-        if window_start_ts > 0:
-            return window_start_ts
-    if "created_at" in columns:
-        dt = _parse_iso_datetime(row["created_at"])
-        if dt is not None:
-            return dt.timestamp()
-    return float(fallback)
-
-
-def _row_created_at_text(row: sqlite3.Row, columns: set[str]) -> str | None:
-    if "created_at" not in columns:
-        return None
-    text = str(row["created_at"] or "").strip()
-    return text or None
-
-
-def _load_fills_from_db(db_path: Path, *, lookback_hours: float) -> tuple[list[FillRecord], list[str]]:
-    diagnostics: list[str] = []
+def _read_asset_fill_metrics(asset: str, db_path: Path) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "asset": asset,
+        "db_path": str(db_path),
+        "db_exists": db_path.exists(),
+        "status": "ok",
+        "query_error": None,
+        "fills": 0,
+        "wins": 0,
+        "losses": 0,
+        "win_rate": None,
+        "pnl_usd": 0.0,
+        "consecutive_losses_current": 0,
+        "consecutive_losses_max": 0,
+        "latest_fill_ts": None,
+        "events": [],
+    }
     if not db_path.exists():
-        diagnostics.append(f"missing_db:{db_path}")
-        return [], diagnostics
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
+        result["status"] = "db_missing"
+        return result
+
+    conn: sqlite3.Connection | None = None
     try:
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
         if not _table_exists(conn, "window_trades"):
-            diagnostics.append(f"missing_table:{db_path}:window_trades")
-            return [], diagnostics
-        columns = _table_columns(conn, "window_trades")
-        if "won" not in columns or "pnl_usd" not in columns:
-            diagnostics.append(f"missing_columns:{db_path}:won_or_pnl_usd")
-            return [], diagnostics
+            result["status"] = "missing_window_trades_table"
+            return result
 
-        select_columns = ["won", "pnl_usd"]
-        for optional in ("decision_ts", "window_start_ts", "created_at", "order_status", "filled"):
-            if optional in columns:
-                select_columns.append(optional)
-        where_predicates: list[str] = []
-        if "order_status" in columns:
-            where_predicates.append("LOWER(order_status) = 'live_filled'")
-        if "filled" in columns:
-            where_predicates.append("filled = 1")
-        if not where_predicates:
-            where_predicates.append("won IS NOT NULL")
-        where_sql = "(" + " OR ".join(where_predicates) + ")"
-        query = f"SELECT {', '.join(select_columns)} FROM window_trades WHERE {where_sql}"
-        rows = conn.execute(query).fetchall()
+        rows = conn.execute(
+            """
+            SELECT
+                COALESCE(CAST(decision_ts AS INTEGER), 0) AS decision_ts,
+                rowid,
+                CAST(COALESCE(pnl_usd, 0) AS REAL) AS pnl_usd,
+                won
+            FROM window_trades
+            WHERE LOWER(COALESCE(order_status, '')) LIKE '%filled%'
+               OR LOWER(COALESCE(order_status, '')) = 'live_partial_fill_cancelled'
+            ORDER BY COALESCE(CAST(decision_ts AS INTEGER), 0) ASC, rowid ASC
+            """
+        ).fetchall()
     except sqlite3.Error as exc:
-        diagnostics.append(f"sqlite_error:{db_path}:{exc}")
-        return [], diagnostics
+        result["status"] = "query_failed"
+        result["query_error"] = str(exc)
+        return result
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
-    now_ts = _utc_now().timestamp()
-    lookback_cutoff = None
-    if lookback_hours > 0:
-        lookback_cutoff = now_ts - max(0.0, float(lookback_hours)) * 3600.0
+    running_loss_streak = 0
+    max_loss_streak = 0
+    wins = 0
+    pnl_total = 0.0
+    events: list[dict[str, Any]] = []
+    latest_fill_ts: int | None = None
 
-    fills: list[FillRecord] = []
-    asset = _infer_asset_name(db_path)
-    for index, row in enumerate(rows):
-        won_value = _parse_bool_int(row["won"])
-        if won_value is None:
-            continue
-        pnl = _safe_float(row["pnl_usd"], 0.0)
-        sort_key = _row_sort_key(row, columns, fallback=index + 1)
-        if lookback_cutoff is not None and sort_key < lookback_cutoff:
-            continue
-        fills.append(
-            FillRecord(
-                asset=asset,
-                db_path=str(db_path),
-                won=won_value,
-                pnl_usd=pnl,
-                sort_key=sort_key,
-                created_at=_row_created_at_text(row, columns),
-            )
+    for row in rows:
+        decision_ts = _safe_int(row["decision_ts"], default=0)
+        rowid = _safe_int(row["rowid"], default=0)
+        pnl_usd = float(_safe_float(row["pnl_usd"], default=0.0) or 0.0)
+        won = _coerce_won(row["won"], pnl_usd=pnl_usd)
+
+        if won > 0:
+            wins += 1
+            running_loss_streak = 0
+        else:
+            running_loss_streak += 1
+            max_loss_streak = max(max_loss_streak, running_loss_streak)
+
+        pnl_total += pnl_usd
+        latest_fill_ts = max(latest_fill_ts or decision_ts, decision_ts)
+        events.append(
+            {
+                "asset": asset,
+                "decision_ts": decision_ts,
+                "rowid": rowid,
+                "won": won,
+                "pnl_usd": pnl_usd,
+            }
         )
-    return fills, diagnostics
+
+    fills = len(rows)
+    losses = fills - wins
+    result.update(
+        {
+            "fills": fills,
+            "wins": wins,
+            "losses": losses,
+            "win_rate": round((wins / fills), 6) if fills > 0 else None,
+            "pnl_usd": round(pnl_total, 6),
+            "consecutive_losses_current": running_loss_streak,
+            "consecutive_losses_max": max_loss_streak,
+            "latest_fill_ts": latest_fill_ts,
+            "events": events,
+        }
+    )
+    return result
 
 
-def aggregate_stage_gate_metrics(
-    db_paths: list[Path],
+def _build_aggregate_metrics(per_asset: list[dict[str, Any]]) -> dict[str, Any]:
+    total_fills = sum(int(row.get("fills") or 0) for row in per_asset)
+    total_wins = sum(int(row.get("wins") or 0) for row in per_asset)
+    total_losses = sum(int(row.get("losses") or 0) for row in per_asset)
+    cumulative_pnl = sum(float(row.get("pnl_usd") or 0.0) for row in per_asset)
+
+    all_events: list[dict[str, Any]] = []
+    for row in per_asset:
+        for event in list(row.get("events") or []):
+            if isinstance(event, dict):
+                all_events.append(event)
+    all_events.sort(key=lambda item: (_safe_int(item.get("decision_ts"), 0), _safe_int(item.get("rowid"), 0), str(item.get("asset") or "")))
+
+    running_losses = 0
+    max_losses = 0
+    for event in all_events:
+        if int(event.get("won") or 0) > 0:
+            running_losses = 0
+        else:
+            running_losses += 1
+            max_losses = max(max_losses, running_losses)
+
+    return {
+        "total_fills": total_fills,
+        "wins": total_wins,
+        "losses": total_losses,
+        "win_rate": round((total_wins / total_fills), 6) if total_fills > 0 else None,
+        "consecutive_losses_current": running_losses,
+        "consecutive_losses_max": max_losses,
+        "cumulative_pnl_usd": round(cumulative_pnl, 6),
+    }
+
+
+def _should_allow_above_500(env_values: dict[str, str]) -> tuple[bool, str | None]:
+    for key in HUMAN_CONFIRMATION_KEYS:
+        if _is_truthy(env_values.get(key)):
+            return True, key
+    return False, None
+
+
+def _enforce_max_trade_cap(
     *,
-    lookback_hours: float = DEFAULT_LOOKBACK_HOURS,
-) -> tuple[StageGateMetrics, list[str]]:
-    all_fills: list[FillRecord] = []
-    diagnostics: list[str] = []
-    scanned: list[str] = []
-    for db_path in db_paths:
-        scanned.append(str(db_path))
-        fills, db_diagnostics = _load_fills_from_db(db_path, lookback_hours=lookback_hours)
-        diagnostics.extend(db_diagnostics)
-        all_fills.extend(fills)
+    requested_value: float,
+    env_values: dict[str, str],
+) -> tuple[float, bool, str | None]:
+    requested = float(requested_value)
+    if requested <= MAX_TRADE_WITHOUT_CONFIRMATION:
+        return requested, False, None
+    allowed, confirmation_key = _should_allow_above_500(env_values)
+    if allowed:
+        return requested, False, confirmation_key
+    return MAX_TRADE_WITHOUT_CONFIRMATION, True, None
 
-    wins = sum(1 for record in all_fills if record.won == 1)
-    losses = sum(1 for record in all_fills if record.won == 0)
-    fills = len(all_fills)
-    win_rate = (wins / fills) if fills else 0.0
-    total_pnl = sum(record.pnl_usd for record in all_fills)
 
-    per_asset: dict[str, dict[str, Any]] = {}
-    for record in all_fills:
-        bucket = per_asset.setdefault(record.asset, {"fills": 0, "wins": 0, "losses": 0, "pnl_usd": 0.0})
-        bucket["fills"] += 1
-        bucket["wins"] += 1 if record.won == 1 else 0
-        bucket["losses"] += 1 if record.won == 0 else 0
-        bucket["pnl_usd"] = round(float(bucket["pnl_usd"]) + float(record.pnl_usd), 4)
-    for bucket in per_asset.values():
-        bucket["win_rate"] = round((bucket["wins"] / bucket["fills"]) if bucket["fills"] else 0.0, 6)
+def _stage_target_from_metrics(aggregate: dict[str, Any]) -> tuple[float | None, str]:
+    total_fills = int(aggregate.get("total_fills") or 0)
+    win_rate = float(aggregate.get("win_rate") or 0.0)
+    pnl_usd = float(aggregate.get("cumulative_pnl_usd") or 0.0)
 
-    sorted_recent = sorted(all_fills, key=lambda item: item.sort_key, reverse=True)
-    consecutive_losses = 0
-    for record in sorted_recent:
-        if record.won == 0:
-            consecutive_losses += 1
+    if total_fills >= 40 and win_rate >= 0.65:
+        return 1000.0, "fills>=40_and_wr>=0.65"
+    if total_fills >= 20 and win_rate >= 0.60 and pnl_usd > 0.0:
+        return 750.0, "fills>=20_and_wr>=0.60_and_pnl>0"
+    return None, "no_threshold_met"
+
+
+def _append_log_entry(log_path: Path, entry: dict[str, Any], *, max_entries: int = 2000) -> None:
+    existing = _load_json(log_path, default=[])
+    if not isinstance(existing, list):
+        existing = []
+    existing.append(entry)
+    if len(existing) > max_entries:
+        existing = existing[-max_entries:]
+    _write_json(log_path, existing)
+
+
+def _already_scaled_for_latest_fill(log_path: Path, *, asset: str, latest_fill_ts: int) -> bool:
+    existing = _load_json(log_path, default=[])
+    if not isinstance(existing, list):
+        return False
+    for run in reversed(existing):
+        if not isinstance(run, dict):
             continue
-        break
-
-    metrics = StageGateMetrics(
-        fills=fills,
-        wins=wins,
-        losses=losses,
-        win_rate=win_rate,
-        total_pnl_usd=round(total_pnl, 4),
-        consecutive_losses=consecutive_losses,
-        by_asset=dict(sorted(per_asset.items())),
-        db_paths_scanned=scanned,
-        lookback_hours=float(lookback_hours),
-    )
-    return metrics, diagnostics
+        for action in list(run.get("actions") or []):
+            if not isinstance(action, dict):
+                continue
+            if action.get("type") != "asset_loss_scale_down":
+                continue
+            if str(action.get("asset") or "").lower() != asset.lower():
+                continue
+            if int(action.get("latest_fill_ts") or 0) != int(latest_fill_ts):
+                continue
+            if bool(action.get("applied")):
+                return True
+    return False
 
 
-def _evaluate_target_from_rules(metrics: StageGateMetrics, current_max_trade_usd: float) -> tuple[float, str, str, bool]:
-    if metrics.consecutive_losses >= 5:
-        return max(0.0, current_max_trade_usd * 0.5), "scale_down", "five_consecutive_losses", False
-    if metrics.fills >= 40 and metrics.win_rate >= 0.65:
-        return 1000.0, "scale_up", "fills_gte_40_and_wr_gte_65pct", False
-    if metrics.fills >= 20 and metrics.win_rate >= 0.60 and metrics.total_pnl_usd > 0:
-        return 750.0, "scale_up", "fills_gte_20_wr_gte_60pct_and_positive_pnl", False
-    return current_max_trade_usd, "hold", "insufficient_stage_gate_edge", False
+def _resolve_relative(path: Path, *, cwd: Path) -> Path:
+    return path if path.is_absolute() else (cwd / path)
 
 
-def evaluate_stage_gate(
-    *,
-    metrics: StageGateMetrics,
-    bankroll_usd: float,
-    risk_fraction: float,
-    current_max_trade_usd: float,
-    balance_usd: float,
-) -> StageGateDecision:
-    clamped_bankroll = max(0.0, float(bankroll_usd))
-    clamped_risk_fraction = max(0.0, float(risk_fraction))
-    current_max = max(0.0, float(current_max_trade_usd))
-    risk_cap = max(0.0, clamped_bankroll * clamped_risk_fraction)
-    safeguards: list[str] = []
+def _extract_clob_balance(balance_json_path: Path) -> tuple[float | None, str]:
+    env_override = _safe_float(os.environ.get("AUTO_STAGE_GATE_CLOB_BALANCE_USD"))
+    if env_override is not None:
+        return float(env_override), "env:AUTO_STAGE_GATE_CLOB_BALANCE_USD"
 
-    if clamped_bankroll > 0 and balance_usd < clamped_bankroll * 0.5:
-        action = "halt"
-        reason = "balance_below_50pct_of_bankroll"
-        target = 0.0
-        halted = True
-    else:
-        target, action, reason, halted = _evaluate_target_from_rules(metrics, current_max_trade_usd=current_max)
+    payload = _load_json(balance_json_path, default={})
+    if not isinstance(payload, dict):
+        return None, "missing"
 
-    if target > risk_cap:
-        target = risk_cap
-        safeguards.append("capped_by_bankroll_times_risk_fraction")
-    if current_max > 0 and target > (current_max * 2.0):
-        target = current_max * 2.0
-        safeguards.append("capped_by_max_2x_step")
+    polymarket_wallet = payload.get("polymarket_wallet")
+    if isinstance(polymarket_wallet, dict):
+        for key in ("free_collateral_usd", "wallet_balance_usd", "total_wallet_value_usd", "wallet_value_usd"):
+            value = _safe_float(polymarket_wallet.get(key))
+            if value is not None:
+                return float(value), f"json:polymarket_wallet.{key}"
 
-    applied = round(max(0.0, target), 2)
-    return StageGateDecision(
-        action=action,
-        reason=reason,
-        current_max_trade_usd=round(current_max, 2),
-        target_max_trade_usd=round(max(0.0, target), 2),
-        applied_max_trade_usd=applied,
-        bankroll_usd=round(clamped_bankroll, 4),
-        risk_fraction=round(clamped_risk_fraction, 6),
-        risk_cap_usd=round(risk_cap, 4),
-        balance_usd=round(float(balance_usd), 4),
-        halted=bool(halted),
-        safeguards=safeguards,
-    )
+    portfolio = payload.get("portfolio")
+    if isinstance(portfolio, dict):
+        for key in ("free_collateral_usd", "wallet_value_usd", "total_wallet_value_usd"):
+            value = _safe_float(portfolio.get(key))
+            if value is not None:
+                return float(value), f"json:portfolio.{key}"
 
+    for key in ("free_collateral_usd", "wallet_value_usd", "total_wallet_value_usd", "wallet_balance_usd"):
+        value = _safe_float(payload.get(key))
+        if value is not None:
+            return float(value), f"json:{key}"
 
-def _default_db_paths(data_dir: Path) -> list[Path]:
-    return [data_dir / f"{asset}_5min_maker.db" for asset in DEFAULT_ASSETS]
+    capital_sources = payload.get("capital_sources")
+    if isinstance(capital_sources, list):
+        for row in capital_sources:
+            if not isinstance(row, dict):
+                continue
+            account = str(row.get("account") or "").strip().lower()
+            if account != "polymarket":
+                continue
+            amount = _safe_float(row.get("amount_usd"))
+            if amount is not None:
+                return float(amount), "json:capital_sources.polymarket.amount_usd"
 
-
-def _resolve_db_paths(args: argparse.Namespace) -> list[Path]:
-    configured = [Path(item).expanduser() for item in list(args.db_path or []) if str(item).strip()]
-    if configured:
-        return configured
-    return _default_db_paths(Path(args.data_dir).expanduser())
-
-
-def _choose_balance(env_values: dict[str, str], *, bankroll_usd: float, fallback_pnl_usd: float) -> float:
-    for key in ("BTC5_BALANCE_USD", "BALANCE_USD", "PORTFOLIO_BALANCE_USD"):
-        if key in env_values:
-            return max(0.0, _safe_float(env_values.get(key), bankroll_usd))
-    return max(0.0, bankroll_usd + float(fallback_pnl_usd))
+    return None, "missing"
 
 
 def run_stage_gate(
     *,
-    state_env_path: Path,
-    db_paths: list[Path],
-    log_path: Path,
-    lookback_hours: float,
-    bankroll_override: float | None = None,
-    risk_fraction_override: float | None = None,
-    balance_override: float | None = None,
+    stage_env_path: Path = DEFAULT_STAGE_ENV_PATH,
+    multi_asset_config_path: Path = DEFAULT_MULTI_ASSET_CONFIG_PATH,
+    asset_db_overrides: dict[str, Path] | None = None,
+    asset_env_overrides: dict[str, Path] | None = None,
+    balance_json_path: Path = DEFAULT_BALANCE_JSON_PATH,
+    log_path: Path = DEFAULT_STAGE_GATE_LOG_PATH,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    env_values = _read_env_kv(state_env_path)
-    bankroll = (
-        float(bankroll_override)
-        if bankroll_override is not None
-        else _safe_float(env_values.get("BTC5_BANKROLL_USD"), 0.0)
-    )
-    risk_fraction = (
-        float(risk_fraction_override)
-        if risk_fraction_override is not None
-        else _safe_float(env_values.get("BTC5_RISK_FRACTION"), 0.0)
-    )
-    current_max = _safe_float(
-        env_values.get("BTC5_STAGE1_MAX_TRADE_USD", env_values.get("BTC5_MAX_TRADE_USD")),
-        0.0,
-    )
+    cwd = Path.cwd()
+    stage_env_path = _resolve_relative(stage_env_path, cwd=cwd)
+    multi_asset_config_path = _resolve_relative(multi_asset_config_path, cwd=cwd)
+    balance_json_path = _resolve_relative(balance_json_path, cwd=cwd)
+    log_path = _resolve_relative(log_path, cwd=cwd)
 
-    metrics, diagnostics = aggregate_stage_gate_metrics(db_paths, lookback_hours=lookback_hours)
-    derived_balance = _choose_balance(env_values, bankroll_usd=bankroll, fallback_pnl_usd=metrics.total_pnl_usd)
-    balance = float(balance_override) if balance_override is not None else derived_balance
+    config_db_paths, config_env_paths = _load_paths_from_multi_asset_config(multi_asset_config_path)
+    db_paths = _merge_path_overrides(config_db_paths, asset_db_overrides)
+    env_paths = _merge_path_overrides(config_env_paths, asset_env_overrides)
 
-    decision = evaluate_stage_gate(
-        metrics=metrics,
-        bankroll_usd=bankroll,
-        risk_fraction=risk_fraction,
-        current_max_trade_usd=current_max,
-        balance_usd=balance,
-    )
-    now_iso = _utc_now().isoformat()
+    stage_env = _parse_env_file(stage_env_path)
+    actions: list[dict[str, Any]] = []
 
-    updates = {
-        "BTC5_MAX_TRADE_USD": f"{decision.applied_max_trade_usd:.2f}",
-        "BTC5_STAGE1_MAX_TRADE_USD": f"{decision.applied_max_trade_usd:.2f}",
-        "BTC5_AUTO_STAGE_GATE_LAST_AT": now_iso,
-        "BTC5_AUTO_STAGE_GATE_ACTION": decision.action,
-        "BTC5_AUTO_STAGE_GATE_REASON": decision.reason,
-        "BTC5_AUTO_STAGE_GATE_HALTED": "true" if decision.halted else "false",
+    per_asset: list[dict[str, Any]] = []
+    for asset in ASSET_ORDER:
+        db_path = _resolve_relative(db_paths.get(asset, DEFAULT_ASSET_DB_PATHS[asset]), cwd=cwd)
+        metrics = _read_asset_fill_metrics(asset, db_path)
+        metrics.pop("events", None)
+        metrics["strategy_env_path"] = str(_resolve_relative(env_paths.get(asset, DEFAULT_ASSET_ENV_PATHS[asset]), cwd=cwd))
+        per_asset.append(metrics)
+
+    # Re-read events separately so the log payload stays compact.
+    per_asset_with_events: list[dict[str, Any]] = []
+    for asset in ASSET_ORDER:
+        db_path = _resolve_relative(db_paths.get(asset, DEFAULT_ASSET_DB_PATHS[asset]), cwd=cwd)
+        per_asset_with_events.append(_read_asset_fill_metrics(asset, db_path))
+    aggregate = _build_aggregate_metrics(per_asset_with_events)
+
+    requested_stage1, stage_reason = _stage_target_from_metrics(aggregate)
+    stage_action: dict[str, Any] = {
+        "type": "stage_promotion",
+        "rule_reason": stage_reason,
+        "requested_stage1_max_trade_usd": requested_stage1,
+        "applied": False,
     }
+    if requested_stage1 is not None:
+        prior_value = _safe_float(stage_env.get(STAGE1_MAX_TRADE_KEY))
+        if prior_value is None:
+            prior_value = _safe_float(stage_env.get(GENERIC_MAX_TRADE_KEY), default=0.0) or 0.0
+        effective_target, blocked, confirmation_key = _enforce_max_trade_cap(
+            requested_value=float(requested_stage1),
+            env_values=stage_env,
+        )
+        stage_action.update(
+            {
+                "prior_stage1_max_trade_usd": round(float(prior_value), 6),
+                "effective_stage1_max_trade_usd": round(float(effective_target), 6),
+                "blocked_by_hard_cap": bool(blocked),
+                "confirmation_key_used": confirmation_key,
+            }
+        )
+        if abs(float(prior_value) - float(effective_target)) > 1e-9:
+            if not dry_run:
+                _upsert_env_values(
+                    stage_env_path,
+                    {STAGE1_MAX_TRADE_KEY: _format_env_float(effective_target)},
+                    header_comment="state/btc5_capital_stage.env — auto stage gate",
+                )
+            stage_env[STAGE1_MAX_TRADE_KEY] = _format_env_float(effective_target)
+            stage_action["applied"] = True
+    actions.append(stage_action)
 
-    env_values_after = dict(env_values)
-    env_values_after.update(updates)
+    for asset_metrics in per_asset:
+        asset = str(asset_metrics.get("asset") or "").lower()
+        streak = int(asset_metrics.get("consecutive_losses_current") or 0)
+        latest_fill_ts = _safe_int(asset_metrics.get("latest_fill_ts"), default=0)
+        if asset not in ASSET_ORDER or streak < 5 or latest_fill_ts <= 0:
+            continue
+        if _already_scaled_for_latest_fill(log_path, asset=asset, latest_fill_ts=latest_fill_ts):
+            actions.append(
+                {
+                    "type": "asset_loss_scale_down",
+                    "asset": asset,
+                    "latest_fill_ts": latest_fill_ts,
+                    "applied": False,
+                    "reason": "already_scaled_for_latest_fill",
+                }
+            )
+            continue
 
-    event = {
-        "run_at": now_iso,
+        env_path = _resolve_relative(env_paths.get(asset, DEFAULT_ASSET_ENV_PATHS[asset]), cwd=cwd)
+        env_values = _parse_env_file(env_path)
+        current_max = _safe_float(env_values.get(STAGE1_MAX_TRADE_KEY))
+        if current_max is None:
+            current_max = _safe_float(env_values.get(GENERIC_MAX_TRADE_KEY))
+        if current_max is None:
+            current_max = _safe_float(stage_env.get(STAGE1_MAX_TRADE_KEY))
+        if current_max is None:
+            current_max = _safe_float(stage_env.get(GENERIC_MAX_TRADE_KEY))
+        if current_max is None or current_max <= 0.0:
+            actions.append(
+                {
+                    "type": "asset_loss_scale_down",
+                    "asset": asset,
+                    "latest_fill_ts": latest_fill_ts,
+                    "applied": False,
+                    "reason": "missing_or_non_positive_max_trade",
+                    "strategy_env_path": str(env_path),
+                }
+            )
+            continue
+
+        requested_scaled = round(float(current_max) * 0.5, 6)
+        effective_scaled, blocked, confirmation_key = _enforce_max_trade_cap(
+            requested_value=requested_scaled,
+            env_values=env_values,
+        )
+        if abs(float(current_max) - float(effective_scaled)) <= 1e-9:
+            actions.append(
+                {
+                    "type": "asset_loss_scale_down",
+                    "asset": asset,
+                    "latest_fill_ts": latest_fill_ts,
+                    "applied": False,
+                    "reason": "no_change",
+                    "strategy_env_path": str(env_path),
+                    "prior_max_trade_usd": round(float(current_max), 6),
+                    "effective_max_trade_usd": round(float(effective_scaled), 6),
+                }
+            )
+            continue
+
+        if not dry_run:
+            _upsert_env_values(
+                env_path,
+                {
+                    STAGE1_MAX_TRADE_KEY: _format_env_float(effective_scaled),
+                    GENERIC_MAX_TRADE_KEY: _format_env_float(effective_scaled),
+                },
+                header_comment=f"{asset.upper()} strategy overrides — auto stage gate",
+            )
+        actions.append(
+            {
+                "type": "asset_loss_scale_down",
+                "asset": asset,
+                "latest_fill_ts": latest_fill_ts,
+                "applied": True,
+                "strategy_env_path": str(env_path),
+                "prior_max_trade_usd": round(float(current_max), 6),
+                "requested_max_trade_usd": round(float(requested_scaled), 6),
+                "effective_max_trade_usd": round(float(effective_scaled), 6),
+                "blocked_by_hard_cap": bool(blocked),
+                "confirmation_key_used": confirmation_key,
+                "reason": "consecutive_losses>=5",
+            }
+        )
+
+    bankroll_usd = _safe_float(stage_env.get(BANKROLL_KEY), default=0.0) or 0.0
+    clob_balance_usd, clob_balance_source = _extract_clob_balance(balance_json_path)
+    halt_threshold_usd = bankroll_usd * 0.5 if bankroll_usd > 0.0 else None
+    halt_triggered = bool(
+        clob_balance_usd is not None
+        and halt_threshold_usd is not None
+        and clob_balance_usd < halt_threshold_usd
+    )
+    halt_action: dict[str, Any] = {
+        "type": "balance_halt",
+        "applied": False,
+        "triggered": halt_triggered,
+        "bankroll_usd": round(float(bankroll_usd), 6),
+        "threshold_usd": (round(float(halt_threshold_usd), 6) if halt_threshold_usd is not None else None),
+        "clob_balance_usd": (round(float(clob_balance_usd), 6) if clob_balance_usd is not None else None),
+        "clob_balance_source": clob_balance_source,
+    }
+    if halt_triggered:
+        prior_daily_loss = _safe_float(stage_env.get(DAILY_LOSS_LIMIT_KEY))
+        halt_action["prior_daily_loss_limit_usd"] = prior_daily_loss
+        if prior_daily_loss is None or abs(prior_daily_loss) > 1e-9:
+            if not dry_run:
+                _upsert_env_values(
+                    stage_env_path,
+                    {DAILY_LOSS_LIMIT_KEY: "0"},
+                    header_comment="state/btc5_capital_stage.env — auto stage gate",
+                )
+            stage_env[DAILY_LOSS_LIMIT_KEY] = "0"
+            halt_action["applied"] = True
+    actions.append(halt_action)
+
+    run_payload = {
+        "generated_at": _iso_utc_now(),
         "dry_run": bool(dry_run),
-        "state_env_path": str(state_env_path),
-        "db_paths": [str(path) for path in db_paths],
-        "diagnostics": diagnostics,
-        "metrics": {
-            "fills": metrics.fills,
-            "wins": metrics.wins,
-            "losses": metrics.losses,
-            "win_rate": round(metrics.win_rate, 6),
-            "total_pnl_usd": metrics.total_pnl_usd,
-            "consecutive_losses": metrics.consecutive_losses,
-            "lookback_hours": metrics.lookback_hours,
-            "by_asset": metrics.by_asset,
-        },
-        "decision": {
-            "action": decision.action,
-            "reason": decision.reason,
-            "current_max_trade_usd": decision.current_max_trade_usd,
-            "target_max_trade_usd": decision.target_max_trade_usd,
-            "applied_max_trade_usd": decision.applied_max_trade_usd,
-            "bankroll_usd": decision.bankroll_usd,
-            "risk_fraction": decision.risk_fraction,
-            "risk_cap_usd": decision.risk_cap_usd,
-            "balance_usd": decision.balance_usd,
-            "halted": decision.halted,
-            "safeguards": decision.safeguards,
-        },
-        "env_updates": updates,
+        "stage_env_path": str(stage_env_path),
+        "balance_json_path": str(balance_json_path),
+        "multi_asset_config_path": str(multi_asset_config_path),
+        "asset_db_paths": {asset: str(_resolve_relative(db_paths.get(asset, DEFAULT_ASSET_DB_PATHS[asset]), cwd=cwd)) for asset in ASSET_ORDER},
+        "asset_env_paths": {asset: str(_resolve_relative(env_paths.get(asset, DEFAULT_ASSET_ENV_PATHS[asset]), cwd=cwd)) for asset in ASSET_ORDER},
+        "aggregate": aggregate,
+        "per_asset": per_asset,
+        "actions": actions,
     }
-
-    if not dry_run:
-        _update_env_file(state_env_path, updates)
-
-    log_payload = _load_json(log_path)
-    events = list(log_payload.get("events") or [])
-    events.append(event)
-    if len(events) > MAX_LOG_EVENTS:
-        events = events[-MAX_LOG_EVENTS:]
-    result = {
-        "generated_at": now_iso,
-        "latest": event,
-        "events": events,
-        "event_count": len(events),
-    }
-    if not dry_run:
-        _write_json(log_path, result)
-
-    return {
-        "generated_at": now_iso,
-        "dry_run": bool(dry_run),
-        "decision": event["decision"],
-        "metrics": event["metrics"],
-        "diagnostics": diagnostics,
-        "state_env_path": str(state_env_path),
-        "log_path": str(log_path),
-        "env_updates": updates,
-    }
+    _append_log_entry(log_path, run_payload)
+    run_payload["log_path"] = str(log_path)
+    return run_payload
 
 
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Automated multi-asset capital stage gate")
-    parser.add_argument("--state-env", default=str(DEFAULT_STATE_ENV_PATH))
-    parser.add_argument("--log-path", default=str(DEFAULT_STAGE_GATE_LOG_PATH))
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--stage-env", type=Path, default=DEFAULT_STAGE_ENV_PATH)
+    parser.add_argument("--multi-asset-config", type=Path, default=DEFAULT_MULTI_ASSET_CONFIG_PATH)
+    parser.add_argument("--balance-json", type=Path, default=DEFAULT_BALANCE_JSON_PATH)
+    parser.add_argument("--log-file", type=Path, default=DEFAULT_STAGE_GATE_LOG_PATH)
     parser.add_argument(
-        "--db-path",
+        "--asset-db",
         action="append",
         default=[],
-        help="Repeatable DB path. Defaults to six asset DBs in --data-dir.",
+        help="Override DB path per asset as asset=path (repeatable).",
     )
-    parser.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR))
-    parser.add_argument("--lookback-hours", type=float, default=DEFAULT_LOOKBACK_HOURS)
-    parser.add_argument("--bankroll", type=float, default=None)
-    parser.add_argument("--risk-fraction", type=float, default=None)
-    parser.add_argument("--balance-usd", type=float, default=None)
+    parser.add_argument(
+        "--asset-env",
+        action="append",
+        default=[],
+        help="Override strategy env path per asset as asset=path (repeatable).",
+    )
     parser.add_argument("--dry-run", action="store_true")
-    return parser.parse_args()
+    return parser
 
 
-def main() -> int:
-    args = _parse_args()
-    result = run_stage_gate(
-        state_env_path=Path(args.state_env).expanduser(),
-        db_paths=_resolve_db_paths(args),
-        log_path=Path(args.log_path).expanduser(),
-        lookback_hours=max(0.0, float(args.lookback_hours)),
-        bankroll_override=args.bankroll,
-        risk_fraction_override=args.risk_fraction,
-        balance_override=args.balance_usd,
+def main(argv: list[str] | None = None) -> int:
+    if load_dotenv is not None:
+        load_dotenv()
+
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    try:
+        asset_db_overrides = _parse_key_value_paths(args.asset_db, arg_name="--asset-db")
+        asset_env_overrides = _parse_key_value_paths(args.asset_env, arg_name="--asset-env")
+    except ValueError as exc:
+        parser.error(str(exc))
+        return 2
+
+    payload = run_stage_gate(
+        stage_env_path=args.stage_env,
+        multi_asset_config_path=args.multi_asset_config,
+        asset_db_overrides=asset_db_overrides,
+        asset_env_overrides=asset_env_overrides,
+        balance_json_path=args.balance_json,
+        log_path=args.log_file,
         dry_run=bool(args.dry_run),
     )
-    print(json.dumps(result, indent=2, sort_keys=True))
+    print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 
 
