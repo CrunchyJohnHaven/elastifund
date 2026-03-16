@@ -2,6 +2,7 @@
 """Unit tests for bot/btc_5min_maker.py."""
 
 import sys
+import asyncio
 import time
 import json
 from datetime import datetime
@@ -2335,3 +2336,83 @@ def test_status_summary_includes_intraday_live_summary(tmp_path: Path) -> None:
     assert intraday["order_failure_counts"]["no_book"] == 1
     assert intraday["best_direction_today"]["label"] == "DOWN"
     assert intraday["best_price_bucket_today"]["label"] == "<0.49"
+
+
+@pytest.mark.asyncio
+async def test_resolve_unsettled_records_resolution_timing(tmp_path: Path) -> None:
+    cfg = MakerConfig(
+        paper_trading=True,
+        db_path=tmp_path / "btc5.db",
+    )
+    bot = BTC5MinMakerBot(cfg)
+    ws = current_window_start(time.time()) - 600
+    bot.db.upsert_window(
+        {
+            "window_start_ts": ws,
+            "window_end_ts": ws + 300,
+            "slug": market_slug_for_window(ws),
+            "decision_ts": ws + 290,
+            "direction": "UP",
+            "open_price": 100.0,
+            "current_price": 100.05,
+            "delta": 0.0005,
+            "token_id": "tok-up",
+            "best_bid": 0.89,
+            "best_ask": 0.90,
+            "order_price": 0.90,
+            "trade_size_usd": 9.0,
+            "shares": 10.0,
+            "order_id": "ord-1",
+            "order_status": "live_filled",
+            "filled": 1,
+            "reason": "seed",
+        }
+    )
+
+    class _FakeHTTP:
+        async def fetch_binance_window_open_close(self, window_start_ts: int) -> tuple[float, float]:
+            assert window_start_ts == ws
+            return (100.0, 101.0)
+
+    await bot._resolve_unsettled(_FakeHTTP(), through_window_start=ws)
+    snapshot = bot.db.resolution_snapshot(ws)
+    assert snapshot is not None
+    assert snapshot["resolved_side"] == "UP"
+    assert snapshot["won"] == 1
+    assert snapshot["pnl_usd"] == pytest.approx(1.0)
+    assert snapshot["resolved_ts"] is not None
+    assert float(snapshot["time_to_resolution_sec"]) >= 0.0
+
+
+@pytest.mark.asyncio
+async def test_spawn_resolution_poller_deduplicates_window(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=False,
+        db_path=tmp_path / "btc5.db",
+        enable_resolution_poller=True,
+        resolution_poll_interval_sec=1.0,
+        resolution_poll_max_seconds=60,
+    )
+    bot = BTC5MinMakerBot(cfg)
+    bot._resolution_poller_runtime_enabled = True
+    calls: list[tuple[int, int]] = []
+    release = asyncio.Event()
+
+    async def fake_poll(*, window_start_ts: int, window_end_ts: int) -> None:
+        calls.append((window_start_ts, window_end_ts))
+        await release.wait()
+
+    monkeypatch.setattr(bot, "_poll_resolution_until_resolved", fake_poll)
+    bot._spawn_resolution_poller(window_start_ts=123, window_end_ts=456)
+    bot._spawn_resolution_poller(window_start_ts=123, window_end_ts=456)
+    await asyncio.sleep(0)
+    assert len(calls) == 1
+    assert 123 in bot._resolution_poll_windows
+
+    release.set()
+    await asyncio.sleep(0)
+    await bot._cancel_resolution_pollers()
+    assert not bot._resolution_poll_windows
