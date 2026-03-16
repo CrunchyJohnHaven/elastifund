@@ -11,6 +11,7 @@ Environment="PYTHONPATH=/home/ubuntu/polymarket-trading-bot:/home/ubuntu/polymar
 EnvironmentFile=/home/ubuntu/polymarket-trading-bot/.env
 EnvironmentFile=-/home/ubuntu/polymarket-trading-bot/config/btc5_strategy.env
 EnvironmentFile=-/home/ubuntu/polymarket-trading-bot/state/btc5_capital_stage.env
+EnvironmentFile=-/home/ubuntu/polymarket-trading-bot/config/sol5_strategy.env
 ExecStart=/usr/bin/python3 bot/btc_5min_maker.py --continuous --live
 Restart=on-failure
 RestartSec=30
