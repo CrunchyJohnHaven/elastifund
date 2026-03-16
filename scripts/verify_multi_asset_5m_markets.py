@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 GAMMA_SLUG_URL = "https://gamma-api.polymarket.com/markets/slug/{slug}"
 DEFAULT_ASSETS = ("btc", "eth", "sol", "xrp", "doge")
@@ -33,11 +33,18 @@ def _safe_float(value: Any) -> float | None:
 
 def _fetch_slug(slug: str, timeout_seconds: float) -> dict[str, Any] | None:
     url = GAMMA_SLUG_URL.format(slug=slug)
+    request = Request(
+        url,
+        headers={
+            "User-Agent": "elastifund-multi-asset-probe/1.0",
+            "Accept": "application/json",
+        },
+    )
     try:
-        with urlopen(url, timeout=timeout_seconds) as response:  # nosec B310 - fixed trusted domain
+        with urlopen(request, timeout=timeout_seconds) as response:  # nosec B310 - fixed trusted domain
             payload = json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
-        if exc.code == 404:
+        if exc.code in (403, 404):
             return None
         raise
     except URLError:
