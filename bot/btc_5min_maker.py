@@ -80,6 +80,9 @@ ACTIONABLE_ORDER_STATUSES = {
     "live_cancelled_unfilled",
     "live_order_failed",
 }
+KELLY_QUALIFY_MIN_ENTRY_PRICE = 0.90
+KELLY_ROLLING_MAX_FILLS = 200
+KELLY_MAX_FRACTION = 0.15
 VALIDATED_STRONG_PRICE_BUCKETS = frozenset({"<0.49", "0.49"})
 OBSERVED_BTC5_LOSS_CLUSTERS = frozenset(
     {
@@ -1020,6 +1023,18 @@ class TradeDB:
                 );
                 CREATE INDEX IF NOT EXISTS idx_window_trades_decision_ts
                     ON window_trades(decision_ts);
+                CREATE TABLE IF NOT EXISTS rolling_kelly_stats (
+                    strategy TEXT PRIMARY KEY,
+                    sample_count INTEGER NOT NULL,
+                    win_rate REAL NOT NULL,
+                    avg_entry_price REAL NOT NULL,
+                    avg_pnl_usd REAL NOT NULL,
+                    total_pnl_usd REAL NOT NULL,
+                    recommended_kelly_fraction REAL NOT NULL,
+                    recommended_trade_size_usd REAL NOT NULL,
+                    last_window_start_ts INTEGER,
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
             existing = {
@@ -1197,6 +1212,133 @@ class TradeDB:
             "fills": len(rows),
             "pnl_usd": round(sum(_safe_float(row.get("pnl_usd"), 0.0) for row in rows), 4),
         }
+
+    def recent_kelly_qualified_fills(
+        self,
+        *,
+        min_entry_price: float = KELLY_QUALIFY_MIN_ENTRY_PRICE,
+        limit: int = KELLY_ROLLING_MAX_FILLS,
+    ) -> list[dict[str, Any]]:
+        capped_limit = max(0, int(limit))
+        if capped_limit <= 0:
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    order_status,
+                    filled,
+                    won,
+                    pnl_usd,
+                    order_price
+                FROM window_trades
+                WHERE order_price >= ?
+                  AND won IS NOT NULL
+                  AND pnl_usd IS NOT NULL
+                ORDER BY decision_ts DESC, id DESC
+                LIMIT ?
+                """,
+                (float(min_entry_price), capped_limit),
+            ).fetchall()
+        qualified: list[dict[str, Any]] = []
+        for row in rows:
+            if not _is_live_filled_status(row["order_status"], row["filled"]):
+                continue
+            won = _won_flag(row["won"])
+            if won is None:
+                continue
+            entry = _safe_float(row["order_price"], None)
+            pnl = _safe_float(row["pnl_usd"], None)
+            if entry is None or pnl is None:
+                continue
+            qualified.append(
+                {
+                    "won": won,
+                    "pnl_usd": float(pnl),
+                    "order_price": float(entry),
+                }
+            )
+        qualified.reverse()
+        return qualified
+
+    def upsert_rolling_kelly_stats(
+        self,
+        *,
+        sample_count: int,
+        win_rate: float,
+        avg_entry_price: float,
+        avg_pnl_usd: float,
+        total_pnl_usd: float,
+        recommended_kelly_fraction: float,
+        recommended_trade_size_usd: float,
+        last_window_start_ts: int | None,
+    ) -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        payload = {
+            "strategy": "fills_ge_090",
+            "sample_count": max(0, int(sample_count)),
+            "win_rate": max(0.0, min(1.0, float(win_rate))),
+            "avg_entry_price": max(0.0, min(1.0, float(avg_entry_price))),
+            "avg_pnl_usd": float(avg_pnl_usd),
+            "total_pnl_usd": float(total_pnl_usd),
+            "recommended_kelly_fraction": max(0.0, min(KELLY_MAX_FRACTION, float(recommended_kelly_fraction))),
+            "recommended_trade_size_usd": max(0.0, float(recommended_trade_size_usd)),
+            "last_window_start_ts": int(last_window_start_ts) if last_window_start_ts is not None else None,
+            "updated_at": now_iso,
+        }
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO rolling_kelly_stats (
+                    strategy,
+                    sample_count,
+                    win_rate,
+                    avg_entry_price,
+                    avg_pnl_usd,
+                    total_pnl_usd,
+                    recommended_kelly_fraction,
+                    recommended_trade_size_usd,
+                    last_window_start_ts,
+                    updated_at
+                ) VALUES (
+                    :strategy,
+                    :sample_count,
+                    :win_rate,
+                    :avg_entry_price,
+                    :avg_pnl_usd,
+                    :total_pnl_usd,
+                    :recommended_kelly_fraction,
+                    :recommended_trade_size_usd,
+                    :last_window_start_ts,
+                    :updated_at
+                )
+                ON CONFLICT(strategy) DO UPDATE SET
+                    sample_count=excluded.sample_count,
+                    win_rate=excluded.win_rate,
+                    avg_entry_price=excluded.avg_entry_price,
+                    avg_pnl_usd=excluded.avg_pnl_usd,
+                    total_pnl_usd=excluded.total_pnl_usd,
+                    recommended_kelly_fraction=excluded.recommended_kelly_fraction,
+                    recommended_trade_size_usd=excluded.recommended_trade_size_usd,
+                    last_window_start_ts=excluded.last_window_start_ts,
+                    updated_at=excluded.updated_at
+                """,
+                payload,
+            )
+
+    def latest_rolling_kelly_stats(self) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM rolling_kelly_stats
+                WHERE strategy = 'fills_ge_090'
+                LIMIT 1
+                """
+            ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
 
     def latest_decision_ts(self) -> int | None:
         with self._connect() as conn:
@@ -1688,6 +1830,11 @@ class BTC5MinMakerBot:
         self.clob = CLOBExecutor(cfg)
         self.smart_wallet_feed = self._build_smart_wallet_feed()
         self._wallet_watch_started_windows: set[int] = set()
+        self._rolling_fills_090: list[tuple[float, float, int]] = []
+        self._rolling_wr: float = 0.0
+        self._rolling_avg_entry: float = 0.0
+        self._rolling_kelly_fraction: float = 0.0
+        self._hydrate_rolling_kelly_state()
 
     def _load_smart_wallet_addresses(self) -> list[str]:
         path = self.cfg.smart_wallets_path
@@ -2012,6 +2159,161 @@ class BTC5MinMakerBot:
             ),
         }
 
+    def _hydrate_rolling_kelly_state(self) -> None:
+        rows = self.db.recent_kelly_qualified_fills(
+            min_entry_price=KELLY_QUALIFY_MIN_ENTRY_PRICE,
+            limit=KELLY_ROLLING_MAX_FILLS,
+        )
+        self._rolling_fills_090 = [
+            (
+                float(_safe_float(row.get("pnl_usd"), 0.0) or 0.0),
+                float(_safe_float(row.get("order_price"), 0.0) or 0.0),
+                1 if int(row.get("won", 0)) == 1 else 0,
+            )
+            for row in rows
+        ]
+        snapshot = self.db.latest_rolling_kelly_stats() or {}
+        if self._rolling_fills_090:
+            n_fills = len(self._rolling_fills_090)
+            wins = sum(item[2] for item in self._rolling_fills_090)
+            self._rolling_wr = round(wins / n_fills, 6) if n_fills else 0.0
+            self._rolling_avg_entry = round(
+                sum(item[1] for item in self._rolling_fills_090) / n_fills,
+                6,
+            ) if n_fills else 0.0
+            self._rolling_kelly_fraction = self._compute_kelly_fraction(
+                n_fills=n_fills,
+                win_rate=self._rolling_wr,
+                avg_entry=self._rolling_avg_entry,
+            )
+            if not snapshot:
+                self._persist_rolling_kelly_stats(last_window_start_ts=None)
+            return
+
+        self._rolling_wr = max(0.0, min(1.0, float(_safe_float(snapshot.get("win_rate"), 0.0) or 0.0)))
+        self._rolling_avg_entry = max(
+            0.0,
+            min(1.0, float(_safe_float(snapshot.get("avg_entry_price"), 0.0) or 0.0)),
+        )
+        self._rolling_kelly_fraction = max(
+            0.0,
+            min(KELLY_MAX_FRACTION, float(_safe_float(snapshot.get("recommended_kelly_fraction"), 0.0) or 0.0)),
+        )
+
+    def _rolling_kelly_metrics(self) -> dict[str, float]:
+        n_fills = len(self._rolling_fills_090)
+        wins = float(sum(item[2] for item in self._rolling_fills_090))
+        total_entry = float(sum(item[1] for item in self._rolling_fills_090))
+        total_pnl = float(sum(item[0] for item in self._rolling_fills_090))
+        win_rate = (wins / n_fills) if n_fills else float(self._rolling_wr)
+        avg_entry = (total_entry / n_fills) if n_fills else float(self._rolling_avg_entry)
+        avg_pnl = (total_pnl / n_fills) if n_fills else 0.0
+        return {
+            "n_fills": float(n_fills),
+            "win_rate": round(max(0.0, min(1.0, float(win_rate))), 6),
+            "avg_entry": round(max(0.0, min(1.0, float(avg_entry))), 6),
+            "avg_pnl_usd": round(float(avg_pnl), 6),
+            "total_pnl_usd": round(float(total_pnl), 6),
+        }
+
+    def _compute_kelly_fraction(self, *, n_fills: int, win_rate: float, avg_entry: float) -> float:
+        if int(n_fills) <= 0:
+            return 0.0
+        p = max(0.0, min(1.0, float(win_rate)))
+        q = 1.0 - p
+        entry = max(1e-6, min(1.0 - 1e-6, float(avg_entry)))
+        b = (1.0 - entry) / entry
+        if b <= 0.0:
+            return 0.0
+        full_kelly = ((p * b) - q) / b
+        quarter_kelly = max(0.0, full_kelly) / 4.0
+        return min(KELLY_MAX_FRACTION, quarter_kelly)
+
+    def _graduated_kelly_risk_plan(self) -> dict[str, float | str]:
+        metrics = self._rolling_kelly_metrics()
+        n_fills = int(metrics["n_fills"])
+        win_rate = float(metrics["win_rate"])
+        avg_entry = float(metrics["avg_entry"])
+        if n_fills < 20:
+            return {
+                "risk_fraction": 0.02,
+                "mode": "bootstrap_2pct",
+                "n_fills": float(n_fills),
+                "win_rate": win_rate,
+                "avg_entry": avg_entry,
+            }
+        if n_fills < 35:
+            return {
+                "risk_fraction": 0.05,
+                "mode": "ramp_5pct",
+                "n_fills": float(n_fills),
+                "win_rate": win_rate,
+                "avg_entry": avg_entry,
+            }
+        if n_fills < 50:
+            return {
+                "risk_fraction": 0.08,
+                "mode": "ramp_8pct",
+                "n_fills": float(n_fills),
+                "win_rate": win_rate,
+                "avg_entry": avg_entry,
+            }
+        kelly_fraction = self._compute_kelly_fraction(
+            n_fills=n_fills,
+            win_rate=win_rate,
+            avg_entry=avg_entry,
+        )
+        return {
+            "risk_fraction": kelly_fraction,
+            "mode": "quarter_kelly",
+            "n_fills": float(n_fills),
+            "win_rate": win_rate,
+            "avg_entry": avg_entry,
+        }
+
+    def _persist_rolling_kelly_stats(self, *, last_window_start_ts: int | None) -> None:
+        metrics = self._rolling_kelly_metrics()
+        plan = self._graduated_kelly_risk_plan()
+        n_fills = int(metrics["n_fills"])
+        win_rate = float(metrics["win_rate"])
+        avg_entry = float(metrics["avg_entry"])
+        self._rolling_wr = win_rate
+        self._rolling_avg_entry = avg_entry
+        self._rolling_kelly_fraction = self._compute_kelly_fraction(
+            n_fills=n_fills,
+            win_rate=win_rate,
+            avg_entry=avg_entry,
+        )
+        recommended_fraction = max(0.0, min(KELLY_MAX_FRACTION, float(plan["risk_fraction"])))
+        recommended_trade_size = round(max(0.0, float(self.cfg.bankroll_usd)) * recommended_fraction, 2)
+        self.db.upsert_rolling_kelly_stats(
+            sample_count=n_fills,
+            win_rate=win_rate,
+            avg_entry_price=avg_entry,
+            avg_pnl_usd=float(metrics["avg_pnl_usd"]),
+            total_pnl_usd=float(metrics["total_pnl_usd"]),
+            recommended_kelly_fraction=recommended_fraction,
+            recommended_trade_size_usd=recommended_trade_size,
+            last_window_start_ts=last_window_start_ts,
+        )
+
+    def _record_resolved_fill_for_kelly(
+        self,
+        *,
+        won: int,
+        pnl_usd: float,
+        entry_price: float,
+        window_start_ts: int,
+    ) -> None:
+        if won not in {0, 1}:
+            return
+        if entry_price < KELLY_QUALIFY_MIN_ENTRY_PRICE - 1e-9:
+            return
+        self._rolling_fills_090.append((float(pnl_usd), float(entry_price), int(won)))
+        if len(self._rolling_fills_090) > KELLY_ROLLING_MAX_FILLS:
+            self._rolling_fills_090 = self._rolling_fills_090[-KELLY_ROLLING_MAX_FILLS:]
+        self._persist_rolling_kelly_stats(last_window_start_ts=window_start_ts)
+
     def _trade_size_for_edge_tier(
         self,
         *,
@@ -2019,9 +2321,25 @@ class BTC5MinMakerBot:
         effective_max_trade_usd: float,
     ) -> dict[str, Any]:
         stage_cap_usd = round(max(0.0, float(effective_max_trade_usd)), 2)
+        risk_plan = self._graduated_kelly_risk_plan()
+        graduated_risk_fraction = max(
+            0.0,
+            min(KELLY_MAX_FRACTION, float(_safe_float(risk_plan.get("risk_fraction"), 0.0) or 0.0)),
+        )
+        kelly_n = int(_safe_float(risk_plan.get("n_fills"), 0.0) or 0)
+        kelly_wr = float(_safe_float(risk_plan.get("win_rate"), 0.0) or 0.0)
+        kelly_avg_entry = float(_safe_float(risk_plan.get("avg_entry"), 0.0) or 0.0)
+        kelly_mode = str(risk_plan.get("mode") or "bootstrap_2pct")
+        kelly_tags = _unique_tags(
+            f"kelly_mode={kelly_mode}",
+            f"kelly_n_fills={kelly_n}",
+            f"kelly_win_rate={kelly_wr:.4f}",
+            f"kelly_avg_entry={kelly_avg_entry:.4f}",
+            f"risk_fraction={graduated_risk_fraction:.4f}",
+        )
         standard_size_usd = calc_trade_size_usd(
             self.cfg.bankroll_usd,
-            self.cfg.risk_fraction,
+            graduated_risk_fraction,
             stage_cap_usd,
         )
         if edge_tier == "strong_validated":
@@ -2032,13 +2350,14 @@ class BTC5MinMakerBot:
                     "sizing_mode=full_stage_cap",
                     f"stage_cap_usd={stage_cap_usd:.2f}",
                     f"standard_size_usd={standard_size_usd:.2f}",
+                    *kelly_tags,
                 ),
             }
         if edge_tier == "exploratory":
             exploratory_cap_usd = round(stage_cap_usd * 0.5, 2)
             exploratory_size_usd = calc_trade_size_usd(
                 self.cfg.bankroll_usd,
-                self.cfg.risk_fraction * 0.5,
+                graduated_risk_fraction * 0.5,
                 exploratory_cap_usd,
             )
             return {
@@ -2049,6 +2368,7 @@ class BTC5MinMakerBot:
                     f"stage_cap_usd={stage_cap_usd:.2f}",
                     f"exploratory_cap_usd={exploratory_cap_usd:.2f}",
                     f"standard_size_usd={standard_size_usd:.2f}",
+                    *kelly_tags,
                 ),
             }
         if edge_tier == "standard":
@@ -2059,6 +2379,7 @@ class BTC5MinMakerBot:
                     "sizing_mode=standard_risk_fraction",
                     f"stage_cap_usd={stage_cap_usd:.2f}",
                     f"standard_size_usd={standard_size_usd:.2f}",
+                    *kelly_tags,
                 ),
             }
         return {
@@ -2445,6 +2766,18 @@ class BTC5MinMakerBot:
                     "pnl_usd": pnl,
                 }
             )
+            if (
+                won in {0, 1}
+                and pnl is not None
+                and _is_live_filled_status(row["order_status"], filled)
+                and order_price >= KELLY_QUALIFY_MIN_ENTRY_PRICE - 1e-9
+            ):
+                self._record_resolved_fill_for_kelly(
+                    won=int(won),
+                    pnl_usd=float(pnl),
+                    entry_price=float(order_price),
+                    window_start_ts=int(row["window_start_ts"]),
+                )
 
     async def _get_open_and_current_price(
         self,
@@ -2599,6 +2932,24 @@ class BTC5MinMakerBot:
                 payload["wallet_count"] = wallet_count
             if "wallet_notional" not in payload:
                 payload["wallet_notional"] = round(max(0.0, float(wallet_notional)), 4)
+            kelly_metrics = self._rolling_kelly_metrics()
+            kelly_plan = self._graduated_kelly_risk_plan()
+            if "kelly_sample_count_090" not in payload:
+                payload["kelly_sample_count_090"] = int(_safe_float(kelly_metrics.get("n_fills"), 0.0) or 0)
+            if "rolling_win_rate_090" not in payload:
+                payload["rolling_win_rate_090"] = round(
+                    float(_safe_float(kelly_metrics.get("win_rate"), 0.0) or 0.0),
+                    6,
+                )
+            if "rolling_avg_entry_090" not in payload:
+                payload["rolling_avg_entry_090"] = round(
+                    float(_safe_float(kelly_metrics.get("avg_entry"), 0.0) or 0.0),
+                    6,
+                )
+            if "rolling_kelly_fraction" not in payload:
+                payload["rolling_kelly_fraction"] = round(float(self._rolling_kelly_fraction), 6)
+            if "kelly_ramp_mode" not in payload:
+                payload["kelly_ramp_mode"] = str(kelly_plan.get("mode") or "bootstrap_2pct")
             return payload
 
         def _persist(row: dict[str, Any]) -> None:
@@ -3369,9 +3720,15 @@ class BTC5MinMakerBot:
     def print_status(self) -> None:
         status = self.db.status_summary()
         stage_controls = self._capital_stage_controls(today_pnl=float(status.get("today_pnl_usd") or 0.0))
+        kelly_plan = self._graduated_kelly_risk_plan()
+        kelly_metrics = self._rolling_kelly_metrics()
         today_notional = float(status.get("today_notional_usd") or 0.0)
         bankroll = max(float(self.cfg.bankroll_usd), 1e-9)
         utilization = max(0.0, today_notional / bankroll)
+        recommended_risk_fraction = max(
+            0.0,
+            min(KELLY_MAX_FRACTION, float(_safe_float(kelly_plan.get("risk_fraction"), 0.0) or 0.0)),
+        )
         print(
             json.dumps(
                 {
@@ -3396,6 +3753,13 @@ class BTC5MinMakerBot:
                     "probe_fresh_for_stage_upgrade": bool(stage_controls.get("probe_fresh_for_stage_upgrade")),
                     "execution_drag_counts": dict(stage_controls.get("execution_drag_counts") or {}),
                     "capital_utilization_ratio": round(utilization, 6),
+                    "kelly_ramp_mode": str(kelly_plan.get("mode") or "bootstrap_2pct"),
+                    "kelly_sample_count_090": int(_safe_float(kelly_metrics.get("n_fills"), 0.0) or 0),
+                    "rolling_win_rate_090": round(float(_safe_float(kelly_metrics.get("win_rate"), 0.0) or 0.0), 6),
+                    "rolling_avg_entry_090": round(float(_safe_float(kelly_metrics.get("avg_entry"), 0.0) or 0.0), 6),
+                    "rolling_kelly_fraction": round(float(self._rolling_kelly_fraction), 6),
+                    "recommended_risk_fraction": round(recommended_risk_fraction, 6),
+                    "recommended_trade_size_usd": round(bankroll * recommended_risk_fraction, 2),
                     "shadow_research_tiers": dict(stage_controls.get("shadow_research_tiers") or {}),
                     **status,
                 },

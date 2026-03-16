@@ -402,6 +402,73 @@ def test_calc_trade_size_usd() -> None:
     assert calc_trade_size_usd(100.0, 0.01, 2.50) == pytest.approx(1.00)
 
 
+def test_compute_kelly_fraction_uses_quarter_kelly_formula() -> None:
+    cfg = MakerConfig(bankroll_usd=390.0)
+    bot = BTC5MinMakerBot(cfg)
+    fraction = bot._compute_kelly_fraction(n_fills=60, win_rate=0.96, avg_entry=0.93)
+    b = (1.0 - 0.93) / 0.93
+    expected = min(0.15, max(0.0, ((0.96 * b) - 0.04) / b) / 4.0)
+    assert fraction == pytest.approx(expected, rel=1e-6)
+
+
+def test_trade_size_for_edge_tier_uses_graduated_kelly_ramp() -> None:
+    cfg = MakerConfig(bankroll_usd=390.0)
+    bot = BTC5MinMakerBot(cfg)
+
+    def _set_rolling(n_fills: int, *, win_rate: float = 0.95, entry: float = 0.92) -> None:
+        wins = int(round(n_fills * win_rate))
+        losses = max(0, n_fills - wins)
+        bot._rolling_fills_090 = ([(1.0, entry, 1)] * wins) + ([(-1.0, entry, 0)] * losses)
+        bot._rolling_wr = win_rate
+        bot._rolling_avg_entry = entry
+        bot._rolling_kelly_fraction = bot._compute_kelly_fraction(
+            n_fills=n_fills,
+            win_rate=win_rate,
+            avg_entry=entry,
+        )
+
+    _set_rolling(10)
+    size_plan_2pct = bot._trade_size_for_edge_tier(edge_tier="standard", effective_max_trade_usd=100.0)
+    assert size_plan_2pct["target_size_usd"] == pytest.approx(7.8)
+
+    _set_rolling(25)
+    size_plan_5pct = bot._trade_size_for_edge_tier(edge_tier="standard", effective_max_trade_usd=100.0)
+    assert size_plan_5pct["target_size_usd"] == pytest.approx(19.5)
+
+    _set_rolling(40)
+    size_plan_8pct = bot._trade_size_for_edge_tier(edge_tier="standard", effective_max_trade_usd=100.0)
+    assert size_plan_8pct["target_size_usd"] == pytest.approx(31.2)
+
+    _set_rolling(60, win_rate=0.96, entry=0.93)
+    size_plan_kelly = bot._trade_size_for_edge_tier(edge_tier="standard", effective_max_trade_usd=100.0)
+    expected_fraction = bot._compute_kelly_fraction(n_fills=60, win_rate=0.96, avg_entry=0.93)
+    assert size_plan_kelly["target_size_usd"] == pytest.approx(round(390.0 * expected_fraction, 2))
+    assert "kelly_mode=quarter_kelly" in size_plan_kelly["sizing_reason_tags"]
+
+
+def test_trade_db_persists_rolling_kelly_stats(tmp_path: Path) -> None:
+    db_path = tmp_path / "btc5.db"
+    cfg = MakerConfig(db_path=db_path)
+    bot = BTC5MinMakerBot(cfg)
+    bot.db.upsert_rolling_kelly_stats(
+        sample_count=24,
+        win_rate=0.9583,
+        avg_entry_price=0.91,
+        avg_pnl_usd=0.081,
+        total_pnl_usd=1.944,
+        recommended_kelly_fraction=0.05,
+        recommended_trade_size_usd=19.5,
+        last_window_start_ts=1710000000,
+    )
+    snapshot = bot.db.latest_rolling_kelly_stats()
+    assert snapshot is not None
+    assert snapshot["sample_count"] == 24
+    assert snapshot["win_rate"] == pytest.approx(0.9583)
+    assert snapshot["avg_entry_price"] == pytest.approx(0.91)
+    assert snapshot["recommended_kelly_fraction"] == pytest.approx(0.05)
+    assert snapshot["recommended_trade_size_usd"] == pytest.approx(19.5)
+
+
 def test_clob_min_order_size_enforces_five_dollar_notional() -> None:
     assert clob_min_order_size(0.92) == pytest.approx(5.44)
     assert clob_min_order_size(0.30) == pytest.approx(16.67)
