@@ -17,15 +17,28 @@ March 14, 2026 — Elastifund Autoresearch
 """
 import json
 import logging
+import os
 import sqlite3
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger("AutoresearchLoop")
 
-DB_PATH = Path("/home/ubuntu/polymarket-trading-bot/data/btc_5min_maker.db")
-RESULTS_PATH = Path("/home/ubuntu/polymarket-trading-bot/data/autoresearch_results.json")
+BOT_DIR = Path(os.environ.get("POLYMARKET_BOT_DIR", "/home/ubuntu/polymarket-trading-bot"))
+DB_PATH = Path(os.environ.get("BTC5_DB_PATH", str(BOT_DIR / "data" / "btc_5min_maker.db")))
+RESULTS_PATH = Path(
+    os.environ.get("BTC5_AUTORESEARCH_RESULTS_PATH", str(BOT_DIR / "data" / "autoresearch_results.json"))
+)
+KELLY_RECOMMENDATION_PATH = Path(
+    os.environ.get(
+        "BTC5_AUTORESEARCH_KELLY_PATH",
+        str(BOT_DIR / "data" / "autoresearch_kelly_recommendation.json"),
+    )
+)
+PRICE_FLOOR_SWEEP = (0.85, 0.87, 0.88, 0.89, 0.90, 0.91, 0.92)
+PRICE_CAP_SWEEP = (0.93, 0.94, 0.95)
 
 
 @dataclass
@@ -39,6 +52,37 @@ class Hypothesis:
     live_pnl_at_generation: float = 0.0
     created_at: str = ""
     resolved_at: str = ""
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2))
+
+
+def _generate_price_floor_hypotheses(*, now: str, observation: dict[str, Any]) -> list[Hypothesis]:
+    """Generate MIN_BUY / MAX_BUY sweeps for replay validation."""
+    hypotheses: list[Hypothesis] = []
+    total_pnl = float(observation.get("total_pnl") or 0.0)
+    for min_buy in PRICE_FLOOR_SWEEP:
+        for cap in PRICE_CAP_SWEEP:
+            if min_buy > cap:
+                continue
+            suffix = f"{min_buy:.2f}_{cap:.2f}".replace(".", "")
+            hypotheses.append(
+                Hypothesis(
+                    hypothesis_id=f"h_price_{suffix}_{now[:10]}",
+                    description=f"Set MIN_BUY={min_buy:.2f}, MAX_BUY={cap:.2f}",
+                    params={
+                        "BTC5_MIN_BUY_PRICE": round(min_buy, 2),
+                        "BTC5_DOWN_MAX_BUY_PRICE": round(cap, 2),
+                        "BTC5_UP_MAX_BUY_PRICE": round(cap, 2),
+                    },
+                    predicted_improvement=max(0.0, total_pnl),
+                    live_pnl_at_generation=total_pnl,
+                    created_at=now,
+                )
+            )
+    return hypotheses
 
 
 def observe_recent_performance(hours: int = 24) -> dict:
@@ -112,6 +156,7 @@ def generate_hypotheses(observation: dict) -> list[Hypothesis]:
     hypotheses = []
     now = datetime.now(timezone.utc).isoformat()
     segments = observation.get("segments", {})
+    hypotheses.extend(_generate_price_floor_hypotheses(now=now, observation=observation))
 
     # Hypothesis: find best price floor from data
     price_data = segments.get("by_price_bucket", {})
@@ -178,10 +223,20 @@ def backtest_hypothesis(hypothesis: Hypothesis, lookback_hours: int = 48) -> flo
     shadow_pnl = 0.0
     for direction, price, pnl, won, ts in fills:
         params = hypothesis.params
+        side = str(direction or "").strip().upper()
 
         if "BTC5_MIN_BUY_PRICE" in params:
             if (price or 0) < params["BTC5_MIN_BUY_PRICE"]:
                 continue
+        max_buy_price = None
+        if "BTC5_MAX_BUY_PRICE" in params:
+            max_buy_price = float(params["BTC5_MAX_BUY_PRICE"])
+        elif side == "UP" and "BTC5_UP_MAX_BUY_PRICE" in params:
+            max_buy_price = float(params["BTC5_UP_MAX_BUY_PRICE"])
+        elif side == "DOWN" and "BTC5_DOWN_MAX_BUY_PRICE" in params:
+            max_buy_price = float(params["BTC5_DOWN_MAX_BUY_PRICE"])
+        if max_buy_price is not None and (price or 0) > max_buy_price:
+            continue
 
         if "BTC5_DIRECTIONAL_MODE" in params:
             mode = params["BTC5_DIRECTIONAL_MODE"]
@@ -204,9 +259,71 @@ def backtest_hypothesis(hypothesis: Hypothesis, lookback_hours: int = 48) -> flo
     return round(shadow_pnl, 2)
 
 
+def _compute_kelly_fraction(*, win_rate: float, avg_entry: float) -> tuple[float, float]:
+    """Return (full_kelly, quarter_kelly), both clamped to >= 0."""
+    if not (0.0 < avg_entry < 1.0):
+        return 0.0, 0.0
+    p = max(0.0, min(1.0, float(win_rate)))
+    q = 1.0 - p
+    b = (1.0 - avg_entry) / avg_entry
+    if b <= 0:
+        return 0.0, 0.0
+    full_kelly = max(0.0, ((p * b) - q) / b)
+    quarter_kelly = max(0.0, full_kelly / 4.0)
+    return round(full_kelly, 6), round(quarter_kelly, 6)
+
+
+def build_kelly_recommendation(*, min_entry: float = 0.90, limit: int = 200) -> dict[str, Any]:
+    """Build Kelly sizing recommendation from recent resolved live fills."""
+    conn = sqlite3.connect(str(DB_PATH))
+    rows = conn.execute(
+        """
+        SELECT won, order_price, pnl_usd, created_at
+        FROM window_trades
+        WHERE order_status = 'live_filled'
+          AND won IS NOT NULL
+          AND order_price >= ?
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (float(min_entry), max(1, int(limit))),
+    ).fetchall()
+    conn.close()
+    n = len(rows)
+    wins = sum(1 for won, _, _, _ in rows if int(won) == 1)
+    wr = (wins / n) if n else 0.0
+    avg_entry = (sum(float(price or 0.0) for _, price, _, _ in rows) / n) if n else 0.0
+    total_pnl = sum(float(pnl or 0.0) for _, _, pnl, _ in rows)
+    full_kelly, quarter_kelly = _compute_kelly_fraction(win_rate=wr, avg_entry=avg_entry)
+    capped_fraction = min(0.15, quarter_kelly)
+    bankroll = float(os.environ.get("BTC5_BANKROLL_USD", "390"))
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "qualifying_min_entry": round(float(min_entry), 4),
+        "lookback_limit": int(limit),
+        "n_qualifying_fills": n,
+        "win_rate": round(wr, 4),
+        "avg_entry_price": round(avg_entry, 4),
+        "total_pnl_usd": round(total_pnl, 4),
+        "full_kelly_fraction": full_kelly,
+        "recommended_kelly_fraction": round(capped_fraction, 6),
+        "recommended_trade_size_usd": round(max(0.0, bankroll * capped_fraction), 2),
+        "bankroll_usd": bankroll,
+    }
+
+
 def run_cycle() -> dict | None:
     """Full autoresearch cycle: observe -> hypothesize -> backtest -> rank."""
     logger.info("=== Autoresearch cycle start ===")
+    kelly_recommendation = build_kelly_recommendation()
+    _write_json(KELLY_RECOMMENDATION_PATH, kelly_recommendation)
+    logger.info(
+        "Kelly recommendation: n=%s wr=%.2f%% fraction=%.4f size=$%.2f",
+        kelly_recommendation.get("n_qualifying_fills", 0),
+        float(kelly_recommendation.get("win_rate", 0.0)) * 100.0,
+        float(kelly_recommendation.get("recommended_kelly_fraction", 0.0)),
+        float(kelly_recommendation.get("recommended_trade_size_usd", 0.0)),
+    )
 
     obs = observe_recent_performance(hours=24)
     logger.info(
@@ -245,8 +362,9 @@ def run_cycle() -> dict | None:
         "cycle_time": datetime.now(timezone.utc).isoformat(),
         "observation": obs,
         "hypotheses": results,
+        "kelly_recommendation": kelly_recommendation,
     }
-    RESULTS_PATH.write_text(json.dumps(output, indent=2))
+    _write_json(RESULTS_PATH, output)
     logger.info(f"Results written to {RESULTS_PATH}")
     logger.info("=== Autoresearch cycle complete ===")
     return output

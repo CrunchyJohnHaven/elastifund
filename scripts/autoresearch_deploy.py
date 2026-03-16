@@ -19,12 +19,13 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-BOT_DIR = Path("/home/ubuntu/polymarket-trading-bot")
+BOT_DIR = Path(os.environ.get("POLYMARKET_BOT_DIR", str(Path(__file__).resolve().parents[1])))
 RESULTS_PATH = BOT_DIR / "data" / "autoresearch_results.json"
 DEPLOY_LOG_PATH = BOT_DIR / "data" / "autoresearch_deploy_log.json"
 CAPITAL_ENV_PATH = BOT_DIR / "state" / "btc5_capital_stage.env"
 REPLAY_SCRIPT = BOT_DIR / "scripts" / "replay_simulator.py"
 DB_PATH = BOT_DIR / "data" / "btc_5min_maker.db"
+AUTORESEARCH_OVERRIDES_PATH = BOT_DIR / "config" / "autoresearch_overrides.json"
 
 # Must beat baseline by this fraction of baseline PnL to deploy.
 IMPROVEMENT_THRESHOLD = 0.10   # 10% better than baseline
@@ -36,6 +37,7 @@ SAFE_DEPLOY_PARAMS = {
     "BTC5_MIN_BUY_PRICE",
     "BTC5_DOWN_MAX_BUY_PRICE",
     "BTC5_UP_MAX_BUY_PRICE",
+    "BTC5_DIRECTIONAL_MODE",
     "BTC5_TOXIC_FLOW_MIN_PRICE_EXEMPT",
     "BTC5_MIN_DELTA",
     "BTC5_UP_MIN_DELTA",
@@ -43,19 +45,48 @@ SAFE_DEPLOY_PARAMS = {
     "BTC5_TOXIC_FLOW_IMBALANCE_THRESHOLD",
 }
 
-# Hard ceilings — never deploy above these values.
-PARAM_CEILINGS = {
-    "BTC5_DOWN_MAX_BUY_PRICE": 0.95,
-    "BTC5_UP_MAX_BUY_PRICE": 0.52,
-    "BTC5_TOXIC_FLOW_MIN_PRICE_EXEMPT": 0.95,
-    "BTC5_TOXIC_FLOW_IMBALANCE_THRESHOLD": 0.98,
+DEFAULT_HARD_BOUNDS = {
+    "BTC5_MIN_BUY_PRICE": {"min": 0.85, "max": 0.95},
+    "BTC5_DOWN_MAX_BUY_PRICE": {"max": 0.95},
+    "BTC5_UP_MAX_BUY_PRICE": {"max": 0.95},
+    "BTC5_TOXIC_FLOW_MIN_PRICE_EXEMPT": {"max": 0.95},
+    "BTC5_TOXIC_FLOW_IMBALANCE_THRESHOLD": {"max": 0.98},
+    "BTC5_MIN_DELTA": {"min": 0.00005},
 }
+ALLOWED_DIRECTIONAL_MODES = {"two_sided", "down_only", "up_only"}
 
-# Hard floors — never deploy below these values.
-PARAM_FLOORS = {
-    "BTC5_MIN_BUY_PRICE": 0.42,
-    "BTC5_MIN_DELTA": 0.00005,
-}
+
+def _load_hard_bounds() -> dict[str, dict[str, float]]:
+    merged = {key: dict(value) for key, value in DEFAULT_HARD_BOUNDS.items()}
+    if not AUTORESEARCH_OVERRIDES_PATH.exists():
+        return merged
+    try:
+        raw = json.loads(AUTORESEARCH_OVERRIDES_PATH.read_text())
+    except Exception as exc:
+        print(f"[deploy] Failed to parse {AUTORESEARCH_OVERRIDES_PATH}: {exc}")
+        return merged
+    if not isinstance(raw, dict):
+        return merged
+    bounds_raw = raw.get("hard_bounds")
+    if not isinstance(bounds_raw, dict):
+        return merged
+    for key, bound in bounds_raw.items():
+        if not isinstance(bound, dict):
+            continue
+        current = dict(merged.get(str(key), {}))
+        for side in ("min", "max"):
+            if side not in bound:
+                continue
+            try:
+                current[side] = float(bound[side])
+            except (TypeError, ValueError):
+                continue
+        if current:
+            merged[str(key)] = current
+    return merged
+
+
+HARD_BOUNDS = _load_hard_bounds()
 
 
 def _now_iso() -> str:
@@ -175,24 +206,85 @@ def _replay_with_hypothesis(hypothesis_params: dict) -> dict | None:
     return _run_replay(config)
 
 
-def _validate_params(params: dict) -> dict:
-    """Apply ceilings/floors to hypothesis params. Remove unsafe params."""
+def _validate_params(params: dict, *, hypothesis_id: str = "unknown") -> tuple[dict, list[dict]]:
+    """Apply hard bounds to hypothesis params and collect guardrail events."""
     safe: dict = {}
+    guardrail_events: list[dict] = []
     for k, v in params.items():
         if k not in SAFE_DEPLOY_PARAMS:
+            continue
+        if k == "BTC5_DIRECTIONAL_MODE":
+            mode = str(v or "").strip().lower()
+            if mode not in ALLOWED_DIRECTIONAL_MODES:
+                guardrail_events.append(
+                    {
+                        "status": "autoresearch_guardrail_triggered",
+                        "hypothesis_id": hypothesis_id,
+                        "param": k,
+                        "reason": "directional_mode_invalid",
+                        "candidate_value": str(v),
+                        "applied_value": None,
+                    }
+                )
+                continue
+            safe[k] = mode
             continue
         try:
             fv = float(v)
         except (TypeError, ValueError):
-            if isinstance(v, str):
-                safe[k] = v  # string params like DIRECTIONAL_MODE
+            guardrail_events.append(
+                {
+                    "status": "autoresearch_guardrail_triggered",
+                    "hypothesis_id": hypothesis_id,
+                    "param": k,
+                    "reason": "invalid_numeric_value",
+                    "candidate_value": str(v),
+                    "applied_value": None,
+                }
+            )
             continue
-        if k in PARAM_CEILINGS:
-            fv = min(fv, PARAM_CEILINGS[k])
-        if k in PARAM_FLOORS:
-            fv = max(fv, PARAM_FLOORS[k])
+        bounds = HARD_BOUNDS.get(k, {})
+        if "min" in bounds and fv < float(bounds["min"]):
+            guardrail_events.append(
+                {
+                    "status": "autoresearch_guardrail_triggered",
+                    "hypothesis_id": hypothesis_id,
+                    "param": k,
+                    "reason": "below_hard_min",
+                    "candidate_value": float(v),
+                    "applied_value": float(bounds["min"]),
+                }
+            )
+            fv = float(bounds["min"])
+        if "max" in bounds and fv > float(bounds["max"]):
+            guardrail_events.append(
+                {
+                    "status": "autoresearch_guardrail_triggered",
+                    "hypothesis_id": hypothesis_id,
+                    "param": k,
+                    "reason": "above_hard_max",
+                    "candidate_value": float(v),
+                    "applied_value": float(bounds["max"]),
+                }
+            )
+            fv = float(bounds["max"])
         safe[k] = fv
-    return safe
+    min_buy = safe.get("BTC5_MIN_BUY_PRICE")
+    if min_buy is not None:
+        for key in ("BTC5_DOWN_MAX_BUY_PRICE", "BTC5_UP_MAX_BUY_PRICE"):
+            if key in safe and float(safe[key]) < float(min_buy):
+                guardrail_events.append(
+                    {
+                        "status": "autoresearch_guardrail_triggered",
+                        "hypothesis_id": hypothesis_id,
+                        "param": key,
+                        "reason": "max_price_below_min_buy",
+                        "candidate_value": float(safe[key]),
+                        "applied_value": float(min_buy),
+                    }
+                )
+                safe[key] = float(min_buy)
+    return safe, guardrail_events
 
 
 def _restart_bot() -> bool:
@@ -271,6 +363,7 @@ def run() -> None:
     best_improvement = 0.0
     best_hypothesis = None
     best_replay = None
+    cycle_guardrail_events: list[dict] = []
 
     for h in hypotheses:
         if not isinstance(h, dict):
@@ -278,11 +371,15 @@ def run() -> None:
         params = h.get("params", {})
         if not params:
             continue
-        safe_params = _validate_params(params)
+        h_id = h.get("hypothesis_id", "unknown")
+        safe_params, guardrail_events = _validate_params(params, hypothesis_id=h_id)
+        if guardrail_events:
+            cycle_guardrail_events.extend(guardrail_events)
+            for event in guardrail_events:
+                print(f"[deploy] guardrail: {event}")
         if not safe_params:
             continue
 
-        h_id = h.get("hypothesis_id", "unknown")
         print(f"[deploy] Testing {h_id}: {safe_params}")
 
         replay = _replay_with_hypothesis(safe_params)
@@ -302,7 +399,14 @@ def run() -> None:
 
     if best_hypothesis is None or best_improvement <= 0:
         print("[deploy] No hypothesis beats baseline. Nothing to deploy.")
-        _log_cycle(log, "no_improvement", None, baseline_pnl, 0.0)
+        _log_cycle(
+            log,
+            "no_improvement",
+            None,
+            baseline_pnl,
+            0.0,
+            guardrail_events=cycle_guardrail_events,
+        )
         _save_deploy_log(log)
         return
 
@@ -310,7 +414,14 @@ def run() -> None:
     threshold_required = abs(baseline_pnl) * IMPROVEMENT_THRESHOLD if baseline_pnl != 0 else 0.50
     if best_improvement < threshold_required:
         print(f"[deploy] Best improvement ${best_improvement:.2f} < threshold ${threshold_required:.2f}. Not deploying.")
-        _log_cycle(log, "below_threshold", best_hypothesis[0], baseline_pnl, best_improvement)
+        _log_cycle(
+            log,
+            "below_threshold",
+            best_hypothesis[0],
+            baseline_pnl,
+            best_improvement,
+            guardrail_events=cycle_guardrail_events,
+        )
         _save_deploy_log(log)
         return
 
@@ -336,7 +447,8 @@ def run() -> None:
     _log_cycle(log, status, h_id, baseline_pnl, best_improvement,
                params=safe_params, old_params=old_values,
                replay_fills=best_replay.get("total_fills", 0) if best_replay else 0,
-               replay_pnl=best_replay.get("total_pnl", 0) if best_replay else 0)
+               replay_pnl=best_replay.get("total_pnl", 0) if best_replay else 0,
+               guardrail_events=cycle_guardrail_events)
     _save_deploy_log(log)
     print(f"[deploy] Done. Logged to {DEPLOY_LOG_PATH}")
 
@@ -352,7 +464,12 @@ def _deploy_without_replay(hypotheses: list, log: dict) -> None:
         print("[deploy] No deployable hypothesis found.")
         return
 
-    params = _validate_params(best_h.get("params", {}))
+    params, guardrail_events = _validate_params(
+        best_h.get("params", {}),
+        hypothesis_id=str(best_h.get("hypothesis_id", "unknown")),
+    )
+    for event in guardrail_events:
+        print(f"[deploy] guardrail: {event}")
     if not params:
         print("[deploy] No safe params after validation.")
         return
@@ -374,14 +491,14 @@ def _deploy_without_replay(hypotheses: list, log: dict) -> None:
     restarted = _restart_bot()
     _log_cycle(log, "deployed_no_replay_" + ("restarted" if restarted else "restart_failed"),
                h_id, 0.0, best_h.get("predicted_improvement", 0),
-               params=params, old_params=old_values)
+               params=params, old_params=old_values, guardrail_events=guardrail_events)
     _save_deploy_log(log)
 
 
 def _log_cycle(log: dict, status: str, h_id: str | None, baseline_pnl: float,
                improvement: float, params: dict | None = None,
                old_params: dict | None = None, replay_fills: int = 0,
-               replay_pnl: float = 0.0) -> None:
+               replay_pnl: float = 0.0, guardrail_events: list[dict] | None = None) -> None:
     log.setdefault("deploys", []).append({
         "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "timestamp": _now_iso(),
@@ -393,6 +510,7 @@ def _log_cycle(log: dict, status: str, h_id: str | None, baseline_pnl: float,
         "replay_pnl": replay_pnl,
         "params_deployed": params,
         "params_before": old_params,
+        "guardrail_events": list(guardrail_events or []),
     })
     # Keep only last 50 entries.
     log["deploys"] = log["deploys"][-50:]

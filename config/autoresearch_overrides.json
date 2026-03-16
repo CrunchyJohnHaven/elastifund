@@ -1,0 +1,14 @@
+{
+  "hard_bounds": {
+    "BTC5_MIN_BUY_PRICE": {
+      "min": 0.85,
+      "max": 0.95
+    },
+    "BTC5_DOWN_MAX_BUY_PRICE": {
+      "max": 0.95
+    },
+    "BTC5_UP_MAX_BUY_PRICE": {
+      "max": 0.95
+    }
+  }
+}

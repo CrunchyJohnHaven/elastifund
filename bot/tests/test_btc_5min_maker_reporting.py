@@ -24,7 +24,7 @@ def test_print_status_emits_stage_and_shadow_metadata(tmp_path: Path, capsys: py
     assert payload["advantage_tier"] == "stage_3_live_ready"
     assert payload["probe_fresh_for_stage_upgrade"] is True
     assert payload["shadow_research_tiers"]["shadow_100"]["shadow_only"] is True
-    assert payload["shadow_research_tiers"]["shadow_300"]["max_trade_usd"] == pytest.approx(300.0)
+    assert payload["shadow_research_tiers"]["shadow_200"]["max_trade_usd"] == pytest.approx(200.0)
 
 
 def test_status_summary_includes_intraday_live_summary(tmp_path: Path) -> None:

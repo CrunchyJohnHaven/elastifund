@@ -12,6 +12,10 @@ def test_market_slug_for_window() -> None:
     assert market_slug_for_window(1710000000) == "btc-updown-5m-1710000000"
 
 
+def test_market_slug_for_window_supports_1m_override() -> None:
+    assert market_slug_for_window(1710000000, window_seconds=60) == "btc-updown-1m-1710000000"
+
+
 def test_direction_from_prices_above_threshold() -> None:
     direction, delta = direction_from_prices(open_price=100.0, current_price=100.05, min_delta=0.0003)
     assert direction == "UP"
@@ -47,6 +51,17 @@ def test_choose_maker_buy_price_guardrails() -> None:
         )
         is None
     )
+
+
+def test_choose_maker_buy_price_prefers_ask_side_on_wide_spread() -> None:
+    price = choose_maker_buy_price(
+        best_bid=0.51,
+        best_ask=0.93,
+        max_price=0.95,
+        min_price=0.90,
+        tick_size=0.01,
+    )
+    assert price == pytest.approx(0.92)
 
 
 def test_choose_maker_buy_price_skips_when_post_only_band_falls_below_min_price() -> None:
@@ -608,7 +623,7 @@ def test_capital_stage_controls_gate_forward_and_shadow_research(tmp_path: Path)
     assert controls["probe_fresh_for_stage_upgrade"] is True
     assert controls["shadow_research_tiers"]["shadow_100"]["shadow_only"] is True
     assert controls["shadow_research_tiers"]["shadow_100"]["size_usd"] == pytest.approx(100.0)
-    assert controls["shadow_research_tiers"]["shadow_300"]["size_usd"] == pytest.approx(300.0)
+    assert controls["shadow_research_tiers"]["shadow_200"]["size_usd"] == pytest.approx(200.0)
 
 
 def test_capital_stage_controls_block_stage_upgrade_when_probe_is_stale(tmp_path: Path) -> None:

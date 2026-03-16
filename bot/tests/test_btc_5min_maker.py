@@ -50,6 +50,10 @@ def test_market_slug_for_window() -> None:
     assert market_slug_for_window(1710000000) == "btc-updown-5m-1710000000"
 
 
+def test_market_slug_for_window_supports_1m_override() -> None:
+    assert market_slug_for_window(1710000000, window_seconds=60) == "btc-updown-1m-1710000000"
+
+
 def _ts(year: int, month: int, day: int, hour: int, minute: int) -> int:
     return int(datetime(year, month, day, hour, minute, tzinfo=ET).timestamp())
 
@@ -89,6 +93,17 @@ def test_choose_maker_buy_price_guardrails() -> None:
         )
         is None
     )
+
+
+def test_choose_maker_buy_price_prefers_ask_side_on_wide_spread() -> None:
+    price = choose_maker_buy_price(
+        best_bid=0.51,
+        best_ask=0.93,
+        max_price=0.95,
+        min_price=0.90,
+        tick_size=0.01,
+    )
+    assert price == pytest.approx(0.92)
 
 
 def test_effective_max_buy_price_prefers_directional_caps() -> None:
