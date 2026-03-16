@@ -52,7 +52,7 @@ def test_run_stage_gate_scales_to_750_and_writes_stage1_cap(tmp_path: Path) -> N
     db_path = tmp_path / "btc_5min_maker.db"
     env_path = tmp_path / "state" / "btc5_capital_stage.env"
     log_path = tmp_path / "data" / "stage_gate_log.json"
-    rows = [(1_000_000 + i, 1 if i < 12 else 0, 1.0 if i < 12 else -0.5) for i in range(20)]
+    rows = [(1_000_000 + i, 0 if i < 8 else 1, -0.5 if i < 8 else 1.0) for i in range(20)]
     _create_window_db(db_path, rows)
     _write_stage_env(env_path, bankroll=5000, risk_fraction=0.33, stage1_max=500)
 
@@ -75,7 +75,7 @@ def test_run_stage_gate_caps_to_2x_step_when_stage3_target_is_higher(tmp_path: P
     db_path = tmp_path / "eth_5min_maker.db"
     env_path = tmp_path / "state" / "btc5_capital_stage.env"
     log_path = tmp_path / "data" / "stage_gate_log.json"
-    rows = [(2_000_000 + i, 1 if i < 30 else 0, 1.0 if i < 30 else -0.5) for i in range(40)]
+    rows = [(2_000_000 + i, 0 if i < 10 else 1, -0.5 if i < 10 else 1.0) for i in range(40)]
     _create_window_db(db_path, rows)
     _write_stage_env(env_path, bankroll=5000, risk_fraction=0.5, stage1_max=300)
 
