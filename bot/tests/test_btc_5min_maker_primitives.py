@@ -92,7 +92,7 @@ def test_choose_maker_sell_price_requires_profit_and_stays_maker() -> None:
         min_price=0.95,
         tick_size=0.01,
     )
-    assert no_edge is None
+    assert no_edge == pytest.approx(0.95)
 
 
 def test_transient_request_error_detection_identifies_network_flake_text() -> None:
