@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from bot.spread_capture import (
     SpreadCaptureScanner,
     SpreadWindowScan,
@@ -62,8 +64,8 @@ def test_scan_window_flags_arb_candidate_when_asks_under_threshold() -> None:
 
     assert scan.qualifies_arb is True
     assert scan.two_sided_both_books is True
-    assert scan.combined_best_ask == 0.94
-    assert scan.gross_edge_per_share == 0.06
+    assert scan.combined_best_ask == pytest.approx(0.94)
+    assert scan.gross_edge_per_share == pytest.approx(0.06)
     assert scan.reason is not None and "arb_candidate" in scan.reason
 
 
