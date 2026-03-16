@@ -441,7 +441,12 @@ def test_trade_size_for_edge_tier_uses_graduated_kelly_ramp() -> None:
 
     _set_rolling(60, win_rate=0.96, entry=0.93)
     size_plan_kelly = bot._trade_size_for_edge_tier(edge_tier="standard", effective_max_trade_usd=100.0)
-    expected_fraction = bot._compute_kelly_fraction(n_fills=60, win_rate=0.96, avg_entry=0.93)
+    metrics = bot._rolling_kelly_metrics()
+    expected_fraction = bot._compute_kelly_fraction(
+        n_fills=int(metrics["n_fills"]),
+        win_rate=float(metrics["win_rate"]),
+        avg_entry=float(metrics["avg_entry"]),
+    )
     assert size_plan_kelly["target_size_usd"] == pytest.approx(round(390.0 * expected_fraction, 2))
     assert "kelly_mode=quarter_kelly" in size_plan_kelly["sizing_reason_tags"]
 
