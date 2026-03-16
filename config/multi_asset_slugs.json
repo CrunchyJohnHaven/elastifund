@@ -1,6 +1,6 @@
 {
-  "discovered": "2026-03-15",
-  "note": "All three confirmed live via Gamma API on 2026-03-15. Same structure: 5-minute binary UP/DOWN resolved via Chainlink. Same CLOB, same maker rebates.",
+  "discovered": "2026-03-16",
+  "note": "BTC/ETH/SOL/XRP/DOGE/BNB 5-minute slug patterns verified against Gamma API on 2026-03-16. Same structure: 5-minute binary UP/DOWN resolved via Chainlink. Same CLOB, same maker flow.",
   "assets": {
     "BTCUSDT": {
       "slug_pattern": "btc-updown-5m-{window_start_ts}",
@@ -11,6 +11,7 @@
       "daily_volume_usd": 120000,
       "service": "btc-5min-maker.service",
       "db": "data/btc_5min_maker.db",
+      "strategy_env": "config/btc5_strategy.env",
       "status": "live"
     },
     "ETHUSDT": {
@@ -22,6 +23,7 @@
       "daily_volume_usd": 26000,
       "service": "eth-5min-maker.service",
       "db": "data/eth_5min_maker.db",
+      "strategy_env": "config/eth5_strategy.env",
       "status": "paper"
     },
     "SOLUSDT": {
@@ -33,6 +35,43 @@
       "daily_volume_usd": 5000,
       "service": "sol-5min-maker.service",
       "db": "data/sol_5min_maker.db",
+      "strategy_env": "config/sol5_strategy.env",
+      "status": "paper"
+    },
+    "XRPUSDT": {
+      "slug_pattern": "xrp-updown-5m-{window_start_ts}",
+      "asset_slug_prefix": "xrp",
+      "binance_symbol": "XRPUSDT",
+      "binance_ws": "wss://stream.binance.com:9443/ws/xrpusdt@trade",
+      "binance_ticker_url": "https://api.binance.com/api/v3/ticker/price?symbol=XRPUSDT",
+      "daily_volume_usd": 3500,
+      "service": "xrp-5min-maker.service",
+      "db": "data/xrp_5min_maker.db",
+      "strategy_env": "config/xrp5_strategy.env",
+      "status": "paper"
+    },
+    "DOGEUSDT": {
+      "slug_pattern": "doge-updown-5m-{window_start_ts}",
+      "asset_slug_prefix": "doge",
+      "binance_symbol": "DOGEUSDT",
+      "binance_ws": "wss://stream.binance.com:9443/ws/dogeusdt@trade",
+      "binance_ticker_url": "https://api.binance.com/api/v3/ticker/price?symbol=DOGEUSDT",
+      "daily_volume_usd": 2400,
+      "service": "doge-5min-maker.service",
+      "db": "data/doge_5min_maker.db",
+      "strategy_env": "config/doge5_strategy.env",
+      "status": "paper"
+    },
+    "BNBUSDT": {
+      "slug_pattern": "bnb-updown-5m-{window_start_ts}",
+      "asset_slug_prefix": "bnb",
+      "binance_symbol": "BNBUSDT",
+      "binance_ws": "wss://stream.binance.com:9443/ws/bnbusdt@trade",
+      "binance_ticker_url": "https://api.binance.com/api/v3/ticker/price?symbol=BNBUSDT",
+      "daily_volume_usd": 1800,
+      "service": "bnb-5min-maker.service",
+      "db": "data/bnb_5min_maker.db",
+      "strategy_env": "config/bnb5_strategy.env",
       "status": "paper"
     }
   }

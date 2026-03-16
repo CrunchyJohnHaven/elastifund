@@ -60,16 +60,31 @@ except Exception:  # pragma: no cover - optional dependency during staged rollou
 
 logger = logging.getLogger("BTC5Maker")
 
-WINDOW_SECONDS = max(60, int(os.environ.get("BTC5_WINDOW_SECONDS", "300")))
+def _window_seconds_from_env(default: int = 300) -> int:
+    raw = os.environ.get("BTC5_WINDOW_SECONDS")
+    if raw in (None, ""):
+        return int(default)
+    try:
+        parsed = int(float(raw))
+    except (TypeError, ValueError):
+        return int(default)
+    if parsed < 60 or parsed % 60 != 0:
+        return int(default)
+    return int(parsed)
+
+
+WINDOW_SECONDS = _window_seconds_from_env()
+WINDOW_MINUTES = max(1, WINDOW_SECONDS // 60)
+ASSET_SLUG_PREFIX = str(os.environ.get("BTC5_ASSET_SLUG_PREFIX", "btc")).strip().rstrip("-")
+if not ASSET_SLUG_PREFIX:
+    ASSET_SLUG_PREFIX = "btc"
 MARKET_SLUG_PREFIX = str(
-    os.environ.get(
-        "BTC5_MARKET_SLUG_PREFIX",
-        f"{os.environ.get('BTC5_ASSET_SLUG_PREFIX', 'btc')}-updown-5m",
-    )
+    os.environ.get("BTC5_MARKET_SLUG_PREFIX", f"{ASSET_SLUG_PREFIX}-updown-{WINDOW_MINUTES}m")
 ).strip().rstrip("-")
 if not MARKET_SLUG_PREFIX:
-    MARKET_SLUG_PREFIX = "btc-updown-5m"
+    MARKET_SLUG_PREFIX = f"{ASSET_SLUG_PREFIX}-updown-{WINDOW_MINUTES}m"
 DEFAULT_DB_PATH = Path("data/btc_5min_maker.db")
+DEFAULT_ADAPTATION_LOG_PATH = Path("data/adaptation_log.json")
 CLOB_HARD_MIN_SHARES = 5.0
 CLOB_HARD_MIN_NOTIONAL_USD = 5.0
 PROBE_DEFAULT_UP_MAX_BUY_PRICE = 0.49
@@ -551,12 +566,25 @@ def _parse_order_size(value: Any) -> float | None:
     return float(parsed)
 
 
-def market_slug_for_window(window_start_ts: int, slug_prefix: str = "") -> str:
+def market_slug_for_window(
+    window_start_ts: int,
+    slug_prefix: str = "",
+    *,
+    window_seconds: int | None = None,
+) -> str:
+    span_seconds = int(window_seconds) if window_seconds is not None else WINDOW_SECONDS
+    window_minutes = max(1, span_seconds // 60)
     prefix = str(slug_prefix or "").strip().rstrip("-")
+    explicit_full_prefix = os.environ.get("BTC5_MARKET_SLUG_PREFIX") not in (None, "")
     if not prefix:
-        prefix = MARKET_SLUG_PREFIX
-    if "-" not in prefix:
-        prefix = f"{prefix}-updown-5m"
+        # Keep window_seconds overrides deterministic for tests/backfills unless an
+        # explicit full slug prefix is configured at runtime.
+        if window_seconds is not None and not explicit_full_prefix:
+            prefix = ASSET_SLUG_PREFIX
+        else:
+            prefix = MARKET_SLUG_PREFIX
+    if "-updown-" not in prefix:
+        prefix = f"{prefix}-updown-{window_minutes}m"
     return f"{prefix}-{int(window_start_ts)}"
 
 
@@ -578,6 +606,9 @@ def choose_maker_buy_price(
     tick_size: float,
     aggression_ticks: int = 1,
     post_only_safety_ticks: int = 0,
+    wide_spread_ticks: int = 10,
+    wide_spread_min_ask: float = 0.90,
+    wide_spread_max_ask: float = 0.95,
 ) -> float | None:
     if best_bid is None or best_ask is None:
         return None
@@ -595,12 +626,26 @@ def choose_maker_buy_price(
     if max_valid <= 0 or max_valid < min_valid:
         return None
 
-    # Stay maker: bid below best ask. Improve by one tick from current best bid.
-    quote_ticks = max(0, int(aggression_ticks))
-    candidate = _round_down_to_tick(
-        best_bid + ((quote_ticks - safety_ticks) * tick_size),
-        tick_size,
-    )
+    spread_ticks = int((best_ask - best_bid) / tick_size) if tick_size > 0 else 0
+
+    # If spread is very wide inside our target ask band, quote one tick below ask
+    # instead of anchoring to the distant bid.
+    if (
+        spread_ticks > max(0, int(wide_spread_ticks))
+        and best_ask >= float(wide_spread_min_ask)
+        and best_ask <= float(wide_spread_max_ask)
+    ):
+        candidate = _round_down_to_tick(
+            best_ask - ((1 + safety_ticks) * tick_size),
+            tick_size,
+        )
+    else:
+        # Stay maker: bid below best ask. Improve by one tick from current best bid.
+        quote_ticks = max(0, int(aggression_ticks))
+        candidate = _round_down_to_tick(
+            best_bid + ((quote_ticks - safety_ticks) * tick_size),
+            tick_size,
+        )
     price = min(max(candidate, min_valid), max_valid)
     if price >= best_ask:
         return None
@@ -870,7 +915,24 @@ class MakerConfig:
     paper_fill_probability: float = float(os.environ.get("BTC5_PAPER_FILL_PROBABILITY", "0.20"))
     clob_fee_rate_bps: int = int(os.environ.get("BTC5_CLOB_FEE_RATE_BPS", "0"))
     request_timeout_sec: float = float(os.environ.get("BTC5_REQUEST_TIMEOUT_SEC", "8"))
+    adaptive_enabled: bool = _env_flag("BTC5_ENABLE_INLINE_ADAPTATION", True)
+    adaptive_suppress_wr_threshold: float = float(
+        os.environ.get("BTC5_ADAPT_SUPPRESS_WR_THRESHOLD", "0.85")
+    )
+    adaptive_suppress_window_fills: int = int(os.environ.get("BTC5_ADAPT_SUPPRESS_WINDOW_FILLS", "10"))
+    adaptive_suppress_duration_sec: int = int(os.environ.get("BTC5_ADAPT_SUPPRESS_DURATION_SEC", "3600"))
+    adaptive_size_raise_wr_threshold: float = float(
+        os.environ.get("BTC5_ADAPT_SIZE_RAISE_WR_THRESHOLD", "0.95")
+    )
+    adaptive_size_raise_window_fills: int = int(os.environ.get("BTC5_ADAPT_SIZE_RAISE_WINDOW_FILLS", "20"))
+    adaptive_size_raise_increment: float = float(os.environ.get("BTC5_ADAPT_SIZE_RAISE_INCREMENT", "0.01"))
+    adaptive_max_risk_fraction: float = float(os.environ.get("BTC5_ADAPT_MAX_RISK_FRACTION", "0.15"))
+    adaptation_log_path: Path = Path(
+        os.environ.get("BTC5_ADAPTATION_LOG_PATH", str(DEFAULT_ADAPTATION_LOG_PATH))
+    )
 
+    binance_symbol: str = os.environ.get("BTC5_ASSET_BINANCE_SYMBOL", "BTCUSDT")
+    binance_kline_interval: str = os.environ.get("BTC5_BINANCE_KLINE_INTERVAL", f"{WINDOW_MINUTES}m")
     binance_ws_url: str = os.environ.get("BTC5_BINANCE_WS_URL", "wss://stream.binance.com:9443/ws/btcusdt@trade")
     binance_klines_url: str = os.environ.get(
         "BTC5_BINANCE_KLINES_URL",
@@ -897,6 +959,10 @@ class MakerConfig:
     session_guardrail_overrides: tuple[SessionGuardrailOverride, ...] = field(init=False, default_factory=tuple)
 
     def __post_init__(self) -> None:
+        self.binance_symbol = str(self.binance_symbol or "BTCUSDT").strip().upper() or "BTCUSDT"
+        self.binance_kline_interval = (
+            str(self.binance_kline_interval or f"{WINDOW_MINUTES}m").strip().lower() or f"{WINDOW_MINUTES}m"
+        )
         self.session_guardrail_overrides = load_session_guardrail_overrides(
             inline_json=self.session_policy_json,
             path_value=self.session_policy_path,
@@ -916,6 +982,13 @@ class MakerConfig:
             0.0,
             min(1.0, float(self.loss_cluster_min_price_exempt)),
         )
+        self.adaptive_suppress_wr_threshold = max(0.0, min(1.0, float(self.adaptive_suppress_wr_threshold)))
+        self.adaptive_size_raise_wr_threshold = max(0.0, min(1.0, float(self.adaptive_size_raise_wr_threshold)))
+        self.adaptive_suppress_window_fills = max(1, int(self.adaptive_suppress_window_fills))
+        self.adaptive_size_raise_window_fills = max(1, int(self.adaptive_size_raise_window_fills))
+        self.adaptive_suppress_duration_sec = max(60, int(self.adaptive_suppress_duration_sec))
+        self.adaptive_size_raise_increment = max(0.0, float(self.adaptive_size_raise_increment))
+        self.adaptive_max_risk_fraction = max(float(self.risk_fraction), float(self.adaptive_max_risk_fraction))
 
     @property
     def effective_max_trade_usd(self) -> float:
@@ -1204,6 +1277,50 @@ class TradeDB:
                 LIMIT ?
                 """,
                 (capped_limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def recent_resolved_live_fills(
+        self,
+        *,
+        limit: int,
+        direction: str | None = None,
+        min_order_price: float | None = None,
+    ) -> list[dict[str, Any]]:
+        capped_limit = max(0, int(limit))
+        if capped_limit <= 0:
+            return []
+        where_parts = [
+            "filled = 1",
+            "won IS NOT NULL",
+            "direction IN ('UP', 'DOWN')",
+        ]
+        params: list[Any] = []
+        normalized_direction = str(direction or "").strip().upper()
+        if normalized_direction in {"UP", "DOWN"}:
+            where_parts.append("direction = ?")
+            params.append(normalized_direction)
+        if min_order_price is not None:
+            where_parts.append("order_price >= ?")
+            params.append(float(min_order_price))
+        where_sql = " AND ".join(where_parts)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT
+                    id,
+                    window_start_ts,
+                    direction,
+                    order_price,
+                    won,
+                    pnl_usd,
+                    updated_at
+                FROM window_trades
+                WHERE {where_sql}
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (*params, capped_limit),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -1704,6 +1821,11 @@ class BTC5MinMakerBot:
         self.clob = CLOBExecutor(cfg)
         self.smart_wallet_feed = self._build_smart_wallet_feed()
         self._wallet_watch_started_windows: set[int] = set()
+        self._adaptive_direction_suppress_until: dict[str, float] = {}
+        self._adaptive_direction_suppress_meta: dict[str, dict[str, Any]] = {}
+        self._adaptive_risk_fraction_boost = 0.0
+        self._last_adaptive_size_raise_window: int | None = None
+        self._restore_adaptation_state()
 
     def _load_smart_wallet_addresses(self) -> list[str]:
         path = self.cfg.smart_wallets_path
@@ -1762,6 +1884,206 @@ class BTC5MinMakerBot:
         except Exception as exc:
             logger.warning("Failed to initialize smart wallet feed: %s", exc)
             return None
+
+    def _adaptive_risk_fraction(self) -> float:
+        if not self.cfg.adaptive_enabled:
+            return float(self.cfg.risk_fraction)
+        return max(
+            0.0,
+            min(
+                float(self.cfg.adaptive_max_risk_fraction),
+                float(self.cfg.risk_fraction) + float(self._adaptive_risk_fraction_boost),
+            ),
+        )
+
+    def _rolling_fill_stats(
+        self,
+        *,
+        limit: int,
+        direction: str | None = None,
+        min_order_price: float | None = None,
+    ) -> dict[str, Any]:
+        rows = self.db.recent_resolved_live_fills(
+            limit=limit,
+            direction=direction,
+            min_order_price=min_order_price,
+        )
+        n = len(rows)
+        wins = sum(1 for row in rows if int(row.get("won") or 0) == 1)
+        wr = (wins / n) if n else 0.0
+        avg_entry = (
+            sum(_safe_float(row.get("order_price"), 0.0) or 0.0 for row in rows) / n
+            if n
+            else 0.0
+        )
+        pnl = sum(_safe_float(row.get("pnl_usd"), 0.0) or 0.0 for row in rows)
+        return {
+            "rows": rows,
+            "fills": n,
+            "wins": wins,
+            "win_rate": round(wr, 6),
+            "avg_entry_price": round(avg_entry, 6),
+            "pnl_usd": round(pnl, 6),
+        }
+
+    def _append_adaptation_log(self, *, event_type: str, payload: dict[str, Any]) -> None:
+        path = Path(self.cfg.adaptation_log_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data: dict[str, Any] = {"events": []}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text())
+                if isinstance(loaded, dict):
+                    data = loaded
+                elif isinstance(loaded, list):
+                    data = {"events": loaded}
+            except Exception:
+                data = {"events": []}
+        events = data.get("events")
+        if not isinstance(events, list):
+            events = []
+        events.append(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "event_type": event_type,
+                **payload,
+            }
+        )
+        data["events"] = events[-500:]
+        data["last_updated"] = datetime.now(timezone.utc).isoformat()
+        path.write_text(json.dumps(data, indent=2))
+
+    def _restore_adaptation_state(self) -> None:
+        if not self.cfg.adaptive_enabled:
+            return
+        path = Path(self.cfg.adaptation_log_path)
+        if not path.exists():
+            return
+        try:
+            payload = json.loads(path.read_text())
+        except Exception:
+            return
+        events = payload.get("events") if isinstance(payload, dict) else payload
+        if not isinstance(events, list):
+            return
+        now_ts = time.time()
+        max_extra = max(0.0, float(self.cfg.adaptive_max_risk_fraction) - float(self.cfg.risk_fraction))
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            event_type = str(event.get("event_type") or "").strip()
+            if event_type == "direction_auto_suppressed":
+                direction = str(event.get("direction") or "").strip().upper()
+                suppress_until = _safe_float(event.get("suppress_until_ts"), 0.0) or 0.0
+                if direction in {"UP", "DOWN"} and suppress_until > now_ts:
+                    self._adaptive_direction_suppress_until[direction] = max(
+                        float(self._adaptive_direction_suppress_until.get(direction, 0.0)),
+                        float(suppress_until),
+                    )
+                    self._adaptive_direction_suppress_meta[direction] = {
+                        "window_fills": int(_safe_float(event.get("window_fills"), 0.0) or 0),
+                        "win_rate": float(_safe_float(event.get("win_rate"), 0.0) or 0.0),
+                        "avg_entry_price": float(_safe_float(event.get("avg_entry_price"), 0.0) or 0.0),
+                        "rolling_pnl_usd": float(_safe_float(event.get("rolling_pnl_usd"), 0.0) or 0.0),
+                        "trigger_window_start_ts": int(
+                            _safe_float(event.get("trigger_window_start_ts"), 0.0) or 0
+                        ),
+                    }
+            elif event_type == "size_risk_fraction_increased":
+                boost = _safe_float(event.get("adaptive_boost"), None)
+                if boost is not None:
+                    self._adaptive_risk_fraction_boost = max(
+                        float(self._adaptive_risk_fraction_boost),
+                        min(max_extra, float(boost)),
+                    )
+
+    def _apply_inline_adaptation(
+        self,
+        *,
+        window_start_ts: int,
+        direction: str,
+        order_price: float,
+        won: int,
+        pnl_usd: float,
+    ) -> None:
+        if not self.cfg.adaptive_enabled:
+            return
+        normalized_direction = str(direction or "").strip().upper()
+        if normalized_direction not in {"UP", "DOWN"}:
+            return
+        direction_stats = self._rolling_fill_stats(
+            limit=self.cfg.adaptive_suppress_window_fills,
+            direction=normalized_direction,
+        )
+        overall_stats = self._rolling_fill_stats(
+            limit=self.cfg.adaptive_size_raise_window_fills,
+            min_order_price=0.90,
+        )
+        now_ts = time.time()
+        if (
+            direction_stats["fills"] >= self.cfg.adaptive_suppress_window_fills
+            and direction_stats["win_rate"] < self.cfg.adaptive_suppress_wr_threshold
+        ):
+            suppress_until = now_ts + float(self.cfg.adaptive_suppress_duration_sec)
+            prior_until = float(self._adaptive_direction_suppress_until.get(normalized_direction, 0.0))
+            self._adaptive_direction_suppress_until[normalized_direction] = max(prior_until, suppress_until)
+            self._adaptive_direction_suppress_meta[normalized_direction] = {
+                "window_fills": int(direction_stats["fills"]),
+                "win_rate": float(direction_stats["win_rate"]),
+                "avg_entry_price": float(direction_stats["avg_entry_price"]),
+                "rolling_pnl_usd": float(direction_stats["pnl_usd"]),
+                "trigger_window_start_ts": int(window_start_ts),
+            }
+            if suppress_until > prior_until + 1.0:
+                self._append_adaptation_log(
+                    event_type="direction_auto_suppressed",
+                    payload={
+                        "direction": normalized_direction,
+                        "suppress_until_ts": int(self._adaptive_direction_suppress_until[normalized_direction]),
+                        "window_fills": int(direction_stats["fills"]),
+                        "win_rate": float(direction_stats["win_rate"]),
+                        "avg_entry_price": float(direction_stats["avg_entry_price"]),
+                        "rolling_pnl_usd": float(direction_stats["pnl_usd"]),
+                        "last_fill": {
+                            "window_start_ts": int(window_start_ts),
+                            "order_price": round(float(order_price), 4),
+                            "won": int(won),
+                            "pnl_usd": round(float(pnl_usd), 6),
+                        },
+                    },
+                )
+
+        if (
+            overall_stats["fills"] >= self.cfg.adaptive_size_raise_window_fills
+            and overall_stats["win_rate"] > self.cfg.adaptive_size_raise_wr_threshold
+            and self._last_adaptive_size_raise_window != int(window_start_ts)
+        ):
+            max_extra = max(0.0, float(self.cfg.adaptive_max_risk_fraction) - float(self.cfg.risk_fraction))
+            if self._adaptive_risk_fraction_boost + 1e-9 < max_extra:
+                self._adaptive_risk_fraction_boost = min(
+                    max_extra,
+                    float(self._adaptive_risk_fraction_boost) + float(self.cfg.adaptive_size_raise_increment),
+                )
+                self._last_adaptive_size_raise_window = int(window_start_ts)
+                self._append_adaptation_log(
+                    event_type="size_risk_fraction_increased",
+                    payload={
+                        "trigger_window_start_ts": int(window_start_ts),
+                        "window_fills": int(overall_stats["fills"]),
+                        "win_rate": float(overall_stats["win_rate"]),
+                        "avg_entry_price": float(overall_stats["avg_entry_price"]),
+                        "rolling_pnl_usd": float(overall_stats["pnl_usd"]),
+                        "base_risk_fraction": float(self.cfg.risk_fraction),
+                        "adaptive_boost": round(float(self._adaptive_risk_fraction_boost), 6),
+                        "effective_risk_fraction": round(float(self._adaptive_risk_fraction()), 6),
+                        "last_fill": {
+                            "direction": normalized_direction,
+                            "order_price": round(float(order_price), 4),
+                            "won": int(won),
+                            "pnl_usd": round(float(pnl_usd), 6),
+                        },
+                    },
+                )
 
     async def _ensure_wallet_copy_watch(self, *, window_start_ts: int, http: MarketHttpClient) -> None:
         if not (self.cfg.enable_wallet_copy and self.smart_wallet_feed):
@@ -2037,9 +2359,10 @@ class BTC5MinMakerBot:
         effective_max_trade_usd: float,
     ) -> dict[str, Any]:
         stage_cap_usd = round(max(0.0, float(effective_max_trade_usd)), 2)
+        effective_risk_fraction = self._adaptive_risk_fraction()
         standard_size_usd = calc_trade_size_usd(
             self.cfg.bankroll_usd,
-            self.cfg.risk_fraction,
+            effective_risk_fraction,
             stage_cap_usd,
         )
         if edge_tier == "strong_validated":
@@ -2050,13 +2373,14 @@ class BTC5MinMakerBot:
                     "sizing_mode=full_stage_cap",
                     f"stage_cap_usd={stage_cap_usd:.2f}",
                     f"standard_size_usd={standard_size_usd:.2f}",
+                    f"effective_risk_fraction={effective_risk_fraction:.4f}",
                 ),
             }
         if edge_tier == "exploratory":
             exploratory_cap_usd = round(stage_cap_usd * 0.5, 2)
             exploratory_size_usd = calc_trade_size_usd(
                 self.cfg.bankroll_usd,
-                self.cfg.risk_fraction * 0.5,
+                effective_risk_fraction * 0.5,
                 exploratory_cap_usd,
             )
             return {
@@ -2067,6 +2391,7 @@ class BTC5MinMakerBot:
                     f"stage_cap_usd={stage_cap_usd:.2f}",
                     f"exploratory_cap_usd={exploratory_cap_usd:.2f}",
                     f"standard_size_usd={standard_size_usd:.2f}",
+                    f"effective_risk_fraction={effective_risk_fraction:.4f}",
                 ),
             }
         if edge_tier == "standard":
@@ -2077,6 +2402,7 @@ class BTC5MinMakerBot:
                     "sizing_mode=standard_risk_fraction",
                     f"stage_cap_usd={stage_cap_usd:.2f}",
                     f"standard_size_usd={standard_size_usd:.2f}",
+                    f"effective_risk_fraction={effective_risk_fraction:.4f}",
                 ),
             }
         return {
@@ -2463,6 +2789,14 @@ class BTC5MinMakerBot:
                     "pnl_usd": pnl,
                 }
             )
+            if filled == 1 and won is not None:
+                self._apply_inline_adaptation(
+                    window_start_ts=int(row["window_start_ts"]),
+                    direction=direction,
+                    order_price=order_price,
+                    won=int(won),
+                    pnl_usd=float(pnl or 0.0),
+                )
 
     async def _get_open_and_current_price(
         self,
@@ -2617,6 +2951,16 @@ class BTC5MinMakerBot:
                 payload["wallet_count"] = wallet_count
             if "wallet_notional" not in payload:
                 payload["wallet_notional"] = round(max(0.0, float(wallet_notional)), 4)
+            if "adaptive_risk_fraction" not in payload:
+                payload["adaptive_risk_fraction"] = round(float(self._adaptive_risk_fraction()), 6)
+            if "adaptive_risk_boost" not in payload:
+                payload["adaptive_risk_boost"] = round(float(self._adaptive_risk_fraction_boost), 6)
+            if "adaptive_direction_suppressions" not in payload:
+                payload["adaptive_direction_suppressions"] = {
+                    direction_key: int(until_ts)
+                    for direction_key, until_ts in self._adaptive_direction_suppress_until.items()
+                    if float(until_ts) > time.time()
+                }
             return payload
 
         def _persist(row: dict[str, Any]) -> None:
@@ -2811,6 +3155,41 @@ class BTC5MinMakerBot:
                 "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
                 "stage_gate_reason": stage_gate_reason,
             })
+
+        normalized_direction = str(direction or "").strip().upper()
+        if self.cfg.adaptive_enabled and normalized_direction in {"UP", "DOWN"}:
+            suppress_until = float(self._adaptive_direction_suppress_until.get(normalized_direction, 0.0))
+            if suppress_until > time.time():
+                suppress_meta = dict(self._adaptive_direction_suppress_meta.get(normalized_direction) or {})
+                suppress_until_iso = datetime.fromtimestamp(suppress_until, tz=timezone.utc).isoformat()
+                row = {
+                    "window_start_ts": window_start_ts,
+                    "window_end_ts": window_end_ts,
+                    "slug": slug,
+                    "direction": direction,
+                    "open_price": open_price,
+                    "current_price": current_price,
+                    "delta": delta,
+                    "order_status": "skip_adaptive_direction_suppressed",
+                    "reason": _join_reasons(
+                        probe_reason,
+                        session_reason,
+                        _reason_tag("adaptive_direction", normalized_direction),
+                        _reason_tag("adaptive_suppress_until", suppress_until_iso),
+                        _reason_tag("adaptive_rolling_wr", f"{float(suppress_meta.get('win_rate', 0.0)):.4f}"),
+                        _reason_tag("adaptive_window_fills", str(int(suppress_meta.get("window_fills", 0)))),
+                    ),
+                }
+                _persist(row)
+                return _result(
+                    {
+                        "window_start_ts": window_start_ts,
+                        "status": row["order_status"],
+                        "direction": direction,
+                        "delta": delta,
+                        "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
+                    }
+                )
 
         recent_regime = self._recent_direction_regime()
         directional_mode = str((recent_regime or {}).get("directional_mode") or "two_sided")
