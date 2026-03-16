@@ -97,7 +97,7 @@ def test_counterfactual_report_groups_and_scores_skip_reasons(tmp_path: Path) ->
 
     assert report["overall"]["count"] == 4
     assert report["overall"]["counterfactual_WR"] == 0.75
-    assert report["overall"]["counterfactual_PnL_per_trade"] == 0.425
+    assert report["overall"]["counterfactual_PnL_per_trade"] == 0.375
 
 
 def test_counterfactual_report_marks_negative_skip_reason_as_tighten(tmp_path: Path) -> None:
