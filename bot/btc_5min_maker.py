@@ -58,6 +58,11 @@ try:
 except Exception:  # pragma: no cover - optional dependency during staged rollout
     SmartWalletFeed = None  # type: ignore[assignment]
 
+try:
+    from bot.momentum_streak import detect_streak
+except ImportError:
+    from momentum_streak import detect_streak  # type: ignore
+
 logger = logging.getLogger("BTC5Maker")
 
 def _window_seconds_from_env(default: int = 300) -> int:
@@ -85,6 +90,7 @@ if not MARKET_SLUG_PREFIX:
     MARKET_SLUG_PREFIX = f"{ASSET_SLUG_PREFIX}-updown-{WINDOW_MINUTES}m"
 DEFAULT_DB_PATH = Path("data/btc_5min_maker.db")
 DEFAULT_ADAPTATION_LOG_PATH = Path("data/adaptation_log.json")
+DEFAULT_STREAK_LOG_PATH = Path("data/streak_log.json")
 CLOB_HARD_MIN_SHARES = 5.0
 CLOB_HARD_MIN_NOTIONAL_USD = 5.0
 PROBE_DEFAULT_UP_MAX_BUY_PRICE = 0.49
@@ -935,6 +941,7 @@ class MakerConfig:
     adaptation_log_path: Path = Path(
         os.environ.get("BTC5_ADAPTATION_LOG_PATH", str(DEFAULT_ADAPTATION_LOG_PATH))
     )
+    streak_log_path: Path = Path(os.environ.get("BTC5_STREAK_LOG_PATH", str(DEFAULT_STREAK_LOG_PATH)))
 
     binance_symbol: str = os.environ.get("BTC5_ASSET_BINANCE_SYMBOL", "BTCUSDT")
     binance_kline_interval: str = os.environ.get("BTC5_BINANCE_KLINE_INTERVAL", f"{WINDOW_MINUTES}m")
@@ -2106,6 +2113,52 @@ class BTC5MinMakerBot:
         data["last_updated"] = datetime.now(timezone.utc).isoformat()
         path.write_text(json.dumps(data, indent=2))
 
+    def _append_streak_detection(
+        self,
+        *,
+        window_start_ts: int,
+        direction: str | None,
+        delta: float,
+        streak_direction: str | None,
+        streak_length: int,
+        streak_signal: bool,
+    ) -> int:
+        path = Path(self.cfg.streak_log_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data: dict[str, Any] = {"events": []}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text())
+                if isinstance(loaded, dict):
+                    data = loaded
+                elif isinstance(loaded, list):
+                    data = {"events": loaded}
+            except Exception:
+                data = {"events": []}
+
+        events = data.get("events")
+        if not isinstance(events, list):
+            events = []
+
+        prior_streak_events = sum(1 for event in events if isinstance(event, dict) and bool(event.get("streak_signal")))
+        streak_event_index = prior_streak_events + 1 if streak_signal else 0
+        events.append(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "window_start_ts": int(window_start_ts),
+                "direction": str(direction or "").strip().upper() or None,
+                "delta": round(float(delta), 8),
+                "streak_direction": str(streak_direction or "").strip().upper() or None,
+                "streak_length": int(max(0, streak_length)),
+                "streak_signal": bool(streak_signal),
+                "streak_event_index": int(streak_event_index),
+            }
+        )
+        data["events"] = events[-2000:]
+        data["last_updated"] = datetime.now(timezone.utc).isoformat()
+        path.write_text(json.dumps(data, indent=2))
+        return int(streak_event_index)
+
     def _restore_adaptation_state(self) -> None:
         if not self.cfg.adaptive_enabled:
             return
@@ -3239,6 +3292,12 @@ class BTC5MinMakerBot:
         decision_timing = "late"
         decision_ts = int(time.time())
         early_fallback_reason: str | None = None
+        streak_direction: str | None = None
+        streak_length = 0
+        streak_signal = False
+        streak_event_index = 0
+        streak_multiplier = 1.0
+        streak_shadow_only = False
 
         def _result(payload: dict[str, Any]) -> dict[str, Any]:
             if "capital_stage" not in payload:
@@ -3301,6 +3360,18 @@ class BTC5MinMakerBot:
                 payload["decision_timing"] = decision_timing
             if "early_fallback_reason" not in payload:
                 payload["early_fallback_reason"] = early_fallback_reason
+            if "streak_direction" not in payload:
+                payload["streak_direction"] = streak_direction
+            if "streak_length" not in payload:
+                payload["streak_length"] = int(streak_length)
+            if "streak_signal" not in payload:
+                payload["streak_signal"] = bool(streak_signal)
+            if "streak_event_index" not in payload:
+                payload["streak_event_index"] = int(streak_event_index)
+            if "streak_multiplier" not in payload:
+                payload["streak_multiplier"] = round(float(streak_multiplier), 4)
+            if "streak_shadow_only" not in payload:
+                payload["streak_shadow_only"] = bool(streak_shadow_only)
             kelly_metrics = self._rolling_kelly_metrics()
             kelly_plan = self._graduated_kelly_risk_plan()
             if "kelly_sample_count_090" not in payload:
@@ -3540,6 +3611,34 @@ class BTC5MinMakerBot:
             direction, delta = prefetched_direction, prefetched_delta
         else:
             direction, delta = direction_from_prices(open_price, current_price, effective_min_delta)
+
+        normalized_direction = str(direction or "").strip().upper()
+        try:
+            detected_direction, detected_length = detect_streak(self.cfg.db_path)
+            streak_direction = str(detected_direction or "").strip().upper() or None
+            streak_length = int(max(0, int(detected_length)))
+        except Exception as exc:
+            logger.warning("Momentum streak detection failed: %s", exc)
+            streak_direction = None
+            streak_length = 0
+        streak_signal = (
+            normalized_direction in {"UP", "DOWN"}
+            and streak_direction in {"UP", "DOWN"}
+            and streak_direction == normalized_direction
+            and streak_length >= 3
+        )
+        try:
+            streak_event_index = self._append_streak_detection(
+                window_start_ts=window_start_ts,
+                direction=normalized_direction or direction,
+                delta=float(delta or 0.0),
+                streak_direction=streak_direction,
+                streak_length=streak_length,
+                streak_signal=streak_signal,
+            )
+        except Exception as exc:
+            logger.warning("Momentum streak logging failed: %s", exc)
+            streak_event_index = 0
         if self.cfg.enable_wallet_copy and self.smart_wallet_feed:
             await self._ensure_wallet_copy_watch(window_start_ts=window_start_ts, http=http)
             try:
@@ -3930,6 +4029,19 @@ class BTC5MinMakerBot:
             *sizing_reason_tags,
             *(size_plan.get("sizing_reason_tags") or []),
         )
+        if streak_signal:
+            streak_multiplier = 1.0 + 0.25 * min(max(streak_length - 2, 0), 4)
+            streak_shadow_only = streak_event_index > 0 and streak_event_index <= 20
+            size_usd = round(min(300.0, max(0.0, float(size_usd) * streak_multiplier)), 2)
+            scaled_cap = round(max(0.0, float(size_cap_usd) * streak_multiplier), 2)
+            size_cap_usd = min(300.0, max(size_usd, scaled_cap))
+            sizing_reason_tags = _unique_tags(
+                *sizing_reason_tags,
+                f"streak_N={streak_length}",
+                f"streak_multiplier={streak_multiplier:.2f}x",
+                f"streak_event_index={streak_event_index}",
+                "streak_shadow_only_warmup" if streak_shadow_only else "streak_shadow_only_complete",
+            )
 
         if edge_tier == "suppressed":
             row = {
@@ -4048,7 +4160,17 @@ class BTC5MinMakerBot:
         placement_failure_attribution: str | None = None
         order_outcome_attribution: str | None = None
 
-        if self.cfg.paper_trading:
+        if streak_shadow_only and not self.cfg.paper_trading:
+            order_id = f"shadow-streak-{window_start_ts}"
+            filled = 0
+            order_status = "shadow_streak_only"
+            executed_shares = 0.0
+            reason = _join_reasons(
+                reason,
+                _reason_tag("streak_shadow_only", "true"),
+                _reason_tag("streak_event_index", str(streak_event_index)),
+            )
+        elif self.cfg.paper_trading:
             order_id = f"paper-{window_start_ts}"
             filled = 1 if deterministic_fill(window_start_ts, self.cfg.paper_fill_probability) else 0
             order_status = "paper_filled" if filled == 1 else "paper_unfilled"
