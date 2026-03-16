@@ -82,6 +82,122 @@ async def test_process_window_records_partial_live_fill(monkeypatch: pytest.Monk
     assert "size_adjustment=clob_min_share_bump" in json.loads(row["size_adjustment_tags"])
 
 
+async def test_process_window_sell_early_closes_open_live_position(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = MakerConfig(
+        paper_trading=False,
+        db_path=tmp_path / "btc5.db",
+        bankroll_usd=250.0,
+        risk_fraction=0.01,
+        max_trade_usd=5.0,
+        min_trade_usd=0.25,
+        min_delta=0.01,
+        max_buy_price=0.95,
+        min_buy_price=0.90,
+        tick_size=0.01,
+        cancel_seconds_before_close=2,
+        enable_sell_early=True,
+        sell_early_min_profit_price=0.0,
+        sell_early_max_candidates=3,
+    )
+    bot = BTC5MinMakerBot(cfg)
+
+    async def fake_resolve(http, through_window_start: int) -> None:
+        return None
+
+    async def fake_prices(*, window_start_ts: int, http) -> tuple[float, float]:
+        return 100.0, 100.0001
+
+    class SellOnlyCLOB:
+        def place_post_only_sell(self, token_id: str, price: float, shares: float) -> PlacementResult:
+            assert token_id == "tok-down"
+            assert price == pytest.approx(1.0)
+            assert shares == pytest.approx(10.0)
+            return PlacementResult(order_id="sell-1", success=True, status="live")
+
+        def get_order_state(self, order_id: str) -> LiveOrderState:
+            assert order_id == "sell-1"
+            return LiveOrderState(
+                order_id="sell-1",
+                status="matched",
+                original_size=10.0,
+                size_matched=10.0,
+                price=1.0,
+            )
+
+        def cancel_order(self, order_id: str) -> bool:
+            raise AssertionError("cancel should not run when sell is fully filled")
+
+    class EarlySellHTTP:
+        top_of_book = staticmethod(MarketHttpClient.top_of_book)
+
+        async def fetch_book(self, token_id: str) -> dict:
+            assert token_id == "tok-down"
+            return {
+                "bids": [{"price": 0.99, "size": 100}],
+                "asks": [],
+            }
+
+    monkeypatch.setattr(bot, "_resolve_unsettled", fake_resolve)
+    monkeypatch.setattr(bot, "_get_open_and_current_price", fake_prices)
+    bot.clob = SellOnlyCLOB()
+
+    window_start_ts = current_window_start(time.time()) - (2 * 300)
+    prior_window_start_ts = window_start_ts - 300
+    bot.db.upsert_window(
+        {
+            "window_start_ts": prior_window_start_ts,
+            "window_end_ts": prior_window_start_ts + 300,
+            "slug": market_slug_for_window(prior_window_start_ts),
+            "decision_ts": prior_window_start_ts + 290,
+            "direction": "DOWN",
+            "open_price": 100.0,
+            "current_price": 99.95,
+            "delta": -0.0005,
+            "token_id": "tok-down",
+            "best_bid": 0.94,
+            "best_ask": 0.95,
+            "order_price": 0.95,
+            "trade_size_usd": 9.5,
+            "shares": 10.0,
+            "order_id": "buy-1",
+            "order_status": "live_filled",
+            "filled": 1,
+            "reason": "seed_open",
+            "resolved_side": None,
+            "won": None,
+            "pnl_usd": None,
+            "realized_pnl_usd": 0.0,
+        }
+    )
+
+    result = await bot._process_window(window_start_ts=window_start_ts, http=EarlySellHTTP())
+
+    assert result["status"] == "skip_delta_too_small"
+    assert result["sell_early"]["attempted"] == 1
+    assert result["sell_early"]["closed"] == 1
+    assert result["sell_early"]["realized_pnl_usd"] == pytest.approx(0.5)
+
+    with bot.db._connect() as conn:
+        row = conn.execute(
+            """
+            SELECT shares, order_status, resolved_side, won, pnl_usd, realized_pnl_usd, reason
+            FROM window_trades
+            WHERE window_start_ts = ?
+            """,
+            (prior_window_start_ts,),
+        ).fetchone()
+    assert row["shares"] == pytest.approx(0.0)
+    assert row["order_status"] == "live_exited_early"
+    assert row["resolved_side"] == "EARLY_EXIT"
+    assert row["won"] == 1
+    assert row["pnl_usd"] == pytest.approx(0.5)
+    assert row["realized_pnl_usd"] == pytest.approx(0.5)
+    assert "sell_early_price=1.00" in str(row["reason"] or "")
+
+
 async def test_process_window_emits_capital_stage_fields(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
