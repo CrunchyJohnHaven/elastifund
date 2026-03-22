@@ -956,7 +956,7 @@ class MakerConfig:
     min_delta: float = float(os.environ.get("BTC5_MIN_DELTA", "0.0003"))
     max_abs_delta: float | None = _optional_env_float("BTC5_MAX_ABS_DELTA")
     maker_improve_ticks: int = int(os.environ.get("BTC5_MAKER_IMPROVE_TICKS", "1"))
-    max_buy_price: float = float(os.environ.get("BTC5_MAX_BUY_PRICE", "0.95"))
+    max_buy_price: float = float(os.environ.get("BTC5_MAX_BUY_PRICE", "0.55"))
     up_max_buy_price: float | None = _optional_env_float("BTC5_UP_MAX_BUY_PRICE")
     down_max_buy_price: float | None = _optional_env_float("BTC5_DOWN_MAX_BUY_PRICE")
     up_live_mode: str = os.environ.get("BTC5_UP_LIVE_MODE", "shadow_only")
@@ -3067,6 +3067,24 @@ class BTC5MinMakerBot:
         session_override = active_session_guardrail_override(self.cfg, window_start_ts=window_start_ts)
         session_policy_name = session_override.session_name if session_override is not None else None
         session_reason = session_guardrail_reason(session_override, window_start_ts=window_start_ts)
+
+        # --- BTC5 time-of-day kill (data shows heavy losses 22-03, 09-11 ET) ---
+        _BTC5_KILL_HOURS_ET = frozenset({22, 23, 0, 1, 2, 3, 9, 10, 11})
+        _win_dt = datetime.fromtimestamp(window_start_ts, tz=timezone.utc)
+        _win_et_hour = (_win_dt.hour - 4) % 24
+        if _win_et_hour in _BTC5_KILL_HOURS_ET:
+            logger.info(
+                "BTC5 TIME-KILL: ET hour %02d — skipping window %s",
+                _win_et_hour, slug,
+            )
+            return _result(
+                {
+                    "window_start_ts": window_start_ts,
+                    "status": "skip_time_of_day_kill",
+                    "decision_reason_tags": ["decision=skip", f"skip_reason=time_kill_et_{_win_et_hour:02d}"],
+                }
+            )
+
         recent_regime: dict[str, Any] | None = None
         edge_tier = "suppressed"
         decision_reason_tags: list[str] = []

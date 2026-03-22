@@ -105,3 +105,51 @@ def test_build_finance_gate_status_keeps_baseline_pass_when_expansion_is_hold_no
     assert status["finance_gate_pass"] is True
     assert status["baseline_live_trading_pass"] is True
     assert status["capital_expansion_only_hold"] is True
+    assert status["max_live_stage_cap"] == 1
+
+
+def test_load_finance_gate_status_normalizes_legacy_lane_names_and_bankroll_sleeves(tmp_path: Path) -> None:
+    reports_dir = tmp_path / "reports" / "finance"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "finance_gate_pass": True,
+        "treasury_gate_pass": False,
+        "capital_expansion_only_hold": True,
+        "finance_state": "hold_no_spend",
+        "allocation_contract": {
+            "max_live_stage_cap": 1,
+        },
+        "verdict": {
+            "btc5_live_baseline": "baseline_allowed",
+            "weather": "shadow_only",
+            "everything_else": "blocked",
+        },
+        "bankroll": {
+            "sleeves": {
+                "btc5_live_baseline": {
+                    "lane_id": "btc5_live_baseline",
+                    "approved_live_budget_usd": 25.0,
+                    "trade_size_cap_usd": 5.0,
+                },
+                "weather_shadow_only": {
+                    "lane_id": "weather_shadow_only",
+                    "approved_live_budget_usd": 0.0,
+                },
+                "everything_else_no_spend": {
+                    "lane_id": "everything_else_no_spend",
+                    "approved_live_budget_usd": 0.0,
+                },
+            }
+        },
+    }
+    (reports_dir / "latest.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    status = load_finance_gate_status(tmp_path)
+
+    assert status["finance_lane_verdicts"]["maker_bootstrap_live"] == "baseline_allowed"
+    assert status["finance_lane_verdicts"]["weather"] == "shadow_only"
+    assert status["finance_lane_verdicts"]["everything_else"] == "blocked"
+    assert status["finance_lane_budgets"]["maker_bootstrap_live"]["lane_id"] == "maker_bootstrap_live"
+    assert status["finance_lane_budgets"]["weather"]["lane_id"] == "weather"
+    assert status["finance_lane_budgets"]["everything_else"]["lane_id"] == "everything_else"
+    assert status["max_live_stage_cap"] == 1

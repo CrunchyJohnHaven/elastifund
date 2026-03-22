@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from scripts.run_btc5_autoresearch_cycle import (
@@ -25,6 +26,10 @@ from scripts.run_btc5_autoresearch_cycle import (
     _write_reports,
     render_strategy_env,
 )
+
+
+def _utc_hours_ago(hours: float) -> str:
+    return (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
 
 
 def test_load_env_file_parses_comments_and_values(tmp_path: Path) -> None:
@@ -351,7 +356,7 @@ def test_deploy_recommendation_promote_shadow_hold() -> None:
 
 def test_select_public_forecast_prefers_confidence_then_deploy_then_recency() -> None:
     standard = {
-        "generated_at": "2026-03-10T11:00:00+00:00",
+        "generated_at": _utc_hours_ago(2.0),
         "arr_tracking": {
             "current_median_arr_pct": 100.0,
             "best_median_arr_pct": 140.0,
@@ -370,7 +375,7 @@ def test_select_public_forecast_prefers_confidence_then_deploy_then_recency() ->
         "size_aware_deployment": {"available": True, "recommended_live_stage_cap": 1},
     }
     probe = {
-        "generated_at": "2026-03-10T11:30:00+00:00",
+        "generated_at": _utc_hours_ago(1.5),
         "arr_tracking": {
             "current_median_arr_pct": 100.0,
             "best_median_arr_pct": 130.0,
@@ -498,7 +503,7 @@ def test_probe_feedback_adjustment_reduces_confidence_for_stale_probe() -> None:
 
 def test_select_public_forecast_prefers_fresh_probe_over_stale_nominally_better_package() -> None:
     standard = {
-        "generated_at": "2026-03-09T00:00:00+00:00",
+        "generated_at": _utc_hours_ago(30.0),
         "arr_tracking": {
             "current_median_arr_pct": 100.0,
             "best_median_arr_pct": 220.0,
@@ -510,7 +515,7 @@ def test_select_public_forecast_prefers_fresh_probe_over_stale_nominally_better_
         "generalization_ratio": 1.2,
     }
     probe = {
-        "generated_at": "2026-03-10T12:30:00+00:00",
+        "generated_at": _utc_hours_ago(0.25),
         "arr_tracking": {
             "current_median_arr_pct": 100.0,
             "best_median_arr_pct": 150.0,

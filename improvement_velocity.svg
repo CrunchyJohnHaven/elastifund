@@ -17,7 +17,7 @@
 <circle cx="1130" cy="90" r="160" fill="#18314d" opacity="0.35"/>
 <circle cx="180" cy="660" r="120" fill="#0c3b49" opacity="0.22"/>
 <text x="80" y="78" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="34" font-weight="700" fill="#f7fafc">BTC5 Public Improvement Velocity</text>
-<text x="80" y="116" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="17" fill="#bfd0ea">Generated 2026-03-14 16:25 UTC from runtime truth and the freshest public BTC5 forecast artifact.</text>
+<text x="80" y="116" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="17" fill="#bfd0ea">Generated 2026-03-15 00:46 UTC from runtime truth and the freshest public BTC5 forecast artifact.</text>
 <rect x="900" y="150" width="320" height="420" rx="24" fill="#0d1b2e" opacity="0.92" stroke="#27496d"/>
 <line x1="100" y1="170.00" x2="860" y2="170.00" stroke="#28425e" stroke-width="1"/>
 <line x1="100" y1="260.00" x2="860" y2="260.00" stroke="#28425e" stroke-width="1"/>
@@ -84,7 +84,7 @@
 <text x="926" y="204" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#91a8c7">SELECTED SOURCE</text>
 <text x="926" y="226" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">reports/btc5_autoresearch_loop/latest.json</text>
 <text x="926" y="254" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#91a8c7">DEPLOY RECOMMENDATION</text>
-<text x="926" y="276" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">shadow_only</text>
+<text x="926" y="276" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">hold</text>
 <text x="926" y="304" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#91a8c7">CONFIDENCE</text>
 <text x="926" y="326" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">high</text>
 <text x="926" y="354" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#91a8c7">FORECAST ARR GAIN</text>
@@ -98,12 +98,12 @@
 <text x="926" y="554" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#91a8c7">PER DAY</text>
 <text x="926" y="576" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">2.25M% / 0.0 fills</text>
 <text x="926" y="604" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#91a8c7">SAMPLE</text>
-<text x="926" y="626" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">0 live fills in the realized</text>
+<text x="926" y="626" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">6 live fills in the realized</text>
 <text x="926" y="648" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">sleeve window; 123 validation</text>
 <text x="926" y="670" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">live-filled rows in the selected</text>
 <text x="926" y="692" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">forecast</text>
 <text x="80" y="630" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#c3d6ee">Metric: Best-package BTC5 continuation ARR trend | Window: 2026-03-09 18:44 UTC -&gt; 2026-03-10 16:31 UTC (21.79h)</text>
-<text x="80" y="650" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#c3d6ee">Confidence: high | Sample: 0 live fills in the realized sleeve window; 123 validation live-filled rows in the selected</text>
+<text x="80" y="650" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#c3d6ee">Confidence: high | Sample: 6 live fills in the realized sleeve window; 123 validation live-filled rows in the selected</text>
 <text x="80" y="670" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#c3d6ee">forecast | Source: reports/btc5_autoresearch_loop/latest.json</text>
 <text x="80" y="690" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#c3d6ee">Source class: forecast loop history + BTC5 window rows</text>
 </svg>

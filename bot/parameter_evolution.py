@@ -251,6 +251,10 @@ class ParameterEvolution:
             elite = population[:n_elite]
             offspring: list[ParameterSet] = []
 
+            # Track consecutive surrogate rejections to avoid infinite loops
+            _surrogate_reject_count = 0
+            _max_surrogate_rejects = self.population_size * 10  # safety ceiling
+
             while len(offspring) < self.population_size - n_elite:
                 # Select parents from top half of current population
                 pool_size = max(2, self.population_size // 2)
@@ -264,15 +268,19 @@ class ParameterEvolution:
 
                 child = self._gaussian_mutation(child)
 
-                # Surrogate pre-screening: skip evaluation if surrogate predicts bad
-                if self._surrogate_fitted:
+                # Surrogate pre-screening: skip evaluation if surrogate predicts bad.
+                # Use rank-based comparison (bottom-25% of current pop) instead of
+                # multiplicative scaling — robust to negative fitness landscapes.
+                if self._surrogate_fitted and _surrogate_reject_count < _max_surrogate_rejects:
                     surrogate_score = self._surrogate_predict(child)
-                    # Accept if surrogate predicts above median of current pop
-                    median_fit = population[len(population) // 2].fitness
-                    if surrogate_score < median_fit * 0.5 and len(offspring) > 0:
-                        # Pre-screened out — try again (don't waste objective calls)
+                    # Reject only if below the 25th-percentile fitness of current pop
+                    cutoff_idx = max(0, int(len(population) * 0.75) - 1)
+                    cutoff_fitness = population[cutoff_idx].fitness
+                    if surrogate_score < cutoff_fitness and len(offspring) > 0:
+                        _surrogate_reject_count += 1
                         continue
 
+                _surrogate_reject_count = 0  # reset on accepted candidate
                 child.fitness = objective_fn(child.to_dict())
                 child.evaluated = True
                 child.generation = gen

@@ -427,6 +427,8 @@ MAX_POSITION_USD = 5.0
 POLY_MIN_ORDER_SHARES = _CLOB_HARD_MIN_SHARES
 MAX_DAILY_LOSS_USD = 10.0
 MAX_EXPOSURE_PCT = 0.90
+MAX_PER_MARKET_USD = 15.0  # Hard cap: never deploy more than this on a single market
+MAX_TOKEN_BUY_PRICE = 0.60  # Never buy a token priced above this (need >60% accuracy to profit)
 KELLY_FRACTION = 0.25
 MAX_KELLY_FRACTION = 0.25
 SCAN_INTERVAL = 180
@@ -527,6 +529,8 @@ def _reload_runtime_settings(*, persist: bool = False) -> RuntimeProfileBundle:
     global POLY_MIN_ORDER_SHARES
     global MAX_DAILY_LOSS_USD
     global MAX_EXPOSURE_PCT
+    global MAX_PER_MARKET_USD
+    global MAX_TOKEN_BUY_PRICE
     global KELLY_FRACTION
     global MAX_KELLY_FRACTION
     global SCAN_INTERVAL
@@ -574,6 +578,8 @@ def _reload_runtime_settings(*, persist: bool = False) -> RuntimeProfileBundle:
     POLY_MIN_ORDER_SHARES = max(_CLOB_HARD_MIN_SHARES, float(os.environ.get("JJ_POLY_MIN_ORDER_SHARES", "5.0")))
     MAX_DAILY_LOSS_USD = float(os.environ.get("JJ_MAX_DAILY_LOSS_USD", "10"))
     MAX_EXPOSURE_PCT = float(os.environ.get("JJ_MAX_EXPOSURE_PCT", "0.90"))
+    MAX_PER_MARKET_USD = float(os.environ.get("JJ_MAX_PER_MARKET_USD", "15.0"))
+    MAX_TOKEN_BUY_PRICE = float(os.environ.get("JJ_MAX_TOKEN_BUY_PRICE", "0.60"))
     KELLY_FRACTION = float(os.environ.get("JJ_KELLY_FRACTION", "0.25"))
     MAX_KELLY_FRACTION = float(os.environ.get("JJ_MAX_KELLY_FRACTION", "0.25"))
     SCAN_INTERVAL = int(os.environ.get("JJ_SCAN_INTERVAL", "180"))
@@ -2736,17 +2742,6 @@ class JJState:
     def has_position(self, market_id: str) -> bool:
         return market_id in self.state["open_positions"]
 
-    def open_notional_for_market(self, market_id: str, direction: str | None = None) -> float:
-        """Return currently open notional for a market/direction pair."""
-        payload = self.state.get("open_positions", {}).get(str(market_id))
-        if not isinstance(payload, dict):
-            return 0.0
-        if direction:
-            open_direction = str(payload.get("direction", "")).strip()
-            if open_direction and open_direction != str(direction).strip():
-                return 0.0
-        return round(max(0.0, _safe_float(payload.get("size_usd"), 0.0) or 0.0), 2)
-
     def upsert_linked_legs(self, attempt_id: str, payload: dict) -> None:
         record = dict(payload)
         record.setdefault("attempt_id", str(attempt_id))
@@ -3497,6 +3492,8 @@ class JJLive:
             self.fast_flow_only,
         )
         logger.info(f"  Max per trade: ${MAX_POSITION_USD}")
+        logger.info(f"  Max per market: ${MAX_PER_MARKET_USD}")
+        logger.info(f"  Max token buy price: ${MAX_TOKEN_BUY_PRICE}")
         logger.info(f"  Daily loss limit: ${MAX_DAILY_LOSS_USD}")
         logger.info(f"  Kelly fraction: {KELLY_FRACTION} (max {MAX_KELLY_FRACTION})")
         logger.info(f"  Scan interval: {SCAN_INTERVAL}s")
@@ -5523,7 +5520,7 @@ class JJLive:
                 min_order_size = clob_min_order_size(order_price, min_shares=POLY_MIN_ORDER_SHARES)
                 if shares < min_order_size:
                     bumped_usd = round(min_order_size * order_price, 2)
-                    if bumped_usd > MAX_POSITION_USD:
+                    if bumped_usd > MAX_POSITION_USD * 2:
                         logger.info(
                             "  SKIP sum-violation leg (%.2f shares / $%.2f below live min %.2f shares / $%.2f): %s",
                             shares,
@@ -5635,43 +5632,30 @@ class JJLive:
                         )
                         continue
 
-                    if not order_id:
-                        logger.warning(
-                            "SUM-VIOL order acknowledged without id: event=%s leg=%s result=%s",
-                            signal.get("event_id", ""),
-                            market_id,
-                            result,
-                        )
-                        continue
-
                     trade_record["order_id"] = order_id
+                    trade_id = self.db.log_trade(trade_record)
                     self._record_trade_telemetry(
-                        {**trade_record, "order_size": shares},
+                        {**trade_record, "trade_id": trade_id, "order_size": shares},
                         fill_status="posted",
-                        execution_stage="live_sum_violation_posted",
+                        execution_stage="live_sum_violation",
                     )
-                    if self.fill_tracker is not None:
-                        self.fill_tracker.record_order(
-                            order_id=order_id,
-                            market_id=market_id,
-                            token_id=token_id,
-                            question=leg_signal["question"],
-                            category=category,
-                            side="BUY",
-                            direction=direction,
-                            price=order_price,
-                            size=shares,
-                            size_usd=size_usd,
-                            order_type="maker",
-                            metadata={
-                                "trade_record": dict(trade_record),
-                                "signal_context": {
-                                    "edge": leg_signal.get("edge", 0.0),
-                                    "market_price": leg_signal.get("market_price", order_price),
-                                    "direction": leg_signal.get("direction", direction),
-                                },
-                            },
-                        )
+                    self.multi_sim.simulate_trade(leg_signal, trade_id)
+                    self.state.record_trade(
+                        market_id=market_id,
+                        question=leg_signal["question"],
+                        direction=direction,
+                        price=price,
+                        size_usd=size_usd,
+                        edge=leg_signal["edge"],
+                        confidence=leg_signal["confidence"],
+                        order_id=order_id,
+                        source=trade_record.get("source", ""),
+                        source_combo=trade_record.get("source_combo", ""),
+                        source_components=trade_record.get("source_components", []),
+                        source_count=int(_safe_float(trade_record.get("source_count", 0), 0)),
+                        signal_sources=list(trade_record.get("signal_sources") or []),
+                        signal_metadata=dict(trade_record.get("signal_metadata") or {}),
+                    )
                     basket_successes += 1
                     orders_placed += 1
                 except Exception as e:
@@ -6446,7 +6430,7 @@ class JJLive:
                         skipped_category += 1
                     elif filter_reason == "velocity":
                         skipped_too_slow += 1
-                    elif filter_reason == "unknown_resolution":
+                    elif filter_reason == "resolution":
                         skipped_no_resolution += 1
 
                 # Extract YES price — handle multiple formats
@@ -6756,7 +6740,6 @@ class JJLive:
                 signal_allowed, filter_reason, category, res_hours = apply_llm_market_filters(
                     question,
                     resolution_hours=mdata_lookup.get("resolution_hours"),
-                    slug=mdata_lookup.get("slug", ""),
                 )
                 if not signal_allowed:
                     logger.info(
@@ -7355,6 +7338,17 @@ class JJLive:
         self._log_lane_health_summary("cycle", lane_health, cycle_num=cycle_num)
 
         # 3. EXECUTE TRADES
+        # --- Time-of-day kill switch (data-driven: suppress losing ET hours) ---
+        _KILL_HOURS_ET = frozenset({22, 23, 0, 1, 2, 3, 9, 10, 11})
+        _now_utc = datetime.now(timezone.utc)
+        _et_hour = (_now_utc.hour - 4) % 24  # approximate UTC -> ET
+        if _et_hour in _KILL_HOURS_ET:
+            logger.info(
+                "TIME-OF-DAY KILL: ET hour %02d:00 is in loss cluster %s — skipping all %d signals",
+                _et_hour, sorted(_KILL_HOURS_ET), len(signals),
+            )
+            signals = []
+
         logger.info(
             "Signal stage: entering execution (%d predictive, %d combinatorial)",
             len(signals),
@@ -7575,28 +7569,25 @@ class JJLive:
                 logger.info(f"  SKIP (size=0): {signal['question'][:50]}...")
                 continue
 
-            existing_market_usd = self.state.open_notional_for_market(market_id, signal["direction"])
-            pending_market_usd = (
-                self.fill_tracker.pending_notional_for_market(market_id, signal["direction"])
-                if self.fill_tracker is not None
-                else 0.0
-            )
-            remaining_market_usd = round(
-                MAX_POSITION_USD - existing_market_usd - pending_market_usd,
-                2,
-            )
-            if remaining_market_usd < 0.50:
-                logger.info(
-                    "  SKIP (per-market cap reached: market=%s dir=%s open=$%.2f pending=$%.2f cap=$%.2f): %s",
-                    str(market_id)[:16],
-                    signal["direction"],
-                    existing_market_usd,
-                    pending_market_usd,
-                    MAX_POSITION_USD,
-                    signal.get("question", "")[:50],
-                )
-                continue
-            size_usd = min(size_usd, remaining_market_usd)
+            # --- Per-market exposure cap (DISPATCH: prevent single-market blowups) ---
+            existing_pos = self.state.state["open_positions"].get(str(market_id))
+            if existing_pos:
+                existing_size = _safe_float(existing_pos.get("size_usd"), 0.0) or 0.0
+                if existing_size >= MAX_PER_MARKET_USD:
+                    logger.info(
+                        "  SKIP per-market cap: $%.2f already deployed on %s (cap $%.2f)",
+                        existing_size, signal.get("question", "")[:50], MAX_PER_MARKET_USD,
+                    )
+                    continue
+                remaining = MAX_PER_MARKET_USD - existing_size
+                if size_usd > remaining:
+                    logger.info(
+                        "  TRIM size $%.2f -> $%.2f (per-market cap $%.2f, existing $%.2f)",
+                        size_usd, remaining, MAX_PER_MARKET_USD, existing_size,
+                    )
+                    size_usd = round(remaining, 2)
+                    if size_usd <= 0:
+                        continue
 
             # Determine token and price
             if signal["direction"] == "buy_yes":
@@ -7608,6 +7599,14 @@ class JJLive:
                 price = 1.0 - signal["market_price"]  # NO token price
                 side = "BUY"
             else:
+                continue
+
+            # --- Token price guard (DISPATCH: never buy expensive tokens) ---
+            if price > MAX_TOKEN_BUY_PRICE:
+                logger.info(
+                    "  SKIP token price $%.2f > max $%.2f: %s",
+                    price, MAX_TOKEN_BUY_PRICE, signal.get("question", "")[:50],
+                )
                 continue
 
             # Calculate shares
@@ -7624,9 +7623,9 @@ class JJLive:
             min_order_size = clob_min_order_size(order_price, min_shares=POLY_MIN_ORDER_SHARES)
             if order_size < min_order_size:
                 bumped_usd = round(min_order_size * order_price, 2)
-                if bumped_usd > MAX_POSITION_USD:
+                if bumped_usd > MAX_POSITION_USD * 2:
                     logger.info(
-                        "  SKIP (%.2f shares / $%.2f below live min %.2f shares / $%.2f; bump to $%.2f exceeds max $%.2f): %s",
+                        "  SKIP (%.2f shares / $%.2f below live min %.2f shares / $%.2f; bump to $%.2f exceeds 2x max $%.2f): %s",
                         order_size,
                         order_size * order_price,
                         min_order_size,

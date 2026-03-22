@@ -110,12 +110,13 @@ pull_remote_data() {
 
 capture_remote_service_status() {
     mkdir -p "$(dirname "$REMOTE_SERVICE_STATUS")"
-    echo "[SERVICE] Capturing jj-live status..."
+    local service_name="btc-5min-maker.service"
+    echo "[SERVICE] Capturing ${service_name} status..."
 
     local systemctl_state="unknown"
     local detail="unknown"
 
-    if detail=$($SSH_CMD "$VPS_HOST" "systemctl is-active jj-live.service 2>/dev/null || true" 2>&1); then
+    if detail=$($SSH_CMD "$VPS_HOST" "systemctl is-active ${service_name} 2>/dev/null || true" 2>&1); then
         systemctl_state="$(printf '%s\n' "$detail" | tail -1 | tr -d '\r')"
         detail="$systemctl_state"
     else
@@ -123,7 +124,7 @@ capture_remote_service_status() {
         systemctl_state="unknown"
     fi
 
-    "$PYTHON_BIN" - "$REMOTE_SERVICE_STATUS" "$VPS_HOST" "$systemctl_state" "$detail" <<'PY'
+    "$PYTHON_BIN" - "$REMOTE_SERVICE_STATUS" "$VPS_HOST" "$service_name" "$systemctl_state" "$detail" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
@@ -131,8 +132,9 @@ from pathlib import Path
 
 target = Path(sys.argv[1])
 host = sys.argv[2]
-systemctl_state = (sys.argv[3] or "unknown").strip()
-detail = (sys.argv[4] or "unknown").strip()
+service_name = (sys.argv[3] or "btc-5min-maker.service").strip()
+systemctl_state = (sys.argv[4] or "unknown").strip()
+detail = (sys.argv[5] or "unknown").strip()
 
 if systemctl_state == "active":
     status = "running"
@@ -144,7 +146,7 @@ else:
 payload = {
     "checked_at": datetime.now(timezone.utc).isoformat(),
     "host": host,
-    "service_name": "jj-live.service",
+    "service_name": service_name,
     "status": status,
     "systemctl_state": systemctl_state,
     "detail": detail,
@@ -278,8 +280,9 @@ do_sync() {
 
     # ── Restart bot if code changed ──
     if $PUSH_CODE && $push_changed; then
-        echo "[RESTART] Restarting jj-live service (code changed)..."
-        $SSH_CMD "$VPS_HOST" "sudo systemctl restart jj-live.service && sleep 3 && sudo systemctl is-active jj-live.service" 2>&1
+        local service_name="btc-5min-maker.service"
+        echo "[RESTART] Restarting ${service_name} (code changed)..."
+        $SSH_CMD "$VPS_HOST" "sudo systemctl restart ${service_name} && sleep 3 && sudo systemctl is-active ${service_name}" 2>&1
     elif $PUSH_CODE; then
         echo "[RESTART] Skipped (no code changes pushed)."
     else

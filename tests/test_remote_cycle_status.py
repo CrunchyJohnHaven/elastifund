@@ -824,7 +824,7 @@ def test_write_remote_cycle_status_emits_runtime_truth_and_public_snapshot(
     assert control_plane["profile_consistency"]["status"] in {"consistent", "mismatch"}
     assert control_plane["profile_consistency"]["selected_profile"] is not None
     assert control_plane["service_consistency"]["status"] == "mismatch"
-    assert control_plane["service_consistency"]["observed_service_name"] == "jj-live.service"
+    assert control_plane["service_consistency"]["observed_service_name"] == "btc-5min-maker.service"
     assert any(
         reason.startswith("service_target_mismatch:")
         for reason in control_plane["service_consistency"]["reasons"]
@@ -858,7 +858,7 @@ def test_write_remote_cycle_status_emits_runtime_truth_and_public_snapshot(
         == "hold"
     )
     assert any(
-        "jj-live.service is running while launch posture remains blocked" in headline
+        "btc-5min-maker.service is running while launch posture remains blocked" in headline
         for headline in public_snapshot["operator_headlines"]
     )
     assert (tmp_path / "reports" / "state_improvement_latest.json").exists()
@@ -2893,7 +2893,7 @@ def test_bridge_pull_only_captures_service_snapshot_before_status(tmp_path: Path
                 "with log.open('a') as fh:",
                 "    fh.write('ssh ' + ' '.join(sys.argv[1:]) + '\\n')",
                 "command = sys.argv[-1]",
-                "if 'systemctl is-active jj-live.service' in command:",
+                "if 'systemctl is-active btc-5min-maker.service' in command:",
                 "    print('inactive')",
                 "elif 'jj_state.json' in command:",
                 "    print('  Bankroll: configured in .env')",

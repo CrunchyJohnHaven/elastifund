@@ -478,6 +478,14 @@ def test_run_execute_falls_back_to_shadow_when_live_treasury_whitelist_blocks(tm
     assert action_rows["allocate::fund_trading"]["status"] == "shadowed"
     assert action_rows["allocate::fund_nontrading"]["status"] == "queued"
 
+    latest_report = json.loads(settings.latest_report_path.read_text(encoding="utf-8"))
+    assert latest_report["treasury_gate_pass"] is False
+    assert latest_report["max_live_stage_cap"] == 1
+    assert latest_report["finance_lane_verdicts"]["maker_bootstrap_live"] == "blocked"
+    assert latest_report["finance_lane_verdicts"]["wallet_intel_directional_shadow"] == "shadow_only"
+    assert latest_report["finance_lane_budgets"]["maker_bootstrap_live"]["allow_notional_creep"] is False
+    assert latest_report["allocation_contract"]["btc5_only_live_funded_lane"] is True
+
 
 def test_live_treasury_executes_only_top_trading_action(tmp_path: Path) -> None:
     seed_external_reports(tmp_path)

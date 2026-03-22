@@ -8,6 +8,7 @@ if str(_TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(_TESTS_DIR))
 
 import _remote_cycle_status_shared as _shared
+import scripts.remote_cycle_status_core as remote_cycle_status_core  # noqa: E402
 import scripts.write_remote_cycle_status as remote_cycle_status  # noqa: E402
 from scripts.write_remote_cycle_status import (  # noqa: E402
     _apply_shared_truth_contract_to_status,
@@ -302,8 +303,9 @@ def test_load_btc5_maker_state_materializes_remote_window_row_cache(
         return SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
 
     monkeypatch.setattr(remote_cycle_status.subprocess, "run", fake_run)
+    monkeypatch.setattr(remote_cycle_status_core.subprocess, "run", fake_run)
 
-    observed = remote_cycle_status._load_btc5_maker_state(tmp_path)
+    observed = remote_cycle_status_core._load_btc5_maker_state(tmp_path)
     cached_rows = json.loads((tmp_path / "reports" / "tmp_remote_btc5_window_rows.json").read_text())
     conn = sqlite3.connect(tmp_path / "data" / "btc_5min_maker.db")
     try:
@@ -316,6 +318,39 @@ def test_load_btc5_maker_state_materializes_remote_window_row_cache(
         ).fetchall()
     finally:
         conn.close()
+    ledger_conn = sqlite3.connect(tmp_path / "data" / "jj_trades.db")
+    try:
+        trade_rows = ledger_conn.execute(
+            """
+            SELECT market_id, order_id, position_size_usd, source, source_combo, source_count
+            FROM trades
+            ORDER BY timestamp ASC
+            """
+        ).fetchall()
+        order_rows = ledger_conn.execute(
+            """
+            SELECT order_id, trade_id, market_id, price, size_usd, status, fill_count
+            FROM orders
+            ORDER BY timestamp ASC
+            """
+        ).fetchall()
+        fill_rows = ledger_conn.execute(
+            """
+            SELECT order_id, trade_id, market_id, fill_price, fill_size_usd
+            FROM fills
+            ORDER BY timestamp ASC
+            """
+        ).fetchall()
+    finally:
+        ledger_conn.close()
+    ledger_conn = sqlite3.connect(tmp_path / "data" / "jj_trades.db")
+    try:
+        trade_columns = {
+            row[1]
+            for row in ledger_conn.execute("PRAGMA table_info(trades)").fetchall()
+        }
+    finally:
+        ledger_conn.close()
 
     assert observed["source"] == "remote_sqlite_probe"
     assert observed["latest_trade"]["order_status"] == "live_filled"
@@ -327,6 +362,27 @@ def test_load_btc5_maker_state_materializes_remote_window_row_cache(
     assert mirrored_rows[-1][1] == 1773421500
     assert mirrored_rows[-1][2] > 0
     assert mirrored_rows[-1][3] == "live_filled"
+    assert trade_rows == [
+        (
+            "btc-updown-5m-1773421200",
+            "btc5-mirror-order-1773421200",
+            8.5,
+            "polymarket_btc5_remote_mirror",
+            "polymarket_btc5_remote_mirror",
+            1,
+        )
+    ]
+    assert len(order_rows) == 1
+    assert order_rows[0][0] == "btc5-mirror-order-1773421200"
+    assert order_rows[0][2] == "btc-updown-5m-1773421200"
+    assert order_rows[0][4] == 8.5
+    assert order_rows[0][5] == "filled"
+    assert order_rows[0][6] == 1
+    assert len(fill_rows) == 1
+    assert fill_rows[0][0] == "btc5-mirror-order-1773421200"
+    assert fill_rows[0][2] == "btc-updown-5m-1773421200"
+    assert fill_rows[0][4] == 8.5
+    assert {"source", "source_combo", "source_components_json", "source_count"}.issubset(trade_columns)
 
 
 def test_write_remote_cycle_status_emits_runtime_mode_reconciliation_artifact(tmp_path: Path):

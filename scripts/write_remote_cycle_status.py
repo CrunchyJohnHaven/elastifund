@@ -15,6 +15,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -23,13 +24,20 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import scripts.remote_cycle_status_core as _core_status
 from bot.runtime_profile import load_runtime_profile as load_runtime_profile_bundle
 from bot.runtime_profile import write_effective_runtime_profile as write_runtime_profile_bundle
 from flywheel.status_report import build_remote_cycle_status as build_base_remote_cycle_status
 from scripts.remote_cycle_status_core import (  # noqa: E402
     _apply_shared_truth_contract_to_status,
+    _build_launch_status as _build_launch_status_core,
+    apply_runtime_mode_reconciliation as _apply_runtime_mode_reconciliation_core,
+    build_runtime_mode_reconciliation as _build_runtime_mode_reconciliation_core,
     _load_btc5_selected_package_summary,
     _resolve_authoritative_trade_totals,
+)
+from scripts.trade_attribution_contract import (  # noqa: E402
+    build_trade_attribution_contract as _build_trade_attribution_contract_impl,
 )
 
 
@@ -96,6 +104,7 @@ REMOTE_BOT_DIR = "/home/ubuntu/polymarket-trading-bot"
 REMOTE_PYTHONPATH = (
     f"{REMOTE_BOT_DIR}:{REMOTE_BOT_DIR}/bot:{REMOTE_BOT_DIR}/polymarket-bot"
 )
+PRIMARY_RUNTIME_SERVICE_NAME = "btc-5min-maker.service"
 WALLET_PROBE_SCRIPT = """import json
 import os
 from py_clob_client.client import ClobClient
@@ -2625,307 +2634,13 @@ def build_runtime_mode_reconciliation(
     runtime_profile_refresh: dict[str, Any],
     runtime_mode_reconciliation_path: Path,
 ) -> dict[str, Any]:
-    bundle = runtime_profile_refresh["bundle"]
-    effective_config = dict(bundle.config)
-    effective_mode = dict(effective_config.get("mode") or {})
-    effective_flags = dict(effective_config.get("feature_flags") or {})
-    risk_limits = dict(effective_config.get("risk_limits") or {})
-    signal_thresholds = dict(effective_config.get("signal_thresholds") or {})
-    market_filters = dict(effective_config.get("market_filters") or {})
-
-    deploy_evidence = _load_latest_deploy_evidence(root)
-    remote_values = dict(deploy_evidence.get("remote_values") or {})
-    remote_runtime_profile = (
-        remote_values.get("JJ_RUNTIME_PROFILE")
-        or deploy_evidence.get("remote_runtime_profile")
-        or bundle.selected_profile
+    return _build_runtime_mode_reconciliation_core(
+        root,
+        status=status,
+        runtime_truth_snapshot=runtime_truth_snapshot,
+        runtime_profile_refresh=runtime_profile_refresh,
+        runtime_mode_reconciliation_path=runtime_mode_reconciliation_path,
     )
-    agent_run_mode = (
-        remote_values.get("ELASTIFUND_AGENT_RUN_MODE")
-        or deploy_evidence.get("agent_run_mode")
-        or "unknown"
-    )
-    remote_paper_trading = _bool_or_none(
-        remote_values.get("PAPER_TRADING") or deploy_evidence.get("paper_trading")
-    )
-    paper_trading = (
-        remote_paper_trading
-        if remote_paper_trading is not None
-        else _bool_or_none(effective_mode.get("paper_trading"))
-    )
-    execution_mode = str(
-        effective_mode.get("effective_execution_mode")
-        or effective_mode.get("execution_mode")
-        or "unknown"
-    ).strip()
-    allow_order_submission = bool(effective_mode.get("allow_order_submission"))
-    service_state = str(
-        deploy_evidence.get("service_state")
-        or status.get("service", {}).get("status")
-        or "unknown"
-    ).strip()
-    process_state = str(deploy_evidence.get("process_state") or "unknown").strip()
-
-    launch_live_blocked = bool(status.get("launch", {}).get("live_launch_blocked"))
-    mode_ambiguity_fields: list[str] = []
-    if not remote_runtime_profile:
-        mode_ambiguity_fields.append("JJ_RUNTIME_PROFILE")
-    if not agent_run_mode or agent_run_mode == "unknown":
-        mode_ambiguity_fields.append("ELASTIFUND_AGENT_RUN_MODE")
-    if paper_trading is None:
-        mode_ambiguity_fields.append("PAPER_TRADING")
-    if not execution_mode or execution_mode == "unknown":
-        mode_ambiguity_fields.append("execution_mode")
-
-    mode_inconsistency_reasons: list[str] = []
-    if remote_runtime_profile and remote_runtime_profile != bundle.selected_profile:
-        mode_inconsistency_reasons.append(
-            f"remote JJ_RUNTIME_PROFILE={remote_runtime_profile} differs from local selected profile {bundle.selected_profile}"
-        )
-    if (
-        agent_run_mode
-        and agent_run_mode != "unknown"
-        and execution_mode
-        and execution_mode != "unknown"
-        and agent_run_mode != execution_mode
-    ):
-        mode_inconsistency_reasons.append(
-            f"remote ELASTIFUND_AGENT_RUN_MODE={agent_run_mode} differs from effective execution_mode={execution_mode}"
-        )
-    local_paper_trading = _bool_or_none(effective_mode.get("paper_trading"))
-    if (
-        remote_paper_trading is not None
-        and local_paper_trading is not None
-        and remote_paper_trading != local_paper_trading
-    ):
-        mode_inconsistency_reasons.append(
-            f"remote PAPER_TRADING={remote_paper_trading} differs from effective paper_trading={local_paper_trading}"
-        )
-    if service_state == "running" and launch_live_blocked and allow_order_submission:
-        mode_inconsistency_reasons.append(
-            "service_state=running while launch_posture=blocked and allow_order_submission=true"
-        )
-
-    launch_posture = (
-        "blocked"
-        if launch_live_blocked or mode_ambiguity_fields or mode_inconsistency_reasons
-        else "clear"
-    )
-    order_submit_enabled = bool(
-        allow_order_submission
-        and launch_posture != "blocked"
-        and not mode_ambiguity_fields
-        and not mode_inconsistency_reasons
-    )
-    restart_recommended = bool(
-        launch_posture != "blocked"
-        and status.get("launch", {}).get("fast_flow_restart_ready")
-        and service_state != "running"
-    )
-
-    jj_state = _load_json(root / "jj_state.json", default={})
-    remote_probe = dict(deploy_evidence.get("remote_probe") or {})
-    polymarket_wallet = status.get("polymarket_wallet") or {}
-    local_counts = {
-        "cycles_completed": int(status.get("runtime", {}).get("cycles_completed") or 0),
-        "total_trades": int(status.get("runtime", {}).get("total_trades") or 0),
-        "open_positions": int(status.get("runtime", {}).get("open_positions") or 0),
-        "deployed_capital_usd": float(status.get("capital", {}).get("deployed_capital_usd") or 0.0),
-    }
-    metric_drifts = {
-        "cycles_completed": _build_metric_drift(
-            {
-                "jj_state.json": _int_or_none(jj_state.get("cycles_completed")),
-                "data/intel_snapshot.json": _int_or_none(
-                    (_load_json(root / "data" / "intel_snapshot.json", default={}) or {}).get("total_cycles")
-                ),
-                "reports/remote_cycle_status.json": _int_or_none(status.get("runtime", {}).get("cycles_completed")),
-            }
-        ),
-        "total_trades": _build_metric_drift(
-            {
-                "jj_state.json": _int_or_none(jj_state.get("total_trades")),
-                "reports/remote_cycle_status.json": _int_or_none(status.get("runtime", {}).get("total_trades")),
-                "deploy_status_command": _int_or_none(remote_probe.get("last_trades")),
-            }
-        ),
-        "open_positions": _build_metric_drift(
-            {
-                "jj_state.json": len(jj_state.get("open_positions") or {}),
-                "reports/remote_cycle_status.json": _int_or_none(status.get("runtime", {}).get("open_positions")),
-                "deploy_status_command": _int_or_none(remote_probe.get("open_positions")),
-                "polymarket_wallet_api": _int_or_none(polymarket_wallet.get("open_positions_count")),
-            }
-        ),
-        "deployed_capital_usd": _build_metric_drift(
-            {
-                "jj_state.json": _float_or_none(jj_state.get("total_deployed")),
-                "reports/runtime_truth_latest.json": _float_or_none(
-                    status.get("capital", {}).get("deployed_capital_usd")
-                ),
-                "polymarket_wallet_api": _float_or_none(
-                    status.get("capital", {}).get("polymarket_observed_deployed_usd")
-                ),
-            }
-        ),
-    }
-    count_drift_detected = any(item["drift_detected"] for item in metric_drifts.values())
-    wallet_balance_delta_usd = _float_or_none(
-        status.get("capital", {}).get("polymarket_accounting_delta_usd")
-    )
-    wallet_balance_drift = bool(
-        polymarket_wallet.get("status") == "ok"
-        and wallet_balance_delta_usd is not None
-        and abs(wallet_balance_delta_usd) >= 5.0
-    )
-
-    profile_override_diff = _compare_profile_contract(
-        bundle.selected_profile,
-        effective_config,
-        applied_overrides=list(bundle.profile.applied_overrides),
-    )
-    caps_threshold_drift = any(
-        change["field"].startswith(("risk_limits.", "signal_thresholds.", "market_filters.max_resolution_hours"))
-        for change in profile_override_diff["changed_fields"]
-    )
-
-    docs_drift = _build_docs_runtime_drift(root, local_counts)
-    remote_probe_alignment = _build_remote_probe_alignment(
-        effective_flags=effective_flags,
-        local_counts=local_counts,
-        remote_probe=remote_probe,
-    )
-    local_remote_truth_mismatch = bool(
-        remote_probe_alignment["count_mismatches"] or remote_probe_alignment["feature_mismatches"]
-    )
-
-    drift_reasons = _dedupe_preserve_order(
-        [
-            *(
-                [f"{name} differs across local and synced sources" for name, item in metric_drifts.items() if item["drift_detected"]]
-            ),
-            "selected runtime profile differs from its effective override surface"
-            if profile_override_diff["changed_fields"]
-            else "",
-            "effective caps/thresholds differ from the checked-in profile defaults"
-            if caps_threshold_drift
-            else "",
-            "reports/runtime_profile_effective.json was stale before this reconciliation run"
-            if runtime_profile_refresh.get("stale_before_refresh")
-            else "",
-            "public/operator docs still describe the stale 314-cycle / zero-activity runtime"
-            if docs_drift["stale"]
-            else "",
-            (
-                "tracked Polymarket capital differs materially from observed wallet value"
-                if wallet_balance_drift
-                else ""
-            ),
-            "remote status probe does not match the recomputed local effective profile"
-            if local_remote_truth_mismatch
-            else "",
-            *list(remote_probe_alignment.get("feature_mismatches") or []),
-            *list(remote_probe_alignment.get("count_mismatches") or []),
-            "jj-live.service is running while launch posture remains blocked"
-            if service_state == "running" and launch_posture == "blocked"
-            else "",
-            *mode_inconsistency_reasons,
-            (
-                "mode fields are ambiguous: "
-                + ", ".join(mode_ambiguity_fields)
-                if mode_ambiguity_fields
-                else ""
-            ),
-        ]
-    )
-    drift_reasons = [reason for reason in drift_reasons if reason]
-
-    return {
-        "generated_at": runtime_truth_snapshot.get("generated_at"),
-        "service_state": service_state or "unknown",
-        "process_state": process_state or "unknown",
-        "remote_runtime_profile": remote_runtime_profile,
-        "agent_run_mode": agent_run_mode,
-        "execution_mode": execution_mode,
-        "paper_trading": paper_trading,
-        "allow_order_submission": allow_order_submission,
-        "order_submit_enabled": order_submit_enabled,
-        "effective_caps": _build_effective_caps(risk_limits),
-        "effective_thresholds": _build_effective_thresholds(
-            risk_limits=risk_limits,
-            signal_thresholds=signal_thresholds,
-            market_filters=market_filters,
-        ),
-        **local_counts,
-        "drift_flags": {
-            "count_drift": count_drift_detected,
-            "counts": metric_drifts,
-            "profile_override_drift": bool(profile_override_diff["changed_fields"]),
-            "caps_threshold_drift": caps_threshold_drift,
-            "docs_stale": docs_drift["stale"],
-            "local_remote_truth_mismatch": local_remote_truth_mismatch,
-            "mode_field_ambiguity": bool(mode_ambiguity_fields),
-            "mode_field_ambiguity_fields": mode_ambiguity_fields,
-            "mode_field_inconsistency": bool(mode_inconsistency_reasons),
-            "mode_field_inconsistency_reasons": mode_inconsistency_reasons,
-            "service_running_while_launch_blocked": service_state == "running"
-            and launch_posture == "blocked",
-            "runtime_profile_effective_stale_before_refresh": bool(
-                runtime_profile_refresh.get("stale_before_refresh")
-            ),
-            "wallet_balance_drift": wallet_balance_drift,
-            "wallet_balance_delta_usd": wallet_balance_delta_usd,
-            "drift_reasons": drift_reasons,
-        },
-        "launch_posture": launch_posture,
-        "restart_recommended": restart_recommended,
-        "mode_reconciliation": {
-            "sources": {
-                "local_env": _relative_path_text(root, root / DEFAULT_ENV_PATH),
-                "env_example": _relative_path_text(root, root / DEFAULT_ENV_EXAMPLE_PATH),
-                "runtime_operator_overrides": _relative_path_text(
-                    root,
-                    root / DEFAULT_RUNTIME_OPERATOR_OVERRIDES_PATH,
-                ),
-                "runtime_profile_effective": _relative_path_text(
-                    root,
-                    runtime_profile_refresh["effective_path"],
-                ),
-                "deploy_report": deploy_evidence.get("path"),
-                "remote_service_status": _relative_path_text(
-                    root,
-                    root / DEFAULT_SERVICE_STATUS_PATH,
-                ),
-                "remote_cycle_status": _relative_path_text(root, root / DEFAULT_JSON_PATH),
-                "runtime_mode_reconciliation_markdown": _relative_path_text(
-                    root,
-                    runtime_mode_reconciliation_path,
-                ),
-            },
-            "local_env": _sanitize_env_subset(runtime_profile_refresh.get("local_env") or {}),
-            "local_env_example": _sanitize_env_subset(runtime_profile_refresh.get("env_example") or {}),
-            "runtime_operator_overrides": _sanitize_env_subset(
-                runtime_profile_refresh.get("operator_overrides") or {}
-            ),
-            "runtime_profile_effective_refreshed": bool(runtime_profile_refresh.get("refreshed")),
-            "runtime_profile_effective_stale_before_refresh_fields": list(
-                runtime_profile_refresh.get("stale_before_refresh_fields") or []
-            ),
-            "selected_profile": bundle.selected_profile,
-            "profile_override_diff": profile_override_diff,
-            "remote_mode": {
-                "generated_at": deploy_evidence.get("generated_at"),
-                "remote_env_exists": deploy_evidence.get("remote_env_exists"),
-                "values": _sanitize_env_subset(remote_values),
-                "remote_runtime_profile": remote_runtime_profile,
-                "agent_run_mode": agent_run_mode,
-                "paper_trading": paper_trading,
-            },
-            "remote_probe": remote_probe,
-            "remote_probe_alignment": remote_probe_alignment,
-            "docs": docs_drift,
-        },
-    }
 
 
 def apply_runtime_mode_reconciliation(
@@ -2935,45 +2650,12 @@ def apply_runtime_mode_reconciliation(
     runtime_mode_reconciliation: dict[str, Any],
     runtime_mode_reconciliation_path: Path,
 ) -> dict[str, Any]:
-    snapshot = dict(runtime_truth_snapshot)
-    snapshot.update(
-        {
-            "service_state": runtime_mode_reconciliation["service_state"],
-            "process_state": runtime_mode_reconciliation["process_state"],
-            "remote_runtime_profile": runtime_mode_reconciliation["remote_runtime_profile"],
-            "agent_run_mode": runtime_mode_reconciliation["agent_run_mode"],
-            "execution_mode": runtime_mode_reconciliation["execution_mode"],
-            "paper_trading": runtime_mode_reconciliation["paper_trading"],
-            "allow_order_submission": runtime_mode_reconciliation["allow_order_submission"],
-            "order_submit_enabled": runtime_mode_reconciliation["order_submit_enabled"],
-            "effective_caps": runtime_mode_reconciliation["effective_caps"],
-            "effective_thresholds": runtime_mode_reconciliation["effective_thresholds"],
-            "cycles_completed": runtime_mode_reconciliation["cycles_completed"],
-            "total_trades": runtime_mode_reconciliation["total_trades"],
-            "open_positions": runtime_mode_reconciliation["open_positions"],
-            "deployed_capital_usd": runtime_mode_reconciliation["deployed_capital_usd"],
-            "drift_flags": runtime_mode_reconciliation["drift_flags"],
-            "launch_posture": runtime_mode_reconciliation["launch_posture"],
-            "restart_recommended": runtime_mode_reconciliation["restart_recommended"],
-            "mode_reconciliation": runtime_mode_reconciliation["mode_reconciliation"],
-        }
+    return _apply_runtime_mode_reconciliation_core(
+        runtime_truth_snapshot,
+        root=root,
+        runtime_mode_reconciliation=runtime_mode_reconciliation,
+        runtime_mode_reconciliation_path=runtime_mode_reconciliation_path,
     )
-    snapshot.setdefault("summary", {}).update(
-        {
-            "remote_runtime_profile": runtime_mode_reconciliation["remote_runtime_profile"],
-            "agent_run_mode": runtime_mode_reconciliation["agent_run_mode"],
-            "execution_mode": runtime_mode_reconciliation["execution_mode"],
-            "paper_trading": runtime_mode_reconciliation["paper_trading"],
-            "allow_order_submission": runtime_mode_reconciliation["allow_order_submission"],
-            "order_submit_enabled": runtime_mode_reconciliation["order_submit_enabled"],
-        }
-    )
-    snapshot.setdefault("artifacts", {})[
-        "runtime_mode_reconciliation_markdown"
-    ] = _relative_path_text(ROOT, runtime_mode_reconciliation_path)
-    snapshot.setdefault("drift", {})["mode_contract"] = runtime_mode_reconciliation["drift_flags"]
-    _attach_control_plane_consistency(snapshot, root=root)
-    return snapshot
 
 
 def _load_strategy_scale_comparison_summary(
@@ -3945,7 +3627,7 @@ def _attach_control_plane_consistency(snapshot: dict[str, Any], *, root: Path) -
     profile_mismatch_reasons = _dedupe_preserve_order(profile_mismatch_reasons)
 
     service_mismatch_reasons: list[str] = []
-    expected_primary_service = "btc-5min-maker.service"
+    expected_primary_service = PRIMARY_RUNTIME_SERVICE_NAME
     service_state = str((snapshot.get("service") or {}).get("status") or "unknown").strip().lower()
     observed_service_name = str((snapshot.get("service") or {}).get("service_name") or "").strip()
     btc5_source = str((snapshot.get("runtime") or {}).get("btc5_source") or "").strip().lower()
@@ -4208,7 +3890,7 @@ def build_runtime_truth_snapshot(
         (
             reason
             for reason in runtime_truth.get("drift_reasons") or []
-            if "jj-live.service is running while launch posture remains blocked" in reason
+            if f"{PRIMARY_RUNTIME_SERVICE_NAME} is running while launch posture remains blocked" in reason
         ),
         None,
     )
@@ -4736,32 +4418,63 @@ def _load_service_status(path: Path) -> dict[str, Any]:
     return _load_service_status_with_fallback(path.parent.parent, path)
 
 
+def _service_status_sort_key(candidate: dict[str, Any]) -> tuple[int, float]:
+    checked_at = _parse_datetime_like(candidate.get("checked_at"))
+    timestamp = checked_at.timestamp() if checked_at is not None else float("-inf")
+    status = str(candidate.get("status") or "unknown").strip().lower()
+    known_rank = 1 if status in {"running", "stopped"} else 0
+    return known_rank, timestamp
+
+
 def _load_service_status_with_fallback(root: Path, path: Path) -> dict[str, Any]:
+    candidate_services: list[dict[str, Any]] = []
+
+    def _append_candidate(candidate: dict[str, Any] | None) -> None:
+        if not isinstance(candidate, dict):
+            return
+        status = str(candidate.get("status") or "unknown").strip().lower()
+        if status == "unknown":
+            return
+        candidate_services.append(candidate)
+
     raw = _load_json(path, default={})
     service = _normalize_service_status_payload(
         raw,
-        default_service_name="jj-live.service",
+        default_service_name=PRIMARY_RUNTIME_SERVICE_NAME,
         source=_relative_path_text(root, path) or str(path),
     )
-    if service["status"] != "unknown":
-        return service
+    _append_candidate(service)
+
+    btc5_service_path = root / "reports" / "btc5_remote_service_status.json"
+    if btc5_service_path != path and btc5_service_path.exists():
+        _append_candidate(
+            _normalize_service_status_payload(
+                _load_json(btc5_service_path, default={}),
+                default_service_name=PRIMARY_RUNTIME_SERVICE_NAME,
+                source=_relative_path_text(root, btc5_service_path) or str(btc5_service_path),
+            )
+        )
 
     local_probe = _probe_local_systemctl_service_status(service["service_name"])
-    if local_probe["status"] != "unknown":
-        return local_probe
+    _append_candidate(local_probe)
 
     fallback = _find_latest_artifact_payload(
         root,
         [
+            Path("reports/btc5_deploy_activation.json"),
+            Path("reports/btc5_remote_service_status.json"),
             Path("reports/runtime_truth_latest.json"),
             Path("reports/remote_cycle_status.json"),
             "reports/runtime_truth_*.json",
+            "reports/runtime/runtime_truth/runtime_truth_*.json",
             "reports/deploy_*.json",
         ],
         extractor=_extract_service_status_candidate,
     )
-    if fallback is not None:
-        return fallback
+    _append_candidate(fallback)
+
+    if candidate_services:
+        return max(candidate_services, key=_service_status_sort_key)
     return service
 
 
@@ -4968,7 +4681,7 @@ def _extract_service_status_candidate(payload: dict[str, Any]) -> dict[str, Any]
     if isinstance(payload.get("service"), dict):
         return _normalize_service_status_payload(
             payload["service"],
-            default_service_name="jj-live.service",
+            default_service_name=PRIMARY_RUNTIME_SERVICE_NAME,
             source=None,
         )
     if any(
@@ -4977,7 +4690,7 @@ def _extract_service_status_candidate(payload: dict[str, Any]) -> dict[str, Any]
     ):
         return _normalize_service_status_payload(
             payload,
-            default_service_name="jj-live.service",
+            default_service_name=PRIMARY_RUNTIME_SERVICE_NAME,
             source=None,
         )
     return None
@@ -5240,154 +4953,18 @@ def _build_launch_status(
     a6_gate: dict[str, Any],
     b1_gate: dict[str, Any],
     accounting_reconciliation: dict[str, Any],
+    deploy_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    runtime = status["runtime"]
-    flywheel = status["flywheel"]
-
-    blocked_checks: list[str] = []
-    blocked_reasons: list[str] = []
-
-    if root_tests["status"] != "passing":
-        blocked_checks.append("root_tests_not_passing")
-        blocked_reasons.append(
-            f"Root regression suite is {root_tests['status']}: {root_tests.get('summary') or 'no summary'}"
-        )
-    if not wallet_flow["ready"]:
-        blocked_checks.append("wallet_flow_not_ready")
-        blocked_reasons.append(
-            "Wallet-flow bootstrap is not ready: "
-            + ", ".join(wallet_flow.get("reasons") or ["unknown"])
-        )
-    if service["status"] != "running":
-        blocked_checks.append("service_not_running")
-        blocked_reasons.append(
-            f"Remote service is {service['status']} ({service.get('systemctl_state') or 'unknown'})."
-        )
-    if runtime.get("closed_trades", 0) <= 0:
-        blocked_checks.append("no_closed_trades")
-        blocked_reasons.append("No closed trades are available for calibration yet.")
-    if status["capital"]["deployed_capital_usd"] <= 0:
-        blocked_checks.append("no_deployed_capital")
-        blocked_reasons.append("No capital is currently deployed.")
-    if status["polymarket_wallet"].get("status") == "ok":
-        actual_deployable = _safe_float(
-            status["capital"].get("polymarket_actual_deployable_usd"),
-            0.0,
-        )
-        if actual_deployable <= 0:
-            blocked_checks.append("no_polymarket_free_collateral")
-            blocked_reasons.append(
-                "Observed Polymarket wallet has no free collateral for new maker orders."
-            )
-        if accounting_reconciliation.get("drift_detected"):
-            open_delta = int(
-                (accounting_reconciliation.get("unmatched_open_positions") or {}).get(
-                    "delta_remote_minus_local", 0
-                )
-                or 0
-            )
-            closed_delta = int(
-                (accounting_reconciliation.get("unmatched_closed_positions") or {}).get(
-                    "delta_remote_minus_local", 0
-                )
-                or 0
-            )
-            accounting_delta = _safe_float(
-                accounting_reconciliation.get("capital_accounting_delta_usd"),
-                0.0,
-            )
-            blocked_checks.append("polymarket_capital_truth_drift")
-            blocked_checks.append("accounting_reconciliation_drift")
-            blocked_reasons.append(
-                "Accounting drift: "
-                f"local ledger open={((accounting_reconciliation.get('local_ledger_counts') or {}).get('open_positions', 0))} "
-                f"vs remote wallet open={((accounting_reconciliation.get('remote_wallet_counts') or {}).get('open_positions', 0))} "
-                f"(delta {open_delta:+d}); "
-                f"local ledger closed={((accounting_reconciliation.get('local_ledger_counts') or {}).get('closed_positions', 0))} "
-                f"vs remote wallet closed={((accounting_reconciliation.get('remote_wallet_counts') or {}).get('closed_positions', 0))} "
-                f"(delta {closed_delta:+d}); "
-                f"capital delta={_format_money(accounting_delta)}."
-            )
-    # Respect the formal kill decision for A-6 and B-1. If the kill decision
-    # file marks a lane as "killed", that lane no longer blocks launch.
-    # Fail-safe: if the file is missing or unreadable, gates remain active.
-    _killed_lanes = _load_killed_structural_alpha_lanes()
-    if a6_gate["status"] == "blocked" and "a6" not in _killed_lanes:
-        blocked_checks.append("a6_gate_blocked")
-        blocked_reasons.append(a6_gate["summary"])
-    if b1_gate["status"] == "blocked" and "b1" not in _killed_lanes:
-        blocked_checks.append("b1_gate_blocked")
-        blocked_reasons.append(b1_gate["summary"])
-    if flywheel.get("decision") != "deploy":
-        blocked_checks.append("flywheel_not_green")
-        blocked_reasons.append(
-            f"Latest flywheel decision is {flywheel.get('decision') or 'n/a'}."
-        )
-
-    fast_flow_restart_ready = (
-        root_tests["status"] == "passing"
-        and wallet_flow["ready"]
+    return _build_launch_status_core(
+        status=status,
+        service=service,
+        root_tests=root_tests,
+        wallet_flow=wallet_flow,
+        a6_gate=a6_gate,
+        b1_gate=b1_gate,
+        accounting_reconciliation=accounting_reconciliation,
+        deploy_evidence=deploy_evidence,
     )
-
-    if root_tests["status"] == "failing":
-        next_operator_action = (
-            "Merge the root regression repair and rerun `make test` before any restart or deploy."
-        )
-    elif root_tests["status"] != "passing":
-        next_operator_action = (
-            "Refresh the root regression status with `make test` before any restart or deploy."
-        )
-    elif not wallet_flow["ready"]:
-        next_operator_action = (
-            "Build wallet-flow bootstrap artifacts, confirm readiness, then restart `jj_live` in paper or shadow fast-flow mode."
-        )
-    elif service["status"] != "running":
-        next_operator_action = (
-            "Restart `jj_live` in paper or shadow with conservative caps and collect the first closed trades needed for calibration."
-        )
-    elif any(
-        check in blocked_checks
-        for check in ("no_polymarket_free_collateral", "polymarket_capital_truth_drift")
-    ):
-        open_delta = int(
-            (accounting_reconciliation.get("unmatched_open_positions") or {}).get(
-                "delta_remote_minus_local", 0
-            )
-            or 0
-        )
-        closed_delta = int(
-            (accounting_reconciliation.get("unmatched_closed_positions") or {}).get(
-                "delta_remote_minus_local", 0
-            )
-            or 0
-        )
-        next_operator_action = (
-            "Resolve accounting drift before any restart: "
-            f"open delta={open_delta:+d}, closed delta={closed_delta:+d}, "
-            f"capital delta={_format_money(_safe_float(accounting_reconciliation.get('capital_accounting_delta_usd'), 0.0))}. "
-            "Refresh runtime truth and do not route new orders until reconciliation is clean and free collateral is visible."
-        )
-    elif blocked_checks:
-        next_operator_action = (
-            "Confirm the running `jj_live` mode is paper or shadow; if it is unintentionally live, stop it. "
-            "Resolve the remaining blocked checks and collect the first closed trades needed for calibration."
-        )
-    elif runtime.get("closed_trades", 0) <= 0:
-        next_operator_action = (
-            "Keep the fast-flow sleeve running until the first closed trades or structural samples appear."
-        )
-    else:
-        next_operator_action = (
-            "Advance wallet-flow and LMSR through paper -> shadow -> micro-live, and require explicit operator approval before any live capital deployment."
-        )
-
-    return {
-        "fast_flow_restart_ready": fast_flow_restart_ready,
-        "live_launch_blocked": bool(blocked_checks),
-        "blocked_checks": blocked_checks,
-        "blocked_reasons": blocked_reasons,
-        "next_operator_action": next_operator_action,
-    }
 
 
 def _build_runtime_truth(
@@ -5444,7 +5021,7 @@ def _build_runtime_truth(
     service_drift_detected = service["status"] == "running" and launch["live_launch_blocked"]
     if service_drift_detected:
         drift_reasons.append(
-            "Service-state drift: jj-live.service is running while launch posture remains blocked; confirm the remote mode is paper or shadow."
+            f"Service-state drift: {PRIMARY_RUNTIME_SERVICE_NAME} is running while launch posture remains blocked; confirm the remote mode is paper or shadow."
         )
     accounting_drift_detected = bool(accounting_reconciliation.get("drift_detected"))
     if accounting_drift_detected:
@@ -5490,18 +5067,19 @@ def _reconcile_deployment_finish(
     blockers = [
         blocker
         for blocker in list(payload.get("blockers") or [])
-        if blocker != "jj-live is intentionally stopped while structural alpha integration is completed."
+        if blocker
+        != f"{PRIMARY_RUNTIME_SERVICE_NAME} is intentionally stopped while structural alpha integration is completed."
     ]
 
     if service["status"] == "running" and launch["live_launch_blocked"]:
         blockers.insert(
             0,
-            "jj-live.service is currently running on the VPS while launch posture remains blocked; treat this as operational drift until the remote mode is reconciled.",
+            f"{PRIMARY_RUNTIME_SERVICE_NAME} is currently running on the VPS while launch posture remains blocked; treat this as operational drift until the remote mode is reconciled.",
         )
     elif service["status"] != "running":
         blockers.insert(
             0,
-            f"jj-live.service is {service['status']} ({service.get('systemctl_state') or 'unknown'}).",
+            f"{PRIMARY_RUNTIME_SERVICE_NAME} is {service['status']} ({service.get('systemctl_state') or 'unknown'}).",
         )
 
     payload["blockers"] = _dedupe_preserve_order(blockers)
@@ -7410,7 +6988,7 @@ def _build_public_headlines(
     headlines: list[str] = []
     if drift.get("service_running_while_launch_blocked"):
         headlines.append(
-            "jj-live.service is running while launch posture remains blocked; treat this as drift until the remote mode is reconciled."
+            f"{PRIMARY_RUNTIME_SERVICE_NAME} is running while launch posture remains blocked; treat this as drift until the remote mode is reconciled."
         )
     if wallet_flow.get("ready"):
         headlines.append("Wallet-flow bootstrap is ready.")
@@ -7636,6 +7214,347 @@ def _safe_iso_mtime(path: Path) -> str | None:
         return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
     except FileNotFoundError:
         return None
+
+
+@contextmanager
+def _sync_core_runtime_hooks():
+    """Keep the legacy module entrypoint aligned with the canonical core helpers."""
+
+    overrides = {
+        "subprocess": subprocess,
+        "_load_polymarket_wallet_state": _load_polymarket_wallet_state,
+    }
+    originals = {
+        name: getattr(_core_status, name)
+        for name in overrides
+        if hasattr(_core_status, name)
+    }
+    try:
+        for name, value in overrides.items():
+            setattr(_core_status, name, value)
+        yield
+    finally:
+        for name, value in originals.items():
+            setattr(_core_status, name, value)
+
+
+def _prepare_local_runtime_profile_evidence(root: Path) -> dict[str, Any]:
+    with _sync_core_runtime_hooks():
+        return _core_status._prepare_local_runtime_profile_evidence(root)
+
+
+def _load_latest_deploy_evidence(root: Path) -> dict[str, Any]:
+    with _sync_core_runtime_hooks():
+        return _core_status._load_latest_deploy_evidence(root)
+
+
+def _build_launch_status(
+    *,
+    status: dict[str, Any],
+    service: dict[str, Any],
+    root_tests: dict[str, Any],
+    wallet_flow: dict[str, Any],
+    a6_gate: dict[str, Any],
+    b1_gate: dict[str, Any],
+    accounting_reconciliation: dict[str, Any],
+    deploy_evidence: dict[str, Any],
+) -> dict[str, Any]:
+    with _sync_core_runtime_hooks():
+        return _core_status._build_launch_status(
+            status=status,
+            service=service,
+            root_tests=root_tests,
+            wallet_flow=wallet_flow,
+            a6_gate=a6_gate,
+            b1_gate=b1_gate,
+            accounting_reconciliation=accounting_reconciliation,
+            deploy_evidence=deploy_evidence,
+        )
+
+
+def _load_btc5_maker_state(root: Path) -> dict[str, Any]:
+    with _sync_core_runtime_hooks():
+        return _core_status._load_btc5_maker_state(root)
+
+
+def build_trade_attribution_contract(
+    *,
+    root: Path,
+    btc5_maker: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return _build_trade_attribution_contract_impl(root=root, btc5_maker=btc5_maker)
+
+
+def _build_trade_proof_artifact(
+    *,
+    root: Path,
+    status: dict[str, Any],
+    runtime_truth_snapshot: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    trade_confirmation = dict(
+        runtime_truth_snapshot.get("trade_confirmation")
+        or status.get("trade_confirmation")
+        or {}
+    )
+    btc5_maker = dict(
+        status.get("btc_5min_maker")
+        or runtime_truth_snapshot.get("btc_5min_maker")
+        or {}
+    )
+    latest_trade = dict(btc5_maker.get("latest_trade") or {})
+    selected_package = dict(
+        status.get("btc5_selected_package")
+        or runtime_truth_snapshot.get("btc5_selected_package")
+        or {}
+    )
+    attribution = build_trade_attribution_contract(root=root, btc5_maker=btc5_maker)
+    fill_confirmed = bool(trade_confirmation.get("fill_confirmed"))
+    profile_id = str(
+        trade_confirmation.get("canonical_live_profile")
+        or selected_package.get("canonical_live_profile")
+        or selected_package.get("selected_active_profile_name")
+        or selected_package.get("selected_best_profile_name")
+        or ""
+    ).strip() or None
+    trade_size_usd = _float_or_none(
+        _first_nonempty(
+            trade_confirmation.get("latest_trade_size_usd"),
+            latest_trade.get("trade_size_usd"),
+        )
+    )
+    order_price = _float_or_none(latest_trade.get("order_price"))
+    latest_filled_trade_at = _first_nonempty(
+        trade_confirmation.get("latest_filled_trade_at"),
+        latest_trade.get("updated_at") if fill_confirmed else None,
+        latest_trade.get("created_at") if fill_confirmed else None,
+    )
+    proof = {
+        "artifact": "btc5_trade_proof",
+        "schema_version": 1,
+        "generated_at": runtime_truth_snapshot.get("generated_at") or _now_iso(),
+        "proof_status": "fill_confirmed" if fill_confirmed else "no_fill_yet",
+        "fill_confirmed": fill_confirmed,
+        "service_name": str(
+            trade_confirmation.get("service_name")
+            or ((status.get("service") or {}).get("service_name"))
+            or "btc-5min-maker.service"
+        ).strip()
+        or None,
+        "source_of_truth": str(
+            trade_confirmation.get("source_of_truth")
+            or attribution.get("source_of_truth")
+            or "data/btc_5min_maker.db#window_trades"
+        ).strip()
+        or None,
+        "lane_id": "maker_bootstrap_live",
+        "strategy_family": "btc5_maker_bootstrap",
+        "profile_id": profile_id,
+        "trade_size_usd": trade_size_usd,
+        "order_price": order_price,
+        "latest_filled_trade_at": latest_filled_trade_at,
+        "attribution_mode": attribution.get("attribution_mode"),
+    }
+    required_fields = (
+        "lane_id",
+        "strategy_family",
+        "profile_id",
+        "trade_size_usd",
+        "order_price",
+        "attribution_mode",
+    )
+    proof["missing_fields"] = [
+        field for field in required_fields if proof.get(field) in (None, "")
+    ] if fill_confirmed else []
+
+    attribution_payload = {
+        "attribution_mode": attribution.get("attribution_mode"),
+        "source_of_truth": attribution.get("source_of_truth"),
+        "fill_confirmed": bool(proof.get("fill_confirmed")),
+        "lane_id": proof.get("lane_id"),
+        "strategy_family": proof.get("strategy_family"),
+        "profile_id": proof.get("profile_id"),
+        "trade_size_usd": proof.get("trade_size_usd"),
+        "order_price": proof.get("order_price"),
+        "latest_filled_trade_at": proof.get("latest_filled_trade_at"),
+    }
+    return proof, attribution_payload
+
+
+def _write_trade_proof_outputs(
+    *,
+    root: Path,
+    written: dict[str, Any],
+) -> dict[str, Any]:
+    status = dict(written.get("status") or {})
+    runtime_truth_path = Path(written["runtime_truth_latest"])
+    status_path = Path(written["json"])
+    runtime_truth_snapshot = json.loads(runtime_truth_path.read_text())
+    remote_cycle_status = json.loads(status_path.read_text())
+
+    proof, attribution = _build_trade_proof_artifact(
+        root=root,
+        status=status or remote_cycle_status,
+        runtime_truth_snapshot=runtime_truth_snapshot,
+    )
+
+    runtime_truth_snapshot["trade_proof"] = proof
+    runtime_truth_snapshot["attribution"] = {
+        **dict(runtime_truth_snapshot.get("attribution") or {}),
+        **attribution,
+    }
+    trade_confirmation = dict(runtime_truth_snapshot.get("trade_confirmation") or {})
+    if proof.get("profile_id") not in (None, ""):
+        trade_confirmation["profile_id"] = proof.get("profile_id")
+    runtime_truth_snapshot["trade_confirmation"] = trade_confirmation
+
+    remote_cycle_status["trade_proof"] = proof
+    remote_cycle_status["attribution"] = {
+        **dict(remote_cycle_status.get("attribution") or {}),
+        **attribution,
+    }
+    status.setdefault("runtime_truth", {})
+    status["runtime_truth"]["trade_proof"] = proof
+    status["runtime_truth"]["attribution"] = dict(runtime_truth_snapshot["attribution"])
+    status["trade_proof"] = proof
+    status["attribution"] = dict(runtime_truth_snapshot["attribution"])
+
+    trade_proof_dir = root / "reports" / "trade_proof"
+    trade_proof_dir.mkdir(parents=True, exist_ok=True)
+    trade_proof_latest_path = trade_proof_dir / "latest.json"
+    trade_proof_latest_path.write_text(json.dumps(proof, indent=2, sort_keys=True))
+
+    runtime_truth_path.write_text(json.dumps(runtime_truth_snapshot, indent=2, sort_keys=True))
+    status_path.write_text(json.dumps(remote_cycle_status, indent=2, sort_keys=True))
+
+    written["status"] = status
+    written["trade_proof_latest"] = str(trade_proof_latest_path)
+    return written
+
+
+def build_remote_cycle_status(
+    root: Path,
+    *,
+    config_path: Path | None = None,
+    service_status_path: Path | None = None,
+    root_test_status_path: Path | None = None,
+    arb_status_path: Path | None = None,
+) -> dict[str, Any]:
+    with _sync_core_runtime_hooks():
+        return _core_status.build_remote_cycle_status(
+            root,
+            config_path=config_path,
+            service_status_path=service_status_path,
+            root_test_status_path=root_test_status_path,
+            arb_status_path=arb_status_path,
+        )
+
+
+def build_runtime_truth_snapshot(
+    root: Path,
+    *,
+    status: dict[str, Any],
+    remote_cycle_status_path: Path,
+    service_status_path: Path,
+    root_test_status_path: Path,
+    latest_edge_scan_path: Path | None,
+    latest_pipeline_path: Path | None,
+    runtime_truth_latest_path: Path,
+    runtime_truth_timestamped_path: Path,
+    public_runtime_snapshot_path: Path,
+    previous_runtime_truth_snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    with _sync_core_runtime_hooks():
+        return _core_status.build_runtime_truth_snapshot(
+            root,
+            status=status,
+            remote_cycle_status_path=remote_cycle_status_path,
+            service_status_path=service_status_path,
+            root_test_status_path=root_test_status_path,
+            latest_edge_scan_path=latest_edge_scan_path,
+            latest_pipeline_path=latest_pipeline_path,
+            runtime_truth_latest_path=runtime_truth_latest_path,
+            runtime_truth_timestamped_path=runtime_truth_timestamped_path,
+            public_runtime_snapshot_path=public_runtime_snapshot_path,
+            previous_runtime_truth_snapshot=previous_runtime_truth_snapshot,
+        )
+
+
+def build_runtime_mode_reconciliation(
+    root: Path,
+    *,
+    status: dict[str, Any],
+    runtime_truth_snapshot: dict[str, Any],
+    runtime_profile_refresh: dict[str, Any],
+    runtime_mode_reconciliation_path: Path,
+) -> dict[str, Any]:
+    with _sync_core_runtime_hooks():
+        return _core_status.build_runtime_mode_reconciliation(
+            root,
+            status=status,
+            runtime_truth_snapshot=runtime_truth_snapshot,
+            runtime_profile_refresh=runtime_profile_refresh,
+            runtime_mode_reconciliation_path=runtime_mode_reconciliation_path,
+        )
+
+
+def apply_runtime_mode_reconciliation(
+    runtime_truth_snapshot: dict[str, Any],
+    *,
+    root: Path,
+    runtime_mode_reconciliation: dict[str, Any],
+    runtime_mode_reconciliation_path: Path,
+) -> dict[str, Any]:
+    with _sync_core_runtime_hooks():
+        return _core_status.apply_runtime_mode_reconciliation(
+            runtime_truth_snapshot,
+            root=root,
+            runtime_mode_reconciliation=runtime_mode_reconciliation,
+            runtime_mode_reconciliation_path=runtime_mode_reconciliation_path,
+        )
+
+
+def build_public_runtime_snapshot(runtime_truth_snapshot: dict[str, Any]) -> dict[str, Any]:
+    with _sync_core_runtime_hooks():
+        return _core_status.build_public_runtime_snapshot(runtime_truth_snapshot)
+
+
+def write_remote_cycle_status(
+    root: Path,
+    *,
+    markdown_path: Path | None = None,
+    json_path: Path | None = None,
+    runtime_truth_latest_path: Path | None = None,
+    public_runtime_snapshot_path: Path | None = None,
+    launch_packet_latest_path: Path | None = None,
+    state_improvement_latest_path: Path | None = None,
+    state_improvement_digest_path: Path | None = None,
+    config_path: Path | None = None,
+    service_status_path: Path | None = None,
+    root_test_status_path: Path | None = None,
+    arb_status_path: Path | None = None,
+    refresh_root_tests: bool = False,
+    root_test_command: Sequence[str] = DEFAULT_ROOT_TEST_COMMAND,
+    root_test_timeout_seconds: int = 900,
+) -> dict[str, Any]:
+    with _sync_core_runtime_hooks():
+        written = _core_status.write_remote_cycle_status(
+            root,
+            markdown_path=markdown_path,
+            json_path=json_path,
+            runtime_truth_latest_path=runtime_truth_latest_path,
+            public_runtime_snapshot_path=public_runtime_snapshot_path,
+            launch_packet_latest_path=launch_packet_latest_path,
+            state_improvement_latest_path=state_improvement_latest_path,
+            state_improvement_digest_path=state_improvement_digest_path,
+            config_path=config_path,
+            service_status_path=service_status_path,
+            root_test_status_path=root_test_status_path,
+            arb_status_path=arb_status_path,
+            refresh_root_tests=refresh_root_tests,
+            root_test_command=root_test_command,
+            root_test_timeout_seconds=root_test_timeout_seconds,
+        )
+    return _write_trade_proof_outputs(root=root.resolve(), written=written)
 
 
 def main() -> None:

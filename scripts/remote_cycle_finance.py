@@ -13,6 +13,62 @@ from scripts.remote_cycle_common import (
 )
 
 
+_LEGACY_LANE_ID_MAP = {
+    "btc5_live_baseline": "maker_bootstrap_live",
+    "everything_else_no_spend": "everything_else",
+    "weather_shadow_only": "weather",
+}
+
+
+def _canonical_lane_id(value: Any) -> str:
+    lane_id = str(value or "").strip().lower()
+    if not lane_id:
+        return ""
+    return _LEGACY_LANE_ID_MAP.get(lane_id, lane_id)
+
+
+def _normalize_lane_verdicts(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+
+    normalized: dict[str, Any] = {}
+    for raw_lane_id, verdict in payload.items():
+        lane_id = _canonical_lane_id(raw_lane_id)
+        if lane_id:
+            normalized[lane_id] = verdict
+    return normalized
+
+
+def _normalize_lane_budgets(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+
+    normalized: dict[str, Any] = {}
+    for raw_lane_id, budget in payload.items():
+        lane_id = _canonical_lane_id(raw_lane_id)
+        if not lane_id:
+            continue
+        if isinstance(budget, dict):
+            normalized[lane_id] = {
+                **budget,
+                "lane_id": _canonical_lane_id(budget.get("lane_id") or lane_id) or lane_id,
+            }
+        else:
+            normalized[lane_id] = budget
+    return normalized
+
+
+def _lane_verdicts_from_allocation_contract(payload: dict[str, Any]) -> dict[str, Any]:
+    return _normalize_lane_verdicts(
+        {
+            "maker_bootstrap_live": payload.get("baseline_allocation_state"),
+            "wallet_intel_directional_shadow": payload.get("wallet_intel_lane_state"),
+            "weather": payload.get("weather_lane_state"),
+            "everything_else": payload.get("other_lanes_state"),
+        }
+    )
+
+
 def load_finance_gate_status(root: Path) -> dict[str, Any]:
     path = root / "reports" / "finance" / "latest.json"
     if not path.exists():
@@ -33,6 +89,16 @@ def load_finance_gate_status(root: Path) -> dict[str, Any]:
     live_hold = dict(last_execute.get("live_hold") or {})
     finance_gate = dict(payload.get("finance_gate") or {})
     capital_expansion_policy = dict(payload.get("capital_expansion_policy") or {})
+    allocation_contract = dict(payload.get("allocation_contract") or {})
+    finance_lane_verdicts = _normalize_lane_verdicts(payload.get("finance_lane_verdicts") or payload.get("verdict") or {})
+    finance_lane_budgets = _normalize_lane_budgets(
+        payload.get("finance_lane_budgets")
+        or payload.get("lanes")
+        or (payload.get("bankroll") or {}).get("sleeves")
+        or {}
+    )
+    if not finance_lane_verdicts:
+        finance_lane_verdicts = _lane_verdicts_from_allocation_contract(allocation_contract)
     finance_state = str(
         first_nonempty(
             capital_expansion_policy.get("finance_state"),
@@ -45,6 +111,8 @@ def load_finance_gate_status(root: Path) -> dict[str, Any]:
         first_nonempty(
             capital_expansion_policy.get("stage_cap"),
             finance_gate.get("stage_cap"),
+            allocation_contract.get("max_live_stage_cap"),
+            payload.get("max_live_stage_cap"),
             payload.get("stage_cap"),
             None,
         )
@@ -107,6 +175,16 @@ def load_finance_gate_status(root: Path) -> dict[str, Any]:
             live_hold.get("requested_mode"),
             None,
         ),
+        "max_live_stage_cap": int_or_none(
+            first_nonempty(
+                allocation_contract.get("max_live_stage_cap"),
+                payload.get("max_live_stage_cap"),
+                stage_cap,
+                None,
+            )
+        ),
+        "finance_lane_verdicts": finance_lane_verdicts,
+        "finance_lane_budgets": finance_lane_budgets,
         "treasury_reason": first_nonempty(
             finance_gate.get("reason"),
             launch_gate_reason,
@@ -191,6 +269,9 @@ def build_finance_gate_status(*, root: Path) -> dict[str, Any]:
         "baseline_live_trading_pass": baseline_live_trading_pass,
         "treasury_gate_pass": canonical_status.get("treasury_gate_pass"),
         "capital_expansion_only_hold": canonical_status.get("capital_expansion_only_hold"),
+        "max_live_stage_cap": canonical_status.get("max_live_stage_cap"),
+        "finance_lane_verdicts": canonical_status.get("finance_lane_verdicts") or {},
+        "finance_lane_budgets": canonical_status.get("finance_lane_budgets") or {},
         "block_reasons": block_reasons,
         "source_artifacts": [
             "reports/finance/action_queue.json",

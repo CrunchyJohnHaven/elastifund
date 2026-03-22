@@ -86,6 +86,95 @@ def _base_model_budget_plan() -> dict:
     }
 
 
+def _base_launch_packet(*, allow_order_submission: bool = True, canonical_live_profile_id: str = "current_live_profile") -> dict:
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "allow_order_submission": allow_order_submission,
+        "canonical_live_profile_id": canonical_live_profile_id,
+    }
+
+
+def _base_remote_cycle_status(*, generated_at: str | None = None) -> dict:
+    return {
+        "generated_at": generated_at or datetime.now(timezone.utc).isoformat(),
+        "service": {"service_name": "btc-5min-maker.service"},
+    }
+
+
+def _base_policy_latest(
+    *,
+    status: str = "keep",
+    promotion_state: str = "shadow_updated",
+    promotion_readiness: str = "shadow_candidate_supported",
+    shadow_strategy_family: str = "directional_shadow",
+    benchmark_objective: str = "improve_wallet_intel_shadow_alignment",
+) -> dict:
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "canonical_live_profile_id": "current_live_profile",
+        "canonical_live_package_hash": "live-hash",
+        "strategy_family": "maker_bootstrap_live",
+        "benchmark_objective": "collect_bounded_stage1_execution_evidence",
+        "promotion_readiness": promotion_readiness,
+        "shadow_comparator_profile_id": "policy-beta",
+        "shadow_comparator_package_hash": "shadow-hash",
+        "shadow_comparator_strategy_family": shadow_strategy_family,
+        "shadow_comparator_benchmark_objective": benchmark_objective,
+        "shadow_comparator_wallet_prior_support_score": 0.82,
+        "artifacts": {
+            "results_ledger": "reports/autoresearch/btc5_policy/results.jsonl",
+            "latest_run": "reports/autoresearch/btc5_policy/run_latest.json",
+        },
+        "latest_experiment": {
+            "status": status,
+            "promotion_state": promotion_state,
+            "decision_reason": "champion_policy_loss_improved_shadow_stage",
+            "policy_loss_delta": 0.08,
+            "frontier_improvement_vs_incumbent": 0.04,
+            "candidate_vs_incumbent_summary": {
+                "mean_fold_loss_improvement": 0.05,
+            },
+            "artifact_paths": {
+                "results_ledger": "reports/autoresearch/btc5_policy/results.jsonl",
+                "run_json": "reports/autoresearch/btc5_policy/run_latest.json",
+            },
+        },
+    }
+
+
+def _base_trade_proof(
+    *,
+    fill_confirmed: bool = False,
+    latest_filled_trade_at: str | None = None,
+    attribution_mode: str = "trade_log_fallback_only",
+    strategy_family: str = "btc5_maker_bootstrap",
+    lane_id: str = "maker_bootstrap_live",
+    post_fill_quality_ok: bool | None = None,
+) -> dict:
+    payload = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "proof_status": "fill_confirmed" if fill_confirmed else "no_fill_yet",
+        "fill_confirmed": fill_confirmed,
+        "service_name": "btc-5min-maker.service",
+        "source_of_truth": "remote_sqlite_probe",
+        "lane_id": lane_id,
+        "strategy_family": strategy_family,
+        "profile_id": "active_profile_probe_d0_00075",
+        "attribution_mode": attribution_mode,
+    }
+    if fill_confirmed:
+        payload.update(
+            {
+                "latest_filled_trade_at": latest_filled_trade_at or datetime.now(timezone.utc).isoformat(),
+                "trade_size_usd": 5.0,
+                "order_price": 0.49,
+            }
+        )
+    if post_fill_quality_ok is not None:
+        payload["post_fill_quality_ok"] = post_fill_quality_ok
+    return payload
+
+
 def _write_fresh_cross_asset_artifacts(root: Path) -> None:
     now = datetime.now(timezone.utc).isoformat()
     _write_json(
@@ -291,3 +380,137 @@ def test_instance6_dispatch_blocks_when_single_action_cap_is_exceeded(tmp_path: 
     assert payload["operator_packet"]["decision"] == "block"
     assert payload["required_outputs"]["finance_gate_pass"] is False
     assert any(reason.startswith("single_action_cap_exceeded:") for reason in payload["required_outputs"]["block_reasons"])
+
+
+def test_instance6_dispatch_emits_shadow_research_lane_contract_without_blocking_shadow_updates(tmp_path: Path) -> None:
+    _write_json(
+        tmp_path / "reports" / "runtime_truth_latest.json",
+        _base_runtime_truth(allow_order_submission=True, stage_label="stage_2", score=0.84),
+    )
+    _write_json(
+        tmp_path / "reports" / "state_improvement_latest.json",
+        _base_state_improvement(conversion=0.22, notional=25.0),
+    )
+    _write_json(tmp_path / "reports" / "launch_packet_latest.json", _base_launch_packet())
+    _write_json(tmp_path / "reports" / "remote_cycle_status.json", _base_remote_cycle_status())
+    _write_json(tmp_path / "reports" / "finance" / "latest.json", _base_finance_latest(finance_gate_pass=True))
+    _write_json(tmp_path / "reports" / "finance" / "model_budget_plan.json", _base_model_budget_plan())
+    _write_json(tmp_path / "reports" / "finance" / "action_queue.json", {"actions": []})
+    _write_json(
+        tmp_path / "reports" / "autoresearch" / "btc5_policy" / "latest.json",
+        _base_policy_latest(),
+    )
+    _write_fresh_cross_asset_artifacts(tmp_path)
+
+    payload = build_instance6_dispatch(tmp_path)
+
+    assert payload["operator_packet"]["decision"] == "action"
+    assert payload["shadow_research_lane"]["discipline"] == "karpathy_single_mutable_lane"
+    assert payload["shadow_research_lane"]["decision_semantics"] == ["keep", "discard", "crash"]
+    assert payload["shadow_research_lane"]["latest_result"]["status"] == "keep"
+    assert payload["shadow_research_lane"]["mutable_candidate"]["strategy_family"] == "directional_shadow"
+    assert payload["shadow_research_lane"]["mutable_surface"] == "reports/autoresearch/btc5_policy/run_latest.json"
+    assert payload["edge_promotion_gate"]["promotion_requested"] is False
+    assert payload["required_outputs"]["promotion_gate_ready"] is False
+
+
+def test_instance6_dispatch_blocks_live_promotion_without_trustworthy_relevant_fill(tmp_path: Path) -> None:
+    _write_json(
+        tmp_path / "reports" / "runtime_truth_latest.json",
+        _base_runtime_truth(allow_order_submission=True, stage_label="stage_2", score=0.84),
+    )
+    _write_json(
+        tmp_path / "reports" / "state_improvement_latest.json",
+        _base_state_improvement(conversion=0.22, notional=25.0),
+    )
+    _write_json(tmp_path / "reports" / "launch_packet_latest.json", _base_launch_packet())
+    _write_json(tmp_path / "reports" / "remote_cycle_status.json", _base_remote_cycle_status())
+    _write_json(tmp_path / "reports" / "finance" / "latest.json", _base_finance_latest(finance_gate_pass=True))
+    _write_json(tmp_path / "reports" / "finance" / "model_budget_plan.json", _base_model_budget_plan())
+    _write_json(tmp_path / "reports" / "finance" / "action_queue.json", {"actions": []})
+    _write_json(
+        tmp_path / "reports" / "autoresearch" / "btc5_policy" / "latest.json",
+        _base_policy_latest(promotion_state="live_promoted", promotion_readiness="promotable"),
+    )
+    _write_json(
+        tmp_path / "reports" / "trade_proof" / "latest.json",
+        _base_trade_proof(fill_confirmed=False),
+    )
+    _write_fresh_cross_asset_artifacts(tmp_path)
+
+    payload = build_instance6_dispatch(tmp_path)
+
+    assert payload["operator_packet"]["decision"] == "block"
+    assert "trustworthy_relevant_live_fill_missing" in payload["edge_promotion_gate"]["reasons"]
+    assert any(
+        reason == "promotion_gate_failed:trustworthy_relevant_live_fill_missing"
+        for reason in payload["required_outputs"]["block_reasons"]
+    )
+    assert payload["required_outputs"]["promotion_gate_ready"] is False
+
+
+def test_instance6_dispatch_requires_post_deploy_and_post_fill_refresh_before_promotion(tmp_path: Path) -> None:
+    fill_at = "2026-03-14T18:00:00+00:00"
+    stale_truth = {
+        **_base_runtime_truth(allow_order_submission=True, stage_label="stage_2", score=0.84),
+        "generated_at": "2026-03-14T17:58:00+00:00",
+        "canonical_live_profile_id": "current_live_profile",
+        "attribution": {"attribution_mode": "db_backed_attribution_ready"},
+    }
+    _write_json(tmp_path / "reports" / "runtime_truth_latest.json", stale_truth)
+    _write_json(
+        tmp_path / "reports" / "state_improvement_latest.json",
+        _base_state_improvement(conversion=0.22, notional=25.0),
+    )
+    _write_json(tmp_path / "reports" / "launch_packet_latest.json", _base_launch_packet())
+    _write_json(
+        tmp_path / "reports" / "remote_cycle_status.json",
+        {
+            **_base_remote_cycle_status(generated_at="2026-03-14T17:59:00+00:00"),
+            "trade_proof": _base_trade_proof(
+                fill_confirmed=True,
+                latest_filled_trade_at=fill_at,
+                attribution_mode="db_backed_attribution_ready",
+                strategy_family="btc5_maker_bootstrap",
+                post_fill_quality_ok=True,
+            ),
+            "attribution": {"attribution_mode": "db_backed_attribution_ready"},
+        },
+    )
+    _write_json(tmp_path / "reports" / "btc5_deploy_activation.json", {"generated_at": "2026-03-14T18:01:00+00:00"})
+    _write_json(tmp_path / "reports" / "finance" / "latest.json", _base_finance_latest(finance_gate_pass=True))
+    _write_json(tmp_path / "reports" / "finance" / "model_budget_plan.json", _base_model_budget_plan())
+    _write_json(tmp_path / "reports" / "finance" / "action_queue.json", {"actions": []})
+    _write_json(
+        tmp_path / "reports" / "autoresearch" / "btc5_policy" / "latest.json",
+        _base_policy_latest(
+            promotion_state="live_promoted",
+            promotion_readiness="promotable",
+            shadow_strategy_family="maker_policy_shadow",
+        ),
+    )
+    _write_json(
+        tmp_path / "reports" / "trade_proof" / "latest.json",
+        {
+            **_base_trade_proof(
+                fill_confirmed=True,
+                latest_filled_trade_at=fill_at,
+                attribution_mode="db_backed_attribution_ready",
+                strategy_family="btc5_maker_bootstrap",
+                post_fill_quality_ok=True,
+            ),
+            "generated_at": "2026-03-14T18:00:05+00:00",
+        },
+    )
+    _write_fresh_cross_asset_artifacts(tmp_path)
+
+    payload = build_instance6_dispatch(tmp_path)
+
+    assert payload["operator_packet"]["decision"] == "block"
+    assert payload["telemetry_refresh_gate"]["valid"] is False
+    assert "post_deploy_refresh_incomplete:runtime_truth_latest" in payload["telemetry_refresh_gate"]["reasons"]
+    assert "post_fill_refresh_incomplete:runtime_truth_latest" in payload["telemetry_refresh_gate"]["reasons"]
+    assert any(
+        reason.startswith("promotion_gate_failed:post_deploy_refresh_incomplete:")
+        for reason in payload["required_outputs"]["block_reasons"]
+    )

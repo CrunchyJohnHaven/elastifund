@@ -17,6 +17,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from bot.combinatorial_integration import canonical_source_key, normalize_source_components
 from bot.lmsr_engine import LMSREngine, MIN_TRADES_FOR_SIGNAL, estimate_b_from_volume
+from scripts.trade_attribution_contract import build_trade_attribution_contract
 
 
 EXECUTION_SOURCES = (
@@ -1072,6 +1073,7 @@ def build_audit_payload(
     generated_at = datetime.now(timezone.utc).isoformat()
     rows, db_columns = _load_trade_rows(db_path)
     state_snapshot = _load_state_snapshot(state_path)
+    attribution = build_trade_attribution_contract(db_path=db_path)
     attribution_ready = all(
         column in set(db_columns)
         for column in ("source", "source_combo", "source_components_json", "source_count")
@@ -1273,6 +1275,7 @@ def build_audit_payload(
             ),
             "trade_log_has_source_attribution": state_snapshot["trade_log_has_source_attribution"],
         },
+        "attribution": attribution,
         "trade_totals": {
             "total_trades": len(rows),
             "resolved_trades": sum(1 for row in rows if str(row.get("outcome") or "").lower() in {"won", "lost"}),
@@ -1291,6 +1294,9 @@ def build_audit_payload(
             "stale_threshold_hours": 6.0,
             "audit_generated_at": generated_at,
             "trade_attribution_ready": attribution_ready,
+            "attribution_mode": attribution.get("attribution_mode"),
+            "attribution_source_of_truth": attribution.get("source_of_truth"),
+            "fill_confirmed": bool(attribution.get("fill_confirmed")),
             "wallet_flow_vs_llm_status": wallet_flow_comparison["status"],
             "combined_sources_vs_single_source_status": combined_vs_single["status"],
             "best_component_source": (ranking_snapshot.get("best_component_source") or {}).get("source"),

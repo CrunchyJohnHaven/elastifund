@@ -64,6 +64,115 @@ def test_ingest_trades_parses_effective_outcome_and_fast_market_flag(tmp_path: P
     ]
 
 
+def test_refresh_realized_metrics_backfills_pnl_and_clusters(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scorer = detector.WalletScorer(db_path=tmp_path / "wallet_scores.db")
+    try:
+        monkeypatch.setattr(scorer, "backfill_market_resolutions", lambda: 0)
+        scorer.ingest_trades(
+            [
+                {
+                    "proxyWallet": "0xmaker",
+                    "conditionId": "cond-1",
+                    "eventSlug": "btc-updown-5m-1",
+                    "title": "BTC Up or Down 5m",
+                    "side": "BUY",
+                    "outcome": "Down",
+                    "outcomeIndex": "1",
+                    "size": "20",
+                    "price": "0.49",
+                    "timestamp": "1700000000",
+                },
+                {
+                    "proxyWallet": "0xmaker",
+                    "conditionId": "cond-2",
+                    "eventSlug": "btc-updown-5m-2",
+                    "title": "BTC Up or Down 5m",
+                    "side": "SELL",
+                    "outcome": "Up",
+                    "outcomeIndex": "0",
+                    "size": "18",
+                    "price": "0.51",
+                    "timestamp": "1700000300",
+                },
+                {
+                    "proxyWallet": "0xmaker",
+                    "conditionId": "cond-3",
+                    "eventSlug": "btc-updown-5m-3",
+                    "title": "BTC Up or Down 5m",
+                    "side": "BUY",
+                    "outcome": "Down",
+                    "outcomeIndex": "1",
+                    "size": "16",
+                    "price": "0.50",
+                    "timestamp": "1700000600",
+                },
+                {
+                    "proxyWallet": "0xmaker",
+                    "conditionId": "cond-4",
+                    "eventSlug": "btc-updown-5m-4",
+                    "title": "BTC Up or Down 5m",
+                    "side": "SELL",
+                    "outcome": "Up",
+                    "outcomeIndex": "0",
+                    "size": "17",
+                    "price": "0.50",
+                    "timestamp": "1700000900",
+                },
+                {
+                    "proxyWallet": "0xmaker",
+                    "conditionId": "cond-5",
+                    "eventSlug": "btc-updown-5m-5",
+                    "title": "BTC Up or Down 5m",
+                    "side": "BUY",
+                    "outcome": "Down",
+                    "outcomeIndex": "1",
+                    "size": "22",
+                    "price": "0.48",
+                    "timestamp": "1700001200",
+                },
+            ]
+        )
+        scorer.compute_scores()
+        scorer.conn.executemany(
+            """
+            INSERT INTO market_resolutions(
+                condition_id, event_slug, market_title, resolved_outcome_index,
+                resolved_outcome, resolution_source, resolved_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (f"cond-{idx}", f"btc-updown-5m-{idx}", "BTC Up or Down 5m", 1, "Down", "test", "2026-03-11T15:00:00Z", "2026-03-11T15:00:00Z")
+                for idx in range(1, 6)
+            ],
+        )
+        scorer.conn.commit()
+
+        updated = scorer.refresh_realized_metrics()
+        row = scorer.conn.execute(
+            """
+            SELECT total_pnl, resolved_trades, realized_roi, realized_edge,
+                   behavior_cluster, ranking_score, wins, losses
+            FROM wallet_scores
+            WHERE wallet = '0xmaker'
+            """
+        ).fetchone()
+    finally:
+        scorer.conn.close()
+
+    assert updated == 5
+    assert row["resolved_trades"] == 5
+    assert row["total_pnl"] > 0
+    assert row["realized_roi"] > 0
+    assert row["realized_edge"] > 0
+    assert row["behavior_cluster"] == "directional"
+    assert row["ranking_score"] > 0
+    assert row["wins"] == 5
+    assert row["losses"] == 0
+
+
 def test_consensus_detector_emits_signal_for_unique_smart_wallets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

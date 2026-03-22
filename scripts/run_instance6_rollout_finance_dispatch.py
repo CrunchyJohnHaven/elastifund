@@ -19,6 +19,10 @@ LADDER = (
     "four_asset_basket",
 )
 FOLLOWER_ASSETS = ("ETH", "SOL", "XRP", "DOGE")
+SHADOW_DECISION_SEMANTICS = ("keep", "discard", "crash")
+PROMOTION_REQUESTED_STATES = {"live_promoted", "live_activated"}
+PROMOTION_READINESS_STATES = {"ready_for_live_promotion", "eligible_for_live_promotion", "promotable"}
+PRIMARY_BTC5_SERVICE = "btc-5min-maker.service"
 
 
 def _utc_now() -> datetime:
@@ -95,6 +99,21 @@ def _first_time(payload: dict[str, Any], path: Path) -> datetime:
         if parsed is not None:
             return parsed
     return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+
+
+def _first_payload_time(payload: dict[str, Any], *keys: str) -> datetime | None:
+    search_keys = keys or (
+        "generated_at",
+        "checked_at",
+        "timestamp",
+        "report_generated_at",
+        "updated_at",
+    )
+    for key in search_keys:
+        parsed = _parse_datetime(payload.get(key))
+        if parsed is not None:
+            return parsed
+    return None
 
 
 def _artifact_health(*, root: Path, rel_path: str, now: datetime, max_age_seconds: int) -> dict[str, Any]:
@@ -214,6 +233,55 @@ def _next_retry(now: datetime, minutes: int) -> str:
     return (now + timedelta(minutes=int(minutes))).isoformat()
 
 
+def _artifact_refreshed_after(
+    *,
+    label: str,
+    artifact_path: str,
+    payload: dict[str, Any],
+    event_at: datetime | None,
+) -> dict[str, Any]:
+    generated_at = _first_payload_time(payload)
+    if event_at is None:
+        return {
+            "label": label,
+            "path": artifact_path,
+            "required": False,
+            "fresh_enough": True,
+            "generated_at": generated_at.isoformat() if generated_at is not None else None,
+            "event_at": None,
+            "reason": None,
+        }
+    if generated_at is None:
+        return {
+            "label": label,
+            "path": artifact_path,
+            "required": True,
+            "fresh_enough": False,
+            "generated_at": None,
+            "event_at": event_at.isoformat(),
+            "reason": f"{label}_missing_refresh_timestamp",
+        }
+    fresh_enough = generated_at >= event_at
+    return {
+        "label": label,
+        "path": artifact_path,
+        "required": True,
+        "fresh_enough": fresh_enough,
+        "generated_at": generated_at.isoformat(),
+        "event_at": event_at.isoformat(),
+        "reason": None if fresh_enough else f"{label}_stale_for_event",
+    }
+
+
+def _family_bucket(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if "maker" in text:
+        return "maker"
+    if "directional" in text:
+        return "directional"
+    return ""
+
+
 def _build_ladder(active_index: int) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for idx, name in enumerate(LADDER):
@@ -232,6 +300,12 @@ def build_instance6_dispatch(root: Path) -> dict[str, Any]:
     reports = root / "reports"
     runtime_truth = _read_json(reports / "runtime_truth_latest.json")
     state_improvement = _read_json(reports / "state_improvement_latest.json")
+    launch_packet = _read_json(reports / "launch_packet_latest.json")
+    remote_cycle_status = _read_json(reports / "remote_cycle_status.json")
+    trade_proof_latest = _read_json(reports / "trade_proof" / "latest.json")
+    btc5_deploy_activation = _read_json(reports / "btc5_deploy_activation.json")
+    btc5_policy_latest = _read_json(reports / "autoresearch" / "btc5_policy" / "latest.json")
+    btc5_autoresearch_latest = _read_json(reports / "btc5_autoresearch" / "latest.json")
     finance_latest = _read_json(reports / "finance" / "latest.json")
     model_budget_plan = _read_json(reports / "finance" / "model_budget_plan.json")
     action_queue = _read_json(reports / "finance" / "action_queue.json")
@@ -460,6 +534,223 @@ def build_instance6_dispatch(root: Path) -> dict[str, Any]:
         finance_block_reasons.append(f"finance_gate_blocked:{finance_gate_reason or 'unknown'}")
     finance_block_reasons.extend(finance_policy_blockers)
 
+    trade_proof_generated_at = _first_payload_time(
+        trade_proof_latest,
+        "generated_at",
+        "checked_at",
+        "updated_at",
+    )
+    deploy_event_at = _first_payload_time(
+        btc5_deploy_activation,
+        "generated_at",
+        "activated_at",
+        "checked_at",
+    )
+
+    trade_proof_payload = (
+        trade_proof_latest
+        if trade_proof_latest
+        else (remote_cycle_status.get("trade_proof") if isinstance(remote_cycle_status.get("trade_proof"), dict) else {})
+    )
+    trade_proof_fill_confirmed = bool(trade_proof_payload.get("fill_confirmed"))
+    fill_event_at = _parse_datetime(trade_proof_payload.get("latest_filled_trade_at")) or trade_proof_generated_at
+    attribution_mode = str(
+        trade_proof_payload.get("attribution_mode")
+        or ((runtime_truth.get("attribution") or {}).get("attribution_mode"))
+        or ((remote_cycle_status.get("attribution") or {}).get("attribution_mode"))
+        or ""
+    ).strip().lower()
+    post_fill_quality_ok_value = _extract_value(
+        trade_proof_payload,
+        ("post_fill_quality_ok",),
+        ("post_fill_quality", "acceptable"),
+        ("post_fill_quality", "ok"),
+        ("quality", "acceptable"),
+    )
+    post_fill_quality_measured = post_fill_quality_ok_value is not None
+    post_fill_quality_ok = bool(post_fill_quality_ok_value) if post_fill_quality_measured else False
+
+    latest_experiment = (
+        btc5_policy_latest.get("latest_experiment")
+        if isinstance(btc5_policy_latest.get("latest_experiment"), dict)
+        else {}
+    )
+    policy_artifacts = btc5_policy_latest.get("artifacts") if isinstance(btc5_policy_latest.get("artifacts"), dict) else {}
+    comparison_summary = (
+        latest_experiment.get("candidate_vs_incumbent_summary")
+        if isinstance(latest_experiment.get("candidate_vs_incumbent_summary"), dict)
+        else {}
+    )
+    latest_status = str(latest_experiment.get("status") or "").strip().lower()
+    latest_promotion_state = str(latest_experiment.get("promotion_state") or "").strip().lower()
+    policy_decision_reason = str(latest_experiment.get("decision_reason") or "").strip()
+    shadow_strategy_family = str(
+        btc5_policy_latest.get("shadow_comparator_strategy_family")
+        or btc5_autoresearch_latest.get("shadow_comparator_strategy_family")
+        or ""
+    ).strip()
+    shadow_profile_id = str(
+        btc5_policy_latest.get("shadow_comparator_profile_id")
+        or btc5_autoresearch_latest.get("shadow_comparator_profile_id")
+        or ""
+    ).strip()
+    shadow_package_hash = str(
+        btc5_policy_latest.get("shadow_comparator_package_hash")
+        or btc5_autoresearch_latest.get("shadow_comparator_package_hash")
+        or ""
+    ).strip()
+    shadow_benchmark_objective = str(
+        btc5_policy_latest.get("shadow_comparator_benchmark_objective")
+        or btc5_autoresearch_latest.get("shadow_comparator_benchmark_objective")
+        or btc5_policy_latest.get("benchmark_objective")
+        or ""
+    ).strip()
+    shadow_wallet_prior_support_score = _as_float(
+        btc5_policy_latest.get("shadow_comparator_wallet_prior_support_score"),
+        _as_float(btc5_policy_latest.get("wallet_prior_support_score"), 0.0),
+    )
+    promotion_readiness = str(btc5_policy_latest.get("promotion_readiness") or "").strip().lower()
+    policy_loss_delta = _as_float(latest_experiment.get("policy_loss_delta"), 0.0)
+    frontier_improvement = _as_float(latest_experiment.get("frontier_improvement_vs_incumbent"), 0.0)
+    mean_fold_improvement = _as_float(comparison_summary.get("mean_fold_loss_improvement"), 0.0)
+    benchmark_improved = bool(
+        latest_status == "keep"
+        and (
+            policy_loss_delta > 0.0
+            or frontier_improvement > 0.0
+            or mean_fold_improvement > 0.0
+            or policy_decision_reason.startswith("champion_policy_loss_improved")
+        )
+    )
+
+    launch_allow_order_submission = launch_packet.get("allow_order_submission")
+    launch_canonical_profile = str(launch_packet.get("canonical_live_profile_id") or "").strip()
+    runtime_canonical_profile = str(
+        _extract_value(
+            runtime_truth,
+            ("canonical_live_profile_id",),
+            ("btc5_selected_package", "canonical_live_profile_id"),
+        )
+        or ""
+    ).strip()
+    remote_service_name = str(
+        _extract_value(
+            remote_cycle_status,
+            ("service", "service_name"),
+            ("service_name",),
+        )
+        or trade_proof_payload.get("service_name")
+        or ""
+    ).strip()
+
+    truth_finance_telemetry_reasons: list[str] = []
+    if launch_allow_order_submission is not None and bool(launch_allow_order_submission) != allow_order_submission:
+        truth_finance_telemetry_reasons.append("launch_vs_runtime_allow_order_submission_mismatch")
+    if launch_canonical_profile and runtime_canonical_profile and launch_canonical_profile != runtime_canonical_profile:
+        truth_finance_telemetry_reasons.append("launch_vs_runtime_canonical_profile_mismatch")
+    if remote_service_name and remote_service_name != PRIMARY_BTC5_SERVICE:
+        truth_finance_telemetry_reasons.append("primary_service_mismatch")
+    if not allow_order_submission:
+        truth_finance_telemetry_reasons.append("runtime_truth_blocks_order_submission")
+    if not finance_gate_effective_pass:
+        truth_finance_telemetry_reasons.append("finance_gate_not_effective")
+
+    deploy_refresh_checks = [
+        _artifact_refreshed_after(
+            label="runtime_truth_latest",
+            artifact_path="reports/runtime_truth_latest.json",
+            payload=runtime_truth,
+            event_at=deploy_event_at,
+        ),
+        _artifact_refreshed_after(
+            label="remote_cycle_status",
+            artifact_path="reports/remote_cycle_status.json",
+            payload=remote_cycle_status,
+            event_at=deploy_event_at,
+        ),
+        _artifact_refreshed_after(
+            label="trade_proof_latest",
+            artifact_path="reports/trade_proof/latest.json",
+            payload=trade_proof_payload,
+            event_at=deploy_event_at,
+        ),
+    ]
+    fill_refresh_checks = [
+        _artifact_refreshed_after(
+            label="runtime_truth_latest",
+            artifact_path="reports/runtime_truth_latest.json",
+            payload=runtime_truth,
+            event_at=fill_event_at if trade_proof_fill_confirmed else None,
+        ),
+        _artifact_refreshed_after(
+            label="remote_cycle_status",
+            artifact_path="reports/remote_cycle_status.json",
+            payload=remote_cycle_status,
+            event_at=fill_event_at if trade_proof_fill_confirmed else None,
+        ),
+        _artifact_refreshed_after(
+            label="trade_proof_latest",
+            artifact_path="reports/trade_proof/latest.json",
+            payload=trade_proof_payload,
+            event_at=fill_event_at if trade_proof_fill_confirmed else None,
+        ),
+    ]
+    telemetry_refresh_reasons = _dedupe(
+        [
+            f"post_deploy_refresh_incomplete:{check['label']}"
+            for check in deploy_refresh_checks
+            if check["required"] and not check["fresh_enough"]
+        ]
+        + [
+            f"post_fill_refresh_incomplete:{check['label']}"
+            for check in fill_refresh_checks
+            if check["required"] and not check["fresh_enough"]
+        ]
+    )
+
+    requested_family_bucket = _family_bucket(shadow_strategy_family)
+    live_fill_family_bucket = _family_bucket(
+        trade_proof_payload.get("strategy_family") or trade_proof_payload.get("lane_id")
+    )
+    live_fill_relevant = bool(
+        trade_proof_fill_confirmed
+        and (
+            not requested_family_bucket
+            or not live_fill_family_bucket
+            or requested_family_bucket == live_fill_family_bucket
+        )
+    )
+    promotion_requested = bool(
+        latest_promotion_state in PROMOTION_REQUESTED_STATES
+        or promotion_readiness in PROMOTION_READINESS_STATES
+    )
+    promotion_gate_reasons: list[str] = []
+    if promotion_requested and not benchmark_improved:
+        promotion_gate_reasons.append("benchmark_improvement_missing")
+    if promotion_requested and truth_finance_telemetry_reasons:
+        promotion_gate_reasons.extend(truth_finance_telemetry_reasons)
+    if promotion_requested and not live_fill_relevant:
+        promotion_gate_reasons.append("trustworthy_relevant_live_fill_missing")
+    if promotion_requested and attribution_mode in {"", "not_ready"}:
+        promotion_gate_reasons.append("attribution_not_ready")
+    if promotion_requested and trade_proof_fill_confirmed and not post_fill_quality_measured:
+        promotion_gate_reasons.append("post_fill_quality_not_measured")
+    if promotion_requested and post_fill_quality_measured and not post_fill_quality_ok:
+        promotion_gate_reasons.append("post_fill_quality_rejected")
+    if promotion_requested and telemetry_refresh_reasons:
+        promotion_gate_reasons.extend(telemetry_refresh_reasons)
+
+    shadow_results_ledger = str(
+        policy_artifacts.get("results_ledger")
+        or (latest_experiment.get("artifact_paths") or {}).get("results_ledger")
+        or ""
+    ).strip()
+    shadow_latest_run = str(
+        policy_artifacts.get("latest_run")
+        or (latest_experiment.get("artifact_paths") or {}).get("run_json")
+        or ""
+    ).strip()
+
     selected_action = None
     queued_for_execution = [
         action
@@ -523,6 +814,7 @@ def build_instance6_dispatch(root: Path) -> dict[str, Any]:
         + risk_breach_reasons
         + finance_block_reasons
         + policy_blockers
+        + [f"promotion_gate_failed:{reason}" for reason in promotion_gate_reasons]
     )
 
     current_stage_index = _as_int(previous_rollout.get("rollout_ladder", {}).get("active_stage_index"), 0)
@@ -631,6 +923,8 @@ def build_instance6_dispatch(root: Path) -> dict[str, Any]:
         "arr_confidence_score": round(arr_confidence_score, 4),
         "block_reasons": block_reasons,
         "finance_gate_pass": finance_gate_effective_pass,
+        "promotion_gate_ready": promotion_requested and not promotion_gate_reasons,
+        "telemetry_refresh_valid": not telemetry_refresh_reasons,
         "one_next_cycle_action": next_action_text,
     }
 
@@ -648,6 +942,12 @@ def build_instance6_dispatch(root: Path) -> dict[str, Any]:
             "finance_latest": "reports/finance/latest.json",
             "finance_model_budget": "reports/finance/model_budget_plan.json",
             "finance_action_queue": "reports/finance/action_queue.json",
+            "launch_packet_latest": "reports/launch_packet_latest.json",
+            "remote_cycle_status": "reports/remote_cycle_status.json",
+            "trade_proof_latest": "reports/trade_proof/latest.json",
+            "btc5_deploy_activation": "reports/btc5_deploy_activation.json",
+            "btc5_policy_latest": "reports/autoresearch/btc5_policy/latest.json",
+            "btc5_autoresearch_latest": "reports/btc5_autoresearch/latest.json",
             "data_plane_health": "reports/data_plane_health/latest.json",
             "market_registry": "reports/market_registry/latest.json",
             "cross_asset_cascade": "reports/cross_asset_cascade/latest.json",
@@ -736,6 +1036,85 @@ def build_instance6_dispatch(root: Path) -> dict[str, Any]:
                 if isinstance(item, dict)
             ],
         },
+        "shadow_research_lane": {
+            "enabled": bool(btc5_policy_latest),
+            "discipline": "karpathy_single_mutable_lane",
+            "scalar_objective": shadow_benchmark_objective or None,
+            "mutable_surface": shadow_latest_run or None,
+            "append_only_results_ledger": shadow_results_ledger or None,
+            "decision_semantics": list(SHADOW_DECISION_SEMANTICS),
+            "latest_result": {
+                "status": latest_status or None,
+                "promotion_state": latest_promotion_state or None,
+                "decision_reason": policy_decision_reason or None,
+                "benchmark_improved": benchmark_improved,
+                "policy_loss_delta": round(policy_loss_delta, 4),
+                "frontier_improvement_vs_incumbent": round(frontier_improvement, 4),
+                "mean_fold_loss_improvement": round(mean_fold_improvement, 4),
+            },
+            "frozen_benchmark": {
+                "canonical_live_profile_id": str(
+                    btc5_policy_latest.get("canonical_live_profile_id")
+                    or btc5_autoresearch_latest.get("canonical_live_profile_id")
+                    or launch_packet.get("canonical_live_profile_id")
+                    or ""
+                ).strip()
+                or None,
+                "canonical_live_package_hash": str(
+                    btc5_policy_latest.get("canonical_live_package_hash")
+                    or btc5_autoresearch_latest.get("canonical_live_package_hash")
+                    or ""
+                ).strip()
+                or None,
+                "strategy_family": str(
+                    btc5_policy_latest.get("strategy_family")
+                    or btc5_autoresearch_latest.get("strategy_family")
+                    or ""
+                ).strip()
+                or None,
+            },
+            "mutable_candidate": {
+                "profile_id": shadow_profile_id or None,
+                "package_hash": shadow_package_hash or None,
+                "strategy_family": shadow_strategy_family or None,
+                "wallet_prior_support_score": round(shadow_wallet_prior_support_score, 4),
+                "promotion_readiness": promotion_readiness or None,
+            },
+        },
+        "telemetry_refresh_gate": {
+            "valid": not telemetry_refresh_reasons,
+            "reasons": telemetry_refresh_reasons,
+            "primary_service": PRIMARY_BTC5_SERVICE,
+            "deploy_event_at": deploy_event_at.isoformat() if deploy_event_at is not None else None,
+            "fill_event_at": fill_event_at.isoformat() if trade_proof_fill_confirmed and fill_event_at is not None else None,
+            "deploy_refresh_checks": deploy_refresh_checks,
+            "fill_refresh_checks": fill_refresh_checks,
+        },
+        "edge_promotion_gate": {
+            "promotion_requested": promotion_requested,
+            "ready": promotion_requested and not promotion_gate_reasons,
+            "reasons": _dedupe(promotion_gate_reasons),
+            "truth_finance_telemetry_contradictions": _dedupe(truth_finance_telemetry_reasons),
+            "benchmark_improved": benchmark_improved,
+            "trustworthy_live_fill_confirmed": trade_proof_fill_confirmed,
+            "relevant_live_fill_confirmed": live_fill_relevant,
+            "attribution_mode": attribution_mode or None,
+            "post_fill_quality": {
+                "measured": post_fill_quality_measured,
+                "acceptable": post_fill_quality_ok if post_fill_quality_measured else None,
+            },
+            "trade_proof": {
+                "proof_status": trade_proof_payload.get("proof_status"),
+                "service_name": trade_proof_payload.get("service_name"),
+                "source_of_truth": trade_proof_payload.get("source_of_truth"),
+                "lane_id": trade_proof_payload.get("lane_id"),
+                "strategy_family": trade_proof_payload.get("strategy_family"),
+                "profile_id": trade_proof_payload.get("profile_id"),
+                "latest_filled_trade_at": trade_proof_payload.get("latest_filled_trade_at"),
+                "trade_size_usd": trade_proof_payload.get("trade_size_usd"),
+                "order_price": trade_proof_payload.get("order_price"),
+            },
+        },
         "operator_packet": {
             "decision": operator_decision,
             "decision_reason": decision_reason,
@@ -759,6 +1138,8 @@ def build_instance6_dispatch(root: Path) -> dict[str, Any]:
         "arr_confidence_score": required_outputs["arr_confidence_score"],
         "block_reasons": required_outputs["block_reasons"],
         "finance_gate_pass": required_outputs["finance_gate_pass"],
+        "promotion_gate_ready": required_outputs["promotion_gate_ready"],
+        "telemetry_refresh_valid": required_outputs["telemetry_refresh_valid"],
         "one_next_cycle_action": required_outputs["one_next_cycle_action"],
     }
     return payload

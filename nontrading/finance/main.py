@@ -17,6 +17,7 @@ from nontrading.finance.config import FinanceSettings
 from nontrading.finance.executor import FinanceExecutionError, FinanceExecutor
 from nontrading.finance.models import (
     FinanceAccount,
+    FinanceAction,
     FinanceExperiment,
     FinancePosition,
     FinanceRecurringCommitment,
@@ -25,7 +26,9 @@ from nontrading.finance.models import (
     utc_now,
 )
 from nontrading.finance.policy import (
+    build_finance_lane_contract,
     build_finance_totals,
+    detect_baseline_live_trading_pass,
     evaluate_rollout_gates,
     load_json,
     refresh_rollout_gate_policies,
@@ -290,6 +293,26 @@ def build_runtime(settings: FinanceSettings) -> tuple[FinanceStore, FinanceActio
     return store, queue, executor
 
 
+def _merge_lane_contract(
+    payload: dict[str, Any],
+    *,
+    settings: FinanceSettings,
+    totals: dict[str, Any],
+    block_reasons: list[str] | None = None,
+    current_live_capital_usd: float | None = None,
+) -> dict[str, Any]:
+    lane_contract = build_finance_lane_contract(
+        workspace_root=settings.workspace_root,
+        capital_ready_to_deploy_usd=float(totals.get("capital_ready_to_deploy_usd", 0.0) or 0.0),
+        single_action_cap_usd=settings.single_action_cap_usd,
+        baseline_live_trading_pass=detect_baseline_live_trading_pass(settings.workspace_root),
+        block_reasons=block_reasons,
+        current_live_capital_usd=current_live_capital_usd,
+    )
+    payload.update(lane_contract)
+    return payload
+
+
 def run_sync(store: FinanceStore, settings: FinanceSettings) -> dict[str, Any]:
     import_summary = _sync_import_dir(store, settings)
     recurring_commitments = detect_recurring_commitments(store)
@@ -306,6 +329,7 @@ def run_sync(store: FinanceStore, settings: FinanceSettings) -> dict[str, Any]:
         "recurring_commitments_detected": len(recurring_commitments),
         "gaps": list(import_summary["gaps"]) + runtime_gaps,
     }
+    report = _merge_lane_contract(report, settings=settings, totals=totals, block_reasons=report["gaps"])
     settings.latest_report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     store.record_snapshot("sync", report["schema_version"], report)
     return report
@@ -375,8 +399,6 @@ def run_allocate(store: FinanceStore, settings: FinanceSettings, queue: FinanceA
     plan = build_allocation_plan(store, settings, audit_report=audit_report)
     settings.allocation_plan_path.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     store.record_snapshot("allocate", plan["schema_version"], plan)
-    from nontrading.finance.models import FinanceAction
-
     queued_actions = [
         FinanceAction(
             **{
@@ -389,6 +411,29 @@ def run_allocate(store: FinanceStore, settings: FinanceSettings, queue: FinanceA
     ]
     queue.sync_actions(queued_actions)
     settings.action_queue_path.write_text(json.dumps(queue.build_report(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    latest = store.latest_snapshot("sync") or {
+        "schema_version": "finance_latest.v1",
+        "generated_at": utc_now(),
+        "gaps": ["sync_not_run"],
+        "totals": build_finance_totals(store, settings),
+    }
+    latest["allocation_plan"] = plan
+    latest["allocation_contract"] = plan.get("allocation_contract", latest.get("allocation_contract"))
+    latest["finance_lane_verdicts"] = plan.get("finance_lane_verdicts", latest.get("finance_lane_verdicts"))
+    latest["finance_lane_budgets"] = plan.get("finance_lane_budgets", latest.get("finance_lane_budgets"))
+    latest["policy"] = plan.get("policy", latest.get("policy"))
+    latest["verdict"] = plan.get("verdict", latest.get("verdict"))
+    latest["bankroll"] = plan.get("bankroll", latest.get("bankroll"))
+    latest["capital_expansion_only_hold"] = plan.get(
+        "capital_expansion_only_hold",
+        latest.get("capital_expansion_only_hold", True),
+    )
+    latest["max_live_stage_cap"] = plan.get("max_live_stage_cap", latest.get("max_live_stage_cap", 1))
+    latest["baseline_live_trading_pass"] = plan.get(
+        "baseline_live_trading_pass",
+        latest.get("baseline_live_trading_pass"),
+    )
+    settings.latest_report_path.write_text(json.dumps(latest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return plan
 
 
@@ -470,6 +515,19 @@ def run_execute(store: FinanceStore, settings: FinanceSettings, queue: FinanceAc
             }
             latest["last_execute"] = result
             latest["rollout_gates"] = rollout_gates.to_dict()
+            latest = _merge_lane_contract(
+                latest,
+                settings=settings,
+                totals=latest.get("totals") if isinstance(latest.get("totals"), dict) else totals,
+                block_reasons=list(dict.fromkeys([*rollout_gates.reasons, preflight_reason])),
+                current_live_capital_usd=(
+                    fallback_action.amount_usd
+                    if fallback_action.bucket == "fund_trading"
+                    else None
+                ),
+            )
+            if selected_mode == "live_treasury":
+                latest["treasury_gate_pass"] = False
             settings.latest_report_path.write_text(json.dumps(latest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             store.record_snapshot("execute", "finance_execute.v1", result)
             return result
@@ -541,6 +599,17 @@ def run_execute(store: FinanceStore, settings: FinanceSettings, queue: FinanceAc
     }
     latest["last_execute"] = result
     latest["rollout_gates"] = rollout_gates.to_dict()
+    latest = _merge_lane_contract(
+        latest,
+        settings=settings,
+        totals=latest.get("totals") if isinstance(latest.get("totals"), dict) else build_finance_totals(store, settings),
+        block_reasons=list(rollout_gates.reasons),
+        current_live_capital_usd=(
+            fallback_action.amount_usd
+            if fallback_action is not None and fallback_action.bucket == "fund_trading"
+            else None
+        ),
+    )
     settings.latest_report_path.write_text(json.dumps(latest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     store.record_snapshot("execute", "finance_execute.v1", result)
     return result

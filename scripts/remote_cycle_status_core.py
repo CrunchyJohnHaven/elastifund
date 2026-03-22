@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import re
@@ -92,6 +93,7 @@ from scripts.remote_cycle_constants import (
     DEFAULT_RUNTIME_OPERATOR_OVERRIDES_PATH,
     DEFAULT_RUNTIME_PROFILE_EFFECTIVE_PATH,
     DEFAULT_RUNTIME_MODE_RECONCILIATION_HISTORY_DIR,
+    DEFAULT_TRADE_PROOF_LATEST_PATH,
     DEFAULT_RUNTIME_TRUTH_LATEST_PATH,
     DEFAULT_RUNTIME_TRUTH_HISTORY_DIR,
     DEFAULT_SERVICE_STATUS_PATH,
@@ -1788,6 +1790,339 @@ def _remote_btc5_decision_ts(row: dict[str, Any]) -> int:
     return int(_safe_float(row.get("window_start_ts"), 0.0))
 
 
+def _ensure_local_trade_ledger_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS trades (
+            id TEXT PRIMARY KEY,
+            timestamp TEXT NOT NULL,
+            market_id TEXT NOT NULL,
+            question TEXT,
+            direction TEXT,
+            entry_price REAL,
+            raw_prob REAL,
+            calibrated_prob REAL,
+            edge REAL,
+            taker_fee REAL,
+            position_size_usd REAL,
+            kelly_fraction REAL,
+            category TEXT,
+            confidence REAL,
+            reasoning TEXT,
+            token_id TEXT,
+            order_id TEXT,
+            paper INTEGER DEFAULT 0,
+            outcome TEXT,
+            resolution_price REAL,
+            pnl REAL,
+            resolved_at TEXT,
+            bankroll_level INTEGER DEFAULT 1000,
+            source TEXT,
+            source_combo TEXT,
+            source_components_json TEXT,
+            source_count INTEGER DEFAULT 1
+        );
+
+        CREATE TABLE IF NOT EXISTS orders (
+            order_id TEXT PRIMARY KEY,
+            trade_id TEXT,
+            timestamp TEXT NOT NULL,
+            placed_at_epoch REAL NOT NULL,
+            market_id TEXT NOT NULL,
+            token_id TEXT,
+            question TEXT,
+            category TEXT,
+            side TEXT,
+            direction TEXT,
+            price REAL,
+            size REAL,
+            size_usd REAL,
+            order_type TEXT,
+            status TEXT DEFAULT 'open',
+            paper INTEGER DEFAULT 0,
+            fill_count INTEGER DEFAULT 0,
+            filled_size REAL DEFAULT 0.0,
+            avg_fill_price REAL,
+            first_fill_at TEXT,
+            first_fill_latency_seconds REAL,
+            last_fill_at TEXT,
+            last_fill_latency_seconds REAL,
+            last_size_matched REAL DEFAULT 0.0,
+            last_seen_at TEXT,
+            cancelled_at TEXT,
+            cancel_reason TEXT,
+            metadata_json TEXT DEFAULT '{}'
+        );
+
+        CREATE TABLE IF NOT EXISTS fills (
+            id TEXT PRIMARY KEY,
+            order_id TEXT NOT NULL,
+            trade_id TEXT,
+            timestamp TEXT NOT NULL,
+            market_id TEXT NOT NULL,
+            token_id TEXT,
+            fill_price REAL NOT NULL,
+            fill_size REAL NOT NULL,
+            fill_size_usd REAL NOT NULL,
+            latency_seconds REAL NOT NULL,
+            cumulative_size_matched REAL,
+            raw_json TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_trade_ledger_trades_timestamp ON trades(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_trade_ledger_orders_timestamp ON orders(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_trade_ledger_fills_timestamp ON fills(timestamp);
+        """
+    )
+
+
+def _btc5_row_represents_fill(row: dict[str, Any]) -> bool:
+    status = str(row.get("order_status") or "").strip().lower()
+    trade_size_usd = _float_or_none(row.get("trade_size_usd")) or 0.0
+    filled = _float_or_none(row.get("filled")) or 0.0
+    return status in {"live_filled", "filled", "paper_filled"} or filled > 0.0 or trade_size_usd > 0.0
+
+
+def _mirror_remote_btc5_rows_to_trade_ledger(root: Path, payload: dict[str, Any]) -> None:
+    rows = payload.get("recent_window_rows")
+    if not isinstance(rows, list):
+        return
+    db_path = root / DEFAULT_TRADES_DB_PATH
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(str(db_path))
+        _ensure_local_trade_ledger_schema(conn)
+        for raw_row in rows:
+            if not isinstance(raw_row, dict) or not _btc5_row_represents_fill(raw_row):
+                continue
+
+            window_start_ts = int(_safe_float(raw_row.get("window_start_ts"), 0.0))
+            if window_start_ts <= 0:
+                continue
+            slug = str(raw_row.get("slug") or f"btc-updown-5m-{window_start_ts}").strip()
+            market_id = slug or f"btc5-window-{window_start_ts}"
+            timestamp = str(raw_row.get("updated_at") or raw_row.get("created_at") or _now_iso())
+            placed_at = str(raw_row.get("created_at") or raw_row.get("updated_at") or timestamp)
+            placed_at_dt = _parse_datetime_like(placed_at) or _parse_datetime_like(timestamp)
+            fill_dt = _parse_datetime_like(timestamp) or placed_at_dt
+            placed_at_epoch = (
+                float(placed_at_dt.timestamp()) if placed_at_dt is not None else float(window_start_ts)
+            )
+            fill_timestamp = fill_dt.isoformat() if fill_dt is not None else timestamp
+            fill_latency_seconds = 0.0
+            if placed_at_dt is not None and fill_dt is not None:
+                fill_latency_seconds = max((fill_dt - placed_at_dt).total_seconds(), 0.0)
+
+            order_price = _float_or_none(
+                _first_nonempty(
+                    raw_row.get("order_price"),
+                    raw_row.get("best_bid"),
+                    raw_row.get("open_price"),
+                    raw_row.get("current_price"),
+                )
+            )
+            trade_size_usd = abs(_float_or_none(raw_row.get("trade_size_usd")) or 0.0)
+            if trade_size_usd <= 0.0:
+                continue
+            shares = _float_or_none(raw_row.get("shares"))
+            if (shares is None or shares <= 0.0) and order_price is not None and order_price > 0.0:
+                shares = trade_size_usd / order_price
+            fill_size = abs(shares or 0.0)
+            if fill_size <= 0.0:
+                fill_size = trade_size_usd
+            fill_price = order_price if order_price is not None else 0.0
+
+            raw_order_id = str(raw_row.get("order_id") or "").strip()
+            order_id = raw_order_id or f"btc5-mirror-order-{window_start_ts}"
+            trade_key = raw_order_id or str(window_start_ts)
+            trade_id = f"btc5-mirror-trade-{trade_key}"
+            fill_id = "btc5-mirror-fill-" + hashlib.sha1(
+                f"{trade_key}:{fill_timestamp}:{trade_size_usd:.8f}".encode("utf-8")
+            ).hexdigest()[:16]
+
+            won_flag = raw_row.get("won")
+            outcome = None
+            resolution_price = None
+            resolved_at = None
+            if won_flag is not None:
+                outcome = "won" if bool(int(won_flag)) else "lost"
+                resolution_price = 1.0 if outcome == "won" else 0.0
+                resolved_at = fill_timestamp
+
+            direction = str(raw_row.get("direction") or "").strip() or None
+            source = "polymarket_btc5_remote_mirror"
+            source_components_json = json.dumps(["btc5_remote_mirror"], sort_keys=True)
+            metadata_json = json.dumps(
+                {
+                    "lane_id": "maker_bootstrap_live",
+                    "strategy_family": "btc5_maker_bootstrap",
+                    "window_start_ts": window_start_ts,
+                    "raw_row": raw_row,
+                },
+                sort_keys=True,
+            )
+
+            conn.execute(
+                """
+                INSERT INTO trades (
+                    id, timestamp, market_id, question, direction, entry_price,
+                    position_size_usd, category, token_id, order_id, paper,
+                    outcome, resolution_price, pnl, resolved_at, bankroll_level,
+                    source, source_combo, source_components_json, source_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    timestamp=excluded.timestamp,
+                    market_id=excluded.market_id,
+                    question=excluded.question,
+                    direction=COALESCE(excluded.direction, trades.direction),
+                    entry_price=COALESCE(excluded.entry_price, trades.entry_price),
+                    position_size_usd=COALESCE(excluded.position_size_usd, trades.position_size_usd),
+                    token_id=COALESCE(excluded.token_id, trades.token_id),
+                    order_id=COALESCE(excluded.order_id, trades.order_id),
+                    paper=excluded.paper,
+                    outcome=COALESCE(excluded.outcome, trades.outcome),
+                    resolution_price=COALESCE(excluded.resolution_price, trades.resolution_price),
+                    pnl=COALESCE(excluded.pnl, trades.pnl),
+                    resolved_at=COALESCE(excluded.resolved_at, trades.resolved_at),
+                    source=COALESCE(excluded.source, trades.source),
+                    source_combo=COALESCE(excluded.source_combo, trades.source_combo),
+                    source_components_json=COALESCE(excluded.source_components_json, trades.source_components_json),
+                    source_count=excluded.source_count
+                """,
+                (
+                    trade_id,
+                    fill_timestamp,
+                    market_id,
+                    slug,
+                    direction,
+                    order_price,
+                    trade_size_usd,
+                    "crypto",
+                    raw_row.get("token_id"),
+                    order_id,
+                    0,
+                    outcome,
+                    resolution_price,
+                    _float_or_none(raw_row.get("pnl_usd")),
+                    resolved_at,
+                    1000,
+                    source,
+                    source,
+                    source_components_json,
+                    1,
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO orders (
+                    order_id, trade_id, timestamp, placed_at_epoch, market_id, token_id,
+                    question, category, side, direction, price, size, size_usd, order_type,
+                    status, paper, fill_count, filled_size, avg_fill_price, first_fill_at,
+                    first_fill_latency_seconds, last_fill_at, last_fill_latency_seconds,
+                    last_size_matched, last_seen_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(order_id) DO UPDATE SET
+                    trade_id=COALESCE(excluded.trade_id, orders.trade_id),
+                    timestamp=excluded.timestamp,
+                    placed_at_epoch=excluded.placed_at_epoch,
+                    market_id=excluded.market_id,
+                    token_id=COALESCE(excluded.token_id, orders.token_id),
+                    question=COALESCE(excluded.question, orders.question),
+                    category=excluded.category,
+                    side=excluded.side,
+                    direction=COALESCE(excluded.direction, orders.direction),
+                    price=COALESCE(excluded.price, orders.price),
+                    size=COALESCE(excluded.size, orders.size),
+                    size_usd=COALESCE(excluded.size_usd, orders.size_usd),
+                    order_type=excluded.order_type,
+                    status=excluded.status,
+                    paper=excluded.paper,
+                    fill_count=MAX(orders.fill_count, excluded.fill_count),
+                    filled_size=MAX(COALESCE(orders.filled_size, 0.0), COALESCE(excluded.filled_size, 0.0)),
+                    avg_fill_price=COALESCE(excluded.avg_fill_price, orders.avg_fill_price),
+                    first_fill_at=COALESCE(orders.first_fill_at, excluded.first_fill_at),
+                    first_fill_latency_seconds=COALESCE(orders.first_fill_latency_seconds, excluded.first_fill_latency_seconds),
+                    last_fill_at=COALESCE(excluded.last_fill_at, orders.last_fill_at),
+                    last_fill_latency_seconds=COALESCE(excluded.last_fill_latency_seconds, orders.last_fill_latency_seconds),
+                    last_size_matched=MAX(COALESCE(orders.last_size_matched, 0.0), COALESCE(excluded.last_size_matched, 0.0)),
+                    last_seen_at=excluded.last_seen_at,
+                    metadata_json=excluded.metadata_json
+                """,
+                (
+                    order_id,
+                    trade_id,
+                    placed_at,
+                    placed_at_epoch,
+                    market_id,
+                    raw_row.get("token_id"),
+                    slug,
+                    "crypto",
+                    "BUY",
+                    direction,
+                    order_price,
+                    fill_size,
+                    trade_size_usd,
+                    "maker",
+                    "filled",
+                    0,
+                    1,
+                    fill_size,
+                    fill_price if fill_price > 0.0 else order_price,
+                    fill_timestamp,
+                    fill_latency_seconds,
+                    fill_timestamp,
+                    fill_latency_seconds,
+                    fill_size,
+                    fill_timestamp,
+                    metadata_json,
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO fills (
+                    id, order_id, trade_id, timestamp, market_id, token_id, fill_price,
+                    fill_size, fill_size_usd, latency_seconds, cumulative_size_matched, raw_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    order_id=excluded.order_id,
+                    trade_id=excluded.trade_id,
+                    timestamp=excluded.timestamp,
+                    market_id=excluded.market_id,
+                    token_id=COALESCE(excluded.token_id, fills.token_id),
+                    fill_price=excluded.fill_price,
+                    fill_size=excluded.fill_size,
+                    fill_size_usd=excluded.fill_size_usd,
+                    latency_seconds=excluded.latency_seconds,
+                    cumulative_size_matched=excluded.cumulative_size_matched,
+                    raw_json=excluded.raw_json
+                """,
+                (
+                    fill_id,
+                    order_id,
+                    trade_id,
+                    fill_timestamp,
+                    market_id,
+                    raw_row.get("token_id"),
+                    fill_price,
+                    fill_size,
+                    trade_size_usd,
+                    fill_latency_seconds,
+                    fill_size,
+                    json.dumps(raw_row, sort_keys=True),
+                ),
+            )
+        conn.commit()
+    except sqlite3.DatabaseError:
+        return
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def _mirror_remote_btc5_rows_to_local_db(root: Path, payload: dict[str, Any]) -> None:
     rows = payload.get("recent_window_rows")
     if not isinstance(rows, list):
@@ -1901,6 +2236,7 @@ PY""".replace("__REMOTE_BOT_DIR__", shlex.quote(REMOTE_BOT_DIR)).replace(
                     payload.setdefault("source", "remote_sqlite_probe")
                     _materialize_remote_btc5_window_rows_cache(root, payload)
                     _mirror_remote_btc5_rows_to_local_db(root, payload)
+                    _mirror_remote_btc5_rows_to_trade_ledger(root, payload)
                     return _normalize_btc5_maker_observation(payload)
         except Exception:
             pass
@@ -2739,10 +3075,21 @@ def build_remote_cycle_status(
     status["btc5_stage_readiness"] = btc5_stage_readiness
     selected_package_summary = _enforce_canonical_live_package(selected_package_summary)
     status["btc5_selected_package"] = selected_package_summary
+    status["attribution"] = build_trade_attribution_contract(
+        root=repo_root,
+        btc5_maker=btc5_maker,
+        selected_package_summary=selected_package_summary,
+        service_name=str(service.get("service_name") or PRIMARY_RUNTIME_SERVICE_NAME),
+    )
     status["trade_confirmation"] = _build_btc5_trade_confirmation(
         btc5_maker=btc5_maker,
         selected_package_summary=selected_package_summary,
         service_name=str(service.get("service_name") or PRIMARY_RUNTIME_SERVICE_NAME),
+        now=generated_at,
+    )
+    status["trade_proof"] = _build_btc5_trade_proof(
+        attribution=dict(status.get("attribution") or {}),
+        trade_confirmation=dict(status.get("trade_confirmation") or {}),
         now=generated_at,
     )
     status["deployment_confidence"] = deployment_confidence
@@ -2856,6 +3203,10 @@ def write_remote_cycle_status(
         repo_root,
         public_runtime_snapshot_path or DEFAULT_PUBLIC_RUNTIME_SNAPSHOT_PATH,
     )
+    trade_proof_latest_target = _resolve_path(
+        repo_root,
+        DEFAULT_TRADE_PROOF_LATEST_PATH,
+    )
     launch_packet_latest_target = _resolve_path(
         repo_root,
         launch_packet_latest_path or DEFAULT_LAUNCH_PACKET_LATEST_PATH,
@@ -2892,6 +3243,7 @@ def write_remote_cycle_status(
             "runtime_truth_latest_json": str(runtime_truth_latest_target),
             "runtime_truth_timestamped_json": str(runtime_truth_timestamped_target),
             "public_runtime_snapshot_json": str(public_runtime_snapshot_target),
+            "trade_proof_latest_json": str(trade_proof_latest_target),
             "launch_packet_latest_json": str(launch_packet_latest_target),
             "launch_packet_timestamped_json": str(launch_packet_timestamped_target),
             "state_improvement_latest_json": str(state_improvement_latest_target),
@@ -2925,7 +3277,9 @@ def write_remote_cycle_status(
             else {}
         ),
     )
+    runtime_truth_snapshot["attribution"] = dict(status.get("attribution") or {})
     runtime_truth_snapshot["trade_confirmation"] = dict(status.get("trade_confirmation") or {})
+    runtime_truth_snapshot["trade_proof"] = dict(status.get("trade_proof") or {})
     runtime_mode_reconciliation = build_runtime_mode_reconciliation(
         repo_root,
         status=status,
@@ -3024,9 +3378,21 @@ def write_remote_cycle_status(
         status,
         runtime_truth_snapshot=runtime_truth_snapshot,
     )
+    status["attribution"] = dict(
+        runtime_truth_snapshot.get("attribution") or status.get("attribution") or {}
+    )
     status["trade_confirmation"] = dict(runtime_truth_snapshot.get("trade_confirmation") or status.get("trade_confirmation") or {})
+    status["trade_proof"] = dict(
+        runtime_truth_snapshot.get("trade_proof") or status.get("trade_proof") or {}
+    )
+    status.setdefault("runtime_truth", {})["attribution"] = dict(
+        runtime_truth_snapshot.get("attribution") or {}
+    )
     status.setdefault("runtime_truth", {})["trade_confirmation"] = dict(
         runtime_truth_snapshot.get("trade_confirmation") or {}
+    )
+    status.setdefault("runtime_truth", {})["trade_proof"] = dict(
+        runtime_truth_snapshot.get("trade_proof") or {}
     )
     public_runtime_snapshot = build_public_runtime_snapshot(runtime_truth_snapshot)
 
@@ -3034,6 +3400,7 @@ def write_remote_cycle_status(
     json_target.parent.mkdir(parents=True, exist_ok=True)
     runtime_truth_latest_target.parent.mkdir(parents=True, exist_ok=True)
     public_runtime_snapshot_target.parent.mkdir(parents=True, exist_ok=True)
+    trade_proof_latest_target.parent.mkdir(parents=True, exist_ok=True)
     launch_packet_latest_target.parent.mkdir(parents=True, exist_ok=True)
     state_improvement_latest_target.parent.mkdir(parents=True, exist_ok=True)
     state_improvement_digest_target.parent.mkdir(parents=True, exist_ok=True)
@@ -3058,6 +3425,13 @@ def write_remote_cycle_status(
     dump_path_atomic(
         public_runtime_snapshot_target,
         public_runtime_snapshot,
+        indent=2,
+        sort_keys=True,
+        trailing_newline=False,
+    )
+    dump_path_atomic(
+        trade_proof_latest_target,
+        runtime_truth_snapshot.get("trade_proof") or {},
         indent=2,
         sort_keys=True,
         trailing_newline=False,
@@ -3104,6 +3478,7 @@ def write_remote_cycle_status(
         "runtime_truth_timestamped": str(runtime_truth_timestamped_target),
         "runtime_mode_reconciliation_markdown": str(runtime_mode_reconciliation_target),
         "public_runtime_snapshot": str(public_runtime_snapshot_target),
+        "trade_proof_latest": str(trade_proof_latest_target),
         "launch_packet_latest": str(launch_packet_latest_target),
         "launch_packet_timestamped": str(launch_packet_timestamped_target),
         "state_improvement_latest": str(state_improvement_latest_target),
@@ -3438,10 +3813,17 @@ def build_runtime_mode_reconciliation(
             elif field == "signal_thresholds.no_threshold":
                 guarded_signal_thresholds["no_threshold"] = item.get("after")
         launch_guard_reasons.append("widening_overrides_neutralized_for_launch_control")
-    elif bounded_stage1_live_override:
+    if not safe_baseline_required and bounded_stage1_live_override:
+        effective_runtime_profile = str(remote_runtime_profile or selected_profile).strip() or selected_profile
+        guarded_mode = dict(guarded_mode)
+        guarded_mode["execution_mode"] = "live"
+        guarded_mode["effective_execution_mode"] = "live"
+        guarded_mode["paper_trading"] = False if remote_paper_trading is None else bool(remote_paper_trading)
+        guarded_mode["allow_order_submission"] = True
         launch_guard_reasons.append(
             "bounded_stage1_live_override_kept_effective_runtime_profile"
         )
+        launch_guard_reasons.append("bounded_stage1_live_override_forced_live_mode_contract")
 
     guarded_config = dict(effective_config)
     guarded_config["mode"] = guarded_mode
@@ -6328,6 +6710,9 @@ def build_runtime_truth_snapshot(
         "finance_gate": finance_gate,
         "btc5_selected_package": selected_package_summary,
         "champion_lane_contract": champion_lane_contract,
+        "attribution": dict(status.get("attribution") or {}),
+        "trade_confirmation": dict(status.get("trade_confirmation") or {}),
+        "trade_proof": dict(status.get("trade_proof") or {}),
         "wallet_flow": status["wallet_flow"],
         "polymarket_wallet": status.get("polymarket_wallet") or {},
         "btc_5min_maker": status.get("btc_5min_maker") or {},
@@ -8822,6 +9207,17 @@ def _apply_shared_truth_contract_to_status(
     status["truth_lattice"] = truth_lattice
     status["truth_gate_status"] = truth_gate_status
     status["truth_gate_blocking_checks"] = truth_gate_blocking_checks
+    status["attribution"] = dict(
+        runtime_truth_snapshot.get("attribution") or status.get("attribution") or {}
+    )
+    status["trade_confirmation"] = dict(
+        runtime_truth_snapshot.get("trade_confirmation")
+        or status.get("trade_confirmation")
+        or {}
+    )
+    status["trade_proof"] = dict(
+        runtime_truth_snapshot.get("trade_proof") or status.get("trade_proof") or {}
+    )
     compatibility_fields = _derive_btc5_selection_compat_fields(runtime_truth_snapshot)
     status.update(compatibility_fields)
     status["btc5_stage_readiness"] = dict(
@@ -8845,6 +9241,9 @@ def _apply_shared_truth_contract_to_status(
             "truth_lattice": truth_lattice,
             "truth_gate_status": truth_gate_status,
             "truth_gate_blocking_checks": truth_gate_blocking_checks,
+            "attribution": dict(status.get("attribution") or {}),
+            "trade_confirmation": dict(status.get("trade_confirmation") or {}),
+            "trade_proof": dict(status.get("trade_proof") or {}),
             "btc5_stage_readiness": dict(status.get("btc5_stage_readiness") or {}),
             "deployment_confidence": dict(status.get("deployment_confidence") or {}),
             **compatibility_fields,
@@ -9939,6 +10338,198 @@ def _summarize_recent_btc5_execution(*, btc5_maker: dict[str, Any], now: datetim
     }
 
 
+def _selected_btc5_profile_id(selected_package_summary: dict[str, Any]) -> str | None:
+    return (
+        str(
+            selected_package_summary.get("canonical_live_profile")
+            or selected_package_summary.get("canonical_live_profile_id")
+            or selected_package_summary.get("selected_active_profile_name")
+            or selected_package_summary.get("selected_best_profile_name")
+            or ""
+        ).strip()
+        or None
+    )
+
+
+def _load_latest_btc5_fill_from_trade_ledger(root: Path) -> dict[str, Any]:
+    db_path = root / DEFAULT_TRADES_DB_PATH
+    if not db_path.exists():
+        return {}
+
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT
+                f.id,
+                f.timestamp,
+                f.market_id,
+                f.order_id,
+                f.trade_id,
+                f.fill_price,
+                f.fill_size_usd,
+                f.raw_json,
+                o.metadata_json,
+                o.direction AS order_direction,
+                t.direction AS trade_direction,
+                t.entry_price,
+                t.source,
+                t.source_combo
+            FROM fills AS f
+            LEFT JOIN orders AS o
+                ON o.order_id = f.order_id
+            LEFT JOIN trades AS t
+                ON t.id = COALESCE(f.trade_id, o.trade_id)
+            WHERE
+                COALESCE(t.source, '') = 'polymarket_btc5_remote_mirror'
+                OR COALESCE(t.source_combo, '') = 'polymarket_btc5_remote_mirror'
+                OR f.market_id LIKE 'btc-updown-5m-%'
+                OR f.order_id LIKE 'btc5-mirror-order-%'
+            ORDER BY f.timestamp DESC, f.id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    except sqlite3.DatabaseError:
+        return {}
+    finally:
+        try:
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
+
+    if row is None:
+        return {}
+    return dict(row)
+
+
+def build_trade_attribution_contract(
+    *,
+    root: Path,
+    btc5_maker: dict[str, Any],
+    selected_package_summary: dict[str, Any] | None = None,
+    service_name: str | None = None,
+) -> dict[str, Any]:
+    selected_package = (
+        dict(selected_package_summary or {})
+        if isinstance(selected_package_summary, dict)
+        else {}
+    )
+    if not selected_package:
+        selected_package = _load_btc5_selected_package_summary(root)
+
+    latest_trade = (
+        dict(btc5_maker.get("latest_trade") or {})
+        if isinstance(btc5_maker.get("latest_trade"), dict)
+        else {}
+    )
+    latest_trade_status = str(latest_trade.get("order_status") or "").strip().lower()
+    latest_fill = _load_latest_btc5_fill_from_trade_ledger(root)
+    raw_fill_payload = fast_loads(latest_fill.get("raw_json") or "{}") if latest_fill.get("raw_json") else {}
+    fill_metadata = (
+        fast_loads(latest_fill.get("metadata_json") or "{}")
+        if latest_fill.get("metadata_json")
+        else {}
+    )
+    lane_id = (
+        str(
+            fill_metadata.get("lane_id")
+            or raw_fill_payload.get("lane_id")
+            or "maker_bootstrap_live"
+        ).strip()
+        or "maker_bootstrap_live"
+    )
+    strategy_family = (
+        str(
+            fill_metadata.get("strategy_family")
+            or raw_fill_payload.get("strategy_family")
+            or "btc5_maker_bootstrap"
+        ).strip()
+        or "btc5_maker_bootstrap"
+    )
+    profile_id = _selected_btc5_profile_id(selected_package)
+    latest_filled_trade_at = (
+        str(
+            latest_fill.get("timestamp")
+            or btc5_maker.get("latest_live_filled_at")
+            or (
+                latest_trade.get("updated_at")
+                if latest_trade_status == "live_filled"
+                else None
+            )
+            or (
+                latest_trade.get("created_at")
+                if latest_trade_status == "live_filled"
+                else None
+            )
+            or ""
+        ).strip()
+        or None
+    )
+    trade_size_usd = _float_or_none(
+        _first_nonempty(
+            latest_fill.get("fill_size_usd"),
+            raw_fill_payload.get("trade_size_usd"),
+            latest_trade.get("trade_size_usd"),
+        )
+    )
+    order_price = _float_or_none(
+        _first_nonempty(
+            latest_fill.get("fill_price"),
+            raw_fill_payload.get("order_price"),
+            latest_fill.get("entry_price"),
+            latest_trade.get("order_price"),
+            latest_trade.get("best_bid"),
+            latest_trade.get("open_price"),
+            latest_trade.get("current_price"),
+        )
+    )
+    fill_confirmed = bool(
+        latest_fill
+        or (
+            latest_trade_status == "live_filled"
+            and trade_size_usd is not None
+            and trade_size_usd > 0.0
+        )
+    )
+    attribution_mode = (
+        "db_backed_attribution_ready"
+        if latest_fill
+        else ("trade_log_fallback_only" if fill_confirmed else "not_ready")
+    )
+    source_of_truth = (
+        "data/jj_trades.db#fills"
+        if latest_fill
+        else str(
+            btc5_maker.get("source")
+            or btc5_maker.get("db_path")
+            or DEFAULT_BTC5_DB_PATH
+        )
+    )
+
+    return {
+        "artifact": "btc5_trade_attribution",
+        "schema_version": 1,
+        "generated_at": _now_iso(),
+        "service_name": str(service_name or PRIMARY_RUNTIME_SERVICE_NAME).strip()
+        or PRIMARY_RUNTIME_SERVICE_NAME,
+        "source_of_truth": source_of_truth,
+        "attribution_mode": attribution_mode,
+        "fill_confirmed": fill_confirmed,
+        "latest_filled_trade_at": latest_filled_trade_at,
+        "lane_id": lane_id,
+        "strategy_family": strategy_family,
+        "profile_id": profile_id,
+        "trade_size_usd": trade_size_usd,
+        "order_price": order_price,
+        "market_id": latest_fill.get("market_id") or latest_trade.get("slug"),
+        "order_id": latest_fill.get("order_id") or latest_trade.get("order_id"),
+        "trade_id": latest_fill.get("trade_id"),
+    }
+
+
 def _build_btc5_trade_confirmation(
     *,
     btc5_maker: dict[str, Any],
@@ -9980,31 +10571,132 @@ def _build_btc5_trade_confirmation(
         status = "no_live_fill_observed"
     return {
         "status": status,
+        "proof_status": "fill_confirmed" if fill_confirmed else "no_fill_yet",
         "service_name": service_name,
         "source_of_truth": str(
             btc5_maker.get("source") or btc5_maker.get("db_path") or "data/btc_5min_maker.db"
         ),
-        "canonical_live_profile": str(
-            selected_package_summary.get("canonical_live_profile")
-            or selected_package_summary.get("selected_active_profile_name")
-            or selected_package_summary.get("selected_best_profile_name")
-            or ""
-        ).strip()
-        or None,
+        "canonical_live_profile": _selected_btc5_profile_id(selected_package_summary),
+        "profile_id": _selected_btc5_profile_id(selected_package_summary),
         "canonical_live_package_hash": str(
             selected_package_summary.get("canonical_live_package_hash") or ""
         ).strip()
         or None,
+        "lane_id": "maker_bootstrap_live",
+        "strategy_family": "btc5_maker_bootstrap",
         "latest_order_status": latest_order_status,
         "latest_trade_window_start_ts": _int_or_none(latest_trade.get("window_start_ts")),
         "latest_trade_direction": latest_trade.get("direction"),
         "latest_trade_size_usd": latest_trade_size_usd,
+        "trade_size_usd": latest_trade_size_usd,
+        "order_price": _float_or_none(
+            _first_nonempty(
+                latest_trade.get("order_price"),
+                latest_trade.get("best_bid"),
+                latest_trade.get("open_price"),
+                latest_trade.get("current_price"),
+            )
+        ),
         "latest_trade_pnl_usd": _float_or_none(latest_trade.get("pnl_usd")),
         "latest_filled_trade_at": latest_fill_dt.isoformat() if latest_fill_dt is not None else None,
         "latest_filled_trade_age_minutes": latest_fill_age_minutes,
         "live_filled_rows": live_filled_rows,
         "fill_confirmed": fill_confirmed,
     }
+
+
+def _build_btc5_trade_proof(
+    *,
+    attribution: dict[str, Any],
+    trade_confirmation: dict[str, Any],
+    now: datetime,
+) -> dict[str, Any]:
+    fill_confirmed = bool(
+        attribution.get("fill_confirmed")
+        or trade_confirmation.get("fill_confirmed")
+    )
+    latest_filled_trade_at = (
+        str(
+            attribution.get("latest_filled_trade_at")
+            or trade_confirmation.get("latest_filled_trade_at")
+            or ""
+        ).strip()
+        or None
+    )
+    trade_size_usd = _float_or_none(
+        _first_nonempty(
+            attribution.get("trade_size_usd"),
+            trade_confirmation.get("trade_size_usd"),
+            trade_confirmation.get("latest_trade_size_usd"),
+        )
+    )
+    order_price = _float_or_none(
+        _first_nonempty(
+            attribution.get("order_price"),
+            trade_confirmation.get("order_price"),
+        )
+    )
+    proof_status = "fill_confirmed" if fill_confirmed else "no_fill_yet"
+    payload = {
+        "artifact": "btc5_trade_proof",
+        "schema_version": 1,
+        "generated_at": now.isoformat(),
+        "proof_status": proof_status,
+        "fill_confirmed": fill_confirmed,
+        "service_name": str(
+            attribution.get("service_name")
+            or trade_confirmation.get("service_name")
+            or PRIMARY_RUNTIME_SERVICE_NAME
+        ).strip()
+        or PRIMARY_RUNTIME_SERVICE_NAME,
+        "source_of_truth": str(
+            attribution.get("source_of_truth")
+            or trade_confirmation.get("source_of_truth")
+            or ""
+        ).strip()
+        or None,
+        "lane_id": str(attribution.get("lane_id") or trade_confirmation.get("lane_id") or "").strip() or None,
+        "strategy_family": str(
+            attribution.get("strategy_family")
+            or trade_confirmation.get("strategy_family")
+            or ""
+        ).strip()
+        or None,
+        "profile_id": str(
+            attribution.get("profile_id")
+            or trade_confirmation.get("profile_id")
+            or trade_confirmation.get("canonical_live_profile")
+            or ""
+        ).strip()
+        or None,
+        "trade_size_usd": trade_size_usd,
+        "order_price": order_price,
+        "latest_filled_trade_at": latest_filled_trade_at,
+        "attribution_mode": str(attribution.get("attribution_mode") or "").strip() or None,
+        "freshness_sla_minutes": 45,
+    }
+    required_fields = [
+        "service_name",
+        "source_of_truth",
+        "lane_id",
+        "strategy_family",
+        "profile_id",
+        "attribution_mode",
+    ]
+    if fill_confirmed:
+        required_fields.extend(
+            [
+                "latest_filled_trade_at",
+                "trade_size_usd",
+                "order_price",
+            ]
+        )
+    payload["missing_fields"] = [
+        field_name
+        for field_name in required_fields
+        if payload.get(field_name) in (None, "")
+    ]
+    return payload
 
 
 def _compute_execution_notional_summary(*, root: Path, now: datetime, btc5_maker: dict[str, Any]) -> dict[str, Any]:

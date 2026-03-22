@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+PRIMARY_RUNTIME_SERVICE_NAME = "btc-5min-maker.service"
+
 
 def _derive_selection_compat_fields(runtime_truth_snapshot: dict[str, Any]) -> dict[str, Any]:
     selected_package = dict(runtime_truth_snapshot.get("btc5_selected_package") or {})
@@ -53,7 +55,7 @@ def build_public_headlines(
     headlines: list[str] = []
     if drift.get("service_running_while_launch_blocked"):
         headlines.append(
-            "jj-live.service is running while launch posture remains blocked; treat this as drift until the remote mode is reconciled."
+            f"{PRIMARY_RUNTIME_SERVICE_NAME} is running while launch posture remains blocked; treat this as drift until the remote mode is reconciled."
         )
     if wallet_flow.get("ready"):
         headlines.append("Wallet-flow bootstrap is ready.")
