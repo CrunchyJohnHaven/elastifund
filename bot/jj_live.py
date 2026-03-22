@@ -321,6 +321,23 @@ except ImportError:
             return None
 
 try:
+    from bot.strike_desk import StrikeDesk, ExecutionPacket
+except ImportError:
+    try:
+        from strike_desk import StrikeDesk, ExecutionPacket  # type: ignore
+    except ImportError:
+        StrikeDesk = None
+        ExecutionPacket = None
+
+try:
+    from bot.event_tape import EventTapeWriter
+except ImportError:
+    try:
+        from event_tape import EventTapeWriter  # type: ignore
+    except ImportError:
+        EventTapeWriter = None
+
+try:
     from bot.sum_violation_scanner import SumViolationScanner
 except ImportError:
     try:
@@ -3360,6 +3377,42 @@ class JJLive:
         else:
             logger.warning("Sum-violation strategy not available — running without")
 
+        # Signal source #9: Strike Desk — unified scanner orchestrator
+        self.strike_desk = None
+        self._strike_desk_enabled = os.environ.get("JJ_STRIKE_DESK_ENABLED", "false").lower() == "true"
+        if not self._strike_desk_enabled:
+            logger.info("Strike desk disabled by config (set JJ_STRIKE_DESK_ENABLED=true to activate)")
+        elif StrikeDesk is not None:
+            try:
+                desk_config = {
+                    "total_capital": self.state.state.get("bankroll", 1000),
+                    "max_desk_exposure_pct": float(os.environ.get("JJ_DESK_EXPOSURE_PCT", "0.60")),
+                    "max_single_market_pct": float(os.environ.get("JJ_DESK_MARKET_PCT", "0.10")),
+                    "max_single_lane_pct": float(os.environ.get("JJ_DESK_LANE_PCT", "0.30")),
+                }
+                self.strike_desk = StrikeDesk(config=desk_config)
+                logger.info(
+                    "Signal source #9: Strike Desk initialized (budget=$%.0f, lanes=%d)",
+                    desk_config["total_capital"] * desk_config["max_desk_exposure_pct"],
+                    6,
+                )
+            except Exception as e:
+                logger.warning(f"Strike desk init failed: {e}")
+                self.strike_desk = None
+        else:
+            logger.warning("Strike desk not available — module not installed")
+
+        # Event tape (append-only audit log)
+        self.event_tape = None
+        if EventTapeWriter is not None:
+            try:
+                tape_path = os.environ.get("JJ_EVENT_TAPE_DB", "data/event_tape.db")
+                self.event_tape = EventTapeWriter(db_path=tape_path)
+                logger.info("Event tape writer initialized at %s", tape_path)
+            except Exception as e:
+                logger.warning(f"Event tape init failed: {e}")
+                self.event_tape = None
+
         # Signals 5/6: A-6 + B-1 structural alpha integration.
         self.combinatorial_cfg = (
             CombinatorialConfig.from_runtime_profile(self.runtime_profile)
@@ -5462,6 +5515,148 @@ class JJLive:
             await self.notifier.send_message(message)
         except Exception:
             pass
+
+    async def _run_strike_desk_cycle(self) -> dict[str, Any]:
+        """Run the strike desk scanner cycle — independent of LLM pipeline.
+
+        Returns a summary dict with orders placed, signals found, etc.
+        """
+        result = {"enabled": False, "signals": 0, "packets": 0, "orders": 0, "errors": []}
+        if self.strike_desk is None or not self._strike_desk_enabled:
+            return result
+        result["enabled"] = True
+
+        try:
+            # Update desk capital from live state
+            bankroll = self.state.state.get("bankroll", 1000)
+            self.strike_desk.update_capital(bankroll)
+
+            # Run all scanner lanes (graceful per-lane failure)
+            raw_signals = await self.strike_desk.scan_all_lanes()
+            result["signals"] = len(raw_signals)
+
+            if not raw_signals:
+                return result
+
+            # Generate prioritized, exposure-checked packets
+            packets = self.strike_desk.generate_packets(raw_signals)
+            result["packets"] = len(packets)
+
+            if not packets:
+                return result
+
+            # Execute each packet through place_order
+            for packet in packets:
+                try:
+                    # Build signal dict matching place_order's expected format
+                    signal = {
+                        "market_id": packet.market_id,
+                        "question": packet.metadata.get("question", packet.market_id),
+                        "direction": f"buy_{packet.direction.lower()}",
+                        "edge": packet.edge_estimate,
+                        "calibrated_prob": 0.5 + packet.edge_estimate,
+                        "market_price": packet.metadata.get("market_price", 0.50),
+                        "source": f"strike_desk.{packet.strategy_id}",
+                        "source_combo": f"strike_desk.{packet.strategy_id}",
+                        "signal_sources": ["strike_desk", packet.strategy_id],
+                        "category": packet.metadata.get("category", "structural"),
+                        "velocity_score": 999,  # Structural edges are highest velocity
+                        "resolution_hours": packet.metadata.get("resolution_hours", 24),
+                        "signal_metadata": packet.metadata,
+                    }
+
+                    # Determine order parameters
+                    token_id = packet.token_id
+                    if not token_id:
+                        logger.warning("Strike desk packet missing token_id, skipping: %s", packet.strategy_id)
+                        self.strike_desk.record_rejection(packet.packet_id, "missing_token_id")
+                        continue
+
+                    price = packet.metadata.get("order_price", packet.metadata.get("market_price", 0.50))
+                    order_price = round(price, 2)
+                    order_size = packet.size_usd / max(price, 0.01)
+                    side = "BUY"
+
+                    trade_record = {
+                        "market_id": packet.market_id,
+                        "question": signal["question"],
+                        "direction": signal["direction"],
+                        "token_id": token_id,
+                        "side": side,
+                        "price": order_price,
+                        "size_usd": packet.size_usd,
+                        "edge": packet.edge_estimate,
+                        "confidence": packet.confidence,
+                        "strategy": f"strike_desk.{packet.strategy_id}",
+                        "priority": packet.priority,
+                        "evidence_hash": packet.evidence_hash,
+                    }
+
+                    order_metadata = {
+                        "source": f"strike_desk.{packet.strategy_id}",
+                        "packet_id": packet.packet_id,
+                        "priority": packet.priority,
+                        "linked_packets": packet.linked_packets,
+                    }
+
+                    # Log to event tape if available
+                    if self.event_tape is not None:
+                        try:
+                            self.event_tape.emit_decision(
+                                "trade_proposed",
+                                market_id=packet.market_id,
+                                direction=signal["direction"],
+                                edge=packet.edge_estimate,
+                                size_usd=packet.size_usd,
+                                strategy=f"strike_desk.{packet.strategy_id}",
+                                priority=packet.priority,
+                            )
+                        except Exception:
+                            pass  # Tape is best-effort
+
+                    order_ok = await self.place_order(
+                        signal=signal,
+                        market_id=packet.market_id,
+                        token_id=token_id,
+                        side=side,
+                        price=price,
+                        order_price=order_price,
+                        order_size=order_size,
+                        size_usd=packet.size_usd,
+                        category=signal["category"],
+                        trade_record=trade_record,
+                        order_metadata=order_metadata,
+                    )
+
+                    if order_ok:
+                        result["orders"] += 1
+                        self.strike_desk.record_fill(packet.packet_id, packet.size_usd)
+                        logger.info(
+                            "STRIKE DESK ORDER: %s on %s — $%.2f (P%d, edge=%.3f)",
+                            packet.strategy_id,
+                            packet.market_id[:30],
+                            packet.size_usd,
+                            packet.priority,
+                            packet.edge_estimate,
+                        )
+                    else:
+                        self.strike_desk.record_rejection(packet.packet_id, "order_failed")
+
+                    await asyncio.sleep(0.5)  # Rate limit between orders
+
+                except Exception as e:
+                    logger.warning("Strike desk packet execution failed: %s", e)
+                    result["errors"].append(str(e))
+                    try:
+                        self.strike_desk.record_rejection(packet.packet_id, f"exception: {e}")
+                    except Exception:
+                        pass
+
+        except Exception as e:
+            logger.warning("Strike desk cycle failed: %s", e)
+            result["errors"].append(str(e))
+
+        return result
 
     async def _execute_sum_violation_signals(self, signals: list[dict]) -> tuple[int, dict[str, str]]:
         """Place maker orders for multi-leg sum-violation baskets."""
@@ -7761,6 +7956,11 @@ class JJLive:
             except Exception as e:
                 logger.warning(f"Sum-violation report write failed: {e}")
 
+        # Strike desk cycle — independent structural edge scanner
+        strike_desk_result = await self._run_strike_desk_cycle()
+        if strike_desk_result.get("orders", 0) > 0:
+            trades_placed += strike_desk_result["orders"]
+
         # Update cycle count
         self.state.state["cycles_completed"] = cycle_num
         self.state.save()
@@ -7796,6 +7996,7 @@ class JJLive:
             ),
             "sum_violation_tradable": len(sum_violation_signals),
             "sum_violation_orders": sum_violation_orders,
+            "strike_desk": strike_desk_result,
             "trades_placed": trades_placed,
             "open_positions": len(self.state.state["open_positions"]),
             "linked_baskets": self.state.count_active_linked_baskets(),
