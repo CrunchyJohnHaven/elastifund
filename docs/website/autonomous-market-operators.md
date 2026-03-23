@@ -1,3 +1,10 @@
+---
+title: From Prediction Markets To Autonomous Market Operators
+status: published
+doc_type: article
+last_reviewed: 2026-03-22
+---
+
 # From Prediction Markets To Autonomous Market Operators
 
 *Part of the Elastifund Education Center - [elastifund.io/learn/autonomous-market-operators](https://elastifund.io/learn/autonomous-market-operators)*

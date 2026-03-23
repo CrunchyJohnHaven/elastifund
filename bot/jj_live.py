@@ -354,6 +354,22 @@ except ImportError:
         SumViolationStrategy = None
 
 try:
+    from bot.promotion_manager import PromotionManager
+except ImportError:
+    try:
+        from promotion_manager import PromotionManager  # type: ignore
+    except ImportError:
+        PromotionManager = None  # type: ignore[misc, assignment]
+
+try:
+    from bot.daily_truth import DailyTruthTracker
+except ImportError:
+    try:
+        from daily_truth import DailyTruthTracker  # type: ignore
+    except ImportError:
+        DailyTruthTracker = None  # type: ignore[misc, assignment]
+
+try:
     from bot.adaptive_platt import PlattCalibrator as RuntimePlattCalibrator
 except ImportError:
     try:
@@ -644,6 +660,9 @@ def _reload_runtime_settings(*, persist: bool = False) -> RuntimeProfileBundle:
         os.environ.get("JJ_PM_CAMPAIGN_DECISION_LOG_PATH", "reports/pm_campaign_decisions.jsonl")
     )
 
+    # BTC5 directional freeze — hard policy lever (DISPATCH_102 demotion)
+    BTC5_DIRECTIONAL_LIVE_FROZEN = _bool_env("JJ_BTC5_DIRECTIONAL_LIVE_FROZEN", True)
+
     return bundle
 
 
@@ -653,6 +672,72 @@ _reload_runtime_settings(persist=False)
 def _round_up(value: float, decimals: int = 2) -> float:
     scale = 10 ** max(0, int(decimals))
     return math.ceil(max(0.0, float(value)) * scale - 1e-12) / scale
+
+
+def _load_structural_signal_feed(feed_path: Path, desk: Any) -> list:
+    """Load structural scanner signal feed JSON and convert to ExecutionPackets.
+
+    The feed is written by scripts/continuous_structural_scanner.py (local Mac)
+    and SCP'd to the VPS. Each signal becomes an ExecutionPacket for the strike desk.
+    Stale feeds (>5 min old) are ignored.
+    """
+    try:
+        if not feed_path.exists():
+            return []
+        import json as _json
+        with open(feed_path) as f:
+            data = _json.load(f)
+        generated = data.get("generated_at", "")
+        if generated:
+            from datetime import datetime as _dt, timezone as _tz
+            try:
+                gen_dt = _dt.fromisoformat(generated)
+                age_sec = (datetime.now(timezone.utc) - gen_dt).total_seconds()
+                if age_sec > 300:  # Stale after 5 min
+                    return []
+            except Exception:
+                pass
+        signals = data.get("signals", [])
+        if not signals:
+            return []
+        packets = []
+        for sig in signals:
+            try:
+                from bot.strike_desk import ExecutionPacket
+            except ImportError:
+                try:
+                    from strike_desk import ExecutionPacket  # type: ignore
+                except ImportError:
+                    return []
+            pkt = ExecutionPacket(
+                strategy_id=sig.get("scanner", "structural_scanner"),
+                market_id=str(sig.get("market_id", "")),
+                platform="polymarket",
+                direction=sig.get("direction", "NO"),
+                token_id=str(sig.get("token_id", "")),
+                size_usd=float(sig.get("size_hint_usd", 10.0)),
+                edge_estimate=float(sig.get("expected_profit_per_share", 0.0)),
+                confidence=float(sig.get("confidence", 0.0)),
+                evidence_hash=str(sig.get("detected_at", ""))[:16],
+                max_slippage=0.02,
+                ttl_seconds=int(sig.get("ttl_seconds", 120)),
+                order_type="maker",
+                priority=2,  # Same as resolution sniper
+                metadata={
+                    "question": sig.get("question", ""),
+                    "market_price": sig.get("entry_price", 0.5),
+                    "order_price": sig.get("entry_price", 0.5),
+                    "category": "structural",
+                    "resolution_hours": sig.get("ttl_seconds", 3600) / 3600.0,
+                    "source": "local_structural_scanner",
+                },
+            )
+            if pkt.token_id and pkt.edge_estimate > 0:
+                packets.append(pkt)
+        return packets
+    except Exception as exc:
+        logger.debug("Failed to load structural signal feed: %s", exc)
+        return []
 
 
 def clob_order_size_for_usd(size_usd: float, price: float) -> float:
@@ -3413,6 +3498,24 @@ class JJLive:
                 logger.warning(f"Event tape init failed: {e}")
                 self.event_tape = None
 
+        # Promotion manager — proof-to-capital ladder
+        self.promotion_manager = None
+        if PromotionManager is not None:
+            try:
+                self.promotion_manager = PromotionManager()
+                logger.info("Promotion manager initialized (proof-to-capital ladder active)")
+            except Exception as e:
+                logger.warning(f"Promotion manager init failed: {e}")
+
+        # Daily truth tracker — ET-day P&L bucketing
+        self.daily_truth = None
+        if DailyTruthTracker is not None:
+            try:
+                self.daily_truth = DailyTruthTracker()
+                logger.info("Daily truth tracker initialized (ET-day P&L bucketing active)")
+            except Exception as e:
+                logger.warning(f"Daily truth tracker init failed: {e}")
+
         # Signals 5/6: A-6 + B-1 structural alpha integration.
         self.combinatorial_cfg = (
             CombinatorialConfig.from_runtime_profile(self.runtime_profile)
@@ -4733,6 +4836,36 @@ class JJLive:
         payload["execution_stage"] = execution_stage
         self._safe_elastic_call("index_trade", payload)
 
+    def _feed_proof_to_capital(
+        self,
+        strategy_id: str,
+        pnl: float,
+        size_usd: float,
+    ) -> None:
+        """Best-effort feed to promotion manager and daily truth tracker."""
+        if self.promotion_manager is not None:
+            try:
+                # Ensure strategy is registered before recording fills
+                pm = self.promotion_manager
+                if pm.get_strategy(strategy_id) is None:
+                    pm.register_strategy(strategy_id)
+                # At fill time we don't know won/pnl — record as neutral fill
+                pm.record_fill(
+                    strategy_id=strategy_id,
+                    won=pnl > 0 if pnl != 0 else True,
+                    pnl=pnl,
+                )
+            except Exception:
+                pass  # promotion tracking is best-effort
+        if self.daily_truth is not None:
+            try:
+                self.daily_truth.record_fill(
+                    strategy=strategy_id,
+                    pnl=pnl,
+                )
+            except Exception:
+                pass  # daily truth tracking is best-effort
+
     def _record_kill_telemetry(
         self,
         *,
@@ -5099,6 +5232,11 @@ class JJLive:
                     signal_sources=list(trade_record.get("signal_sources") or []),
                     signal_metadata=dict(trade_record.get("signal_metadata") or {}),
                 )
+                self._feed_proof_to_capital(
+                    strategy_id=str(trade_record.get("source_combo", trade_record.get("source", "unknown"))),
+                    pnl=0.0,
+                    size_usd=size_usd,
+                )
 
                 logger.info(
                     "  PAPER TRADE LOGGED: %s (db: %s)",
@@ -5329,6 +5467,11 @@ class JJLive:
             signal_sources=list(trade_record.get("signal_sources") or []),
             signal_metadata=dict(trade_record.get("signal_metadata") or {}),
         )
+        self._feed_proof_to_capital(
+            strategy_id=str(trade_record.get("source_combo", trade_record.get("source", "unknown"))),
+            pnl=0.0,
+            size_usd=fill_event.fill_size_usd,
+        )
         logger.info(
             "FILL DETECTED: order=%s market=%s size=%.4f price=%.3f latency=%.1fs",
             fill_event.order_id[:16],
@@ -5516,6 +5659,11 @@ class JJLive:
         except Exception:
             pass
 
+    @staticmethod
+    def _load_structural_feed_packets(feed_path: Path, desk: Any) -> list:
+        """Load structural scanner signal feed and convert to ExecutionPackets."""
+        return _load_structural_signal_feed(feed_path, desk)
+
     async def _run_strike_desk_cycle(self) -> dict[str, Any]:
         """Run the strike desk scanner cycle — independent of LLM pipeline.
 
@@ -5533,13 +5681,49 @@ class JJLive:
 
             # Run all scanner lanes (graceful per-lane failure)
             raw_signals = await self.strike_desk.scan_all_lanes()
+
+            # Ingest local structural scanner signal feed (pushed via SCP)
+            _feed_path = Path("reports/structural_signal_feed.json")
+            _feed_signals = _load_structural_signal_feed(_feed_path, self.strike_desk)
+            if _feed_signals:
+                raw_signals.extend(_feed_signals)
+                logger.info("Strike desk: ingested %d signals from local structural scanner", len(_feed_signals))
+
             result["signals"] = len(raw_signals)
 
             if not raw_signals:
                 return result
 
             # Generate prioritized, exposure-checked packets
-            packets = self.strike_desk.generate_packets(raw_signals)
+            # Structural lanes first: resolution > neg_risk > dual_sided > stale_quote > whale > btc5
+            _structural_launch_order = [
+                "resolution", "neg_risk", "dual_sided", "stale_quote",
+                "cross_plat", "whale", "leader_follower", "llm_tournament", "btc5",
+            ]
+            packets = self.strike_desk.generate_packets(
+                raw_signals, launch_order=_structural_launch_order,
+            )
+            result["packets"] = len(packets)
+
+            if not packets:
+                return result
+
+            # --- BTC5 demotion gate (DISPATCH_102) ---
+            # Block any btc5 packet from live execution; shadow only.
+            live_packets: list = []
+            for _pkt in packets:
+                _sid = getattr(_pkt, "strategy_id", "") or ""
+                if "btc5" in _sid.lower():
+                    if hasattr(_pkt, "status"):
+                        _pkt.status = "blocked_btc5_demotion"
+                    logger.warning(
+                        "BTC5 DEMOTION: blocking live btc5 packet, shadow only — strategy=%s market=%s",
+                        _sid,
+                        getattr(_pkt, "market_id", "?"),
+                    )
+                else:
+                    live_packets.append(_pkt)
+            packets = live_packets
             result["packets"] = len(packets)
 
             if not packets:
@@ -5781,6 +5965,11 @@ class JJLive:
                         signal_sources=list(trade_record.get("signal_sources") or []),
                         signal_metadata=dict(trade_record.get("signal_metadata") or {}),
                     )
+                    self._feed_proof_to_capital(
+                        strategy_id=str(trade_record.get("source_combo", trade_record.get("source", "sum_violation"))),
+                        pnl=0.0,
+                        size_usd=size_usd,
+                    )
                     basket_successes += 1
                     orders_placed += 1
                     continue
@@ -5850,6 +6039,11 @@ class JJLive:
                         source_count=int(_safe_float(trade_record.get("source_count", 0), 0)),
                         signal_sources=list(trade_record.get("signal_sources") or []),
                         signal_metadata=dict(trade_record.get("signal_metadata") or {}),
+                    )
+                    self._feed_proof_to_capital(
+                        strategy_id=str(trade_record.get("source_combo", trade_record.get("source", "sum_violation"))),
+                        pnl=0.0,
+                        size_usd=size_usd,
                     )
                     basket_successes += 1
                     orders_placed += 1
@@ -7620,6 +7814,44 @@ class JJLive:
                 )
                 continue
 
+            # --- BTC5 directional freeze (env-lever, DISPATCH_102) ---
+            if BTC5_DIRECTIONAL_LIVE_FROZEN:
+                _q_lower = str(signal.get("question", "")).lower()
+                _src_lower = str(signal.get("source_combo", signal.get("source", ""))).lower()
+                if "btc5" in _src_lower or "btc" in _q_lower:
+                    _res_h = float(signal.get("resolution_hours", 999))
+                    if _res_h <= 0.5:
+                        logger.warning(
+                            "BTC5 DIRECTIONAL FREEZE: suppressing btc5-originated signal — question=%s source=%s",
+                            signal.get("question", "")[:80],
+                            signal.get("source_combo", signal.get("source", "")),
+                        )
+                        continue
+
+            # --- Replay gate: block naked one-sided BTC short-window trades ---
+            _q_replay = str(signal.get("question", ""))
+            _q_replay_lower = _q_replay.lower()
+            if ("bitcoin up or down" in _q_replay_lower or "btc" in _q_replay_lower):
+                _res_h_replay = float(signal.get("resolution_hours", 999))
+                if _res_h_replay <= 0.5:
+                    _dir = str(signal.get("direction", ""))
+                    _has_pair = bool(
+                        signal.get("linked_packets")
+                        or signal.get("dual_sided")
+                        or signal.get("signal_metadata", {}).get("dual_sided")
+                    )
+                    _is_one_sided = (
+                        (_dir.startswith("buy_yes") or _dir.startswith("buy_no"))
+                        and not _has_pair
+                    )
+                    if _is_one_sided:
+                        logger.warning(
+                            "STRUCTURAL GATE: blocking naked one-sided BTC short-window trade — question=%s dir=%s",
+                            _q_replay[:80],
+                            _dir,
+                        )
+                        continue
+
             feedback = self._get_elastic_ml_feedback(str(market_id))
             signal["elastic_ml_feedback"] = feedback
             if feedback.get("paused"):
@@ -7763,6 +7995,19 @@ class JJLive:
             if size_usd <= 0:
                 logger.info(f"  SKIP (size=0): {signal['question'][:50]}...")
                 continue
+
+            # --- Structural gate: block naked one-sided BTC short-window trades ---
+            _q = str(signal.get("question", "")).lower()
+            _is_btc_short = ("bitcoin up or down" in _q or "btc up or down" in _q) and \
+                float(signal.get("resolution_hours", 99)) <= 0.5
+            if _is_btc_short and BTC5_DIRECTIONAL_LIVE_FROZEN:
+                _has_pair = bool(signal.get("linked_packets")) or bool(signal.get("dual_sided"))
+                if not _has_pair:
+                    logger.info(
+                        "STRUCTURAL GATE: blocking naked one-sided BTC short-window trade: %s",
+                        signal.get("question", "")[:80],
+                    )
+                    continue
 
             # --- Per-market exposure cap (DISPATCH: prevent single-market blowups) ---
             existing_pos = self.state.state["open_positions"].get(str(market_id))

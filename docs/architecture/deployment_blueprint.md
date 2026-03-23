@@ -488,3 +488,17 @@ This is advisory initially (warning only for stale results) and blocking only wh
 4. **Service Map:** VPS runs 6+ systemd units for execution; local runs 10+ launchd agents for intelligence; they share artifacts on disk, not RPC.
 5. **Authority Boundaries:** Local decides what to trade and at what size; VPS decides how and when to execute; risk parameter changes require a deploy (both hosts involved).
 6. **Rollout Order:** Fix SSH key symlink, build fill reporting, verify shadow trader, add freshness monitoring, gate deploys on intelligence harness.
+
+## 11. Staged Deployment Order
+
+Use this order when moving proof-carrying modules toward live capital:
+
+1. Local twin shadow
+2. Lightsail truth writers + event tape
+3. Strike desk in shadow
+4. Promotion manager enforcement
+5. Seed-live Resolution Sniper
+6. Whale Copy
+7. Neg-Risk
+
+The local twin remains the replay and mutation environment. Lightsail remains the only live executor. Anything that cannot survive the intelligence harness stays out of the live path.

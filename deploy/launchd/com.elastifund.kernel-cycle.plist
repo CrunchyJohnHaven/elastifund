@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.elastifund.kernel-cycle</string>
+
+  <!--
+    Runs the self-improvement kernel cycle every 5 minutes locally.
+    Orchestrates: sensorium -> thesis_foundry -> promotion_bundle -> research_os
+
+    Outputs:
+      reports/kernel/kernel_state.json
+      reports/kernel/cycle_log.jsonl
+      reports/evidence_bundle.json
+      reports/thesis_bundle.json
+      reports/promotion_bundle.json
+      reports/learning_bundle.json
+
+    Install:
+      cp deploy/launchd/com.elastifund.kernel-cycle.plist ~/Library/LaunchAgents/
+      launchctl load ~/Library/LaunchAgents/com.elastifund.kernel-cycle.plist
+
+    Logs:
+      tail -f /Users/johnbradley/Desktop/Elastifund/logs/kernel_cycle.launchd.log
+  -->
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/johnbradley/Desktop/Elastifund/scripts/run_kernel_cycle.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/johnbradley/Desktop/Elastifund</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+    <key>BTC5_DEPLOY_MODE</key>
+    <string>shadow</string>
+    <key>KALSHI_WEATHER_MODE</key>
+    <string>paper</string>
+  </dict>
+
+  <!-- Run every 5 minutes -->
+  <key>StartInterval</key>
+  <integer>300</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/johnbradley/Desktop/Elastifund/logs/kernel_cycle.launchd.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/johnbradley/Desktop/Elastifund/logs/kernel_cycle.launchd.log</string>
+</dict>
+</plist>

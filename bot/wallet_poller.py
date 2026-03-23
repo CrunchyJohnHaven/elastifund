@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
+from scripts.report_envelope import write_report
 
 load_dotenv()
 
@@ -44,6 +45,9 @@ DEFAULT_POLL_INTERVAL_SECONDS = int(os.environ.get("WALLET_POLLER_INTERVAL_SECON
 DEFAULT_DB_PATH = Path(os.environ.get("JJ_DB_FILE", "data/jj_trades.db"))
 DEFAULT_HEARTBEAT_PATH = Path(os.environ.get("WALLET_POLLER_HEARTBEAT_FILE", "data/wallet_poller_heartbeat.json"))
 DEFAULT_SNAPSHOT_DIR = Path(os.environ.get("WALLET_POLLER_SNAPSHOT_DIR", "data/wallet_snapshots"))
+DEFAULT_LIVE_SNAPSHOT_PATH = Path(
+    os.environ.get("WALLET_LIVE_SNAPSHOT_PATH", "reports/wallet_live_snapshot_latest.json")
+)
 
 
 def _utc_now() -> datetime:
@@ -116,7 +120,12 @@ def _write_heartbeat(
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
-def _write_snapshot(snapshot_dir: Path, snapshot: WalletSnapshot) -> Path:
+def _write_snapshot(
+    snapshot_dir: Path,
+    snapshot: WalletSnapshot,
+    *,
+    live_snapshot_path: Path = DEFAULT_LIVE_SNAPSHOT_PATH,
+) -> Path:
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     ts = snapshot.timestamp.replace(":", "-").replace("+", "").replace("Z", "")
     path = snapshot_dir / f"snapshot_{ts}.json"
@@ -124,6 +133,25 @@ def _write_snapshot(snapshot_dir: Path, snapshot: WalletSnapshot) -> Path:
     # Also write latest
     latest = snapshot_dir / "latest.json"
     latest.write_text(json.dumps(asdict(snapshot), indent=2, sort_keys=True) + "\n")
+    status = "fresh" if snapshot.reconciliation_status == "reconciled" else ("error" if snapshot.error else "blocked")
+    blockers: list[str] = []
+    if snapshot.error:
+        blockers.append(snapshot.error)
+    elif snapshot.reconciliation_status != "reconciled":
+        blockers.append(snapshot.recommendation)
+    write_report(
+        live_snapshot_path,
+        artifact="wallet_live_snapshot",
+        payload=asdict(snapshot),
+        status=status,
+        source_of_truth="bot/wallet_reconciliation.py; data/jj_trades.db; Polymarket wallet API",
+        freshness_sla_seconds=300,
+        blockers=blockers,
+        summary=(
+            f"reconciliation_status={snapshot.reconciliation_status} "
+            f"open={snapshot.open_position_count} closed={snapshot.closed_position_count}"
+        ),
+    )
     return path
 
 

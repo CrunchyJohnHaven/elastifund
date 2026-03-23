@@ -53,9 +53,13 @@ def build_public_headlines(
     drift: dict[str, Any],
 ) -> list[str]:
     headlines: list[str] = []
-    if drift.get("service_running_while_launch_blocked"):
+    service_running_while_blocked = bool(
+        drift.get("service_running_while_launch_blocked")
+        or (launch.get("live_launch_blocked") and service.get("status") == "running")
+    )
+    if service_running_while_blocked:
         headlines.append(
-            f"{PRIMARY_RUNTIME_SERVICE_NAME} is running while launch posture remains blocked; treat this as drift until the remote mode is reconciled."
+            "jj-live.service is running while launch posture remains blocked; treat this as drift until the remote mode is reconciled."
         )
     if wallet_flow.get("ready"):
         headlines.append("Wallet-flow bootstrap is ready.")

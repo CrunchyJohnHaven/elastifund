@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.elastifund.weather-shadow-lane</string>
+
+  <!--
+    Runs run_instance4_weather_shadow_lane.py hourly.
+    Emits: reports/parallel/instance04_weather_divergence_shadow.json
+    Mode: paper only (no live Kalshi orders).
+
+    Install:
+      cp deploy/launchd/com.elastifund.weather-shadow-lane.plist ~/Library/LaunchAgents/
+      launchctl load ~/Library/LaunchAgents/com.elastifund.weather-shadow-lane.plist
+
+    Logs:
+      tail -f /Users/johnbradley/Desktop/Elastifund/logs/weather_shadow_lane.launchd.log
+  -->
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/johnbradley/Desktop/Elastifund/scripts/run_instance4_weather_shadow_lane.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/johnbradley/Desktop/Elastifund</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+    <key>KALSHI_WEATHER_MODE</key>
+    <string>paper</string>
+  </dict>
+
+  <!-- Run once per hour -->
+  <key>StartInterval</key>
+  <integer>3600</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/johnbradley/Desktop/Elastifund/logs/weather_shadow_lane.launchd.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/johnbradley/Desktop/Elastifund/logs/weather_shadow_lane.launchd.log</string>
+</dict>
+</plist>

@@ -19,11 +19,21 @@ def test_deploy_script_syncs_runtime_profile_contract_and_uses_systemd_service()
     assert 'data/wallet_scores.db' in script
     assert '"scripts/clean_env_for_profile.sh"' in script
     assert '"polymarket-bot/src/core/time_utils.py"' in script
+    assert '"scripts/run_strike_desk.py"' in script
     assert 'chmod +x scripts/clean_env_for_profile.sh' in script
     assert "from bot.polymarket_runtime import ClaudeAnalyzer, TelegramNotifier" in script
     assert "from bot.runtime_profile import load_runtime_profile" in script
     assert 'SERVICE_NAME="jj-live.service"' in script
+    assert 'STRIKE_DESK_SERVICE_NAME="strike-desk.service"' in script
+    assert 'STRIKE_DESK_TIMER_NAME="strike-desk.timer"' in script
+    assert 'sudo systemctl start $STRIKE_DESK_TIMER_NAME' in script
+    assert 'sudo systemctl start $STRIKE_DESK_SERVICE_NAME' in script
+    assert 'systemctl show $STRIKE_DESK_SERVICE_NAME -p Result --value' in script
+    assert 'sudo systemctl is-active $STRIKE_DESK_TIMER_NAME' in script
     assert "Skipping service restart (--restart not set)." in script
     assert 'sudo journalctl -u $SERVICE_NAME -n 20 --no-pager' in script
     assert "remote state is authoritative; not syncing" in script
     assert '"$VPS:$BOT_DIR/jj_live.py"' not in script
+    assert '--strike-desk' in script
+    assert 'deploy/strike-desk.service' in script
+    assert 'deploy/strike-desk.timer' in script

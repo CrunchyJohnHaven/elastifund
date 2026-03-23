@@ -16,6 +16,8 @@ Scanners (priority order):
   P4  WhaleTracker           — consensus copy-trade signals
   P5  SemanticLeaderFollower — statistical lead-lag signals
   P6  LLMTournament          — LLM consensus-divergence signals
+  P7  BTC5                   — BTC 5-minute maker signals
+  P8  DualSidedSpread        — pair-completion spread capture
 
 Design:
   - All scanner imports are try/except guarded (graceful degradation)
@@ -31,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import logging
 import time
 import uuid
@@ -98,6 +101,47 @@ except ImportError:
         SemanticLeaderFollower = None  # type: ignore[misc, assignment]
         LeaderFollowerSignal = None  # type: ignore[misc, assignment]
 
+try:
+    from bot.event_tape import EventTapeWriter
+except ImportError:
+    try:
+        from event_tape import EventTapeWriter  # type: ignore
+    except ImportError:
+        EventTapeWriter = None  # type: ignore[misc, assignment]
+
+try:
+    from bot.spread_capture import SpreadCaptureScanner, SpreadWindowScan
+except ImportError:
+    try:
+        from spread_capture import SpreadCaptureScanner, SpreadWindowScan  # type: ignore
+    except ImportError:
+        SpreadCaptureScanner = None  # type: ignore[misc, assignment]
+        SpreadWindowScan = None  # type: ignore[misc, assignment]
+
+try:
+    from bot.maker_velocity_blitz import (
+        MarketSnapshot,
+        DualSidedSpreadIntent,
+        rank_dual_sided_spread_markets,
+        allocate_dual_sided_spread_notional,
+        build_dual_sided_spread_intents,
+    )
+except ImportError:
+    try:
+        from maker_velocity_blitz import (  # type: ignore
+            MarketSnapshot,
+            DualSidedSpreadIntent,
+            rank_dual_sided_spread_markets,
+            allocate_dual_sided_spread_notional,
+            build_dual_sided_spread_intents,
+        )
+    except ImportError:
+        MarketSnapshot = None  # type: ignore[misc, assignment]
+        DualSidedSpreadIntent = None  # type: ignore[misc, assignment]
+        rank_dual_sided_spread_markets = None  # type: ignore[misc, assignment]
+        allocate_dual_sided_spread_notional = None  # type: ignore[misc, assignment]
+        build_dual_sided_spread_intents = None  # type: ignore[misc, assignment]
+
 # ---------------------------------------------------------------------------
 # Priority constants
 # ---------------------------------------------------------------------------
@@ -110,6 +154,7 @@ PRIORITY_WHALE: int = 4
 PRIORITY_LEADER_FOLLOWER: int = 5
 PRIORITY_LLM_TOURNAMENT: int = 6
 PRIORITY_BTC5: int = 7
+PRIORITY_DUAL_SIDED: int = 8
 
 LANE_NAMES: dict[int, str] = {
     PRIORITY_NEG_RISK: "neg_risk",
@@ -120,6 +165,7 @@ LANE_NAMES: dict[int, str] = {
     PRIORITY_LEADER_FOLLOWER: "leader_follower",
     PRIORITY_LLM_TOURNAMENT: "llm_tournament",
     PRIORITY_BTC5: "btc5",
+    PRIORITY_DUAL_SIDED: "dual_sided",
 }
 
 # ---------------------------------------------------------------------------
@@ -163,6 +209,25 @@ def _evidence_hash(payload: str) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
+def _launch_rank(packet: ExecutionPacket, launch_order: list[str] | None) -> tuple[Any, ...]:
+    """Return a deterministic sort key for a packet.
+
+    When launch_order is provided, it overrides the default priority
+    ordering for the first-claim pass while preserving the existing
+    conflict-resolution semantics.
+    """
+    if launch_order:
+        order_map = {name: idx for idx, name in enumerate(launch_order)}
+        return (
+            order_map.get(packet.strategy_id, len(order_map)),
+            packet.priority,
+            -packet.edge_estimate,
+            packet.timestamp,
+            packet.packet_id,
+        )
+    return (packet.priority, -packet.edge_estimate, packet.timestamp, packet.packet_id)
+
+
 # ---------------------------------------------------------------------------
 # Default config
 # ---------------------------------------------------------------------------
@@ -183,6 +248,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "leader_follower_kelly_fraction": 0.125,
     "tournament_kelly_fraction": 0.25,
     "resolution_default_size": 10.0,
+    "dual_sided_combined_cost_cap": 0.97,
+    "dual_sided_reserve_pct": 0.20,
+    "dual_sided_per_market_cap": 10.0,
+    "dual_sided_max_markets": 6,
 }
 
 
@@ -195,9 +264,14 @@ class StrikeDesk:
     """Aggregates signals from all money-making scanners into a
     priority-ordered execution queue with exposure management."""
 
-    def __init__(self, config: Optional[dict[str, Any]] = None) -> None:
+    def __init__(
+        self,
+        config: Optional[dict[str, Any]] = None,
+        tape_writer: Any | None = None,
+    ) -> None:
         self._config: dict[str, Any] = {**DEFAULT_CONFIG, **(config or {})}
         self._capital: float = float(self._config["capital"])
+        self._tape_writer = tape_writer
 
         # Exposure tracking: {market_id: usd_amount}
         self._market_exposure: dict[str, float] = {}
@@ -209,9 +283,12 @@ class StrikeDesk:
         # Fill / rejection history
         self._fills: list[dict] = []
         self._rejections: list[dict] = []
+        self._execution_log: list[dict[str, Any]] = []
 
         # Active packets (current cycle)
         self._active_packets: list[ExecutionPacket] = []
+        self._last_shadow_alternatives: list[dict[str, Any]] = []
+        self._packet_approval_seq: dict[str, int] = {}
 
         # Scanner instances (lazy-init, can be injected)
         self._neg_risk: Any = None
@@ -220,6 +297,7 @@ class StrikeDesk:
         self._cross_plat: Any = None
         self._tournament: Any = None
         self._leader_follower: Any = None
+        self._spread_capture: Any = None
 
         self._init_scanners()
         logger.info(
@@ -286,6 +364,14 @@ class StrikeDesk:
             except Exception as exc:
                 logger.warning("SemanticLeaderFollower init failed: %s", exc)
 
+        if SpreadCaptureScanner is not None:
+            try:
+                self._spread_capture = SpreadCaptureScanner(
+                    ask_sum_threshold=float(self._config.get("dual_sided_combined_cost_cap", 0.97)),
+                )
+            except Exception as exc:
+                logger.warning("SpreadCaptureScanner init failed: %s", exc)
+
     # ------------------------------------------------------------------
     # Scanner injection (for testing)
     # ------------------------------------------------------------------
@@ -305,6 +391,7 @@ class StrikeDesk:
     async def scan_all_lanes(
         self,
         *,
+        enabled_lanes: Optional[set[str]] = None,
         neg_risk_data: Any = None,
         whale_signals: Optional[list] = None,
         sniper_markets: Optional[list[dict]] = None,
@@ -312,6 +399,7 @@ class StrikeDesk:
         cross_plat_kalshi: Optional[list] = None,
         tournament_questions: Optional[list[dict]] = None,
         leader_follower_data: Optional[dict] = None,
+        dual_sided_snapshots: Optional[list] = None,
     ) -> list[ExecutionPacket]:
         """Run all available scanners via asyncio.gather.
 
@@ -324,6 +412,9 @@ class StrikeDesk:
         """
         tasks = []
 
+        def _enabled(name: str) -> bool:
+            return enabled_lanes is None or name in enabled_lanes
+
         async def _safe_scan(name: str, coro: Any) -> list[ExecutionPacket]:
             try:
                 return await coro
@@ -332,17 +423,26 @@ class StrikeDesk:
                 return []
 
         # Neg-risk
-        tasks.append(_safe_scan("neg_risk", self._scan_neg_risk(neg_risk_data)))
+        if _enabled("neg_risk"):
+            tasks.append(_safe_scan("neg_risk", self._scan_neg_risk(neg_risk_data)))
         # Whale
-        tasks.append(_safe_scan("whale", self._scan_whale(whale_signals)))
+        if _enabled("whale"):
+            tasks.append(_safe_scan("whale", self._scan_whale(whale_signals)))
         # Resolution sniper
-        tasks.append(_safe_scan("resolution", self._scan_resolution(sniper_markets)))
+        if _enabled("resolution"):
+            tasks.append(_safe_scan("resolution", self._scan_resolution(sniper_markets)))
         # Cross-platform arb
-        tasks.append(_safe_scan("cross_plat", self._scan_cross_plat(cross_plat_poly, cross_plat_kalshi)))
+        if _enabled("cross_plat"):
+            tasks.append(_safe_scan("cross_plat", self._scan_cross_plat(cross_plat_poly, cross_plat_kalshi)))
         # LLM tournament
-        tasks.append(_safe_scan("tournament", self._scan_tournament(tournament_questions)))
+        if _enabled("tournament"):
+            tasks.append(_safe_scan("tournament", self._scan_tournament(tournament_questions)))
         # Semantic leader-follower
-        tasks.append(_safe_scan("leader_follower", self._scan_leader_follower(leader_follower_data)))
+        if _enabled("leader_follower"):
+            tasks.append(_safe_scan("leader_follower", self._scan_leader_follower(leader_follower_data)))
+        # Dual-sided spread capture
+        if _enabled("dual_sided"):
+            tasks.append(_safe_scan("dual_sided", self._scan_dual_sided(dual_sided_snapshots)))
 
         results = await asyncio.gather(*tasks)
         all_packets: list[ExecutionPacket] = []
@@ -390,6 +490,37 @@ class StrikeDesk:
             pkt = self._adapt_resolution(target)
             if pkt is not None:
                 packets.append(pkt)
+
+        for market in markets:
+            best_bid = market.get("best_bid")
+            best_ask = market.get("best_ask")
+            if best_bid is None or best_ask is None:
+                continue
+            try:
+                fair_price = float(
+                    market.get("mid")
+                    if market.get("mid") is not None
+                    else (float(best_bid) + float(best_ask)) / 2.0
+                )
+            except (TypeError, ValueError):
+                fair_price = 0.5
+
+            order_book = {
+                "bids": [{"price": float(best_bid), "size": float(market.get("bid_depth_usd", 1.0) or 1.0)}],
+                "asks": [{"price": float(best_ask), "size": float(market.get("ask_depth_usd", 1.0) or 1.0)}],
+            }
+            stale_quotes = self._sniper.detect_stale_quotes(
+                market_id=str(market.get("market_id") or market.get("condition_id") or ""),
+                question=str(market.get("question") or ""),
+                order_book=order_book,
+                fair_price_estimate=fair_price,
+            )
+            for quote in stale_quotes:
+                if quote.stale_price >= quote.fair_price:
+                    continue
+                pkt = self._adapt_stale_quote(quote)
+                if pkt is not None:
+                    packets.append(pkt)
         return packets
 
     async def _scan_cross_plat(
@@ -444,6 +575,69 @@ class StrikeDesk:
             pkt = self._adapt_leader_follower(sig)
             if pkt is not None:
                 packets.append(pkt)
+        return packets
+
+    async def _scan_dual_sided(
+        self, snapshots: Optional[list] = None,
+    ) -> list[ExecutionPacket]:
+        """Scan for dual-sided spread capture opportunities.
+
+        Accepts a list of MarketSnapshot objects (or dicts with the same
+        fields).  Ranks them by locked-edge score, allocates notional,
+        builds DualSidedSpreadIntent objects, and converts each intent
+        into a linked pair of ExecutionPackets (one YES, one NO).
+        """
+        if rank_dual_sided_spread_markets is None or build_dual_sided_spread_intents is None:
+            return []
+        if not snapshots:
+            return []
+
+        # Coerce dicts to MarketSnapshot if needed
+        typed_snapshots: list[Any] = []
+        for snap in snapshots:
+            if MarketSnapshot is not None and not isinstance(snap, MarketSnapshot):
+                try:
+                    typed_snapshots.append(MarketSnapshot(**snap))
+                except Exception:
+                    continue
+            else:
+                typed_snapshots.append(snap)
+
+        combined_cost_cap = float(self._config.get("dual_sided_combined_cost_cap", 0.97))
+        reserve_pct = float(self._config.get("dual_sided_reserve_pct", 0.20))
+        per_market_cap = float(self._config.get("dual_sided_per_market_cap", 10.0))
+        max_markets = int(self._config.get("dual_sided_max_markets", 6))
+
+        ranked = rank_dual_sided_spread_markets(
+            typed_snapshots,
+            combined_cost_cap=combined_cost_cap,
+        )
+        if not ranked:
+            return []
+
+        allocations = allocate_dual_sided_spread_notional(
+            bankroll_usd=self._capital,
+            ranked_candidates=ranked,
+            reserve_pct=reserve_pct,
+            per_market_cap_usd=per_market_cap,
+            max_markets=max_markets,
+        )
+        if not allocations:
+            return []
+
+        intents = build_dual_sided_spread_intents(
+            allocations_usd=allocations,
+            ranked_candidates=ranked,
+        )
+
+        packets: list[ExecutionPacket] = []
+        for intent in intents:
+            packets.extend(self._adapt_dual_sided(intent))
+
+        logger.info(
+            "scan_dual_sided: %d snapshots -> %d ranked -> %d intents -> %d packets",
+            len(typed_snapshots), len(ranked), len(intents), len(packets),
+        )
         return packets
 
     # ------------------------------------------------------------------
@@ -579,6 +773,43 @@ class StrikeDesk:
                 "no_price": getattr(target, "current_no_price", 0.0),
                 "resolution_eta_hours": getattr(target, "resolution_eta_hours", 0.0),
                 "risk_factors": getattr(target, "risk_factors", []),
+            },
+        )
+
+    def _adapt_stale_quote(self, quote: Any) -> Optional[ExecutionPacket]:
+        """Convert StaleQuote to a maker-first YES-side execution packet."""
+        if quote is None:
+            return None
+
+        market_id = getattr(quote, "market_id", "")
+        size = min(float(getattr(quote, "size_available", 1.0) or 1.0), self._max_per_market)
+        size = max(1.0, size)
+        evidence = (
+            f"stale_quote|market={market_id}|side={getattr(quote, 'side', 'YES')}"
+            f"|stale={getattr(quote, 'stale_price', 0.0):.4f}|fair={getattr(quote, 'fair_price', 0.0):.4f}"
+        )
+
+        return ExecutionPacket(
+            strategy_id="stale_quote",
+            market_id=market_id,
+            platform="polymarket",
+            direction="YES",
+            token_id="",
+            size_usd=round(size, 2),
+            edge_estimate=round(float(getattr(quote, "edge", 0.0) or 0.0), 4),
+            confidence=0.85,
+            evidence_hash=_evidence_hash(evidence),
+            max_slippage=float(self._config.get("default_max_slippage", 0.02)),
+            ttl_seconds=15,
+            order_type="maker",
+            priority=PRIORITY_STALE_QUOTE,
+            metadata={
+                "question": getattr(quote, "question", ""),
+                "stale_price": getattr(quote, "stale_price", 0.0),
+                "fair_price": getattr(quote, "fair_price", 0.0),
+                "size_available": getattr(quote, "size_available", 0.0),
+                "likely_reason": getattr(quote, "likely_reason", ""),
+                "execution_side": "buy_yes",
             },
         )
 
@@ -750,66 +981,271 @@ class StrikeDesk:
             },
         )
 
+    def _adapt_dual_sided(self, intent: Any) -> list[ExecutionPacket]:
+        """Convert a DualSidedSpreadIntent into a linked pair of ExecutionPackets.
+
+        Returns two packets (YES leg, NO leg) with mutual linked_packets
+        references.  Both legs are maker-only.
+        """
+        if intent is None:
+            return []
+
+        market_id = getattr(intent, "market_id", "")
+        yes_price = float(getattr(intent, "yes_buy_price", 0.0))
+        no_price = float(getattr(intent, "no_buy_price", 0.0))
+        notional = float(getattr(intent, "notional_usd", 0.0))
+        combined_cost = yes_price + no_price
+        locked_edge = max(0.0, 1.0 - combined_cost)
+
+        # Enforce combined cost cap
+        cost_cap = float(self._config.get("dual_sided_combined_cost_cap", 0.97))
+        if combined_cost >= cost_cap:
+            logger.debug(
+                "adapt_dual_sided: skipping %s — combined_cost=%.4f >= cap=%.4f",
+                market_id, combined_cost, cost_cap,
+            )
+            return []
+
+        group_id = uuid.uuid4().hex[:12]
+        evidence = (
+            f"dual_sided|market={market_id}"
+            f"|yes={yes_price:.4f}|no={no_price:.4f}"
+            f"|combined={combined_cost:.4f}|edge={locked_edge:.4f}"
+        )
+
+        per_leg = round(notional / 2.0, 2)
+        timeout = int(getattr(intent, "timeout_seconds", 120))
+
+        pkt_yes = ExecutionPacket(
+            strategy_id="dual_sided",
+            market_id=market_id,
+            platform="polymarket",
+            direction="YES",
+            token_id="",
+            size_usd=per_leg,
+            edge_estimate=round(locked_edge, 4),
+            confidence=0.90,
+            evidence_hash=_evidence_hash(evidence),
+            max_slippage=float(self._config.get("default_max_slippage", 0.02)),
+            ttl_seconds=timeout,
+            order_type="maker",
+            priority=PRIORITY_DUAL_SIDED,
+            metadata={
+                "group_id": group_id,
+                "leg": "yes",
+                "yes_buy_price": yes_price,
+                "no_buy_price": no_price,
+                "combined_cost": round(combined_cost, 6),
+                "locked_edge": round(locked_edge, 6),
+                "reference_price": yes_price,
+                "wallet_confirmation_mode": getattr(intent, "wallet_confirmation_mode", "overlay_only"),
+            },
+        )
+
+        pkt_no = ExecutionPacket(
+            strategy_id="dual_sided",
+            market_id=market_id,
+            platform="polymarket",
+            direction="NO",
+            token_id="",
+            size_usd=per_leg,
+            edge_estimate=round(locked_edge, 4),
+            confidence=0.90,
+            evidence_hash=_evidence_hash(evidence),
+            max_slippage=float(self._config.get("default_max_slippage", 0.02)),
+            ttl_seconds=timeout,
+            order_type="maker",
+            priority=PRIORITY_DUAL_SIDED,
+            metadata={
+                "group_id": group_id,
+                "leg": "no",
+                "yes_buy_price": yes_price,
+                "no_buy_price": no_price,
+                "combined_cost": round(combined_cost, 6),
+                "locked_edge": round(locked_edge, 6),
+                "reference_price": no_price,
+                "wallet_confirmation_mode": getattr(intent, "wallet_confirmation_mode", "overlay_only"),
+            },
+        )
+
+        # Link the two legs
+        pkt_yes.linked_packets = [pkt_no.packet_id]
+        pkt_no.linked_packets = [pkt_yes.packet_id]
+
+        return [pkt_yes, pkt_no]
+
     # ------------------------------------------------------------------
     # Priority and conflict resolution
     # ------------------------------------------------------------------
 
-    def prioritize_signals(self, packets: list[ExecutionPacket]) -> list[ExecutionPacket]:
+    def prioritize_signals(
+        self,
+        packets: list[ExecutionPacket],
+        launch_order: list[str] | None = None,
+    ) -> list[ExecutionPacket]:
         """Sort packets by priority (P0 first) and apply conflict resolution.
 
         Conflict rules:
         1. Higher-priority lane wins on same market.
-        2. Same-priority opposing signals on same market: both dropped.
+        2. Same-priority opposing signals on same market: both dropped,
+           unless the packets are explicitly linked as a basket.
         3. Dedup: only one packet per (market_id, direction) unless linked.
+        4. When launch_order is provided, its ordering takes precedence for
+           the first-claim pass without changing the default desk policy.
         """
-        # Sort by priority ascending (P0 = highest priority = lowest number)
-        sorted_packets = sorted(packets, key=lambda p: (p.priority, -p.edge_estimate))
+        sorted_packets = sorted(packets, key=lambda p: _launch_rank(p, launch_order))
+        use_launch_order = bool(launch_order)
 
-        # Track claimed markets: {market_id: (direction, priority, packet_id)}
-        claimed: dict[str, tuple[str, int, str]] = {}
+        # Track claimed markets: {market_id: (direction, claim_score, priority, packet_id, strategy_id)}
+        claimed: dict[str, tuple[str, int, int, str, str]] = {}
         accepted: list[ExecutionPacket] = []
         dropped_ids: set[str] = set()
+        shadow_alternatives: list[dict[str, Any]] = []
 
         for pkt in sorted_packets:
             mid = pkt.market_id
+            pkt_rank = _launch_rank(pkt, launch_order)[0] if use_launch_order else pkt.priority
             if mid in claimed:
-                prev_dir, prev_pri, prev_id = claimed[mid]
+                prev_dir, prev_score, prev_pri, prev_id, prev_strategy_id = claimed[mid]
 
-                # Same-priority conflict with opposing direction: drop both
-                if prev_pri == pkt.priority and prev_dir != pkt.direction:
+                # Same-score conflict with opposing direction: drop both,
+                # unless the packets are explicitly linked as a basket pair.
+                if prev_score == pkt_rank and prev_dir != pkt.direction:
+                    linked_basket = prev_id in pkt.linked_packets
+                    if linked_basket:
+                        logger.info(
+                            "Conflict: preserving linked basket pair %s and %s on market %s",
+                            prev_id, pkt.packet_id, mid,
+                        )
+                        claimed[mid] = (pkt.direction, pkt_rank, pkt.priority, pkt.packet_id, pkt.strategy_id)
+                        accepted.append(pkt)
+                        shadow_alternatives.append({
+                            "chosen_action": "linked_basket",
+                            "rejected_actions": [],
+                            "reason": "same_score_linked_opposing_preserved",
+                            "market_id": mid,
+                        })
+                        continue
+
                     logger.info(
-                        "Conflict: dropping both %s and %s on market %s (same priority, opposing)",
+                        "Conflict: dropping both %s and %s on market %s (same score, opposing)",
                         prev_id, pkt.packet_id, mid,
                     )
                     dropped_ids.add(prev_id)
                     dropped_ids.add(pkt.packet_id)
+                    shadow_alternatives.append({
+                        "chosen_action": "none",
+                        "rejected_actions": [
+                            {
+                                "packet_id": prev_id,
+                                "strategy_id": prev_strategy_id,
+                                "priority": prev_pri,
+                                "direction": prev_dir,
+                                "reason": "same_score_opposing",
+                            },
+                            {
+                                "packet_id": pkt.packet_id,
+                                "strategy_id": pkt.strategy_id,
+                                "priority": pkt.priority,
+                                "direction": pkt.direction,
+                                "reason": "same_score_opposing",
+                            },
+                        ],
+                        "reason": "same_score_opposing",
+                        "market_id": mid,
+                    })
                     continue
 
-                # Higher-priority already claimed this market
-                if prev_pri < pkt.priority:
+                # Earlier claim wins under the active ordering.
+                if prev_score < pkt_rank:
                     logger.debug(
-                        "Suppressed %s (P%d) on market %s — already claimed by P%d",
-                        pkt.packet_id, pkt.priority, mid, prev_pri,
+                        "Suppressed %s (P%d) on market %s — already claimed by %s",
+                        pkt.packet_id, pkt.priority, mid, prev_id,
                     )
                     dropped_ids.add(pkt.packet_id)
+                    shadow_alternatives.append({
+                        "chosen_action": prev_id,
+                        "rejected_actions": [
+                            {
+                                "packet_id": pkt.packet_id,
+                                "strategy_id": pkt.strategy_id,
+                                "priority": pkt.priority,
+                                "direction": pkt.direction,
+                                "reason": "later_claim_suppressed",
+                            }
+                        ],
+                        "reason": "earlier_claim_wins",
+                        "market_id": mid,
+                    })
                     continue
 
-                # Same priority, same direction — keep first (higher edge)
-                if prev_pri == pkt.priority and prev_dir == pkt.direction:
+                # Same score, same direction — keep the first packet.
+                if prev_score == pkt_rank and prev_dir == pkt.direction:
                     dropped_ids.add(pkt.packet_id)
+                    shadow_alternatives.append({
+                        "chosen_action": prev_id,
+                        "rejected_actions": [
+                            {
+                                "packet_id": pkt.packet_id,
+                                "strategy_id": pkt.strategy_id,
+                                "priority": pkt.priority,
+                                "direction": pkt.direction,
+                                "reason": "same_score_same_direction",
+                            }
+                        ],
+                        "reason": "same_score_same_direction",
+                        "market_id": mid,
+                    })
                     continue
 
-            claimed[mid] = (pkt.direction, pkt.priority, pkt.packet_id)
+            claimed[mid] = (pkt.direction, pkt_rank, pkt.priority, pkt.packet_id, pkt.strategy_id)
             accepted.append(pkt)
 
-        # Remove any packets that were retroactively dropped
         result = [p for p in accepted if p.packet_id not in dropped_ids]
 
         logger.info(
             "prioritize_signals: %d input -> %d accepted, %d dropped",
             len(packets), len(result), len(dropped_ids),
         )
+        self._last_shadow_alternatives = shadow_alternatives
         return result
+
+    # ------------------------------------------------------------------
+    # Exposure checks
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Daily PnL demotion
+    # ------------------------------------------------------------------
+
+    def set_btc5_daily_pnl(
+        self,
+        *,
+        et_day_pnl_usd: float = 0.0,
+        rolling_24h_pnl_usd: float = 0.0,
+    ) -> None:
+        """Inject current BTC5 daily PnL for demotion checks.
+
+        When BTC5 daily PnL is red beyond threshold, directional BTC5
+        packets are suppressed and capital routes to structural lanes.
+        """
+        self._btc5_et_day_pnl = et_day_pnl_usd
+        self._btc5_rolling_24h_pnl = rolling_24h_pnl_usd
+
+    def is_btc5_demoted(self) -> tuple[bool, str]:
+        """Check if BTC5 should be demoted due to daily PnL.
+
+        Returns (demoted, reason).
+        """
+        threshold = self._config.get("btc5_daily_pnl_demotion_usd", -10.0)
+        et_day = getattr(self, "_btc5_et_day_pnl", 0.0)
+        rolling = getattr(self, "_btc5_rolling_24h_pnl", 0.0)
+
+        if et_day < threshold:
+            return True, f"btc5_et_day_pnl={et_day:.2f} < demotion_threshold={threshold}"
+        if rolling < threshold:
+            return True, f"btc5_rolling_24h_pnl={rolling:.2f} < demotion_threshold={threshold}"
+        return False, ""
 
     # ------------------------------------------------------------------
     # Exposure checks
@@ -857,18 +1293,91 @@ class StrikeDesk:
     # Packet generation pipeline
     # ------------------------------------------------------------------
 
-    def generate_packets(self, raw_packets: list[ExecutionPacket]) -> list[ExecutionPacket]:
+    def generate_packets(
+        self,
+        raw_packets: list[ExecutionPacket],
+        launch_order: list[str] | None = None,
+    ) -> list[ExecutionPacket]:
         """Full pipeline: prioritize, resolve conflicts, check exposure.
 
         Returns the final list of packets ready for execution.
         """
-        prioritized = self.prioritize_signals(raw_packets)
+        prioritized = self.prioritize_signals(raw_packets, launch_order=launch_order)
         approved: list[ExecutionPacket] = []
+        self._packet_approval_seq = {}
+
+        # Check BTC5 daily PnL demotion
+        btc5_demoted, btc5_demotion_reason = self.is_btc5_demoted()
 
         for pkt in prioritized:
+            # Suppress directional BTC5 packets when demoted
+            if btc5_demoted and pkt.strategy_id == "btc5":
+                logger.info(
+                    "BTC5 demoted — suppressing %s (%s): %s",
+                    pkt.packet_id, pkt.direction, btc5_demotion_reason,
+                )
+                pkt.status = "rejected"
+                self._rejections.append({
+                    "packet_id": pkt.packet_id,
+                    "reason": f"btc5_daily_pnl_demotion: {btc5_demotion_reason}",
+                    "timestamp": time.time(),
+                })
+                if self._tape_writer is not None:
+                    self._tape_writer.emit_decision(
+                        "trade_rejected",
+                        {
+                            "packet_id": pkt.packet_id,
+                            "strategy_id": pkt.strategy_id,
+                            "reason": f"btc5_daily_pnl_demotion: {btc5_demotion_reason}",
+                        },
+                        correlation_id=pkt.packet_id,
+                    )
+                continue
+            if self._tape_writer is not None:
+                self._tape_writer.emit_decision(
+                    "trade_proposed",
+                    {
+                        "packet_id": pkt.packet_id,
+                        "strategy_id": pkt.strategy_id,
+                        "market_id": pkt.market_id,
+                        "platform": pkt.platform,
+                        "direction": pkt.direction,
+                        "size_usd": pkt.size_usd,
+                        "edge_estimate": pkt.edge_estimate,
+                        "confidence": pkt.confidence,
+                        "priority": pkt.priority,
+                        "order_type": pkt.order_type,
+                        "linked_packets": list(pkt.linked_packets),
+                        "metadata": dict(pkt.metadata),
+                    },
+                    correlation_id=pkt.packet_id,
+                )
             allowed, reason = self.check_exposure(pkt)
             if allowed:
                 approved.append(pkt)
+                pkt.status = "pending"
+                if self._tape_writer is not None:
+                    evt = self._tape_writer.emit_decision(
+                        "trade_approved",
+                        {
+                            "packet_id": pkt.packet_id,
+                            "strategy_id": pkt.strategy_id,
+                            "market_id": pkt.market_id,
+                            "platform": pkt.platform,
+                            "direction": pkt.direction,
+                            "size_usd": pkt.size_usd,
+                            "edge_estimate": pkt.edge_estimate,
+                            "confidence": pkt.confidence,
+                            "priority": pkt.priority,
+                            "order_type": pkt.order_type,
+                            "linked_packets": list(pkt.linked_packets),
+                            "metadata": dict(pkt.metadata),
+                            "reason": "exposure_ok",
+                        },
+                        causation_seq=None,
+                        correlation_id=pkt.packet_id,
+                    )
+                    self._packet_approval_seq[pkt.packet_id] = evt.seq
             else:
                 logger.info(
                     "Exposure blocked %s (%s) on %s: %s",
@@ -880,9 +1389,342 @@ class StrikeDesk:
                     "reason": reason,
                     "timestamp": time.time(),
                 })
+                if self._tape_writer is not None:
+                    self._tape_writer.emit_decision(
+                        "trade_rejected",
+                        {
+                            "packet_id": pkt.packet_id,
+                            "strategy_id": pkt.strategy_id,
+                            "market_id": pkt.market_id,
+                            "platform": pkt.platform,
+                            "direction": pkt.direction,
+                            "size_usd": pkt.size_usd,
+                            "edge_estimate": pkt.edge_estimate,
+                            "confidence": pkt.confidence,
+                            "priority": pkt.priority,
+                            "order_type": pkt.order_type,
+                            "linked_packets": list(pkt.linked_packets),
+                            "metadata": dict(pkt.metadata),
+                            "reason": reason,
+                        },
+                        correlation_id=pkt.packet_id,
+                    )
 
         self._active_packets = approved
+        if self._tape_writer is not None:
+            for alt in self._last_shadow_alternatives:
+                self._tape_writer.emit_shadow_alternative(
+                    chosen_action=str(alt.get("chosen_action", "")),
+                    rejected_actions=list(alt.get("rejected_actions", [])),
+                    reason=str(alt.get("reason", "")),
+                    correlation_id=str(alt.get("market_id") or ""),
+                    metadata={
+                        "reason": alt.get("reason", ""),
+                        "market_id": alt.get("market_id", ""),
+                    },
+                )
         return approved
+
+    def _packet_to_order_payload(self, packet: ExecutionPacket) -> dict[str, Any]:
+        """Translate a strike packet into the existing JJ Live order shape."""
+        reference_price = float(
+            packet.metadata.get(
+                "reference_price",
+                packet.metadata.get("midpoint", packet.metadata.get("best_bid", 0.5)),
+            )
+            or 0.5
+        )
+        order_size = round(packet.size_usd / max(reference_price, 0.01), 6)
+        return {
+            "signal": {
+                "source": packet.strategy_id,
+                "question": packet.metadata.get("question", packet.market_id),
+                "direction": packet.direction,
+                "edge": packet.edge_estimate,
+                "confidence": packet.confidence,
+                "priority": packet.priority,
+                "packet_id": packet.packet_id,
+            },
+            "market_id": packet.market_id,
+            "token_id": packet.token_id,
+            "side": "BUY",
+            "price": reference_price,
+            "order_price": reference_price,
+            "order_size": order_size,
+            "size_usd": packet.size_usd,
+            "category": packet.strategy_id,
+            "trade_record": {
+                "source": packet.strategy_id,
+                "source_combo": packet.metadata.get("source_combo", packet.strategy_id),
+                "source_components": list(packet.metadata.get("source_components", [])),
+                "source_count": int(packet.metadata.get("source_count", 1) or 1),
+                "signal_sources": list(packet.metadata.get("signal_sources", [packet.strategy_id])),
+                "signal_metadata": dict(packet.metadata),
+                "packet_id": packet.packet_id,
+            },
+            "order_metadata": {
+                "packet_id": packet.packet_id,
+                "strategy_id": packet.strategy_id,
+                "market_id": packet.market_id,
+                "priority": packet.priority,
+                "order_type": packet.order_type,
+                "ttl_seconds": packet.ttl_seconds,
+                "max_slippage": packet.max_slippage,
+                "linked_packets": list(packet.linked_packets),
+                "reference_price": reference_price,
+                "execution_style": "maker_first",
+                "cancel_discipline": "deadline_cancel",
+            },
+        }
+
+    async def execute_queue(
+        self,
+        packets: list[ExecutionPacket],
+        executor: Any | None = None,
+        *,
+        tape_writer: Any | None = None,
+        allow_taker_fallback: bool = False,
+    ) -> dict[str, Any]:
+        """Submit packets through the existing execution path in priority order."""
+        tape = tape_writer or self._tape_writer
+        summary = {
+            "submitted": 0,
+            "filled": 0,
+            "rejected": 0,
+            "cancelled": 0,
+            "abandoned": 0,
+            "tape_events": 0,
+        }
+
+        if executor is None:
+            summary["abandoned"] = len(packets)
+            return summary
+
+        place_order = getattr(executor, "place_order", executor)
+        if not callable(place_order):
+            raise TypeError("executor must be callable or expose place_order()")
+
+        for packet in packets:
+            payload = self._packet_to_order_payload(packet)
+            approval_seq = self._packet_approval_seq.get(packet.packet_id)
+            if tape is not None:
+                tape.emit_execution(
+                    "order_placed",
+                    {
+                        "packet_id": packet.packet_id,
+                        "strategy_id": packet.strategy_id,
+                        "market_id": packet.market_id,
+                        "priority": packet.priority,
+                        "order_type": packet.order_type,
+                        "execution_style": "maker_first",
+                        "allow_taker_fallback": allow_taker_fallback,
+                        "payload": payload,
+                    },
+                    causation_seq=approval_seq,
+                    correlation_id=packet.packet_id,
+                )
+                summary["tape_events"] += 1
+
+            try:
+                result = place_order(**payload)
+                if inspect.isawaitable(result):
+                    result = await result
+            except Exception as exc:
+                packet.status = "rejected"
+                self._rejections.append({
+                    "packet_id": packet.packet_id,
+                    "reason": f"execution_error: {exc}",
+                    "timestamp": time.time(),
+                })
+                summary["rejected"] += 1
+                if tape is not None:
+                    tape.emit_execution(
+                        "order_status_changed",
+                        {
+                            "packet_id": packet.packet_id,
+                            "strategy_id": packet.strategy_id,
+                            "market_id": packet.market_id,
+                            "status": "rejected",
+                            "reason": f"execution_error: {exc}",
+                        },
+                        causation_seq=approval_seq,
+                        correlation_id=packet.packet_id,
+                    )
+                    summary["tape_events"] += 1
+                continue
+
+            status = "submitted"
+            filled = False
+            fallback_used = False
+            if isinstance(result, dict):
+                status = str(result.get("status", status) or status)
+                filled = bool(result.get("filled")) or status == "filled"
+            elif isinstance(result, bool):
+                filled = result
+                status = "filled" if result else "rejected"
+            elif result is None:
+                status = "submitted"
+
+            if (
+                not filled
+                and allow_taker_fallback
+                and packet.priority <= PRIORITY_RESOLUTION
+            ):
+                fallback_payload = {
+                    **payload,
+                    "signal": {**payload["signal"], "execution_style": "taker"},
+                    "order_metadata": {
+                        **payload["order_metadata"],
+                        "execution_style": "taker",
+                    },
+                }
+                if tape is not None:
+                    tape.emit_execution(
+                        "order_placed",
+                        {
+                            "packet_id": packet.packet_id,
+                            "strategy_id": packet.strategy_id,
+                            "market_id": packet.market_id,
+                            "priority": packet.priority,
+                            "order_type": "taker",
+                            "execution_style": "taker",
+                            "allow_taker_fallback": True,
+                            "payload": fallback_payload,
+                        },
+                        causation_seq=approval_seq,
+                        correlation_id=packet.packet_id,
+                    )
+                    summary["tape_events"] += 1
+                try:
+                    fallback_result = place_order(**fallback_payload)
+                    if inspect.isawaitable(fallback_result):
+                        fallback_result = await fallback_result
+                except Exception as exc:
+                    status = f"taker_fallback_error: {exc}"
+                else:
+                    fallback_used = True
+                    result = fallback_result
+                    if isinstance(fallback_result, dict):
+                        status = str(fallback_result.get("status", "submitted") or "submitted")
+                        filled = bool(fallback_result.get("filled")) or status == "filled"
+                    elif isinstance(fallback_result, bool):
+                        filled = fallback_result
+                        status = "filled" if fallback_result else "rejected"
+                    elif fallback_result is None:
+                        status = "submitted"
+
+            rejected = status in {"rejected", "failed", "error"} or status.startswith("taker_fallback_error")
+            if rejected and not filled:
+                packet.status = "rejected"
+                summary["rejected"] += 1
+            else:
+                packet.status = "filled" if filled else "pending"
+
+            summary["submitted"] += 1
+            self._execution_log.append({
+                "packet_id": packet.packet_id,
+                "strategy_id": packet.strategy_id,
+                "market_id": packet.market_id,
+                "status": status,
+                "fallback_used": fallback_used,
+                "timestamp": time.time(),
+            })
+
+            if tape is not None:
+                if filled:
+                    tape.emit_execution(
+                        "order_filled",
+                        {
+                            "packet_id": packet.packet_id,
+                            "strategy_id": packet.strategy_id,
+                            "market_id": packet.market_id,
+                            "fill_size_usd": packet.size_usd,
+                            "fill_price": payload["price"],
+                            "status": "filled",
+                            "fallback_used": fallback_used,
+                        },
+                        causation_seq=approval_seq,
+                        correlation_id=packet.packet_id,
+                    )
+                    summary["filled"] += 1
+                    self.record_fill(packet, fill_price=payload["price"])
+                    summary["tape_events"] += 1
+                elif rejected:
+                    tape.emit_execution(
+                        "order_status_changed",
+                        {
+                            "packet_id": packet.packet_id,
+                            "strategy_id": packet.strategy_id,
+                            "market_id": packet.market_id,
+                            "status": "rejected",
+                            "execution_style": "maker_first",
+                            "fallback_used": fallback_used,
+                        },
+                        causation_seq=approval_seq,
+                        correlation_id=packet.packet_id,
+                    )
+                    summary["tape_events"] += 1
+                else:
+                    tape.emit_execution(
+                        "order_status_changed",
+                        {
+                            "packet_id": packet.packet_id,
+                            "strategy_id": packet.strategy_id,
+                            "market_id": packet.market_id,
+                            "status": status,
+                            "execution_style": "maker_first",
+                            "fallback_used": fallback_used,
+                        },
+                        causation_seq=approval_seq,
+                        correlation_id=packet.packet_id,
+                    )
+                    summary["tape_events"] += 1
+
+        return summary
+
+    async def run_cycle(
+        self,
+        *,
+        executor: Any | None = None,
+        tape_writer: Any | None = None,
+        allow_taker_fallback: bool = False,
+        launch_order: list[str] | None = None,
+        neg_risk_data: Any = None,
+        whale_signals: Optional[list] = None,
+        sniper_markets: Optional[list[dict]] = None,
+        cross_plat_poly: Optional[list] = None,
+        cross_plat_kalshi: Optional[list] = None,
+        tournament_questions: Optional[list[dict]] = None,
+        leader_follower_data: Optional[dict] = None,
+        dual_sided_snapshots: Optional[list] = None,
+    ) -> dict[str, Any]:
+        """Run one strike-desk cycle from scan to execution."""
+        if tape_writer is not None:
+            self._tape_writer = tape_writer
+        raw_packets = await self.scan_all_lanes(
+            neg_risk_data=neg_risk_data,
+            whale_signals=whale_signals,
+            sniper_markets=sniper_markets,
+            cross_plat_poly=cross_plat_poly,
+            cross_plat_kalshi=cross_plat_kalshi,
+            tournament_questions=tournament_questions,
+            leader_follower_data=leader_follower_data,
+            dual_sided_snapshots=dual_sided_snapshots,
+        )
+        approved_packets = self.generate_packets(raw_packets, launch_order=launch_order)
+        execution_summary = await self.execute_queue(
+            approved_packets,
+            executor=executor,
+            tape_writer=tape_writer,
+            allow_taker_fallback=allow_taker_fallback,
+        )
+        return {
+            "raw_packets": [pkt.to_dict() for pkt in raw_packets],
+            "approved_packets": [pkt.to_dict() for pkt in approved_packets],
+            "execution_summary": execution_summary,
+            "diagnostics": self.get_diagnostics(),
+            "shadow_alternatives": list(self._last_shadow_alternatives),
+        }
 
     def get_active_packets(self) -> list[ExecutionPacket]:
         """Return the current list of approved packets."""
@@ -961,6 +1803,7 @@ class StrikeDesk:
             "cross_plat": self._cross_plat is not None,
             "tournament": self._tournament is not None,
             "leader_follower": self._leader_follower is not None,
+            "spread_capture": self._spread_capture is not None,
         }
 
         return {

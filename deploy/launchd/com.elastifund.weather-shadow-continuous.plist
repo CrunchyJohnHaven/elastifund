@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.elastifund.weather-shadow-continuous</string>
+
+  <!--
+    Runs weather_shadow_continuous.py in daemon mode.
+    Polls every 30 seconds and emits the shadow artifact at :25 and :55 each hour.
+    Supersedes com.elastifund.weather-shadow-lane (hourly) with precise window targeting.
+    Emits: reports/parallel/instance04_weather_divergence_shadow.json
+    Mode: shadow only (no live Kalshi orders ever).
+
+    Install:
+      cp deploy/launchd/com.elastifund.weather-shadow-continuous.plist ~/Library/LaunchAgents/
+      launchctl load ~/Library/LaunchAgents/com.elastifund.weather-shadow-continuous.plist
+
+    Logs:
+      tail -f /Users/johnbradley/Desktop/Elastifund/logs/weather_shadow_continuous.launchd.log
+  -->
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/johnbradley/Desktop/Elastifund/scripts/weather_shadow_continuous.py</string>
+    <string>--daemon</string>
+    <string>--interval</string>
+    <string>30</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/johnbradley/Desktop/Elastifund</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+    <key>KALSHI_WEATHER_MODE</key>
+    <string>paper</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/johnbradley/Desktop/Elastifund/logs/weather_shadow_continuous.launchd.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/johnbradley/Desktop/Elastifund/logs/weather_shadow_continuous.launchd.log</string>
+</dict>
+</plist>

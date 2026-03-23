@@ -1,5 +1,9 @@
 # API Documentation
 
+- Status: canonical
+- Last reviewed: 2026-03-22
+- Scope: HTTP API index for the current Elastifund services
+
 This directory packages the HTTP APIs that currently exist in the Elastifund repo.
 
 ## Covered Services

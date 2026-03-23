@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.elastifund.learning-bundle</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/johnbradley/Desktop/Elastifund/scripts/learning_bundle.py</string>
+    <string>--daemon</string>
+    <string>--mode</string>
+    <string>all</string>
+    <string>--interval</string>
+    <string>3600</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/johnbradley/Desktop/Elastifund</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+    <key>PYTHONPATH</key>
+    <string>/Users/johnbradley/Desktop/Elastifund</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/johnbradley/Desktop/Elastifund/logs/learning_bundle.launchd.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/johnbradley/Desktop/Elastifund/logs/learning_bundle.launchd.log</string>
+</dict>
+</plist>

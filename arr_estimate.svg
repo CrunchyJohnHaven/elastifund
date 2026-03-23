@@ -12,14 +12,15 @@
 <text x="80" y="122" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="17" fill="#c7d4e7">Linear annualized sleeve run-rate from live-filled BTC5 results, plus the freshest selected BTC5 forecast.</text>
 <rect x="80" y="154" width="1120" height="126" rx="26" fill="#0e1523" stroke="#5b3046" opacity="0.95"/>
 <text x="112" y="194" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="14" fill="#e1a7be">FUND-LEVEL REALIZED ARR CLAIM</text>
-<text x="112" y="234" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="30" font-weight="700" fill="#fff0f4">UNBLOCKED</text>
-<text x="112" y="262" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="16" fill="#e5d7de">fund_realized_arr_claim_unblocked</text>
+<text x="112" y="234" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="30" font-weight="700" fill="#fff0f4">BLOCKED</text>
+<text x="112" y="262" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="16" fill="#e5d7de">fund_realized_arr_claim_blocked_until_ledger_wallet_reconciliation_closes</text>
 <text x="112" y="296" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="14" fill="#d3c4cc">Source: reports/runtime_truth_latest.json | Time window: fund lifetime | Confidence: high</text>
 <text x="80" y="350" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="24" fill="#f7fafc">Realized BTC5 sleeve run-rate</text>
 <text x="80" y="378" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="15" fill="#c9d4e4">Time window: trailing_12_live_fills | Confidence: high | Source: reports/runtime/tmp/tmp_remote_btc5_window_rows.json</text>
-<text x="80" y="404" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="15" fill="#9eb1ca">6 live fills, 4.25h, $-8.55 PnL</text>
+<text x="80" y="404" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="15" fill="#9eb1ca">162 live fills, 321.36h, $60.23 PnL</text>
 <rect x="520" y="332" width="560" height="22" rx="11" fill="#111b2a"/>
-<text x="1104" y="350" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="22" font-weight="700" fill="#fefefe">-15.9k%</text>
+<rect x="520" y="332" width="88.00" height="22" rx="11" fill="#53f3c8" opacity="0.92"/>
+<text x="1104" y="350" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="22" font-weight="700" fill="#fefefe">1.9k%</text>
 <text x="80" y="460" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="24" fill="#f7fafc">Active forecast ARR</text>
 <text x="80" y="488" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="15" fill="#c9d4e4">Time window: selected_public_forecast | Confidence: high | Source: reports/btc5_autoresearch_loop/latest.json</text>
 <text x="80" y="514" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="15" fill="#9eb1ca">Active package: current_live_profile</text>
@@ -35,7 +36,7 @@
 <text x="80" y="708" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="15" fill="#c9d4e4">Time window: selected_public_forecast | Confidence: high | Source: reports/btc5_autoresearch_loop/latest.json</text>
 <text x="80" y="734" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="15" fill="#9eb1ca">Selected forecast validation rows: 123</text>
 <rect x="520" y="662" width="560" height="22" rx="11" fill="#111b2a"/>
-<rect x="520" y="662" width="88.00" height="22" rx="11" fill="#ffd467" opacity="0.92"/>
+<rect x="520" y="662" width="347.03" height="22" rx="11" fill="#ffd467" opacity="0.92"/>
 <text x="1104" y="680" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="22" font-weight="700" fill="#fefefe">79.1k%</text>
-<text x="80" y="716" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="14" fill="#d5e2f3">Deploy recommendation: hold | Forecast delta vs active: 2.04M% | Sample: 6 live fills in the realized sleeve window; 123 validation live-filled rows in the selected forecast</text>
+<text x="80" y="716" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="14" fill="#d5e2f3">Deploy recommendation: hold | Forecast delta vs active: 2.04M% | Sample: 162 live fills in the realized sleeve window; 123 validation live-filled rows in the selected forecast</text>
 </svg>

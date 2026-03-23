@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Strike Desk every 5 minutes
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=strike-desk.service
+
+[Install]
+WantedBy=timers.target

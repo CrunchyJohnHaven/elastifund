@@ -3,6 +3,16 @@
 
 set -euo pipefail
 
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    cat <<'EOF'
+Usage: ./scripts/btc5_status.sh [user@host]
+
+Check BTC 5-min maker service status on the VPS. The host defaults to
+VPS_USER@VPS_IP from .env or the environment.
+EOF
+    exit 0
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 

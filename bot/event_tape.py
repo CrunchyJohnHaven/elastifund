@@ -3,7 +3,8 @@
 Event Tape Writer — Append-only event log for every system decision and observation.
 ====================================================================================
 Phase 1: Writer only (no replay engine). Captures immutable events to a SQLite-backed
-tape with monotonic sequence numbers, causal chains, and correlation grouping.
+tape plus append-only JSONL segments with monotonic sequence numbers, causal chains,
+and correlation grouping.
 
 Architecture:
   - TapeEvent: frozen dataclass envelope (seq, ts, event_type, source, session_id,
@@ -37,6 +38,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("JJ.event_tape")
@@ -98,25 +100,32 @@ class EventTapeWriter:
     def __init__(
         self,
         db_path: str = "data/tape/tape.db",
+        jsonl_path: str | None = None,
         session_id: str | None = None,
     ) -> None:
         self._db_path = str(db_path)
+        self._jsonl_path = str(jsonl_path or Path(self._db_path).with_suffix(".jsonl"))
         self._session_id = session_id or uuid.uuid4().hex
         self._lock = threading.Lock()
+
+        Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(self._jsonl_path).parent.mkdir(parents=True, exist_ok=True)
 
         self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA_SQL)
         self._conn.commit()
+        self._jsonl_handle = open(self._jsonl_path, "a", encoding="utf-8")
 
         # Recover next seq from existing data
         row = self._conn.execute("SELECT MAX(seq) AS m FROM events").fetchone()
         self._next_seq: int = (row["m"] or 0) + 1
 
         logger.info(
-            "EventTapeWriter initialized db=%s session=%s next_seq=%d",
+            "EventTapeWriter initialized db=%s jsonl=%s session=%s next_seq=%d",
             self._db_path,
+            self._jsonl_path,
             self._session_id,
             self._next_seq,
         )
@@ -130,6 +139,11 @@ class EventTapeWriter:
     # ------------------------------------------------------------------
 
     def close(self) -> None:
+        try:
+            self._jsonl_handle.flush()
+            self._jsonl_handle.close()
+        except Exception:
+            pass
         self._conn.close()
 
     def __enter__(self) -> "EventTapeWriter":
@@ -186,6 +200,8 @@ class EventTapeWriter:
                 ),
             )
             self._conn.commit()
+            self._jsonl_handle.write(json.dumps(event_to_json(event), default=str) + "\n")
+            self._jsonl_handle.flush()
 
         logger.debug(
             "emit seq=%d type=%s source=%s corr=%s",
@@ -233,6 +249,43 @@ class EventTapeWriter:
             correlation_id=correlation_id,
         )
 
+    def emit_market_lifecycle(
+        self,
+        venue: str,
+        market_id: str,
+        lifecycle_phase: str,
+        listed_ts: int | None,
+        updated_ts: int | None,
+        rule_source: str,
+        time_to_resolution_seconds: int | None,
+        *,
+        source: str = "sensorium",
+        causation_seq: int | None = None,
+        correlation_id: str | None = None,
+        source_artifacts: list[dict[str, Any]] | None = None,
+        confidence: float | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> TapeEvent:
+        """Emit a market.lifecycle event."""
+        return self.emit(
+            event_type="market.lifecycle",
+            source=source,
+            payload={
+                "venue": venue,
+                "market_id": market_id,
+                "lifecycle_phase": lifecycle_phase,
+                "listed_ts": listed_ts,
+                "updated_ts": updated_ts,
+                "rule_source": rule_source,
+                "time_to_resolution_seconds": time_to_resolution_seconds,
+                "source_artifacts": source_artifacts or [],
+                "confidence": confidence,
+                "metadata": metadata or {},
+            },
+            causation_seq=causation_seq,
+            correlation_id=correlation_id,
+        )
+
     # ------------------------------------------------------------------
     # Typed helpers — Book
     # ------------------------------------------------------------------
@@ -274,6 +327,47 @@ class EventTapeWriter:
             correlation_id=correlation_id,
         )
 
+    def emit_orderbook_tape(
+        self,
+        venue: str,
+        market_id: str,
+        token_id: str,
+        best_bid: float | None,
+        best_ask: float | None,
+        last_trade_price: float | None,
+        rtds_spot: float | None,
+        oracle_value: float | None,
+        liquidity_usd: float | None,
+        spread_bps: float | None,
+        trade_prints: list[dict[str, Any]] | None = None,
+        *,
+        source: str = "sensorium",
+        causation_seq: int | None = None,
+        correlation_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> TapeEvent:
+        """Emit an orderbook.tape event."""
+        return self.emit(
+            event_type="orderbook.tape",
+            source=source,
+            payload={
+                "venue": venue,
+                "market_id": market_id,
+                "token_id": token_id,
+                "best_bid": best_bid,
+                "best_ask": best_ask,
+                "last_trade_price": last_trade_price,
+                "rtds_spot": rtds_spot,
+                "oracle_value": oracle_value,
+                "liquidity_usd": liquidity_usd,
+                "spread_bps": spread_bps,
+                "trade_prints": trade_prints or [],
+                "metadata": metadata or {},
+            },
+            causation_seq=causation_seq,
+            correlation_id=correlation_id,
+        )
+
     # ------------------------------------------------------------------
     # Typed helpers — Decision
     # ------------------------------------------------------------------
@@ -302,6 +396,66 @@ class EventTapeWriter:
             correlation_id=correlation_id,
         )
 
+    def emit_shadow_alternative(
+        self,
+        chosen_action: str,
+        rejected_actions: list[dict[str, Any]],
+        *,
+        reason: str = "",
+        source: str = "strike_desk",
+        causation_seq: int | None = None,
+        correlation_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> TapeEvent:
+        """Emit a shadow.alternative event."""
+        return self.emit(
+            event_type="shadow.alternative",
+            source=source,
+            payload={
+                "chosen_action": chosen_action,
+                "rejected_actions": rejected_actions,
+                "reason": reason,
+                "metadata": metadata or {},
+            },
+            causation_seq=causation_seq,
+            correlation_id=correlation_id,
+        )
+
+    def emit_settlement_source(
+        self,
+        venue: str,
+        market_id: str,
+        rule_source: str,
+        official_source: str,
+        truth_anchor: str,
+        parsed_rule: str,
+        confidence: float,
+        *,
+        source: str = "sensorium",
+        causation_seq: int | None = None,
+        correlation_id: str | None = None,
+        source_artifacts: list[dict[str, Any]] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> TapeEvent:
+        """Emit a settlement.source event."""
+        return self.emit(
+            event_type="settlement.source",
+            source=source,
+            payload={
+                "venue": venue,
+                "market_id": market_id,
+                "rule_source": rule_source,
+                "official_source": official_source,
+                "truth_anchor": truth_anchor,
+                "parsed_rule": parsed_rule,
+                "confidence": confidence,
+                "source_artifacts": source_artifacts or [],
+                "metadata": metadata or {},
+            },
+            causation_seq=causation_seq,
+            correlation_id=correlation_id,
+        )
+
     # ------------------------------------------------------------------
     # Typed helpers — Execution
     # ------------------------------------------------------------------
@@ -326,6 +480,38 @@ class EventTapeWriter:
             event_type=event_type,
             source=source,
             payload=payload,
+            causation_seq=causation_seq,
+            correlation_id=correlation_id,
+        )
+
+    def emit_wallet_truth(
+        self,
+        tape_derived_balance: float,
+        api_balance: float,
+        divergence_usd: float,
+        divergence_pct: float,
+        threshold_pct: float,
+        is_divergent: bool,
+        *,
+        source: str = "wallet_truth",
+        causation_seq: int | None = None,
+        correlation_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> TapeEvent:
+        """Emit a wallet.truth event for circuit-breaker hooks."""
+        return self.emit(
+            event_type="wallet.truth",
+            source=source,
+            payload={
+                "tape_derived_balance": tape_derived_balance,
+                "api_balance": api_balance,
+                "divergence_usd": divergence_usd,
+                "divergence_pct": divergence_pct,
+                "threshold_pct": threshold_pct,
+                "is_divergent": is_divergent,
+                "circuit_breaker_triggered": is_divergent,
+                "metadata": metadata or {},
+            },
             causation_seq=causation_seq,
             correlation_id=correlation_id,
         )
@@ -385,6 +571,19 @@ class EventTapeWriter:
         rows = self._conn.execute(
             "SELECT * FROM events WHERE correlation_id = ? ORDER BY seq",
             (correlation_id,),
+        ).fetchall()
+        return [_row_to_event(r) for r in rows]
+
+    def query_seq_range(self, start_seq: int, end_seq: int, limit: int = 1000) -> list[TapeEvent]:
+        """Return a deterministic replay window by inclusive sequence range."""
+        rows = self._conn.execute(
+            """
+            SELECT * FROM events
+            WHERE seq BETWEEN ? AND ?
+            ORDER BY seq
+            LIMIT ?
+            """,
+            (start_seq, end_seq, limit),
         ).fetchall()
         return [_row_to_event(r) for r in rows]
 
@@ -543,3 +742,17 @@ def _row_to_event(row: sqlite3.Row) -> TapeEvent:
         causation_seq=row["causation_seq"],
         correlation_id=row["correlation_id"],
     )
+
+
+def event_to_json(event: TapeEvent) -> dict[str, Any]:
+    """Convert a tape event into a JSON-serializable dict."""
+    return {
+        "seq": event.seq,
+        "ts": event.ts,
+        "event_type": event.event_type,
+        "source": event.source,
+        "session_id": event.session_id,
+        "payload": event.payload,
+        "causation_seq": event.causation_seq,
+        "correlation_id": event.correlation_id,
+    }

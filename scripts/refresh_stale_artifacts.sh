@@ -23,6 +23,16 @@
 
 set -euo pipefail
 
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    cat <<'EOF'
+Usage: ./scripts/refresh_stale_artifacts.sh
+
+Refresh BTC5 stage-1 stale artifacts on the Dublin VPS.
+This script is intended to run from /home/ubuntu/polymarket-trading-bot/.
+EOF
+    exit 0
+fi
+
 REPO_DIR="/home/ubuntu/polymarket-trading-bot"
 cd "$REPO_DIR"
 

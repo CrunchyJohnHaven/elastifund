@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: help bootstrap bootstrap-lite bootstrap-runtime doctor onboard quickstart preflight hygiene verify-static verify-fastpath test-select test-fixture-ownership test-research-sim test-platform test verify test-root test-polymarket test-nontrading smoke-nontrading btc5-autoresearch-local btc5-autoresearch-local-autopush btc5-arr-report btc5-hypothesis-lab btc5-regime-policy-lab btc5-hypothesis-frontier deploy-write-manifest deploy-dry-run api-specs clean
+.PHONY: help bootstrap bootstrap-lite bootstrap-runtime doctor onboard quickstart preflight hygiene verify-static verify-fastpath test-select test-fixture-ownership test-research-sim test-platform test verify test-root test-polymarket test-nontrading smoke-nontrading btc5-autoresearch-local btc5-autoresearch-local-autopush btc5-arr-report btc5-hypothesis-lab btc5-regime-policy-lab btc5-hypothesis-frontier strike-factory-local deploy-write-manifest deploy-dry-run api-specs clean
 
 help:
 	@printf '%s\n' \
@@ -29,6 +29,7 @@ help:
 		'btc5-hypothesis-lab Run the BTC5 walk-forward hypothesis generator' \
 		'btc5-regime-policy-lab Run the BTC5 regime-conditioned policy search' \
 		'btc5-hypothesis-frontier Render the tracked BTC5 hypothesis frontier artifacts' \
+		'strike-factory-local Run the revenue-first strike factory cycle' \
 		'deploy-write-manifest Regenerate the release manifest from current machine truth' \
 		'deploy-dry-run   Refresh bridge state, regenerate the manifest, and run the VPS deploy dry-run' \
 		'test-polymarket  Run the nested polymarket-bot test suite' \
@@ -61,13 +62,18 @@ preflight:
 
 hygiene:
 	$(PYTHON) scripts/check_repo_hygiene.py
+	$(PYTHON) scripts/check_docs_indexes.py
+	$(PYTHON) scripts/check_static_routes.py
+	$(PYTHON) scripts/check_shell_help.py
+	$(PYTHON) scripts/render_scripts_index.py --check
+	$(PYTHON) scripts/render_deprecation_candidates.py --check
 
 verify-static:
-	$(PYTHON) scripts/check_repo_hygiene.py
+	$(MAKE) hygiene
 	$(PYTHON) -m pytest -q tests/test_select_test_targets.py tests/test_reports_layout_contract.py tests/test_reports_top_level_symlink_collapse.py tests/test_reports_top_level_symlink_prune.py tests/test_reports_symlink_collapse.py
 
 verify-fastpath:
-	$(PYTHON) scripts/check_repo_hygiene.py
+	$(MAKE) hygiene
 	$(PYTHON) scripts/render_repo_manifest.py --check
 	$(PYTHON) -m pytest -q tests/test_select_test_targets.py tests/test_reports_layout_contract.py tests/test_reports_top_level_symlink_collapse.py tests/test_reports_top_level_symlink_prune.py tests/test_reports_symlink_collapse.py
 
@@ -87,7 +93,7 @@ test:
 	$(PYTHON) scripts/run_root_tests.py
 
 verify:
-	$(PYTHON) scripts/check_repo_hygiene.py
+	$(MAKE) hygiene
 	$(PYTHON) scripts/run_root_tests.py
 	cd polymarket-bot && $(PYTHON) -m pytest tests -q
 
@@ -121,6 +127,9 @@ btc5-regime-policy-lab:
 
 btc5-hypothesis-frontier:
 	$(PYTHON) scripts/render_btc5_hypothesis_frontier.py
+
+strike-factory-local:
+	$(PYTHON) scripts/run_strike_factory.py
 
 deploy-write-manifest:
 	$(PYTHON) scripts/deploy_release_bundle.py --write-manifest

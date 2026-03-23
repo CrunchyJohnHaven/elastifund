@@ -27,6 +27,7 @@ from bot.wallet_reconciliation import (
     cross_reference_wallet_export,
     load_wallet_export_csv,
 )
+from scripts.report_envelope import write_report
 
 
 def _utc_now() -> datetime:
@@ -265,6 +266,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--report-path",
         type=Path,
         default=REPO_ROOT / "reports" / "wallet_reconciliation" / "latest.json",
+    )
+    parser.add_argument(
+        "--wallet-live-snapshot-path",
+        type=Path,
+        default=REPO_ROOT / "reports" / "wallet_live_snapshot_latest.json",
     )
     parser.add_argument(
         "--debug-path",
@@ -520,10 +526,31 @@ def main(argv: list[str] | None = None) -> int:
         },
     }
 
-    args.report_path.parent.mkdir(parents=True, exist_ok=True)
-    args.report_path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    write_report(
+        args.report_path,
+        artifact="wallet_reconciliation",
+        payload=payload,
+        status="fresh" if wallet_reconciliation_summary["stage_gate_ready"] else "blocked",
+        source_of_truth="Polymarket data-api; data/finance_imports/*; reports/runtime_truth_latest.json",
+        freshness_sla_seconds=1800,
+        blockers=wallet_reconciliation_summary.get("stage_gate_blocking_checks") or [],
+        summary=(
+            f"wallet_value_usd={wallet_surface['wallet_value_usd']:.2f} "
+            f"free_collateral_usd={wallet_surface['free_collateral_usd']:.2f}"
+        ),
+    )
+    write_report(
+        args.wallet_live_snapshot_path,
+        artifact="wallet_live_snapshot",
+        payload=payload,
+        status="fresh" if wallet_reconciliation_summary["stage_gate_ready"] else "blocked",
+        source_of_truth="Polymarket data-api; data/finance_imports/*; reports/runtime_truth_latest.json",
+        freshness_sla_seconds=1800,
+        blockers=wallet_reconciliation_summary.get("stage_gate_blocking_checks") or [],
+        summary=(
+            f"wallet_value_usd={wallet_surface['wallet_value_usd']:.2f} "
+            f"free_collateral_usd={wallet_surface['free_collateral_usd']:.2f}"
+        ),
     )
     exposure_report_path = args.report_path.with_name("open_exposure_inventory.md")
     exposure_report_path.write_text(

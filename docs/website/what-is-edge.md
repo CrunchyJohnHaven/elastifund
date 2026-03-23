@@ -1,3 +1,10 @@
+---
+title: What Is "Edge"? The Honest Math of Prediction Market Trading
+status: published
+doc_type: article
+last_reviewed: 2026-03-22
+---
+
 # What Is "Edge"? The Honest Math of Prediction Market Trading
 
 *Part of the Elastifund Education Center — [elastifund.io/learn/what-is-edge](https://elastifund.io/learn/what-is-edge)*

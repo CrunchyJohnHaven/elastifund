@@ -16,6 +16,20 @@
 #
 set -euo pipefail
 
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    cat <<'EOF'
+Usage: ./scripts/bridge.sh [--pull-only|--push-only|--skip-flywheel|--loop] [--key PATH]
+
+Controlled sync between the Mac and the Dublin VPS.
+  --pull-only       Pull VPS data and run the local flywheel.
+  --push-only       Perform the mandatory pre-pull, then push code.
+  --skip-flywheel   Skip the local flywheel step.
+  --loop            Repeat the sync every 30 minutes.
+  --key PATH        Use a specific SSH key.
+EOF
+    exit 0
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="${ELASTIFUND_PROJECT_DIR:-$(dirname "$SCRIPT_DIR")}"
 VPS_HOST="ubuntu@52.208.155.0"

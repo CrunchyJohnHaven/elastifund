@@ -1,3 +1,10 @@
+---
+title: Strategy Autopsy: R10 - NOAA Weather Bracket Arbitrage (Kalshi)
+status: rejected
+doc_type: autopsy
+last_reviewed: 2026-03-22
+---
+
 # Strategy Autopsy: R10 — NOAA Weather Bracket Arbitrage (Kalshi)
 
 *Status: REJECTED | Tested: March 7, 2026 | Kill Reason: NWS rounding creates insufficient model accuracy*

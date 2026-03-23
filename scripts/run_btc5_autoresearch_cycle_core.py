@@ -830,6 +830,7 @@ def _resolved_candidate_class(
     evidence_band: str,
     validation_live_filled_rows: int,
     generalization_ratio: float,
+    obs_fresh: bool = False,
 ) -> tuple[str, list[str]]:
     normalized = _normalized_candidate_class(candidate_class)
     if normalized:
@@ -842,6 +843,11 @@ def _resolved_candidate_class(
         and float(generalization_ratio) >= 0.80
     ):
         return "hold_current", ["fallback_validated_candidate_hold_current"]
+    # When fresh source observations are available, label this as an active probe
+    # rather than a stale fallback.  This prevents novelty_discovery surfaces from
+    # being silently downgraded to the generic "revalidation needed" bucket.
+    if obs_fresh:
+        return "probe_only", ["fresh_obs_active_probe"]
     return "probe_only", ["fallback_requires_revalidation"]
 
 
@@ -853,6 +859,7 @@ def _effective_candidate_class(
     validation_live_filled_rows: int,
     generalization_ratio: float,
     current_probe: dict[str, Any],
+    obs_fresh: bool = False,
 ) -> tuple[str, list[str], str]:
     resolved_class, reason_tags = _resolved_candidate_class(
         source=source,
@@ -860,6 +867,7 @@ def _effective_candidate_class(
         evidence_band=evidence_band,
         validation_live_filled_rows=validation_live_filled_rows,
         generalization_ratio=generalization_ratio,
+        obs_fresh=obs_fresh,
     )
     stage_not_ready_tags = {
         str(tag)
@@ -994,6 +1002,7 @@ def _build_package_ranking(
     ranked_packages: list[dict[str, Any]],
     current_probe: dict[str, Any],
     frontier_report: dict[str, Any] | None = None,
+    obs_fresh: bool = False,
 ) -> dict[str, Any]:
     ranking_inputs = (
         current_probe.get("ranking_inputs")
@@ -1026,6 +1035,7 @@ def _build_package_ranking(
             evidence_band=evidence_band,
             validation_live_filled_rows=validation_rows,
             generalization_ratio=generalization_ratio,
+            obs_fresh=obs_fresh,
         )
         if explicit_reason_tags:
             base_reason_tags = explicit_reason_tags
@@ -1036,6 +1046,7 @@ def _build_package_ranking(
             validation_live_filled_rows=validation_rows,
             generalization_ratio=generalization_ratio,
             current_probe=current_probe,
+            obs_fresh=obs_fresh,
         )
         base_package_set = _package_set_label(base_class)
         effective_package_set = _package_set_label(effective_class)
@@ -3686,6 +3697,29 @@ def main() -> int:
         refresh_remote=bool(args.refresh_remote),
         remote_cache_json=args.remote_cache_json,
     )
+    # Compute observation freshness for novelty-layer suppression.
+    # When fresh fills exist, fallback_requires_revalidation is replaced with
+    # fresh_obs_active_probe throughout the package ranking logic.
+    import time as _time_mod
+    _filled_rows = [r for r in rows if str(r.get("order_status") or "").strip().lower() in {"live_filled", "filled"}]
+    _latest_ts = max(
+        (int(r.get("window_start_ts") or 0) for r in _filled_rows),
+        default=0,
+    )
+    obs_freshness_hours = (
+        max(0.0, (_time_mod.time() - _latest_ts) / 3600.0) if _latest_ts > 0 else 9999.0
+    )
+    obs_is_fresh = obs_freshness_hours <= 6.0
+    obs_filled_count = len(_filled_rows)
+    # Write source_observations summary for thesis layer / downstream consumers
+    _source_obs_summary = {
+        "generated_at": _now_utc().isoformat(),
+        "obs_row_count": len(rows),
+        "obs_filled_count": obs_filled_count,
+        "obs_freshness_hours": round(obs_freshness_hours, 3),
+        "obs_is_fresh": obs_is_fresh,
+        "baseline": baseline,
+    }
     horizon_trades = max(len(rows), 40)
     global_summary = build_global_summary(
         rows=rows,
@@ -3891,6 +3925,7 @@ def main() -> int:
         ranked_packages=ranked_packages,
         current_probe=current_probe,
         frontier_report=frontier_report,
+        obs_fresh=obs_is_fresh,
     )
     ranked_package_items = (
         package_ranking.get("ranked_packages") if isinstance(package_ranking.get("ranked_packages"), list) else []
@@ -3940,6 +3975,7 @@ def main() -> int:
 
     payload = {
         "generated_at": _now_utc().isoformat(),
+        "source_observations_summary": _source_obs_summary,
         "execution_mode": {
             "requested": str(args.mode),
             "effective": mode,

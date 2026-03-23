@@ -49,6 +49,7 @@ from scripts.remote_cycle_public_snapshot import (
     build_public_headlines as _build_public_headlines_impl,
     build_public_runtime_snapshot as _build_public_runtime_snapshot_impl,
 )
+from scripts.report_envelope import write_report
 from scripts.remote_cycle_rendering import (
     build_operator_digest as _build_operator_digest_impl,
     format_signed_number as _format_signed_number_impl,
@@ -67,6 +68,8 @@ try:
     from src.polymarket_fee_model import maker_rebate_amount as _shared_maker_rebate_amount
 except Exception:  # pragma: no cover - fallback keeps truth generation resilient
     _shared_maker_rebate_amount = None
+
+from scripts.btc5_daily_pnl import compute_btc5_daily_pnl, BTC5DailyPnLPacket
 
 
 from scripts.remote_cycle_constants import (
@@ -2584,6 +2587,16 @@ def _merge_btc5_maker_observation(
         }
     )
 
+    # --- Canonical daily PnL metrics (ET-day + rolling 24h) ---
+    daily_pnl_packet = compute_btc5_daily_pnl(
+        fills=btc5_maker.get("recent_live_filled") or [],
+        legacy_recent_pnl_usd=_float_or_none(
+            (fill_attribution.get("recent_live_filled_summary") or {}).get("pnl_usd")
+        ),
+    )
+    runtime.update(daily_pnl_packet.runtime_truth_fields())
+    status["btc5_daily_pnl"] = daily_pnl_packet.to_dict()
+
 
 def _refresh_remote_observation_cadence(
     status: dict[str, Any],
@@ -2708,9 +2721,38 @@ def _build_accounting_reconciliation(status: dict[str, Any], *, root: Path) -> d
     wallet_reconciliation_override = status.get("wallet_reconciliation_override") or {}
     reconcile_with_wallet_truth = bool(wallet_reconciliation_override.get("active"))
 
-    local_total_trades = int(runtime.get("trade_db_total_trades") or 0)
-    local_closed_positions = int(runtime.get("closed_trades") or 0)
-    local_open_positions = int(runtime.get("open_positions") or 0)
+    jj_state = _load_json(root / "jj_state.json", default={})
+    trade_counts = _load_trade_counts(root)
+
+    def _count_positions(value: Any) -> int:
+        if isinstance(value, dict):
+            return len(value)
+        if isinstance(value, list):
+            return len(value)
+        return int(value or 0)
+
+    local_total_trades = int(
+        _first_nonempty(
+            jj_state.get("total_trades"),
+            trade_counts.get("total_trades"),
+            runtime.get("trade_db_total_trades"),
+            runtime.get("total_trades"),
+            0,
+        )
+        or 0
+    )
+    local_closed_positions = int(
+        _first_nonempty(
+            trade_counts.get("closed_trades"),
+            runtime.get("closed_trades"),
+            0,
+        )
+        or 0
+    )
+    if "open_positions" in jj_state:
+        local_open_positions = _count_positions(jj_state.get("open_positions"))
+    else:
+        local_open_positions = _count_positions(runtime.get("open_positions"))
 
     wallet_status = str(polymarket_wallet.get("status") or "unavailable").strip().lower()
     remote_wallet_source = str(
@@ -3408,33 +3450,60 @@ def write_remote_cycle_status(
 
     markdown_target.write_text(render_remote_cycle_status_markdown(status))
     dump_path_atomic(json_target, status, indent=2, sort_keys=True, trailing_newline=False)
-    dump_path_atomic(
+    write_report(
         runtime_truth_timestamped_target,
-        runtime_truth_snapshot,
-        indent=2,
-        sort_keys=True,
-        trailing_newline=False,
+        artifact="runtime_truth",
+        payload=runtime_truth_snapshot,
+        status="blocked"
+        if bool((runtime_truth_snapshot.get("launch") or {}).get("live_launch_blocked"))
+        or bool(runtime_truth_snapshot.get("blockers"))
+        else "fresh",
+        source_of_truth="reports/runtime_truth_latest.json; reports/public_runtime_snapshot.json; reports/trade_proof/latest.json",
+        freshness_sla_seconds=3600,
+        blockers=list(runtime_truth_snapshot.get("blockers") or []),
+        summary="timestamped runtime truth snapshot",
     )
-    dump_path_atomic(
+    write_report(
         runtime_truth_latest_target,
-        runtime_truth_snapshot,
-        indent=2,
-        sort_keys=True,
-        trailing_newline=False,
+        artifact="runtime_truth",
+        payload=runtime_truth_snapshot,
+        status="blocked"
+        if bool((runtime_truth_snapshot.get("launch") or {}).get("live_launch_blocked"))
+        or bool(runtime_truth_snapshot.get("blockers"))
+        else "fresh",
+        source_of_truth="reports/runtime_truth_latest.json; reports/public_runtime_snapshot.json; reports/trade_proof/latest.json",
+        freshness_sla_seconds=3600,
+        blockers=list(runtime_truth_snapshot.get("blockers") or []),
+        summary="latest runtime truth snapshot",
     )
-    dump_path_atomic(
+    write_report(
         public_runtime_snapshot_target,
-        public_runtime_snapshot,
-        indent=2,
-        sort_keys=True,
-        trailing_newline=False,
+        artifact="public_runtime_snapshot",
+        payload=public_runtime_snapshot,
+        status="blocked"
+        if bool((runtime_truth_snapshot.get("launch") or {}).get("live_launch_blocked"))
+        or bool(runtime_truth_snapshot.get("blockers"))
+        else "fresh",
+        source_of_truth="reports/runtime_truth_latest.json; reports/public_runtime_snapshot.json",
+        freshness_sla_seconds=3600,
+        blockers=list(runtime_truth_snapshot.get("blockers") or []),
+        summary="public runtime snapshot",
     )
-    dump_path_atomic(
+    write_report(
         trade_proof_latest_target,
-        runtime_truth_snapshot.get("trade_proof") or {},
-        indent=2,
-        sort_keys=True,
-        trailing_newline=False,
+        artifact="trade_proof",
+        payload=runtime_truth_snapshot.get("trade_proof") or {},
+        status="fresh"
+        if bool((runtime_truth_snapshot.get("trade_proof") or {}).get("fill_confirmed"))
+        else "blocked",
+        source_of_truth="reports/runtime_truth_latest.json; reports/trade_proof/latest.json",
+        freshness_sla_seconds=3600,
+        blockers=(
+            list((runtime_truth_snapshot.get("trade_proof") or {}).get("blockers") or [])
+            if isinstance(runtime_truth_snapshot.get("trade_proof"), dict)
+            else []
+        ),
+        summary="BTC5 trade proof",
     )
     dump_path_atomic(
         launch_packet_timestamped_target,
@@ -3450,19 +3519,25 @@ def write_remote_cycle_status(
         sort_keys=True,
         trailing_newline=False,
     )
-    dump_path_atomic(
+    write_report(
         state_improvement_timestamped_target,
-        state_improvement,
-        indent=2,
-        sort_keys=True,
-        trailing_newline=False,
+        artifact="state_improvement",
+        payload=state_improvement,
+        status="fresh" if state_improvement else "blocked",
+        source_of_truth="reports/runtime_truth_latest.json; reports/state_improvement_latest.json",
+        freshness_sla_seconds=3600,
+        blockers=[] if state_improvement else ["empty_state_improvement"],
+        summary="timestamped state improvement snapshot",
     )
-    dump_path_atomic(
+    write_report(
         state_improvement_latest_target,
-        state_improvement,
-        indent=2,
-        sort_keys=True,
-        trailing_newline=False,
+        artifact="state_improvement",
+        payload=state_improvement,
+        status="fresh" if state_improvement else "blocked",
+        source_of_truth="reports/runtime_truth_latest.json; reports/state_improvement_latest.json",
+        freshness_sla_seconds=3600,
+        blockers=[] if state_improvement else ["empty_state_improvement"],
+        summary="latest state improvement snapshot",
     )
     state_improvement_digest_target.write_text(
         _render_state_improvement_digest_markdown(state_improvement)
@@ -3784,7 +3859,7 @@ def build_runtime_mode_reconciliation(
         and launch_live_blocked
         and bool(guarded_mode.get("allow_order_submission"))
     )
-    safe_baseline_required = invalid_service_launch_combo
+    safe_baseline_required = bool(invalid_service_launch_combo and not bounded_stage1_live_override)
 
     safe_bundle: Any = None
     if safe_baseline_required:
@@ -6046,6 +6121,9 @@ def _build_deployment_confidence(
             for check in selected_package_blocking_checks
             if str(check) != "selected_runtime_package_missing"
         ]
+    service_status_blocking_checks = []
+    if selected_package_summary.get("exists") and service_freshness.get("freshness") == "stale":
+        service_status_blocking_checks.append("service_status_stale")
     validated_for_live_stage1 = bool(
         selected_package_summary.get("validated_for_live_stage1")
     ) or allow_stage1_without_selected_package
@@ -6053,19 +6131,19 @@ def _build_deployment_confidence(
     trade_now_blocking_checks = list(
         btc5_stage_readiness.get("trade_now_blocking_checks") or []
     )
+    accounting_drift_blocker = bool(
+        accounting_reconciliation.get("drift_detected")
+        and not allow_stage1_without_selected_package
+    )
     stage_1_blockers = _dedupe_preserve_order(
         [
             *trade_now_blocking_checks,
             *list(btc5_stage_readiness.get("stage_1_blockers") or []),
             *selected_package_blocking_checks,
+            *service_status_blocking_checks,
             *(
                 ["accounting_reconciliation_drift"]
-                if bool(accounting_reconciliation.get("drift_detected"))
-                else []
-            ),
-            *(
-                ["service_status_stale"]
-                if service_freshness.get("freshness") == "stale"
+                if accounting_drift_blocker
                 else []
             ),
             *(
@@ -6078,7 +6156,11 @@ def _build_deployment_confidence(
                 if confirmation_freshness_label == "stale"
                 else []
             ),
-            *contradiction_codes,
+            *(
+                contradiction_codes
+                if not allow_stage1_without_selected_package
+                else []
+            ),
         ]
     )
     stage_2_blockers = _dedupe_preserve_order(
@@ -6097,16 +6179,12 @@ def _build_deployment_confidence(
         [
             *selected_package_blocking_checks,
             *trade_now_blocking_checks,
+            *service_status_blocking_checks,
             *list(btc5_stage_readiness.get("stage_2_blockers") or []),
             *list(btc5_stage_readiness.get("stage_3_blockers") or []),
             *(
                 ["accounting_reconciliation_drift"]
-                if bool(accounting_reconciliation.get("drift_detected"))
-                else []
-            ),
-            *(
-                ["service_status_stale"]
-                if service_freshness.get("freshness") == "stale"
+                if accounting_drift_blocker
                 else []
             ),
             *(
@@ -6119,7 +6197,11 @@ def _build_deployment_confidence(
                 if confirmation_freshness_label == "stale"
                 else []
             ),
-            *contradiction_codes,
+            *(
+                contradiction_codes
+                if not allow_stage1_without_selected_package
+                else []
+            ),
         ]
     )
 
@@ -6139,19 +6221,19 @@ def _build_deployment_confidence(
         )
     ):
         next_required_artifact = "reports/btc5_autoresearch/latest.json"
-    elif not scale_summary.get("exists"):
-        next_required_artifact = "reports/strategy_scale_comparison.json"
+    elif "stale_service_file_with_fresh_btc5_probe" in contradiction_codes or "service_status_stale" in blocking_checks:
+        next_required_artifact = "reports/remote_service_status.json"
     elif any(
         check in blocking_checks
         for check in ("stage_upgrade_probe_stale", "stage_1_probe_missing")
     ):
         next_required_artifact = "reports/btc5_autoresearch_current_probe/latest.json"
+    elif bool(accounting_reconciliation.get("drift_detected")):
+        next_required_artifact = "data/jj_trades.db"
+    elif not scale_summary.get("exists"):
+        next_required_artifact = "reports/strategy_scale_comparison.json"
     elif any(str(check).startswith("wallet_export_") for check in blocking_checks):
         next_required_artifact = "data/Polymarket-History-*.csv"
-    elif "stale_service_file_with_fresh_btc5_probe" in contradiction_codes or "service_status_stale" in blocking_checks:
-        next_required_artifact = "reports/remote_service_status.json"
-    elif "accounting_reconciliation_drift" in blocking_checks:
-        next_required_artifact = "data/jj_trades.db"
     elif "confirmation_evidence_stale" in blocking_checks:
         next_required_artifact = audit_summary.get("confirmation_next_required_artifact")
         if not next_required_artifact:
@@ -7648,6 +7730,35 @@ def _build_launch_status(
                 f"(delta {closed_delta:+d}); "
                 f"capital delta={_format_money(accounting_delta)}."
             )
+    if accounting_reconciliation.get("drift_detected") and "accounting_reconciliation_drift" not in blocked_checks:
+        open_delta = int(
+            (accounting_reconciliation.get("unmatched_open_positions") or {}).get(
+                "delta_remote_minus_local", 0
+            )
+            or 0
+        )
+        closed_delta = int(
+            (accounting_reconciliation.get("unmatched_closed_positions") or {}).get(
+                "delta_remote_minus_local", 0
+            )
+            or 0
+        )
+        accounting_delta = _safe_float(
+            accounting_reconciliation.get("capital_accounting_delta_usd"),
+            0.0,
+        )
+        blocked_checks.append("polymarket_capital_truth_drift")
+        blocked_checks.append("accounting_reconciliation_drift")
+        blocked_reasons.append(
+            "Accounting drift: "
+            f"local ledger open={((accounting_reconciliation.get('local_ledger_counts') or {}).get('open_positions', 0))} "
+            f"vs remote wallet open={((accounting_reconciliation.get('remote_wallet_counts') or {}).get('open_positions', 0))} "
+            f"(delta {open_delta:+d}); "
+            f"local ledger closed={((accounting_reconciliation.get('local_ledger_counts') or {}).get('closed_positions', 0))} "
+            f"vs remote wallet closed={((accounting_reconciliation.get('remote_wallet_counts') or {}).get('closed_positions', 0))} "
+            f"(delta {closed_delta:+d}); "
+            f"capital delta={_format_money(accounting_delta)}."
+        )
     # Flywheel promotion posture is advisory for the always-on baseline. We keep
     # it in the operator packet, but it should not force capital idle when the
     # runtime, wallet truth, and risk guardrails are otherwise healthy.
@@ -9565,6 +9676,8 @@ def _build_public_performance_scoreboard(
         portfolio_equity_delta_1d = _float_or_none(wallet_export_summary.get("portfolio_equity_delta_1d"))
         closed_cashflow_delta_1d = _float_or_none(wallet_export_summary.get("closed_cashflow_delta_1d"))
         open_notional_delta_1d = _float_or_none(wallet_export_summary.get("open_notional_delta_1d"))
+        if wallet_export_fresh:
+            use_wallet_export_reporting = True
         if use_wallet_export_reporting:
             reporting_precedence = "wallet_export"
             reporting_precedence_reason = "wallet_export_fresh_and_at_least_as_recent_as_btc5_probe"
@@ -9599,6 +9712,11 @@ def _build_public_performance_scoreboard(
             reporting_precedence_reason = "btc5_probe_retained_as_reporting_source"
     wallet_reconciliation_summary["reporting_precedence"] = reporting_precedence
     wallet_reconciliation_summary["reporting_precedence_reason"] = reporting_precedence_reason
+    if not drift_open and reporting_precedence != "wallet_export":
+        fund_claim_status = "blocked"
+        fund_claim_reason = (
+            "fund_realized_arr_claim_blocked_until_ledger_wallet_reconciliation_and_wallet_export_precedence_close"
+        )
     denominator_initial = _float_or_none(
         _first_nonempty(
             capital.get("polymarket_tracked_capital_usd"),

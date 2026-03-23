@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -10,6 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.report_envelope import validate_report_envelope
 
 
 @dataclass(frozen=True)
@@ -54,16 +59,19 @@ CANONICAL_REFERENCE_FILES = (
     Path("AGENTS.md"),
     Path("README.md"),
     Path("CLAUDE.md"),
+    Path("scripts/README.md"),
     Path("PROJECT_INSTRUCTIONS.md"),
     Path("CONTRIBUTING.md"),
     Path("SECURITY.md"),
     Path("SUPPORT.md"),
+    Path("docs/ops/LOCAL_TWIN_ENTRYPOINTS.md"),
     Path("docs/ops/llm_context_manifest.md"),
     Path("docs/strategy/flywheel_strategy.md"),
     Path("docs/ops/dispatch_instructions.md"),
     Path("docs/FORK_AND_RUN.md"),
     Path("docs/PARALLEL_AGENT_WORKFLOW.md"),
     Path("docs/REPO_MAP.md"),
+    Path("docs/architecture/README.md"),
 )
 
 MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
@@ -71,6 +79,21 @@ BACKTICK_PATH_RE = re.compile(r"`([A-Za-z0-9_./-]+\.[A-Za-z0-9]+)`")
 BACKTICK_REFERENCE_SUFFIXES = (".md", ".json", ".toml", ".yml", ".yaml", ".txt", ".sh")
 GENERATED_REFERENCE_PATHS = ("jj_state.json",)
 GENERATED_REFERENCE_PREFIXES = ("reports/",)
+DEBRIS_SUFFIX_RE = re.compile(r".* \(\d+\)(?:\.[^/]+)?$")
+
+CANONICAL_LATEST_REPORTS = (
+    Path("reports/runtime_truth_latest.json"),
+    Path("reports/public_runtime_snapshot.json"),
+    Path("reports/trade_proof/latest.json"),
+    Path("reports/canonical_operator_truth.json"),
+    Path("reports/wallet_live_snapshot_latest.json"),
+    Path("reports/evidence_bundle.json"),
+    Path("reports/thesis_bundle.json"),
+    Path("reports/promotion_bundle.json"),
+    Path("reports/capital_lab/latest.json"),
+    Path("reports/counterfactual_lab/latest.json"),
+    Path("reports/learning_bundle.json"),
+)
 
 PLACEHOLDER_MARKERS = (
     "...",
@@ -100,6 +123,53 @@ def tracked_files() -> list[Path]:
         capture_output=True,
     )
     return [Path(entry) for entry in result.stdout.decode("utf-8").split("\0") if entry]
+
+
+def untracked_files() -> list[Path]:
+    result = subprocess.run(
+        ["git", "ls-files", "-o", "--exclude-standard", "-z"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    )
+    return [Path(entry) for entry in result.stdout.decode("utf-8").split("\0") if entry]
+
+
+def list_prunable_worktrees() -> list[str]:
+    result = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    )
+    prunable: list[str] = []
+    current: str | None = None
+    for raw_line in result.stdout.decode("utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("worktree "):
+            current = line.split(" ", 1)[1].strip()
+            continue
+        if line.startswith("prunable") and current:
+            prunable.append(current)
+    return prunable
+
+
+def canonical_report_issues() -> list[str]:
+    issues: list[str] = []
+    for rel_path in CANONICAL_LATEST_REPORTS:
+        abs_path = ROOT / rel_path
+        if not abs_path.exists():
+            issues.append(f"{rel_path}: canonical latest artifact is missing")
+            continue
+        try:
+            payload = json.loads(abs_path.read_text())
+        except Exception as exc:
+            issues.append(f"{rel_path}: canonical latest artifact is unreadable: {exc}")
+            continue
+        issues.extend(f"{rel_path}: {issue}" for issue in validate_report_envelope(payload))
+    return issues
 
 
 def is_placeholder(value: str) -> bool:
@@ -157,6 +227,10 @@ def is_generated_reference(target: str) -> bool:
     return target.startswith(GENERATED_REFERENCE_PREFIXES)
 
 
+def is_duplicate_debris(path: Path | str) -> bool:
+    return bool(DEBRIS_SUFFIX_RE.match(Path(path).name))
+
+
 def reference_exists(source: Path, target: str) -> bool:
     candidate = (source.parent / target).resolve()
     try:
@@ -173,11 +247,16 @@ def reference_exists(source: Path, target: str) -> bool:
 def main() -> int:
     issues: list[str] = []
     files = tracked_files()
+    all_files = {*(files), *(untracked_files())}
 
     for rel_path in files:
         for label, rule in BLOCKED_PATH_RULES:
             if rule(rel_path):
                 issues.append(f"{rel_path}: blocked {label}")
+
+    for rel_path in sorted(all_files, key=str):
+        if is_duplicate_debris(rel_path):
+            issues.append(f"{rel_path}: duplicate debris file")
 
     for rel_path in files:
         abs_path = ROOT / rel_path
@@ -193,6 +272,11 @@ def main() -> int:
                     issues.append(
                         f"{rel_path}:{line_number}: possible {pattern.label}: {value[:12]}..."
                     )
+
+    issues.extend(canonical_report_issues())
+
+    for worktree in list_prunable_worktrees():
+        issues.append(f"stale worktree reference: {worktree}")
 
     seen_reference_issues: set[tuple[Path, str]] = set()
     for rel_path in CANONICAL_REFERENCE_FILES:

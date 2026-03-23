@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.elastifund.canonical-truth-writer</string>
+
+  <!--
+    Pulls fresh Polymarket wallet state every 30 minutes and writes the
+    authoritative operator truth packet.
+
+    Outputs:
+      reports/canonical_operator_truth.json
+      data/finance_imports/account_polymarket.csv
+
+    Install:
+      cp deploy/launchd/com.elastifund.canonical-truth-writer.plist ~/Library/LaunchAgents/
+      launchctl load ~/Library/LaunchAgents/com.elastifund.canonical-truth-writer.plist
+
+    Logs:
+      tail -f /Users/johnbradley/Desktop/Elastifund/logs/canonical_truth_writer.launchd.log
+  -->
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/johnbradley/Desktop/Elastifund/scripts/canonical_truth_writer.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/johnbradley/Desktop/Elastifund</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+  </dict>
+
+  <!-- Run every 30 minutes -->
+  <key>StartInterval</key>
+  <integer>1800</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/johnbradley/Desktop/Elastifund/logs/canonical_truth_writer.launchd.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/johnbradley/Desktop/Elastifund/logs/canonical_truth_writer.launchd.log</string>
+</dict>
+</plist>

@@ -16,6 +16,7 @@ Options:
   --restart           Restart jj-live.service after syncing files
   --btc5              Install/restart btc-5min-maker.service on the VPS
   --btc5-autoresearch Install/enable the 5-minute BTC5 autoresearch timer
+  --strike-desk       Install/enable the strike-desk execution orchestrator timer
   --kalshi            Install/enable kalshi-weather-trader.timer (runs every 5m)
   --loop              Install/enable jj-improvement-loop.timer (runs every 30m)
   --monitor           Install/enable btc5-pnl-monitor.timer (runs every 5m)
@@ -56,6 +57,7 @@ CLEAN_ENV=false
 RESTART_SERVICE=false
 ENABLE_BTC5=false
 ENABLE_BTC5_AUTORESEARCH=false
+ENABLE_STRIKE_DESK=false
 ENABLE_KALSHI=false
 ENABLE_LOOP=false
 ENABLE_MONITOR=false
@@ -83,6 +85,9 @@ while [ $# -gt 0 ]; do
             ;;
         --btc5-autoresearch)
             ENABLE_BTC5_AUTORESEARCH=true
+            ;;
+        --strike-desk)
+            ENABLE_STRIKE_DESK=true
             ;;
         --kalshi)
             ENABLE_KALSHI=true
@@ -121,6 +126,8 @@ SERVICE_NAME="jj-live.service"
 BTC5_SERVICE_NAME="btc-5min-maker.service"
 BTC5_AUTORESEARCH_SERVICE_NAME="btc5-autoresearch.service"
 BTC5_AUTORESEARCH_TIMER_NAME="btc5-autoresearch.timer"
+STRIKE_DESK_SERVICE_NAME="strike-desk.service"
+STRIKE_DESK_TIMER_NAME="strike-desk.timer"
 KALSHI_SERVICE_NAME="kalshi-weather-trader.service"
 KALSHI_TIMER_NAME="kalshi-weather-trader.timer"
 LOOP_SERVICE_NAME="jj-improvement-loop.service"
@@ -141,11 +148,12 @@ echo "  Target:   $VPS:$BOT_DIR"
 echo "  Profile:  $PROFILE_NAME"
 echo "  Clean env: $CLEAN_ENV"
 echo "  Restart:   $RESTART_SERVICE"
-echo "  BTC5 service: $ENABLE_BTC5"
-echo "  BTC5 autoresearch: $ENABLE_BTC5_AUTORESEARCH"
-echo "  Kalshi timer: $ENABLE_KALSHI"
-echo "  Loop timer:   $ENABLE_LOOP"
-echo "  PnL monitor:  $ENABLE_MONITOR"
+  echo "  BTC5 service: $ENABLE_BTC5"
+  echo "  BTC5 autoresearch: $ENABLE_BTC5_AUTORESEARCH"
+  echo "  Strike desk timer: $ENABLE_STRIKE_DESK"
+  echo "  Kalshi timer: $ENABLE_KALSHI"
+  echo "  Loop timer:   $ENABLE_LOOP"
+  echo "  PnL monitor:  $ENABLE_MONITOR"
 echo
 
 POLYBOT_FILES=(
@@ -164,6 +172,7 @@ SCRIPT_SUPPORT_FILES=(
     "scripts/btc5_pnl_monitor.py"
     "scripts/btc5_regime_policy_lab.py"
     "scripts/run_btc5_autoresearch_cycle.py"
+    "scripts/run_strike_desk.py"
     "scripts/run_kalshi_weather_auto.sh"
     "scripts/run_flywheel_cycle.py"
     "scripts/write_remote_cycle_status.py"
@@ -174,6 +183,8 @@ DEPLOY_ASSET_FILES=(
     "deploy/btc-5min-maker.service"
     "deploy/btc5-autoresearch.service"
     "deploy/btc5-autoresearch.timer"
+    "deploy/strike-desk.service"
+    "deploy/strike-desk.timer"
     "deploy/btc5-pnl-monitor.service"
     "deploy/btc5-pnl-monitor.timer"
     "deploy/kalshi-weather-trader.service"
@@ -388,6 +399,15 @@ else
     echo "  Skipping BTC5 autoresearch timer (--btc5-autoresearch not set)."
 fi
 
+if [[ "$ENABLE_STRIKE_DESK" == "true" ]]; then
+    echo
+    echo "  Installing/enabling strike desk timer..."
+    "${SSH_CMD[@]}" "$VPS" "cd $BOT_DIR && sudo install -m 644 $BOT_DIR/deploy/$STRIKE_DESK_SERVICE_NAME /etc/systemd/system/$STRIKE_DESK_SERVICE_NAME && sudo install -m 644 $BOT_DIR/deploy/$STRIKE_DESK_TIMER_NAME /etc/systemd/system/$STRIKE_DESK_TIMER_NAME && sudo systemctl daemon-reload && sudo systemctl enable $STRIKE_DESK_TIMER_NAME && sudo systemctl start $STRIKE_DESK_TIMER_NAME && sudo systemctl start $STRIKE_DESK_SERVICE_NAME && strike_desk_result=\$(sudo systemctl show $STRIKE_DESK_SERVICE_NAME -p Result --value) && test \"\$strike_desk_result\" = success && sudo systemctl is-active $STRIKE_DESK_TIMER_NAME && echo 'Strike desk timer active:' && sudo systemctl list-timers $STRIKE_DESK_TIMER_NAME --no-pager"
+else
+    echo
+    echo "  Skipping strike desk timer (--strike-desk not set)."
+fi
+
 if [[ "$ENABLE_KALSHI" == "true" ]]; then
     echo
     echo "  Installing/enabling Kalshi weather trader timer..."
@@ -429,6 +449,7 @@ echo "========================================"
 echo
 echo "Examples:"
 echo "  ./scripts/deploy.sh --clean-env --profile maker_velocity_live --restart --btc5 --btc5-autoresearch --kalshi --loop"
+echo "  ./scripts/deploy.sh --clean-env --profile maker_velocity_live --restart --btc5 --btc5-autoresearch --strike-desk --kalshi --loop"
 echo "  ./scripts/deploy.sh --clean-env --profile live_aggressive --restart"
 echo "  ./scripts/deploy.sh --clean-env --profile paper_aggressive --restart"
 echo "  ./scripts/deploy.sh"

@@ -41,6 +41,22 @@ Canonical command path rule:
 | Runtime mode/profile edits | `python3 scripts/runtime_controls.py --help` | Profile/override control |
 | Remote cycle status artifact | `python3 scripts/write_remote_cycle_status.py --help` | Refreshes remote cycle status contract |
 
+## Proof-Carrying Kernel And Local Twin
+
+| Workflow | Canonical command | Script entrypoint |
+|---|---|---|
+| Canonical truth reconciliation | `python3 scripts/canonical_truth_writer.py` | `python3 scripts/canonical_truth_writer.py` |
+| Local twin shadow cycle | `python3 scripts/run_local_twin.py` | `python3 scripts/run_local_twin.py` |
+| Kernel cycle shadow | `python3 scripts/run_kernel_cycle.py` | `python3 scripts/run_kernel_cycle.py` |
+| Intelligence harness | `python3 scripts/run_intelligence_harness.py` | `python3 scripts/run_intelligence_harness.py` |
+| Strike desk shadow queue | `python3 scripts/run_strike_desk.py` | `python3 scripts/run_strike_desk.py` |
+
+## Revenue-First Execution
+
+| Workflow | Canonical command | Script entrypoint |
+|---|---|---|
+| Strike factory cycle | `make strike-factory-local` | `python3 scripts/run_strike_factory.py` |
+
 ## Research And Lane Automation
 
 - `run_*` scripts: lane dispatches and one-shot operators (cross-asset, audits, collectors, autoresearch).

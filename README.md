@@ -29,6 +29,8 @@ Elastic is the shared substrate for system memory, evaluation, observability, wo
 | **Operator Packet** (existing operator / deep research) | [COMMAND_NODE.md](COMMAND_NODE.md) | single root handoff packet |
 | Active operating policy | [PROJECT_INSTRUCTIONS.md](PROJECT_INSTRUCTIONS.md) | execution and policy contract |
 | Machine-first workflow rules | [AGENTS.md](AGENTS.md) | commands, guardrails, path ownership |
+| Canonical architecture index | [docs/architecture/README.md](docs/architecture/README.md) | proof kernel, event tape, strike desk, promotion, deploy split |
+| Canonical deploy / shadow split | [docs/architecture/deployment_blueprint.md](docs/architecture/deployment_blueprint.md) | local twin vs Lightsail role boundary |
 | Contribution and PR requirements | [CONTRIBUTING.md](CONTRIBUTING.md) | setup, tests, DCO |
 
 ### Start Here Path

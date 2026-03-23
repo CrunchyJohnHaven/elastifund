@@ -1,3 +1,10 @@
+---
+title: Prediction Markets 101
+status: published
+doc_type: article
+last_reviewed: 2026-03-22
+---
+
 # Prediction Markets 101
 
 *Part of the Elastifund Education Center — [elastifund.io/learn/prediction-markets-101](https://elastifund.io/learn/prediction-markets-101)*

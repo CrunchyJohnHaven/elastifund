@@ -1,3 +1,10 @@
+---
+title: How AI Forecasts: The Science of Machine Probability Estimation
+status: published
+doc_type: article
+last_reviewed: 2026-03-22
+---
+
 # How AI Forecasts: The Science of Machine Probability Estimation
 
 *Part of the Elastifund Education Center — [elastifund.io/learn/how-ai-forecasts](https://elastifund.io/learn/how-ai-forecasts)*

@@ -1,0 +1,17 @@
+[Unit]
+Description=Strike Desk Execution Orchestrator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/polymarket-trading-bot
+Environment=STRIKE_DESK_LANE_SET=p2_p4
+ExecStart=/bin/bash -lc 'mkdir -p reports/strike_desk data/tape && export PYTHONPATH=/home/ubuntu/polymarket-trading-bot:/home/ubuntu/polymarket-trading-bot/bot:/home/ubuntu/polymarket-trading-bot/polymarket-bot && /usr/bin/python3 scripts/run_strike_desk.py --reports-dir reports/strike_desk --tape-db data/tape/strike_desk.db'
+Restart=on-failure
+RestartSec=60
+TimeoutStartSec=1200
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=strike-desk

@@ -175,12 +175,17 @@ class TestHeartbeatPersistence:
 class TestSnapshotPersistence:
     def test_write_snapshot_creates_files(self, tmp_path: Path):
         snap = _make_snapshot()
-        path = _write_snapshot(tmp_path, snap)
+        live_report = tmp_path / "reports" / "wallet_live_snapshot_latest.json"
+        path = _write_snapshot(tmp_path, snap, live_snapshot_path=live_report)
         assert path.exists()
         latest = tmp_path / "latest.json"
         assert latest.exists()
         data = json.loads(latest.read_text())
         assert data["user_address"] == "0xabc"
+        report = json.loads(live_report.read_text())
+        assert report["artifact"] == "wallet_live_snapshot"
+        assert report["status"] == "fresh"
+        assert report["source_of_truth"]
 
 
 class TestRunSinglePoll:

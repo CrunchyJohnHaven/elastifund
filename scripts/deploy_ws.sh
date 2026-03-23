@@ -13,6 +13,16 @@
 
 set -euo pipefail
 
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    cat <<'EOF'
+Usage: ./scripts/deploy_ws.sh [user@host]
+
+Deploy WebSocket infrastructure to the Dublin VPS. If no host is supplied,
+VPS_USER@VPS_IP from .env or the environment is used.
+EOF
+    exit 0
+fi
+
 SSH_KEY="${LIGHTSAIL_KEY:-$HOME/.ssh/lightsail.pem}"
 VPS="${1:-${VPS_USER:-ubuntu}@${VPS_IP:?Set VPS_IP in .env}}"
 BOT_DIR="/home/ubuntu/polymarket-trading-bot"

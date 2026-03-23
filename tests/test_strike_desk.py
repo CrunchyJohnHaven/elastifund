@@ -105,6 +105,18 @@ class MockResolutionTarget:
 
 
 @dataclass
+class MockStaleQuote:
+    market_id: str = "stale_market_1"
+    question: str = "Did event Y happen?"
+    side: str = "YES"
+    stale_price: float = 0.41
+    fair_price: float = 0.55
+    edge: float = 0.14
+    size_available: float = 12.0
+    likely_reason: str = "pre_news_quote"
+
+
+@dataclass
 class MockCrossPlatformOpportunity:
     matched_pair: Any = None
     buy_yes_platform: str = "polymarket"
@@ -305,7 +317,7 @@ class TestPriorityConstants(unittest.TestCase):
         self.assertLess(PRIORITY_NEG_RISK, PRIORITY_LLM_TOURNAMENT)
 
     def test_lane_names_complete(self):
-        self.assertEqual(len(LANE_NAMES), 8)
+        self.assertEqual(len(LANE_NAMES), 9)
 
 
 class TestPrioritizeSignals(unittest.TestCase):
@@ -335,6 +347,16 @@ class TestPrioritizeSignals(unittest.TestCase):
         p2 = _make_packet(strategy_id="b", market_id="same", priority=2, direction="NO")
         result = desk.prioritize_signals([p1, p2])
         self.assertEqual(len(result), 0)
+
+    def test_same_priority_linked_opposing_kept(self):
+        desk = _make_desk()
+        p1 = _make_packet(strategy_id="a", market_id="same", priority=2, direction="YES")
+        p2 = _make_packet(strategy_id="b", market_id="same", priority=2, direction="NO")
+        p1.linked_packets = [p2.packet_id]
+        p2.linked_packets = [p1.packet_id]
+        result = desk.prioritize_signals([p1, p2])
+        self.assertEqual(len(result), 2)
+        self.assertEqual({pkt.packet_id for pkt in result}, {p1.packet_id, p2.packet_id})
 
     def test_same_priority_same_direction_keeps_first(self):
         desk = _make_desk()
@@ -546,6 +568,19 @@ class TestResolutionAdapter(unittest.TestCase):
         pkt = desk._adapt_resolution(target)
         self.assertAlmostEqual(pkt.metadata["yes_price"], 0.97, places=2)
         self.assertAlmostEqual(pkt.metadata["resolution_eta_hours"], 6.0, places=1)
+
+
+class TestStaleQuoteAdapter(unittest.TestCase):
+    def test_adapt_stale_quote_basic(self):
+        desk = _make_desk()
+        quote = MockStaleQuote()
+        pkt = desk._adapt_stale_quote(quote)
+        self.assertIsNotNone(pkt)
+        self.assertEqual(pkt.strategy_id, "stale_quote")
+        self.assertEqual(pkt.market_id, "stale_market_1")
+        self.assertEqual(pkt.direction, "YES")
+        self.assertEqual(pkt.priority, PRIORITY_STALE_QUOTE)
+        self.assertEqual(pkt.metadata["execution_side"], "buy_yes")
 
 
 class TestCrossPlatAdapter(unittest.TestCase):
@@ -950,6 +985,81 @@ class TestDefaultConfig(unittest.TestCase):
         desk = _make_desk({"capital": 5000.0, "max_desk_exposure_pct": 0.50})
         self.assertEqual(desk._capital, 5000.0)
         self.assertAlmostEqual(desk._desk_budget, 2500.0, places=1)
+
+
+class TestBTC5DailyPnlDemotion(unittest.TestCase):
+    """Tests for BTC5 daily PnL demotion logic in generate_packets."""
+
+    def test_btc5_not_demoted_by_default(self):
+        desk = _make_desk()
+        demoted, reason = desk.is_btc5_demoted()
+        self.assertFalse(demoted)
+        self.assertEqual(reason, "")
+
+    def test_btc5_demoted_on_negative_et_day(self):
+        desk = _make_desk({"btc5_daily_pnl_demotion_usd": -10.0})
+        desk.set_btc5_daily_pnl(et_day_pnl_usd=-15.0, rolling_24h_pnl_usd=5.0)
+        demoted, reason = desk.is_btc5_demoted()
+        self.assertTrue(demoted)
+        self.assertIn("et_day_pnl", reason)
+
+    def test_btc5_demoted_on_negative_rolling(self):
+        desk = _make_desk({"btc5_daily_pnl_demotion_usd": -10.0})
+        desk.set_btc5_daily_pnl(et_day_pnl_usd=0.0, rolling_24h_pnl_usd=-12.0)
+        demoted, reason = desk.is_btc5_demoted()
+        self.assertTrue(demoted)
+        self.assertIn("rolling_24h_pnl", reason)
+
+    def test_btc5_not_demoted_above_threshold(self):
+        desk = _make_desk({"btc5_daily_pnl_demotion_usd": -10.0})
+        desk.set_btc5_daily_pnl(et_day_pnl_usd=-5.0, rolling_24h_pnl_usd=-8.0)
+        demoted, _ = desk.is_btc5_demoted()
+        self.assertFalse(demoted)
+
+    def test_generate_packets_suppresses_btc5_when_demoted(self):
+        desk = _make_desk({"btc5_daily_pnl_demotion_usd": -10.0})
+        desk.set_btc5_daily_pnl(et_day_pnl_usd=-20.0)
+
+        btc5_pkt = _make_packet(strategy_id="btc5", priority=PRIORITY_BTC5, market_id="btc_mkt_1")
+        whale_pkt = _make_packet(strategy_id="whale", priority=PRIORITY_WHALE, market_id="whale_mkt_1")
+
+        approved = desk.generate_packets([btc5_pkt, whale_pkt])
+
+        # BTC5 should be suppressed, whale should pass
+        approved_ids = {p.strategy_id for p in approved}
+        self.assertNotIn("btc5", approved_ids)
+        self.assertIn("whale", approved_ids)
+
+    def test_generate_packets_allows_btc5_when_not_demoted(self):
+        desk = _make_desk({"btc5_daily_pnl_demotion_usd": -10.0})
+        desk.set_btc5_daily_pnl(et_day_pnl_usd=5.0, rolling_24h_pnl_usd=10.0)
+
+        btc5_pkt = _make_packet(strategy_id="btc5", priority=PRIORITY_BTC5, market_id="btc_mkt_2")
+        approved = desk.generate_packets([btc5_pkt])
+        self.assertEqual(len(approved), 1)
+        self.assertEqual(approved[0].strategy_id, "btc5")
+
+    def test_btc5_demotion_records_rejection(self):
+        desk = _make_desk({"btc5_daily_pnl_demotion_usd": -10.0})
+        desk.set_btc5_daily_pnl(et_day_pnl_usd=-20.0)
+
+        btc5_pkt = _make_packet(strategy_id="btc5", priority=PRIORITY_BTC5, market_id="btc_mkt_3")
+        desk.generate_packets([btc5_pkt])
+
+        self.assertEqual(len(desk._rejections), 1)
+        self.assertIn("daily_pnl_demotion", desk._rejections[0]["reason"])
+
+    def test_structural_lanes_unaffected_by_btc5_demotion(self):
+        desk = _make_desk({"btc5_daily_pnl_demotion_usd": -10.0})
+        desk.set_btc5_daily_pnl(et_day_pnl_usd=-50.0, rolling_24h_pnl_usd=-50.0)
+
+        # All non-btc5 packets should pass
+        packets = [
+            _make_packet(strategy_id="neg_risk", priority=PRIORITY_NEG_RISK, market_id="nr_1"),
+            _make_packet(strategy_id="whale", priority=PRIORITY_WHALE, market_id="wh_1"),
+        ]
+        approved = desk.generate_packets(packets)
+        self.assertEqual(len(approved), 2)
 
 
 if __name__ == "__main__":

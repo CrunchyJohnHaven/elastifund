@@ -3,6 +3,15 @@
 
 set -euo pipefail
 
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    cat <<'EOF'
+Usage: ./scripts/health_check.sh
+
+Pure bash + jq heartbeat checker for cron use.
+EOF
+    exit 0
+fi
+
 HEARTBEAT_FILE="${JJ_HEARTBEAT_FILE:-data/heartbeat.json}"
 TIMEOUT_SECONDS="${JJ_HEARTBEAT_TIMEOUT_SECONDS:-600}"
 NOW_EPOCH="${JJ_HEALTH_NOW_EPOCH:-$(date -u +%s)}"

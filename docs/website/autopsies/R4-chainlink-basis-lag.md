@@ -1,3 +1,10 @@
+---
+title: Strategy Autopsy: R4 - Chainlink vs Binance Basis Lag
+status: rejected
+doc_type: autopsy
+last_reviewed: 2026-03-22
+---
+
 # Strategy Autopsy: R4 — Chainlink vs Binance Basis Lag
 
 *Status: REJECTED | Tested: March 6, 2026 | Kill Reason: Taker fee exceeds spread*

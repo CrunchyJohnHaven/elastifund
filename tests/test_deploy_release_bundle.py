@@ -207,6 +207,8 @@ def test_build_release_contract_requires_snapshot_and_profile_selection(tmp_path
         "reports/public_runtime_snapshot.json",
         "reports/runtime_profile_effective.json",
         "reports/runtime_truth_latest.json",
+        "reports/trade_proof/latest.json",
+        "reports/wallet_live_snapshot_latest.json",
     ]
 
 
@@ -251,6 +253,8 @@ def test_validate_release_plan_flags_stale_sha_and_missing_required_bundle_files
         "reports/public_runtime_snapshot.json",
         "reports/runtime_profile_effective.json",
         "reports/runtime_truth_latest.json",
+        "reports/trade_proof/latest.json",
+        "reports/wallet_live_snapshot_latest.json",
     ]
     assert any("does not match HEAD" in issue for issue in validation["issues"])
 
@@ -322,6 +326,8 @@ def test_build_release_manifest_collects_checksums_and_runtime_truth(
         "reports/public_runtime_snapshot.json",
         "reports/runtime_profile_effective.json",
         "reports/runtime_truth_latest.json",
+        "reports/trade_proof/latest.json",
+        "reports/wallet_live_snapshot_latest.json",
     ]
     assert manifest["excluded_changed_files"] == ["docs/ignored.md"]
     assert manifest["checksums"]["bot/jj_live.py"] == hashlib.sha256(b"print('ok')\n").hexdigest()
@@ -392,6 +398,9 @@ def _write_release_contract_files(tmp_path: Path) -> None:
     (tmp_path / "config" / "runtime_profiles" / "research_scan.json").write_text("{}\n")
     (tmp_path / "reports").mkdir(exist_ok=True)
     (tmp_path / "reports" / "runtime_truth_latest.json").write_text("{}\n")
+    (tmp_path / "reports" / "wallet_live_snapshot_latest.json").write_text("{}\n")
+    (tmp_path / "reports" / "trade_proof").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "reports" / "trade_proof" / "latest.json").write_text("{}\n")
     (tmp_path / "reports" / "public_runtime_snapshot.json").write_text("{}\n")
     (tmp_path / "reports" / "runtime_profile_effective.json").write_text(
         json.dumps({"selected_profile": "shadow_fast_flow"})

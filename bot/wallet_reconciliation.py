@@ -15,6 +15,7 @@ import time
 from typing import Any, Iterable, Mapping, Sequence
 
 import requests
+from scripts.report_envelope import write_report
 
 try:  # pragma: no cover - unix-only
     import fcntl
@@ -315,10 +316,22 @@ class PolymarketWalletReconciler:
 
         payload = asdict(summary)
         if report_path is not None:
-            report_path.parent.mkdir(parents=True, exist_ok=True)
             report_payload = dict(payload)
             report_payload["report_path"] = str(report_path)
-            report_path.write_text(json.dumps(report_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            write_report(
+                report_path,
+                artifact="wallet_reconciliation",
+                payload=report_payload,
+                status="fresh" if summary.status == "reconciled" else "blocked",
+                source_of_truth="Polymarket data-api; local jj_trades.db; wallet export CSV",
+                freshness_sla_seconds=1800,
+                blockers=[] if summary.status == "reconciled" else [summary.recommendation or summary.status],
+                summary=(
+                    f"open_positions={summary.open_positions_count} "
+                    f"closed_positions={summary.closed_positions_count} "
+                    f"status={summary.status}"
+                ),
+            )
             summary = ReconciliationSummary(**report_payload)
         return summary
 

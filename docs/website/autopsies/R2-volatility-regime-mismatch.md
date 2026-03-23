@@ -1,3 +1,10 @@
+---
+title: Strategy Autopsy: R2 - Volatility Regime Mismatch
+status: rejected
+doc_type: autopsy
+last_reviewed: 2026-03-22
+---
+
 # Strategy Autopsy: R2 — Volatility Regime Mismatch
 
 *Status: REJECTED | Tested: March 6, 2026 | Kill Reason: Negative EV, degrades over time*

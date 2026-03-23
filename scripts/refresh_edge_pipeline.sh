@@ -8,6 +8,16 @@
 
 set -euo pipefail
 
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    cat <<'EOF'
+Usage: ./scripts/refresh_edge_pipeline.sh [--kill-only]
+
+Refresh the full edge scan pipeline, then run the kill battery report.
+  --kill-only   Skip the Gamma API refresh and edge scan steps.
+EOF
+    exit 0
+fi
+
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 

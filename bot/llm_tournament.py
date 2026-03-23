@@ -47,18 +47,45 @@ except ImportError:  # pragma: no cover - direct script execution fallback
 logger = logging.getLogger("JJ.llm_tournament")
 
 # Default model roster — override via constructor
-DEFAULT_MODELS = ["claude-sonnet-4-6", "gpt-4o", "gemini-2.0-flash"]
+# Cost-optimized default: 1 premium + 2 cheap = diversity without burning cash
+DEFAULT_MODELS = ["claude-haiku-3-5", "gemini-2.0-flash", "gpt-4o-mini"]
 
-# Approximate cost-per-1k-tokens for each model (input + output blended estimate)
+# Full model roster with cost-per-1k-tokens (input + output blended)
 _MODEL_COST_PER_1K: dict[str, float] = {
+    # Premium (use sparingly for high-conviction checks)
     "claude-sonnet-4-6": 0.003,
-    "claude-haiku-3-5": 0.0008,
     "gpt-4o": 0.005,
+    "gemini-1.5-pro": 0.00125,
+    # Cheap workhorses (primary tournament participants)
+    "claude-haiku-3-5": 0.0008,
     "gpt-4o-mini": 0.00015,
     "gemini-2.0-flash": 0.00035,
-    "gemini-1.5-pro": 0.00125,
+    # Near-free (Groq free tier, Kimi/Moonshot, DeepSeek)
+    "llama-3.3-70b-versatile": 0.0,      # Groq free tier
+    "llama-3.1-8b-instant": 0.0,          # Groq free tier
+    "qwen-qwq-32b": 0.0,                  # Groq free tier
+    "moonshot-v1-8k": 0.0001,             # Kimi 2.5 / Moonshot AI
+    "moonshot-v1-32k": 0.0002,            # Kimi 2.5 long context
+    "deepseek-chat": 0.00014,             # DeepSeek V3
+    "deepseek-reasoner": 0.00042,         # DeepSeek R1
 }
 _DEFAULT_COST_PER_1K = 0.002  # fallback for unknown models
+
+# Provider routing: model prefix -> base URL for OpenAI-compatible APIs
+_PROVIDER_BASE_URLS: dict[str, str] = {
+    "llama-": "https://api.groq.com/openai/v1",
+    "qwen-": "https://api.groq.com/openai/v1",
+    "moonshot-": "https://api.moonshot.cn/v1",
+    "deepseek-": "https://api.deepseek.com/v1",
+}
+
+# API key env-var for each OpenAI-compat provider prefix
+_PROVIDER_API_KEY_ENVS: dict[str, str] = {
+    "llama-": "GROQ_API_KEY",
+    "qwen-": "GROQ_API_KEY",
+    "moonshot-": "MOONSHOT_API_KEY",
+    "deepseek-": "DEEPSEEK_API_KEY",
+}
 
 PROMPT_TEMPLATE = """You are a superforecaster estimating probabilities for prediction markets.
 
@@ -169,6 +196,7 @@ class LLMTournament:
         self._anthropic_client = None
         self._openai_client = None
         self._google_client = None
+        self._compat_clients: dict[str, object] = {}   # prefix -> AsyncOpenAI
         self._clients_initialized = False
 
         # Historical accuracy tracking
@@ -342,6 +370,8 @@ class LLMTournament:
                 raw = await self._call_openai(model_name, prompt)
             elif model_name.startswith("gemini"):
                 raw = await self._call_google(model_name, prompt)
+            elif any(model_name.startswith(p) for p in _PROVIDER_BASE_URLS):
+                raw = await self._call_compat(model_name, prompt)
             else:
                 raise RuntimeError(
                     f"Unknown model provider for model name: {model_name!r}"
@@ -386,6 +416,95 @@ class LLMTournament:
         model = self._google_client.GenerativeModel(model_name)
         response = await asyncio.to_thread(model.generate_content, prompt)
         return response.text if response.text else ""
+
+    async def _call_compat(self, model_name: str, prompt: str) -> str:
+        """Call an OpenAI-compatible provider (Groq, Moonshot, DeepSeek, etc.)."""
+        import os
+        from openai import AsyncOpenAI
+
+        # Find the matching prefix
+        prefix = next(
+            (p for p in _PROVIDER_BASE_URLS if model_name.startswith(p)), None
+        )
+        if prefix is None:
+            raise RuntimeError(f"No compat base URL for model: {model_name!r}")
+
+        # Build client once per prefix and cache it
+        if prefix not in self._compat_clients:
+            base_url = _PROVIDER_BASE_URLS[prefix]
+            api_key_env = _PROVIDER_API_KEY_ENVS.get(prefix, "")
+            api_key = os.environ.get(api_key_env, "") if api_key_env else ""
+            if not api_key or api_key.startswith("your-"):
+                raise RuntimeError(
+                    f"API key not set for provider {prefix!r} "
+                    f"(env var: {api_key_env!r})"
+                )
+            self._compat_clients[prefix] = AsyncOpenAI(
+                api_key=api_key, base_url=base_url
+            )
+            logger.info("Tournament: compat client ready for prefix=%r", prefix)
+
+        client = self._compat_clients[prefix]
+        response = await client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=self.temperature,
+            max_tokens=512,
+        )
+        text = response.choices[0].message.content or ""
+        # Log usage so provider status flips from configured → active
+        self._log_provider_usage(prefix=prefix, model_name=model_name, prompt=prompt, response=text)
+        return text
+
+    def _log_provider_usage(
+        self,
+        *,
+        prefix: str,
+        model_name: str,
+        prompt: str,
+        response: str,
+    ) -> None:
+        """Append one usage record to reports/autoresearch/providers/{name}/history.jsonl."""
+        import json as _json
+        import time as _time
+        from pathlib import Path as _Path
+        from datetime import datetime as _dt, timezone as _tz
+
+        # Derive a human-friendly provider name from the prefix (strip trailing dash)
+        provider_name = prefix.rstrip("-")
+        cost = self._estimate_cost(model_name, prompt, response)
+        tokens_estimate = int((len(prompt) + len(response)) / 4)
+        record = {
+            "ts": _dt.now(tz=_tz.utc).isoformat(),
+            "epoch_s": _time.time(),
+            "provider": provider_name,
+            "model": model_name,
+            "prompt_chars": len(prompt),
+            "response_chars": len(response),
+            "tokens_estimate": tokens_estimate,
+            "cost_usd": round(cost, 8),
+            "lane": "tournament",
+        }
+        try:
+            root = _Path(__file__).resolve().parents[1]
+            provider_dir = root / "reports" / "autoresearch" / "providers" / provider_name
+            provider_dir.mkdir(parents=True, exist_ok=True)
+            history_path = provider_dir / "history.jsonl"
+            with history_path.open("a", encoding="utf-8") as fh:
+                fh.write(_json.dumps(record) + "\n")
+            # Overwrite status with latest activity
+            status = {
+                "provider": provider_name,
+                "status": "active",
+                "last_used_at": record["ts"],
+                "last_model": model_name,
+                "last_cost_usd": record["cost_usd"],
+            }
+            (provider_dir / "status.json").write_text(
+                _json.dumps(status, indent=2) + "\n", encoding="utf-8"
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Provider usage log failed for %s: %s", provider_name, exc)
 
     # ------------------------------------------------------------------
     # Main entry point

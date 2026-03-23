@@ -42,6 +42,24 @@
         ["Runtime mode/profile edits", "`python3 scripts/runtime_controls.py --help`", "Profile/override control"],
         ["Remote cycle status artifact", "`python3 scripts/write_remote_cycle_status.py --help`", "Refreshes remote cycle status contract"]
       ]
+    },
+    {
+      "heading": "Proof-Carrying Kernel And Local Twin",
+      "columns": ["Workflow", "Canonical command", "Script entrypoint"],
+      "rows": [
+        ["Canonical truth reconciliation", "`python3 scripts/canonical_truth_writer.py`", "`python3 scripts/canonical_truth_writer.py`"],
+        ["Local twin shadow cycle", "`python3 scripts/run_local_twin.py`", "`python3 scripts/run_local_twin.py`"],
+        ["Kernel cycle shadow", "`python3 scripts/run_kernel_cycle.py`", "`python3 scripts/run_kernel_cycle.py`"],
+        ["Intelligence harness", "`python3 scripts/run_intelligence_harness.py`", "`python3 scripts/run_intelligence_harness.py`"],
+        ["Strike desk shadow queue", "`python3 scripts/run_strike_desk.py`", "`python3 scripts/run_strike_desk.py`"]
+      ]
+    },
+    {
+      "heading": "Revenue-First Execution",
+      "columns": ["Workflow", "Canonical command", "Script entrypoint"],
+      "rows": [
+        ["Strike factory cycle", "`make strike-factory-local`", "`python3 scripts/run_strike_factory.py`"]
+      ]
     }
   ],
   "bullet_sections": [

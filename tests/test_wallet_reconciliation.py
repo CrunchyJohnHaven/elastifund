@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+from types import SimpleNamespace
 
 from bot.wallet_reconciliation import (
     PolymarketWalletReconciler,
@@ -11,7 +12,11 @@ from bot.wallet_reconciliation import (
     build_open_position_inventory,
     classify_btc_open_positions,
 )
-from scripts.reconcile_polymarket_wallet import _load_env_defaults, _looks_like_live_wallet_address
+from scripts.reconcile_polymarket_wallet import (
+    _load_env_defaults,
+    _looks_like_live_wallet_address,
+    main as reconcile_wallet_main,
+)
 
 
 class FakeResponse:
@@ -128,7 +133,7 @@ def test_reconcile_to_sqlite_mirrors_remote_positions_and_scores_drift(tmp_path:
 
     report_payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert report_payload["remote_closed_local_open_mismatches"] == 1
-    assert report_payload["status"] == "drift_detected"
+    assert report_payload["status"] == "blocked"
     assert report_payload["unmatched_open_positions"]["delta_remote_minus_local"] == -2
 
     with sqlite3.connect(db_path) as conn:
@@ -294,7 +299,7 @@ def test_open_position_inventory_separates_btc_fast_leaks_and_discretionary_book
     assert inventory["summary"]["sleeve_counts"]["btc5_intentional"] == 1
     assert inventory["summary"]["sleeve_counts"]["non_btc_fast"] == 1
     assert inventory["summary"]["sleeve_counts"]["long_dated_discretionary"] == 1
-    assert inventory["summary"]["policy_counts"]["close_only"] == 1
+    assert inventory["summary"]["policy_counts"]["close_only"] == 2
     assert inventory["summary"]["non_btc_fast_close_only"] is True
 
     eth_row = next(row for row in inventory["rows"] if row["token_id"] == "0xethasset")
@@ -318,3 +323,146 @@ def test_closed_winners_summary_orders_by_realized_pnl() -> None:
     )
 
     assert [row["title"] for row in winners] == ["Market B", "Market A"]
+
+
+def test_reconcile_wallet_cli_writes_canonical_live_snapshot_alias(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "data" / "jj_trades.db"
+    report_path = tmp_path / "reports" / "wallet_reconciliation" / "latest.json"
+    live_snapshot_path = tmp_path / "reports" / "wallet_live_snapshot_latest.json"
+    runtime_truth_path = tmp_path / "reports" / "runtime_truth_latest.json"
+    wallet_export_csv = tmp_path / "data" / "Polymarket-History-2026.csv"
+    debug_path = tmp_path / "reports" / "debug.json"
+    wallet_export_csv.parent.mkdir(parents=True, exist_ok=True)
+    wallet_export_csv.write_text("market_name,action\n", encoding="utf-8")
+    runtime_truth_path.parent.mkdir(parents=True, exist_ok=True)
+    runtime_truth_path.write_text(
+        json.dumps(
+            {
+                "capital": {
+                    "polymarket_actual_deployable_usd": 100.0,
+                    "polymarket_reserved_order_usd": 0.0,
+                    "polymarket_observed_total_usd": 100.0,
+                },
+                "polymarket_wallet": {
+                    "free_collateral_usd": 100.0,
+                    "reserved_order_usd": 0.0,
+                    "total_wallet_value_usd": 100.0,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "scripts.reconcile_polymarket_wallet.load_wallet_export_csv",
+        lambda _path: {
+            "available": True,
+            "path": str(wallet_export_csv),
+            "latest_timestamp": "2099-01-01T00:00:00Z",
+            "row_count": 1,
+            "open_market_keys": ["market-a"],
+            "redeemed_market_keys": [],
+        },
+    )
+    monkeypatch.setattr(
+        "scripts.reconcile_polymarket_wallet.cross_reference_wallet_export",
+        lambda **_kwargs: {"status": "ok"},
+    )
+    monkeypatch.setattr(
+        "scripts.reconcile_polymarket_wallet.classify_btc_open_positions",
+        lambda *_args, **_kwargs: {"btc_open_positions_stale": 0},
+    )
+    monkeypatch.setattr(
+        "scripts.reconcile_polymarket_wallet.build_open_position_inventory",
+        lambda *_args, **_kwargs: {
+            "summary": {
+                "sleeve_counts": {
+                    "btc5_intentional": 1,
+                    "non_btc_fast": 0,
+                    "long_dated_discretionary": 0,
+                },
+                "policy_counts": {"close_only": 0},
+            },
+            "rows": [],
+        },
+    )
+    monkeypatch.setattr(
+        "scripts.reconcile_polymarket_wallet.build_closed_winners_summary",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        "scripts.reconcile_polymarket_wallet.build_capital_attribution_summary",
+        lambda *_args, **_kwargs: {"capital_accounting_delta_usd": 0.0},
+    )
+
+    class FakeReconciler:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def fetch_open_positions(self, _user: str):
+            return [
+                {
+                    "conditionId": "0xcond1",
+                    "asset": "0xtoken1",
+                    "title": "ETH 5m",
+                    "outcome": "UP",
+                    "size": 5.0,
+                }
+            ]
+
+        def fetch_closed_positions(self, _user: str):
+            return []
+
+        def reconcile_to_sqlite(self, **_kwargs):
+            return SimpleNamespace(
+                status="reconciled",
+                recommendation="ready_for_launch_gate",
+                open_positions_count=1,
+                closed_positions_count=0,
+                matched_remote_open_positions=1,
+                matched_remote_closed_positions=0,
+                unmatched_remote_open_positions=0,
+                unmatched_remote_closed_positions=0,
+                local_trade_count=1,
+                phantom_local_open_trade_ids=[],
+                remote_closed_local_open_trade_ids=[],
+                report_path=None,
+            )
+
+        def close(self) -> None:
+            self.closed = True
+
+    monkeypatch.setattr("scripts.reconcile_polymarket_wallet.PolymarketWalletReconciler", FakeReconciler)
+    monkeypatch.setattr("scripts.reconcile_polymarket_wallet.default_user_address", lambda: "0x" + ("ab" * 20))
+
+    exit_code = reconcile_wallet_main(
+        [
+            "--user",
+            "0x" + ("ab" * 20),
+            "--db-path",
+            str(db_path),
+            "--report-path",
+            str(report_path),
+            "--wallet-live-snapshot-path",
+            str(live_snapshot_path),
+            "--wallet-export-csv",
+            str(wallet_export_csv),
+            "--runtime-truth-path",
+            str(runtime_truth_path),
+            "--debug-path",
+            str(debug_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert report_path.exists()
+    assert live_snapshot_path.exists()
+
+    report_payload = json.loads(report_path.read_text(encoding="utf-8"))
+    live_snapshot_payload = json.loads(live_snapshot_path.read_text(encoding="utf-8"))
+    assert report_payload["artifact"] == "wallet_reconciliation"
+    assert report_payload["status"] == "fresh"
+    assert report_payload["source_of_truth"]
+    assert live_snapshot_payload["artifact"] == "wallet_live_snapshot"
+    assert live_snapshot_payload["status"] == "fresh"
+    assert live_snapshot_payload["source_of_truth"]

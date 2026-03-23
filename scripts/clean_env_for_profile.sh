@@ -3,6 +3,16 @@
 
 set -euo pipefail
 
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    cat <<'EOF'
+Usage: ./scripts/clean_env_for_profile.sh [PROFILE_NAME]
+
+Strip runtime overrides from .env while preserving secrets and operator settings.
+Default profile: live_aggressive
+EOF
+    exit 0
+fi
+
 PROFILE_NAME="${1:-live_aggressive}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"

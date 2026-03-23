@@ -1,5 +1,9 @@
 # Architecture Decision Records
 
+- Status: canonical
+- Last reviewed: 2026-03-22
+- Scope: architecture decisions that shape the Elastifund control plane
+
 This directory captures the major architectural decisions behind the current Elastifund repo and the next-stage Elastifund.io buildout.
 
 ## Index

@@ -44,6 +44,8 @@ EXACT_DEPLOYABLE_FILES = {
 }
 REQUIRED_RELEASE_REPORT_FILES = (
     "reports/runtime_truth_latest.json",
+    "reports/wallet_live_snapshot_latest.json",
+    "reports/trade_proof/latest.json",
     "reports/public_runtime_snapshot.json",
     "reports/runtime_profile_effective.json",
 )

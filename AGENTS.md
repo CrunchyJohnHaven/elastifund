@@ -8,8 +8,9 @@ Use this as the machine-first entrypoint for coding sessions in the Elastifund m
 2. `docs/FORK_AND_RUN.md` if the goal is booting or forking the stack
 3. `docs/PARALLEL_AGENT_WORKFLOW.md` if Codex and Claude Code will work in parallel
 4. `docs/REPO_MAP.md` for path ownership and safe edit boundaries
-5. `PROJECT_INSTRUCTIONS.md` for the active operating context
-6. `CONTRIBUTING.md` for setup, tests, and PR rules
+5. `docs/architecture/README.md` for the canonical proof-carrying runtime map
+6. `PROJECT_INSTRUCTIONS.md` for the active operating context
+7. `CONTRIBUTING.md` for setup, tests, and PR rules
 
 Open `CLAUDE.md` only when you need the JJ operating model or higher-level process rules.
 
@@ -28,6 +29,10 @@ make test
 make verify
 make test-nontrading
 make smoke-nontrading
+make strike-factory-local
+python3 scripts/run_local_twin.py
+python3 scripts/run_kernel_cycle.py
+python3 scripts/run_intelligence_harness.py
 make test-polymarket
 ```
 
@@ -52,6 +57,7 @@ If two agents need the same file, stop parallelizing. Path ownership beats merge
 - Existing JSON handoff artifacts are the runtime status contract. Do not invent new runtime APIs just to pass state between lanes.
 - Keep new durable docs under `docs/` or `research/`, not the repo root, except for the approved numbered governance set `00_MISSION_AND_PRINCIPLES.md` through `12_MANAGED_SERVICE_BOUNDARY.md`.
 - Keep the repo root narrow: entrypoints, the approved numbered governance set, public repo standards, and compatibility files only.
+- The canonical architecture map lives in `docs/architecture/README.md`; do not mint a second control plane in root docs.
 - Keep secrets in `.env` only. Runtime state, credentials, exports, and local scratch files should stay ignored.
 - Private investor and legal materials live outside this repo and are out of scope for normal coding sessions.
 

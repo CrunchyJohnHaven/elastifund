@@ -9,6 +9,7 @@ This is the canonical map for navigating Elastifund quickly, especially in LLM-d
 | `README.md` | public overview, quick boot, current positioning |
 | `docs/FORK_AND_RUN.md` | easiest fork/bootstrap path |
 | `AGENTS.md` | machine-first commands and guardrails |
+| `docs/architecture/README.md` | canonical proof-carrying runtime map and staged deployment order |
 | `docs/PARALLEL_AGENT_WORKFLOW.md` | Codex/Claude split rules and sync cadence |
 | `PROJECT_INSTRUCTIONS.md` | current priorities and operating context |
 | `CLAUDE.md` | JJ operating model and process rules |
@@ -16,10 +17,17 @@ This is the canonical map for navigating Elastifund quickly, especially in LLM-d
 | `docs/numbered/00_MISSION_AND_PRINCIPLES.md` → `docs/numbered/12_MANAGED_SERVICE_BOUNDARY.md` | canonical governance, narrative, and public-messaging numbered-doc lane |
 | `docs/strategy/edge_discovery_system.md` | research and kill-rule architecture |
 | `FAST_TRADE_EDGE_ANALYSIS.md` | latest validation output |
+| `scripts/README.md` | canonical command map for verify, deploy, local twin, kernel, and revenue workflows |
 
 If a new doc overlaps one of the files above or the numbered-doc lane, consolidate instead of creating another source of truth.
 The repo root should stay narrow: session entrypoints, public repo standards, and a small number of compatibility files only.
 For live status, prefer checked-in runtime contracts (`config/remote_cycle_status.json`, `improvement_velocity.json`) and `research/edge_backlog_ranked.md` over stale prose. Runtime-local artifacts under `reports/` can be used when available, but may be absent in a clean clone.
+
+## Architecture Control Plane
+
+The proof-carrying runtime lives under `docs/architecture/`.
+Start with `docs/architecture/README.md`, then follow the order it lists.
+Use `scripts/README.md` for canonical commands and `docs/architecture/deployment_blueprint.md` for the local-vs-Lightsail split.
 
 ## Directory Map
 

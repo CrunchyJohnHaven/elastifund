@@ -14,11 +14,11 @@ rg -n "scripts/deploy\.sh|scripts/deploy_ws\.sh|scripts/btc5_status\.sh|scripts/
 
 | Script | Reference count | External refs | Why not removed now |
 |---|---:|---:|---|
-| `scripts/deploy.sh` | 22 | 7 | Active in docs, tests, and scripts; compatibility deploy lane still used |
-| `scripts/deploy_ws.sh` | 12 | 3 | Referenced by ops docs and script surfaces |
-| `scripts/btc5_status.sh` | 9 | 2 | Referenced by BTC5 rollout/deploy flows |
-| `scripts/install_bridge_cron.sh` | 4 | 0 | Active operational helper |
-| `scripts/install_jj_health_cron.sh` | 3 | 0 | Canonical install path for health-monitor cron |
+| `scripts/deploy.sh` | 28 | 12 | Active in docs, tests, and scripts; compatibility deploy lane still used |
+| `scripts/deploy_ws.sh` | 10 | 1 | Referenced by ops docs and script surfaces |
+| `scripts/btc5_status.sh` | 7 | 0 | Referenced by BTC5 rollout/deploy flows |
+| `scripts/install_bridge_cron.sh` | 3 | 0 | Active operational helper |
+| `scripts/install_jj_health_cron.sh` | 2 | 0 | Canonical install path for health-monitor cron |
 | `scripts/vps_setup.sh` | 5 | 0 | Manual bootstrap helper still discoverable |
 
 ## Completed In This Wave

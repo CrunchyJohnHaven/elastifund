@@ -1,3 +1,10 @@
+---
+title: Benchmark Methodology
+status: published
+doc_type: article
+last_reviewed: 2026-03-22
+---
+
 # Benchmark Methodology
 
 **Status:** methodology published, rankings withheld until real T0-T5 runs exist  
