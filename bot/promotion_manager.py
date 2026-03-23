@@ -9,6 +9,13 @@ Every stage transition requires passing all quantitative gates. Hope is not
 a position size.
 
 March 2026 — Elastifund / JJ
+
+v2 additions (DISPATCH_111):
+- StrategyRecord.net_returns: per-trade net returns after fees
+- check_promotion_v2(): Bayesian log-growth posterior gate
+- check_demotion_v2(): Bayesian demotion gate
+- promote_v2(): uses check_promotion_v2
+- FalsePromotionTracker: logs promotions and tracks reversion within 21 days
 """
 
 from __future__ import annotations
@@ -21,6 +28,8 @@ import time
 from dataclasses import dataclass, field, asdict
 from enum import IntEnum
 from typing import Any, Optional
+
+from bot.bayesian_promoter import LogGrowthPosterior
 
 logger = logging.getLogger("JJ.promotion_manager")
 
@@ -137,6 +146,7 @@ class StrategyRecord:
     cooloff_until: float = 0.0                   # epoch; 0 = no cooloff
     demotion_reason: str = ""
     created_at: float = field(default_factory=time.time)
+    net_returns: list[float] = field(default_factory=list)  # per-trade net returns after fees
 
     # -- derived properties --------------------------------------------------
 
@@ -262,7 +272,8 @@ CREATE TABLE IF NOT EXISTS strategies (
     metadata TEXT NOT NULL DEFAULT '{}',
     cooloff_until REAL NOT NULL DEFAULT 0.0,
     demotion_reason TEXT NOT NULL DEFAULT '',
-    created_at REAL NOT NULL
+    created_at REAL NOT NULL,
+    net_returns TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS promotion_events (
@@ -275,6 +286,11 @@ CREATE TABLE IF NOT EXISTS promotion_events (
     gate_results TEXT,
     reason TEXT
 );
+"""
+
+# Migration SQL: add net_returns column to existing tables that lack it
+_MIGRATION_ADD_NET_RETURNS = """
+ALTER TABLE strategies ADD COLUMN net_returns TEXT NOT NULL DEFAULT '[]';
 """
 
 
@@ -300,6 +316,16 @@ class PromotionManager:
 
     def _init_schema(self) -> None:
         self._conn.executescript(_SCHEMA)
+        # Add net_returns column if it doesn't exist yet (migration for existing DBs)
+        try:
+            self._conn.execute(_MIGRATION_ADD_NET_RETURNS)
+            self._conn.commit()
+            logger.info("Migration: added net_returns column to strategies table")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" in str(exc).lower():
+                pass  # Column already exists — no action needed
+            else:
+                raise
         self._conn.commit()
 
     # ------------------------------------------------------------------
@@ -307,6 +333,11 @@ class PromotionManager:
     # ------------------------------------------------------------------
 
     def _row_to_record(self, row: sqlite3.Row) -> StrategyRecord:
+        # net_returns may be absent in very old schema snapshots
+        try:
+            net_returns = json.loads(row["net_returns"])
+        except (IndexError, KeyError):
+            net_returns = []
         return StrategyRecord(
             strategy_id=row["strategy_id"],
             current_stage=PromotionStage(row["current_stage"]),
@@ -325,6 +356,7 @@ class PromotionManager:
             cooloff_until=row["cooloff_until"],
             demotion_reason=row["demotion_reason"],
             created_at=row["created_at"],
+            net_returns=net_returns,
         )
 
     def _save_record(self, rec: StrategyRecord) -> None:
@@ -333,8 +365,8 @@ class PromotionManager:
                (strategy_id, current_stage, stage_entered_at, fills, wins, losses,
                 gross_pnl, max_drawdown, daily_pnl_history, fill_rate,
                 orders_submitted, sharpe, slippage_values, metadata,
-                cooloff_until, demotion_reason, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                cooloff_until, demotion_reason, created_at, net_returns)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 rec.strategy_id,
                 int(rec.current_stage),
@@ -353,6 +385,7 @@ class PromotionManager:
                 rec.cooloff_until,
                 rec.demotion_reason,
                 rec.created_at,
+                json.dumps(rec.net_returns),
             ),
         )
         self._conn.commit()
@@ -451,6 +484,22 @@ class PromotionManager:
         if rec.orders_submitted > 0:
             rec.fill_rate = rec.fills / rec.orders_submitted
 
+        self._save_record(rec)
+        return rec
+
+    def record_trade_return(self, strategy_id: str, net_return: float) -> StrategyRecord:
+        """Append a per-trade net return (after fees) to the strategy record.
+
+        This feeds the Bayesian log-growth posterior used by check_promotion_v2()
+        and check_demotion_v2().  Call this in addition to (not instead of)
+        record_fill() so that both legacy gates and v2 gates receive data.
+
+        Args:
+            strategy_id: the strategy to update
+            net_return: fractional return after fees, e.g. 0.05 for +5%, -0.02 for -2%.
+        """
+        rec = self._strategies[strategy_id]
+        rec.net_returns.append(net_return)
         self._save_record(rec)
         return rec
 
@@ -824,6 +873,283 @@ class PromotionManager:
         return rec
 
     # ------------------------------------------------------------------
+    # Bayesian v2 promotion / demotion gates (DISPATCH_111)
+    # ------------------------------------------------------------------
+
+    # Stage-dependent minimum observation counts for v2 gates
+    _V2_MIN_OBS: dict[PromotionStage, int] = {
+        PromotionStage.MICRO_LIVE: 10,   # shadow -> microlive
+        PromotionStage.SEED: 30,          # microlive -> seed
+        PromotionStage.SCALE: 100,        # seed -> scale
+    }
+
+    # P(mu>0) thresholds required to PROMOTE to each target stage
+    _V2_PROMOTE_THRESHOLD: dict[PromotionStage, float] = {
+        PromotionStage.MICRO_LIVE: 0.80,
+        PromotionStage.SEED: 0.90,
+        PromotionStage.SCALE: 0.95,
+    }
+
+    # P(mu>0) thresholds BELOW which we demote FROM each stage
+    # (lower than promotion to prevent oscillation)
+    _V2_DEMOTE_THRESHOLD: dict[PromotionStage, float] = {
+        PromotionStage.MICRO_LIVE: 0.30,
+        PromotionStage.SEED: 0.40,
+        PromotionStage.SCALE: 0.50,
+    }
+
+    def _build_posterior(self, net_returns: list[float]) -> LogGrowthPosterior:
+        """Construct a LogGrowthPosterior from a list of net returns."""
+        posterior = LogGrowthPosterior()
+        for r in net_returns:
+            log_ret = math.log(1.0 + max(-0.99, r))
+            posterior.update(log_ret)
+        return posterior
+
+    def check_promotion_v2(self, strategy_id: str) -> dict[str, Any]:
+        """Bayesian log-growth promotion gate.
+
+        Computes P(mu_ell > 0 | data) using Student-t posterior.
+        Stage-dependent thresholds:
+          shadow -> microlive: P >= 0.80, min 10 observations
+          microlive -> seed:   P >= 0.90, min 30 observations
+          seed -> scale:       P >= 0.95, min 100 observations
+
+        Execution health gates (fill rate, drawdown) remain unchanged;
+        this method only replaces the edge-quality gate.
+
+        Returns the same dict shape as check_promotion() for easy comparison.
+        """
+        rec = self._strategies[strategy_id]
+        current = rec.current_stage
+        target = PromotionStage(current + 1) if current < PromotionStage.CORE else None
+
+        base: dict[str, Any] = {
+            "eligible": False,
+            "target_stage": int(target) if target is not None else None,
+            "gates_passed": [],
+            "gates_failed": [],
+            "details": {},
+            "bayesian": {},
+        }
+
+        if target is None:
+            base["gates_failed"].append("already_at_max_stage")
+            return base
+
+        if target == PromotionStage.CORE:
+            base["gates_failed"].append("requires_human_approval")
+            base["details"]["requires_human_approval"] = {
+                "required": "John's explicit sign-off",
+                "actual": "automated check",
+                "passed": False,
+            }
+            return base
+
+        # Cool-off check (same as v1)
+        if rec.cooloff_until > time.time():
+            remaining = (rec.cooloff_until - time.time()) / 86400.0
+            base["gates_failed"].append("cooloff_active")
+            base["details"]["cooloff_active"] = {
+                "required": 0,
+                "actual": round(remaining, 1),
+                "passed": False,
+                "message": f"{remaining:.1f} days remaining in cool-off",
+            }
+            return base
+
+        # Stages without a v2 bayesian gate (HYPOTHESIS, BACKTESTED, SHADOW)
+        promote_threshold = self._V2_PROMOTE_THRESHOLD.get(target)
+        min_obs = self._V2_MIN_OBS.get(target)
+        if promote_threshold is None:
+            base["eligible"] = True
+            base["gates_passed"].append("no_quantitative_gate")
+            return base
+
+        # ---- Bayesian edge-quality gate ----
+        n_obs = len(rec.net_returns)
+        posterior = self._build_posterior(rec.net_returns)
+        p_pos = posterior.prob_positive()
+
+        base["bayesian"] = posterior.to_dict()
+
+        # Min observations gate
+        obs_ok = n_obs >= min_obs
+        base["details"]["min_observations"] = {
+            "required": min_obs,
+            "actual": n_obs,
+            "passed": obs_ok,
+        }
+        (base["gates_passed"] if obs_ok else base["gates_failed"]).append("min_observations")
+
+        # Posterior probability gate
+        prob_ok = p_pos >= promote_threshold
+        base["details"]["prob_positive"] = {
+            "required": promote_threshold,
+            "actual": round(p_pos, 6),
+            "passed": prob_ok,
+        }
+        (base["gates_passed"] if prob_ok else base["gates_failed"]).append("prob_positive")
+
+        # ---- Execution health gates (fill rate + drawdown, unchanged from v1) ----
+        gate = STAGE_GATES.get(target)
+        if gate is not None:
+            # Fill rate
+            fill_ok = rec.fill_rate >= gate.min_fill_rate
+            base["details"]["min_fill_rate"] = {
+                "required": gate.min_fill_rate,
+                "actual": round(rec.fill_rate, 4),
+                "passed": fill_ok,
+            }
+            (base["gates_passed"] if fill_ok else base["gates_failed"]).append("min_fill_rate")
+
+            # Max drawdown
+            allocated = self._stage_capital(rec.current_stage)
+            dd_pct = (rec.max_drawdown / allocated) if allocated > 0 else 0.0
+            dd_ok = dd_pct <= gate.max_drawdown_pct
+            base["details"]["max_drawdown_pct"] = {
+                "required": f"<= {gate.max_drawdown_pct:.0%}",
+                "actual": round(dd_pct, 4),
+                "passed": dd_ok,
+            }
+            (base["gates_passed"] if dd_ok else base["gates_failed"]).append("max_drawdown_pct")
+
+        base["eligible"] = len(base["gates_failed"]) == 0
+        return base
+
+    def check_demotion_v2(self, strategy_id: str) -> dict[str, Any]:
+        """Bayesian demotion gate.
+
+        Demote thresholds (lower than promotion to prevent oscillation):
+          microlive: P(mu>0) < 0.30
+          seed:      P(mu>0) < 0.40
+          scale:     P(mu>0) < 0.50
+
+        Also retains the existing hard execution-health triggers (drawdown,
+        fill-rate collapse) from check_demotion().
+        """
+        rec = self._strategies[strategy_id]
+        if rec.current_stage < PromotionStage.MICRO_LIVE:
+            return {
+                "should_demote": False,
+                "severity": None,
+                "triggers": [],
+                "details": {},
+                "bayesian": {},
+            }
+
+        triggers: list[str] = []
+        details: dict[str, Any] = {}
+        severity: Optional[str] = None
+
+        # ---- Bayesian edge-quality demotion gate ----
+        demote_threshold = self._V2_DEMOTE_THRESHOLD.get(rec.current_stage)
+        n_obs = len(rec.net_returns)
+        posterior = self._build_posterior(rec.net_returns)
+        p_pos = posterior.prob_positive()
+        bayesian_info = posterior.to_dict()
+
+        if demote_threshold is not None:
+            min_obs_for_kill = 15  # Need at least 15 obs to pull the kill trigger
+            if n_obs >= min_obs_for_kill and p_pos < demote_threshold:
+                triggers.append("bayesian_edge_collapse")
+                details["bayesian_edge_collapse"] = {
+                    "threshold": demote_threshold,
+                    "actual_prob_positive": round(p_pos, 6),
+                    "n_observations": n_obs,
+                    "posterior_mean": round(posterior.posterior_mean, 8),
+                }
+                severity = "severe"
+
+        # ---- Hard execution-health triggers (same as v1) ----
+        allocated = self._stage_capital(rec.current_stage)
+        gate = STAGE_GATES.get(rec.current_stage)
+        if gate and allocated > 0:
+            dd_pct = rec.max_drawdown / allocated
+            if dd_pct > gate.max_drawdown_pct:
+                triggers.append("drawdown_breach")
+                details["drawdown_breach"] = {
+                    "cap": gate.max_drawdown_pct,
+                    "actual": round(dd_pct, 4),
+                }
+                severity = "severe"
+
+        pf = rec.profit_factor
+        if rec.fills >= 10 and pf < 0.90:
+            triggers.append("profit_factor_collapse")
+            details["profit_factor_collapse"] = {"threshold": 0.90, "actual": round(pf, 4)}
+            severity = "severe"
+
+        if rec.orders_submitted >= 20 and rec.fill_rate < 0.10:
+            triggers.append("fill_rate_collapse")
+            details["fill_rate_collapse"] = {"threshold": 0.10, "actual": round(rec.fill_rate, 4)}
+            severity = "severe"
+
+        if len(rec.daily_pnl_history) >= 3:
+            last3 = rec.daily_pnl_history[-3:]
+            if all(d < 0 for d in last3):
+                triggers.append("three_consecutive_losing_days")
+                details["three_consecutive_losing_days"] = {"last_3": last3}
+                if severity is None:
+                    severity = "moderate"
+
+        return {
+            "should_demote": len(triggers) > 0,
+            "severity": severity,
+            "triggers": triggers,
+            "details": details,
+            "bayesian": bayesian_info,
+        }
+
+    def promote_v2(self, strategy_id: str) -> StrategyRecord:
+        """Move strategy to next stage if eligible per Bayesian v2 gate.
+
+        Uses check_promotion_v2() instead of check_promotion().
+        Raises ValueError if not eligible.
+        """
+        result = self.check_promotion_v2(strategy_id)
+        if not result["eligible"]:
+            raise ValueError(
+                f"Strategy {strategy_id} not eligible for v2 promotion: "
+                f"failed gates: {result['gates_failed']}"
+            )
+
+        rec = self._strategies[strategy_id]
+        old_stage = rec.current_stage
+        new_stage = PromotionStage(old_stage + 1)
+
+        self._log_event(
+            strategy_id, old_stage, new_stage, "promotion_v2",
+            gate_results=result["details"],
+        )
+
+        rec.current_stage = new_stage
+        rec.stage_entered_at = time.time()
+        # Reset per-stage counters for the new stage
+        rec.fills = 0
+        rec.wins = 0
+        rec.losses = 0
+        rec.gross_pnl = 0.0
+        rec.max_drawdown = 0.0
+        rec.daily_pnl_history = []
+        rec.fill_rate = 0.0
+        rec.orders_submitted = 0
+        rec.sharpe = 0.0
+        rec.slippage_values = []
+        rec.net_returns = []
+        rec.metadata["gross_wins"] = 0.0
+        rec.metadata["gross_losses"] = 0.0
+        rec.cooloff_until = 0.0
+        rec.demotion_reason = ""
+
+        self._save_record(rec)
+        logger.info(
+            "PROMOTED_V2 %s: %s -> %s (bayesian gate)",
+            strategy_id, old_stage.name, new_stage.name,
+        )
+        return rec
+
+    # ------------------------------------------------------------------
     # Capital & position queries
     # ------------------------------------------------------------------
 
@@ -915,3 +1241,136 @@ class PromotionManager:
         if self._conn:
             self._conn.close()
             self._conn = None  # type: ignore[assignment]
+
+
+# ---------------------------------------------------------------------------
+# False Promotion Tracker (DISPATCH_111)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _PromotionRecord:
+    """Internal record tracking a single promotion event."""
+    strategy_id: str
+    from_stage: PromotionStage
+    to_stage: PromotionStage
+    promoted_at: float
+    demoted_at: Optional[float] = None
+    reverted: bool = False
+
+
+class FalsePromotionTracker:
+    """Tracks promotions and flags strategies that get demoted within 21 days.
+
+    A "false promotion" is a promotion that is reversed by a demotion within
+    the lookback window.  This metric measures whether the promotion gate is
+    too lenient.
+
+    Usage:
+        tracker = FalsePromotionTracker()
+        tracker.record_promotion("strat_a", PromotionStage.SHADOW, PromotionStage.MICRO_LIVE)
+        # ... later, if the strategy is demoted ...
+        tracker.record_demotion("strat_a", PromotionStage.MICRO_LIVE, PromotionStage.SHADOW)
+        summary = tracker.summary()
+    """
+
+    LOOKBACK_DAYS: float = 21.0
+
+    def __init__(self) -> None:
+        self._records: list[_PromotionRecord] = []
+
+    def record_promotion(
+        self,
+        strategy_id: str,
+        from_stage: PromotionStage,
+        to_stage: PromotionStage,
+        timestamp: Optional[float] = None,
+    ) -> None:
+        """Log a promotion event."""
+        self._records.append(
+            _PromotionRecord(
+                strategy_id=strategy_id,
+                from_stage=from_stage,
+                to_stage=to_stage,
+                promoted_at=timestamp if timestamp is not None else time.time(),
+            )
+        )
+        logger.debug(
+            "FalsePromotionTracker: recorded promotion %s %s->%s",
+            strategy_id, from_stage.name, to_stage.name,
+        )
+
+    def record_demotion(
+        self,
+        strategy_id: str,
+        from_stage: PromotionStage,
+        to_stage: PromotionStage,
+        timestamp: Optional[float] = None,
+    ) -> None:
+        """Log a demotion event; marks matching promotions as reverted if within lookback."""
+        now = timestamp if timestamp is not None else time.time()
+        lookback_cutoff = now - self.LOOKBACK_DAYS * 86400.0
+
+        for rec in self._records:
+            if (
+                rec.strategy_id == strategy_id
+                and rec.to_stage == from_stage
+                and not rec.reverted
+                and rec.demoted_at is None
+                and rec.promoted_at >= lookback_cutoff
+            ):
+                rec.demoted_at = now
+                rec.reverted = True
+                logger.warning(
+                    "FalsePromotionTracker: FALSE PROMOTION detected for %s "
+                    "(%s->%s, reversed after %.1f days)",
+                    strategy_id,
+                    rec.from_stage.name,
+                    rec.to_stage.name,
+                    (now - rec.promoted_at) / 86400.0,
+                )
+                break  # Mark only the most-recent matching promotion
+
+    def false_promotion_rate(self) -> float:
+        """Fraction of promotions that were reversed within the lookback window.
+
+        Only counts promotions old enough to have completed the full lookback
+        period (or that have already been reverted).
+        """
+        now = time.time()
+        lookback_secs = self.LOOKBACK_DAYS * 86400.0
+        eligible = [
+            r for r in self._records
+            if (now - r.promoted_at) >= lookback_secs or r.reverted
+        ]
+        if not eligible:
+            return 0.0
+        reverted = sum(1 for r in eligible if r.reverted)
+        return reverted / len(eligible)
+
+    def get_false_promotions(self) -> list[dict[str, Any]]:
+        """Return all confirmed false promotions."""
+        return [
+            {
+                "strategy_id": r.strategy_id,
+                "from_stage": r.from_stage.name,
+                "to_stage": r.to_stage.name,
+                "promoted_at": r.promoted_at,
+                "demoted_at": r.demoted_at,
+                "days_before_demotion": (
+                    (r.demoted_at - r.promoted_at) / 86400.0
+                    if r.demoted_at is not None else None
+                ),
+            }
+            for r in self._records
+            if r.reverted
+        ]
+
+    def summary(self) -> dict[str, Any]:
+        """Full tracker summary."""
+        return {
+            "total_promotions": len(self._records),
+            "false_promotions": len(self.get_false_promotions()),
+            "false_promotion_rate": round(self.false_promotion_rate(), 4),
+            "lookback_days": self.LOOKBACK_DAYS,
+            "records": self.get_false_promotions(),
+        }

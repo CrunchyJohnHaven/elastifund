@@ -1,0 +1,194 @@
+# Edge Discovery Engine Configuration
+# =====================================
+# Loaded by run_edge_discovery.sh via --config flag.
+# All values have defaults in _default_config() in src/edge_discovery_engine.py.
+# Override only the values you want to change from the defaults.
+#
+# Usage:
+#   python3 src/edge_discovery_engine.py --config config/edge_discovery_config.yaml
+
+# ---------------------------------------------------------------------------
+# Walk-forward backtest parameters
+# ---------------------------------------------------------------------------
+engine:
+  # Training window (days): how far back to look for fitting
+  # Default: 30 days. Larger windows reduce overfitting but need more data.
+  train_window_days: 30
+
+  # Test window (days): out-of-sample evaluation period per fold
+  # Default: 10 days. Shorter = more folds; longer = more stable estimates.
+  test_window_days: 10
+
+  # Step size (days): how far to advance each walk-forward fold
+  # Default: 7 days. Smaller = more overlap; larger = independent folds.
+  step_size_days: 7
+
+  # Number of walk-forward windows per hypothesis
+  # Default: 4. A hypothesis must survive this many windows to promote.
+  n_windows: 4
+
+  # ---------------------------------------------------------------------------
+  # Multiple testing correction
+  # ---------------------------------------------------------------------------
+
+  # Benjamini-Hochberg FDR alpha (false discovery rate target)
+  # Default: 0.10 (10% FDR). Lower = stricter; higher = more discoveries.
+  bh_fdr_alpha: 0.10
+
+  # ---------------------------------------------------------------------------
+  # Kill thresholds
+  # ---------------------------------------------------------------------------
+
+  # Kill if P(mu > 0) < kill_prob_positive with at least kill_min_trades trades
+  kill_prob_positive: 0.30
+  kill_min_trades: 30
+
+  # Kill if fee drag exceeds kill_fee_drag_pct of gross edge
+  kill_fee_drag_pct: 0.50
+
+  # Kill if average opportunity density < kill_density_min per day
+  kill_density_min: 1.0
+
+  # Kill if maker fill rate < kill_fill_rate_min (applies to maker strategies only)
+  kill_fill_rate_min: 0.10
+
+  # Kill if max drawdown > kill_max_dd_multiplier × avg daily PnL
+  kill_max_dd_multiplier: 3.0
+
+  # ---------------------------------------------------------------------------
+  # Promotion thresholds (ALL must pass)
+  # ---------------------------------------------------------------------------
+
+  # P(mu > 0) >= promote_prob_positive
+  promote_prob_positive: 0.90
+
+  # Opportunity density >= promote_density_min per day
+  promote_density_min: 2.0
+
+  # Maker fill rate >= promote_fill_rate_min
+  promote_fill_rate_min: 0.20
+
+  # Must survive >= promote_min_windows walk-forward windows
+  promote_min_windows: 3
+
+  # Must have >= promote_min_trades total simulated trades
+  promote_min_trades: 30
+
+# ---------------------------------------------------------------------------
+# Hypothesis generation parameters
+# ---------------------------------------------------------------------------
+generation:
+  # Venues to enumerate hypotheses for
+  venues:
+    - polymarket
+    - kalshi
+
+  # Strategy families to include in parameter sweep
+  families:
+    - longshot_fade
+    - maker_micro
+    - time_decay
+    - latency_capture
+    - structural_basket
+    - sentiment_fade
+    - cross_platform_arb
+    - combinatorial
+
+  # Budget allocation across three generation methods (fractions sum to 1.0)
+  # parameter_sweep: enumerate explicit parameter grids
+  # combinatorial: mix signal sources
+  # research_seeded: parse edge_backlog_ranked.md
+  budget_parameter_sweep: 0.33
+  budget_combinatorial: 0.33
+  budget_research_seeded: 0.34
+
+  # Minimum composite score to seed a research hypothesis (from backlog)
+  research_min_composite: 3.0
+
+  # Minimum P(works) to seed a research hypothesis
+  research_min_p_works: 0.15
+
+  # Number of signal sources to combine in combinatorial generation
+  combo_k_values:
+    - 2
+    - 3
+    - 4
+
+  # Time windows to sweep (ET hours, inclusive)
+  time_windows:
+    - name: early_morning
+      start: 3
+      end: 6
+    - name: morning
+      start: 7
+      end: 11
+    - name: afternoon
+      start: 12
+      end: 16
+    - name: evening
+      start: 17
+      end: 21
+    - name: overnight
+      start: 22
+      end: 2
+    - name: all_day
+      start: 0
+      end: 23
+
+# ---------------------------------------------------------------------------
+# Synthetic data parameters (used when no historical data is available)
+# ---------------------------------------------------------------------------
+synthetic_data:
+  # Number of synthetic market records per hypothesis
+  n_markets: 600
+
+  # Base win rate for calibrated predictions
+  base_win_rate: 0.52
+
+  # Maker fill probability (calibrated from BTC5 empirical data)
+  maker_fill_prob: 0.20
+
+  # Average market resolution time (hours, for exponential distribution)
+  avg_resolution_hours: 72
+
+  # VPIN distribution parameters (half-normal)
+  vpin_mean: 0.25
+  vpin_std: 0.15
+
+# ---------------------------------------------------------------------------
+# Fee models by venue
+# ---------------------------------------------------------------------------
+fee_models:
+  polymarket:
+    maker_rebate:
+      # Polymarket maker: 0% fee + 20-25% spread rebate
+      # Modeled as net negative fee (rebate)
+      rebate_rate: 0.0025
+    maker_flat:
+      # Post-only, no rebate (conservative)
+      fee_rate: 0.0
+    taker_flat:
+      # Taker fee: 2% of notional on prediction markets
+      # (crypto: 0.44%, sports: 1.75% at best)
+      fee_rate: 0.02
+  kalshi:
+    zero_fee:
+      fee_rate: 0.0
+    taker_flat:
+      fee_rate: 0.07  # Kalshi taker fee: 7% of stake on binary contracts
+
+# ---------------------------------------------------------------------------
+# Daemon configuration (for run_edge_discovery.sh)
+# ---------------------------------------------------------------------------
+daemon:
+  # Seconds to sleep between cycles
+  sleep_between_cycles: 60
+
+  # Default max hypotheses per cycle
+  default_max_hypotheses: 50
+
+  # Default cycle timeout (seconds)
+  default_cycle_timeout: 3600
+
+  # Log level: DEBUG or INFO
+  log_level: INFO

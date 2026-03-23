@@ -933,6 +933,107 @@ def choose_token_id_for_direction(market: dict[str, Any], direction: str) -> str
     return None
 
 
+# ---------------------------------------------------------------------------
+# DISPATCH_112: New execution utility functions
+# ---------------------------------------------------------------------------
+
+def compute_aggression(spread_ticks: int, fill_model_ev: float) -> int:
+    """Return aggression level based on spread width and expected value.
+
+    Aggression levels:
+        0 - skip (spread too tight, no edge for maker)
+        1 - standard maker quote
+        2 - aggressive maker quote (wider spread with positive EV)
+
+    Args:
+        spread_ticks: Current bid-ask spread in ticks.
+        fill_model_ev: Expected value from the fill model (positive = favourable).
+
+    Returns:
+        Integer aggression level 0, 1, or 2.
+    """
+    if spread_ticks < 3:
+        return 0
+    if spread_ticks <= 5:
+        return 1
+    return min(2, 1 if fill_model_ev <= 0.01 else 2)
+
+
+def compute_maker_ev(
+    p_fill: float,
+    p_win: float,
+    entry_price: float,
+    rebate_rate: float = 0.005,
+    cancel_cost: float = 0.0,
+    adverse_selection: float = 0.0,
+) -> float:
+    """Compute expected value of a maker order.
+
+    Args:
+        p_fill: Probability that the maker order fills before cancel.
+        p_win: Probability that the position resolves in our favour.
+        entry_price: Price paid per contract (0-1 scale).
+        rebate_rate: Maker rebate as a fraction of notional.
+        cancel_cost: Fixed cost incurred if the order is cancelled unfilled.
+        adverse_selection: Cost of adverse selection per unit of notional.
+
+    Returns:
+        Expected value in dollars per dollar of notional at risk.
+    """
+    payoff_if_win = 1.0 - entry_price
+    loss_if_lose = entry_price
+    rebate = rebate_rate * entry_price * (1.0 - entry_price)
+    ev_conditional = (
+        p_win * payoff_if_win
+        - (1.0 - p_win) * loss_if_lose
+        + rebate
+        - adverse_selection
+    )
+    return p_fill * ev_conditional - cancel_cost
+
+
+class RTDSTruthFeed:
+    """Stub for the Real-Time Delta Signal (RTDS) truth feed.
+
+    Tracks the candle open price and accumulates real-time Binance trade data
+    to produce a live delta signal. Designed to be wired into the execution
+    loop in a later sprint; all methods are safe to call without side effects.
+    """
+
+    def __init__(self) -> None:
+        self._candle_open: float | None = None
+        self._last_price: float | None = None
+        self._trade_count: int = 0
+
+    def set_candle_open(self, price: float) -> None:
+        """Record the candle open price for delta computation."""
+        self._candle_open = float(price)
+
+    def update(self, trade_price: float) -> None:
+        """Ingest a new trade price tick from the Binance trade stream."""
+        self._last_price = float(trade_price)
+        self._trade_count += 1
+
+    def get_delta(self) -> float | None:
+        """Return (last_price - candle_open) / candle_open, or None if not ready."""
+        if self._candle_open is None or self._last_price is None:
+            return None
+        if self._candle_open == 0.0:
+            return None
+        return (self._last_price - self._candle_open) / self._candle_open
+
+    @property
+    def trade_count(self) -> int:
+        """Number of trade ticks ingested since last candle open."""
+        return self._trade_count
+
+    def reset(self) -> None:
+        """Reset state for a new candle window."""
+        self._candle_open = None
+        self._last_price = None
+        self._trade_count = 0
+
+
 @dataclass
 class MakerConfig:
     paper_trading: bool = os.environ.get("BTC5_PAPER_TRADING", "true").lower() in {"1", "true", "yes"}
@@ -954,12 +1055,16 @@ class MakerConfig:
     stage_order_failed_rate_limit: float = float(os.environ.get("BTC5_STAGE_ORDER_FAILED_RATE_LIMIT", "0.25"))
     min_trade_usd: float = float(os.environ.get("BTC5_MIN_TRADE_USD", "5.00"))
     min_delta: float = float(os.environ.get("BTC5_MIN_DELTA", "0.0003"))
-    max_abs_delta: float | None = _optional_env_float("BTC5_MAX_ABS_DELTA")
+    max_abs_delta: float = float(os.environ.get("BTC5_MAX_ABS_DELTA", "0.0050"))
     maker_improve_ticks: int = int(os.environ.get("BTC5_MAKER_IMPROVE_TICKS", "1"))
     max_buy_price: float = float(os.environ.get("BTC5_MAX_BUY_PRICE", "0.55"))
     up_max_buy_price: float | None = _optional_env_float("BTC5_UP_MAX_BUY_PRICE")
     down_max_buy_price: float | None = _optional_env_float("BTC5_DOWN_MAX_BUY_PRICE")
     up_live_mode: str = os.environ.get("BTC5_UP_LIVE_MODE", "shadow_only")
+    allowed_sides: frozenset[str] = field(init=False, default_factory=frozenset)
+    max_entry_price: float = float(os.environ.get("BTC5_MAX_ENTRY_PRICE", "0.49"))
+    entry_window_start_sec: int = int(os.environ.get("BTC5_ENTRY_WINDOW_START_SEC", "10"))
+    entry_window_end_sec: int = int(os.environ.get("BTC5_ENTRY_WINDOW_END_SEC", "2"))
     enforce_lt049_skip_baseline: bool = _env_flag("BTC5_ENFORCE_LT049_SKIP_BASELINE", True)
     down_mid_bucket_experiment_mode: str = os.environ.get(
         "BTC5_DOWN_MID_BUCKET_EXPERIMENT_MODE",
@@ -978,7 +1083,7 @@ class MakerConfig:
     midpoint_guardrail_shade_ticks: int = int(os.environ.get("BTC5_MIDPOINT_GUARDRAIL_SHADE_TICKS", "3"))
     enable_toxic_flow_guardrail: bool = _env_flag("BTC5_ENABLE_TOXIC_FLOW_GUARDRAIL", True)
     toxic_flow_depth_levels: int = int(os.environ.get("BTC5_TOXIC_FLOW_DEPTH_LEVELS", "3"))
-    toxic_flow_imbalance_threshold: float = float(os.environ.get("BTC5_TOXIC_FLOW_IMBALANCE_THRESHOLD", "0.35"))
+    toxic_flow_imbalance_threshold: float = float(os.environ.get("BTC5_TOXIC_FLOW_IMBALANCE_THRESHOLD", "0.80"))
     toxic_flow_min_depth_shares: float = float(os.environ.get("BTC5_TOXIC_FLOW_MIN_DEPTH_SHARES", "25"))
     toxic_flow_min_price_exempt: float = float(os.environ.get("BTC5_TOXIC_FLOW_MIN_PRICE_EXEMPT", "0.0"))
     midpoint_kill_zone_min_price_exempt: float = float(os.environ.get("BTC5_MIDPOINT_KILL_ZONE_MIN_PRICE_EXEMPT", "0.0"))
@@ -1112,6 +1217,19 @@ class MakerConfig:
         self.down_mid_bucket_experiment_session_bucket = (
             str(self.down_mid_bucket_experiment_session_bucket or "open_et").strip().lower() or "open_et"
         )
+        # Parse allowed_sides from env (default: DOWN-only mode)
+        raw_sides = os.environ.get("BTC5_ALLOWED_SIDES", "DOWN")
+        parsed_sides: set[str] = set()
+        for s in raw_sides.split(","):
+            s = s.strip().upper()
+            if s in {"UP", "DOWN"}:
+                parsed_sides.add(s)
+        self.allowed_sides = frozenset(parsed_sides) if parsed_sides else frozenset({"DOWN"})
+        # Clamp max_entry_price
+        self.max_entry_price = max(0.0, min(1.0, float(self.max_entry_price)))
+        # Ensure entry window bounds are sane
+        self.entry_window_start_sec = max(1, int(self.entry_window_start_sec))
+        self.entry_window_end_sec = max(0, int(self.entry_window_end_sec))
 
     @property
     def effective_max_trade_usd(self) -> float:
