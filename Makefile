@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: help bootstrap bootstrap-lite bootstrap-runtime doctor onboard quickstart preflight hygiene verify-static verify-fastpath test-select test-fixture-ownership test-research-sim test-platform test verify test-root test-polymarket test-nontrading smoke-nontrading btc5-autoresearch-local btc5-autoresearch-local-autopush btc5-arr-report btc5-hypothesis-lab btc5-regime-policy-lab btc5-hypothesis-frontier strike-factory-local deploy-write-manifest deploy-dry-run api-specs analyze-iv check-edge clean
+.PHONY: help bootstrap bootstrap-lite bootstrap-runtime doctor onboard quickstart preflight hygiene verify-static verify-fastpath test-select test-fixture-ownership test-research-sim test-platform test verify test-root test-polymarket test-nontrading smoke-nontrading lint type-check btc5-autoresearch-local btc5-autoresearch-local-autopush btc5-arr-report btc5-hypothesis-lab btc5-regime-policy-lab btc5-hypothesis-frontier strike-factory-local deploy-write-manifest deploy-dry-run api-specs analyze-iv check-edge clean
 
 help:
 	@printf '%s\n' \
@@ -23,6 +23,8 @@ help:
 		'test-root        Run the repo-root pytest matrix' \
 		'test-nontrading  Run the nontrading test suite only' \
 		'smoke-nontrading Run the deterministic nontrading smoke check' \
+		'lint             Run ruff linter on the codebase' \
+		'type-check       Run mypy type checker on bot/ and src/' \
 		'btc5-autoresearch-local Run the local 5-minute BTC5 autoresearch loop' \
 		'btc5-autoresearch-local-autopush Run the local loop and auto-push allowlisted ARR promotions' \
 		'btc5-arr-report  Render tracked percentage-only ARR progress artifacts' \
@@ -106,6 +108,12 @@ test-nontrading:
 
 smoke-nontrading:
 	$(PYTHON) scripts/nontrading_smoke.py
+
+lint:
+	$(PYTHON) -m ruff check .
+
+type-check:
+	$(PYTHON) -m mypy bot/ src/ --ignore-missing-imports
 
 btc5-autoresearch-local:
 	$(PYTHON) scripts/run_btc5_autoresearch_loop.py --include-archive-csvs

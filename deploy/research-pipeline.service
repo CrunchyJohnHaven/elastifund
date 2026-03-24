@@ -1,0 +1,19 @@
+[Unit]
+Description=Elastifund Edge Discovery Pipeline
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/polymarket-trading-bot
+EnvironmentFile=/home/ubuntu/polymarket-trading-bot/.env
+ExecStart=/usr/bin/python3 src/main.py --run-once
+StandardOutput=append:/var/log/elastifund/research-pipeline.log
+StandardError=append:/var/log/elastifund/research-pipeline.log
+TimeoutStartSec=3600
+MemoryMax=8G
+SyslogIdentifier=research-pipeline
+
+[Install]
+WantedBy=multi-user.target

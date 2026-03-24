@@ -1055,12 +1055,15 @@ class MakerConfig:
     stage_order_failed_rate_limit: float = float(os.environ.get("BTC5_STAGE_ORDER_FAILED_RATE_LIMIT", "0.25"))
     min_trade_usd: float = float(os.environ.get("BTC5_MIN_TRADE_USD", "5.00"))
     min_delta: float = float(os.environ.get("BTC5_MIN_DELTA", "0.0003"))
-    max_abs_delta: float = float(os.environ.get("BTC5_MAX_ABS_DELTA", "0.0050"))
+    max_abs_delta: float = float(os.environ.get("BTC5_MAX_ABS_DELTA", "0.0150"))
     maker_improve_ticks: int = int(os.environ.get("BTC5_MAKER_IMPROVE_TICKS", "1"))
     max_buy_price: float = float(os.environ.get("BTC5_MAX_BUY_PRICE", "0.55"))
     up_max_buy_price: float | None = _optional_env_float("BTC5_UP_MAX_BUY_PRICE")
     down_max_buy_price: float | None = _optional_env_float("BTC5_DOWN_MAX_BUY_PRICE")
     up_live_mode: str = os.environ.get("BTC5_UP_LIVE_MODE", "shadow_only")
+    direction_mode: str = os.environ.get("BTC5_DIRECTION_MODE", "both")  # "both", "down_only", "up_only"
+    tod_filter_enabled: bool = os.environ.get("BTC5_TOD_FILTER_ENABLED", "1") == "1"
+    tod_suppress_hours_et: str = os.environ.get("BTC5_TOD_SUPPRESS_HOURS_ET", "0,1,2,8,9")
     allowed_sides: frozenset[str] = field(init=False, default_factory=frozenset)
     max_entry_price: float = float(os.environ.get("BTC5_MAX_ENTRY_PRICE", "0.49"))
     entry_window_start_sec: int = int(os.environ.get("BTC5_ENTRY_WINDOW_START_SEC", "10"))
@@ -1125,7 +1128,7 @@ class MakerConfig:
     min_buy_price: float = float(os.environ.get("BTC5_MIN_BUY_PRICE", "0.04"))
     tick_size: float = float(os.environ.get("BTC5_TICK_SIZE", "0.01"))
     entry_seconds_before_close: int = int(os.environ.get("BTC5_ENTRY_SECONDS_BEFORE_CLOSE", "10"))
-    cancel_seconds_before_close: int = int(os.environ.get("BTC5_CANCEL_SECONDS_BEFORE_CLOSE", "2"))
+    cancel_seconds_before_close: int = int(os.environ.get("BTC5_CANCEL_SECONDS_BEFORE_CLOSE", "5"))
     daily_loss_limit_usd: float = float(os.environ.get("BTC5_DAILY_LOSS_LIMIT_USD", "247"))
     enable_probe_after_daily_loss: bool = _env_flag("BTC5_ENABLE_PROBE_AFTER_DAILY_LOSS", True)
     enable_probe_after_recent_loss: bool = _env_flag("BTC5_ENABLE_PROBE_AFTER_RECENT_LOSS", True)
@@ -3186,20 +3189,25 @@ class BTC5MinMakerBot:
         session_policy_name = session_override.session_name if session_override is not None else None
         session_reason = session_guardrail_reason(session_override, window_start_ts=window_start_ts)
 
-        # --- BTC5 time-of-day kill (data shows heavy losses 22-03, 09-11 ET) ---
-        _BTC5_KILL_HOURS_ET = frozenset({22, 23, 0, 1, 2, 3, 9, 10, 11})
+        # --- BTC5 time-of-day filter (configurable via BTC5_TOD_SUPPRESS_HOURS_ET) ---
         _win_dt = datetime.fromtimestamp(window_start_ts, tz=timezone.utc)
         _win_et_hour = (_win_dt.hour - 4) % 24
-        if _win_et_hour in _BTC5_KILL_HOURS_ET:
+        if self.cfg.tod_filter_enabled:
+            _tod_suppress_hours = frozenset(
+                int(h.strip()) for h in self.cfg.tod_suppress_hours_et.split(",") if h.strip()
+            )
+        else:
+            _tod_suppress_hours = frozenset()
+        if _win_et_hour in _tod_suppress_hours:
             logger.info(
-                "BTC5 TIME-KILL: ET hour %02d — skipping window %s",
+                "BTC5 TOD-SUPPRESS: ET hour %02d in suppress list — skipping window %s",
                 _win_et_hour, slug,
             )
             return _result(
                 {
                     "window_start_ts": window_start_ts,
-                    "status": "skip_time_of_day_kill",
-                    "decision_reason_tags": ["decision=skip", f"skip_reason=time_kill_et_{_win_et_hour:02d}"],
+                    "status": "skip_tod_suppressed",
+                    "decision_reason_tags": ["decision=skip", f"skip_reason=tod_suppressed_et_{_win_et_hour:02d}"],
                 }
             )
 
@@ -3453,6 +3461,58 @@ class BTC5MinMakerBot:
                 "delta": delta,
                 "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
                 "stage_gate_reason": stage_gate_reason,
+            })
+
+        # --- Direction filter (BTC5_DIRECTION_MODE: both / down_only / up_only) ---
+        if self.cfg.direction_mode == "down_only" and direction == "UP":
+            decision_reason_tags = ["decision=skip", "skip_reason=direction_filtered"]
+            row = {
+                "window_start_ts": window_start_ts,
+                "window_end_ts": window_end_ts,
+                "slug": slug,
+                "direction": direction,
+                "open_price": open_price,
+                "current_price": current_price,
+                "delta": delta,
+                "order_status": "skip_direction_filtered",
+                "reason": _join_reasons(
+                    probe_reason,
+                    session_reason,
+                    "UP suppressed in down_only mode",
+                ),
+            }
+            _persist(row)
+            return _result({
+                "window_start_ts": window_start_ts,
+                "status": row["order_status"],
+                "direction": direction,
+                "delta": delta,
+                "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
+            })
+        elif self.cfg.direction_mode == "up_only" and direction == "DOWN":
+            decision_reason_tags = ["decision=skip", "skip_reason=direction_filtered"]
+            row = {
+                "window_start_ts": window_start_ts,
+                "window_end_ts": window_end_ts,
+                "slug": slug,
+                "direction": direction,
+                "open_price": open_price,
+                "current_price": current_price,
+                "delta": delta,
+                "order_status": "skip_direction_filtered",
+                "reason": _join_reasons(
+                    probe_reason,
+                    session_reason,
+                    "DOWN suppressed in up_only mode",
+                ),
+            }
+            _persist(row)
+            return _result({
+                "window_start_ts": window_start_ts,
+                "status": row["order_status"],
+                "direction": direction,
+                "delta": delta,
+                "risk_mode": probe_mode.get("mode") if probe_mode else "normal",
             })
 
         if (

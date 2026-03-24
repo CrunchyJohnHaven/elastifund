@@ -1,0 +1,15 @@
+[Unit]
+Description=Elastifund Historical Data Pipeline
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/polymarket-trading-bot
+EnvironmentFile=/home/ubuntu/polymarket-trading-bot/.env
+ExecStart=/usr/bin/python3 -m data_layer.pipeline_runner --venue all
+StandardOutput=append:/var/log/elastifund/data-pipeline.log
+StandardError=append:/var/log/elastifund/data-pipeline.log
+TimeoutStartSec=7200
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Historical Data Pipeline daily at 3 AM UTC
+
+[Timer]
+OnCalendar=*-*-* 03:07:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

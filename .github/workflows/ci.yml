@@ -35,12 +35,28 @@ jobs:
         run: python3 scripts/quickstart.py --prepare-only --agent-name ci-smoke
       - name: Hygiene
         run: make hygiene
-      - name: Routing and reports contract checks
-        run: python3 -m pytest -q tests/test_select_test_targets.py tests/test_reports_layout_contract.py tests/test_reports_top_level_symlink_collapse.py tests/test_reports_top_level_symlink_prune.py tests/test_reports_symlink_collapse.py
+      - name: Lint (ruff)
+        run: make lint
+      - name: Type check (mypy)
+        run: make type-check
+        continue-on-error: true
       - name: Fastpath verification
         run: make verify-fastpath
-      - name: Targeted runtime execution regressions
-        run: python3 -m pytest -q tests/test_jj_live_sum_violation.py tests/test_config_runtime_profile_overrides.py bot/tests/test_btc_5min_maker_core_executor.py bot/tests/test_btc_5min_maker_primitives.py::test_place_post_only_buy_fails_closed_when_post_only_unsupported
+      - name: Full root test suite
+        run: make test-root
+      - name: Check FAST_TRADE_EDGE_ANALYSIS.md freshness
+        run: |
+          if [ ! -f FAST_TRADE_EDGE_ANALYSIS.md ]; then
+            echo "::warning::FAST_TRADE_EDGE_ANALYSIS.md not found"
+            exit 0
+          fi
+          last_modified=$(stat -c %Y FAST_TRADE_EDGE_ANALYSIS.md 2>/dev/null || stat -f %m FAST_TRADE_EDGE_ANALYSIS.md)
+          now=$(date +%s)
+          age_hours=$(( (now - last_modified) / 3600 ))
+          echo "FAST_TRADE_EDGE_ANALYSIS.md last modified ${age_hours}h ago"
+          if [ "$age_hours" -gt 48 ]; then
+            echo "::warning::FAST_TRADE_EDGE_ANALYSIS.md is stale (${age_hours}h old, threshold 48h). Re-run the pipeline."
+          fi
 
   polymarket:
     name: Polymarket Bot Tests
