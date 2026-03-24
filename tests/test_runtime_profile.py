@@ -126,7 +126,7 @@ def test_maker_velocity_live_profile_is_fast_turn_crypto_only() -> None:
     assert bundle.config["feature_flags"]["enable_wallet_flow"] is True
     assert bundle.config["feature_flags"]["enable_lmsr"] is True
     assert bundle.config["risk_limits"]["max_position_usd"] == 10.0
-    assert bundle.config["risk_limits"]["hourly_notional_budget_usd"] == 227.38
+    assert bundle.config["risk_limits"]["hourly_notional_budget_usd"] == 390.0
     assert bundle.config["market_filters"]["max_resolution_hours"] == 1.0
     assert bundle.config["market_filters"]["category_priorities"]["crypto"] == 3
     assert bundle.config["market_filters"]["category_priorities"]["politics"] == 0

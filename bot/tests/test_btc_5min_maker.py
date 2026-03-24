@@ -2080,7 +2080,7 @@ async def test_process_window_enters_probe_mode_after_recent_live_loss(
     result = await bot._process_window(window_start_ts=window_start_ts, http=ProbeBookHTTP())
 
     assert result["status"] == "live_cancelled_unfilled"
-    assert result["risk_mode"] == "probe_confirmation_v2"
+    assert result["risk_mode"] == "probe"
     assert result["price"] == pytest.approx(0.48)
 
     with bot.db._connect() as conn:
@@ -2091,7 +2091,7 @@ async def test_process_window_enters_probe_mode_after_recent_live_loss(
     assert row["order_price"] == pytest.approx(0.48)
     assert "probe_recent_live_pnl" in (row["reason"] or "")
     assert row["order_status"] == "live_cancelled_unfilled"
-    assert row["risk_mode"] == "probe_confirmation_v2"
+    assert row["risk_mode"] == "probe"
 
 
 @pytest.mark.asyncio
@@ -2211,7 +2211,7 @@ async def test_process_window_uses_probe_mode_after_daily_loss(
     result = await bot._process_window(window_start_ts=window_start_ts, http=ProbeBookHTTP())
 
     assert result["status"] == "live_cancelled_unfilled"
-    assert result["risk_mode"] == "probe_confirmation_v2"
+    assert result["risk_mode"] == "probe"
 
     with bot.db._connect() as conn:
         row = conn.execute(
@@ -2221,7 +2221,7 @@ async def test_process_window_uses_probe_mode_after_daily_loss(
     assert row["order_price"] == pytest.approx(0.48)
     assert "probe_daily_loss" in (row["reason"] or "")
     assert row["order_status"] == "live_cancelled_unfilled"
-    assert row["risk_mode"] == "probe_confirmation_v2"
+    assert row["risk_mode"] == "probe"
 
 
 def test_status_summary_includes_intraday_live_summary(tmp_path: Path) -> None:

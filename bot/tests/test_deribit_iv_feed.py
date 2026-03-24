@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 import time
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 # Ensure the bot package is importable without full dependencies.
 import sys, os

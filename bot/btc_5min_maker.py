@@ -1205,9 +1205,11 @@ def compute_maker_ev(
 class RTDSTruthFeed:
     """Stub for the Real-Time Delta Signal (RTDS) truth feed.
 
-    Tracks the candle open price and accumulates real-time Binance trade data
-    to produce a live delta signal. Designed to be wired into the execution
-    loop in a later sprint; all methods are safe to call without side effects.
+    This is intentionally a minimal stub. The target doctrine is
+    Chainlink-first for settlement-aligned candle state, with Binance retained
+    only as auxiliary microstructure and basis context. The current
+    implementation still tracks a single live price stream and is designed to
+    be safe to call before the full Chainlink/Binance dual-feed wiring lands.
     """
 
     def __init__(self) -> None:
@@ -1220,7 +1222,7 @@ class RTDSTruthFeed:
         self._candle_open = float(price)
 
     def update(self, trade_price: float) -> None:
-        """Ingest a new trade price tick from the Binance trade stream."""
+        """Ingest a new trade price tick from the currently wired live stream."""
         self._last_price = float(trade_price)
         self._trade_count += 1
 
@@ -3444,7 +3446,7 @@ class BTC5MinMakerBot:
         down_cap = self._session_direction_cap("DOWN", session_override)
         if abs(up_cap - down_cap) <= 1e-9:
             return "balanced"
-        return "down_biased" if down_cap < up_cap else "up_biased"
+        return "down_biased" if down_cap > up_cap else "up_biased"
 
     def _session_tightens_delta_cap(self, session_override: SessionGuardrailOverride | None) -> bool:
         if session_override is None:
@@ -6085,6 +6087,10 @@ class BTC5MinMakerBot:
             if probe_down_max_buy_price is not None:
                 mode_max_buy_price = min(mode_max_buy_price, float(probe_down_max_buy_price))
 
+        skip_guardrail_price: float | None = None
+        if best_ask is not None and best_ask > mode_max_buy_price + 1e-9:
+            skip_guardrail_price = _round_down_to_tick(mode_max_buy_price, self.cfg.tick_size)
+
         order_price = choose_maker_buy_price(
             best_bid=best_bid,
             best_ask=best_ask,
@@ -6105,6 +6111,7 @@ class BTC5MinMakerBot:
                 "token_id": token_id,
                 "best_bid": best_bid,
                 "best_ask": best_ask,
+                "order_price": skip_guardrail_price,
                 "order_status": "skip_price_outside_guardrails",
                 "reason": _join_reasons(probe_reason, session_reason, regime_reason),
             }
@@ -6318,9 +6325,13 @@ class BTC5MinMakerBot:
                 and streak_event_index <= 20
                 and Path(self.cfg.streak_log_path) != DEFAULT_STREAK_LOG_PATH
             )
-            size_usd = round(min(300.0, max(0.0, float(size_usd) * streak_multiplier)), 2)
-            scaled_cap = round(max(0.0, float(size_cap_usd) * streak_multiplier), 2)
-            size_cap_usd = min(300.0, max(size_usd, scaled_cap))
+            streak_tier_cap_usd = round(max(0.0, float(size_cap_usd)), 2)
+            raw_streak_size_usd = round(max(0.0, float(size_usd) * streak_multiplier), 2)
+            size_usd = round(
+                min(300.0, streak_tier_cap_usd, raw_streak_size_usd),
+                2,
+            )
+            size_cap_usd = min(300.0, streak_tier_cap_usd)
             sizing_target_usd = size_usd
             sizing_cap_usd = size_cap_usd
             sizing_reason_tags = _unique_tags(
@@ -6328,6 +6339,7 @@ class BTC5MinMakerBot:
                 f"streak_N={streak_length}",
                 f"streak_multiplier={streak_multiplier:.2f}x",
                 f"streak_event_index={streak_event_index}",
+                "streak_size_capped_to_tier_cap" if raw_streak_size_usd > streak_tier_cap_usd + 1e-9 else None,
                 "streak_shadow_only_warmup" if streak_shadow_only else "streak_shadow_only_complete",
             )
 

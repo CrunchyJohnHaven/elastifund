@@ -102,6 +102,38 @@ def build_public_runtime_snapshot(runtime_truth_snapshot: dict[str, Any]) -> dic
         (state_improvement.get("strategy_recommendations") or {}).get("truth_lattice")
         or {}
     )
+    strategy_recommendations = state_improvement.get("strategy_recommendations") or {}
+    public_scoreboard = strategy_recommendations.get("public_performance_scoreboard") or {}
+    wallet_reconciliation_summary = (
+        strategy_recommendations.get("wallet_reconciliation_summary")
+        or public_scoreboard.get("wallet_reconciliation_summary")
+        or {}
+    )
+    btc5_daily_pnl = runtime_truth_snapshot.get("btc5_daily_pnl") or {}
+    btc5_et_day = dict(btc5_daily_pnl.get("et_day") or {})
+    btc5_rolling_24h = dict(btc5_daily_pnl.get("rolling_24h") or {})
+    if not btc5_et_day:
+        btc5_et_day = {
+            "fill_count": runtime.get("btc5_realized_live_fills_et_day"),
+            "gross_realized_pnl_usd": runtime.get("btc5_realized_live_pnl_et_day_usd"),
+            "net_after_rebate_pnl_usd": runtime.get("btc5_realized_live_pnl_et_day_net_after_rebate_usd"),
+        }
+    if not btc5_rolling_24h:
+        btc5_rolling_24h = {
+            "fill_count": runtime.get("btc5_realized_live_fills_rolling_24h"),
+            "gross_realized_pnl_usd": runtime.get("btc5_realized_live_pnl_rolling_24h_usd"),
+            "net_after_rebate_pnl_usd": runtime.get(
+                "btc5_realized_live_pnl_rolling_24h_net_after_rebate_usd"
+            ),
+        }
+    wallet_reporting_field = next(
+        (
+            dict(item)
+            for item in list(source_precedence.get("fields") or [])
+            if isinstance(item, dict) and str(item.get("field") or "").strip().lower() == "wallet_reporting"
+        ),
+        {},
+    )
     launch_packet = runtime_truth_snapshot.get("launch_packet") or {}
     selection_compat = _derive_selection_compat_fields(runtime_truth_snapshot)
 
@@ -254,6 +286,42 @@ def build_public_runtime_snapshot(runtime_truth_snapshot: dict[str, Any]) -> dic
             "rule": source_precedence.get("rule"),
             "fields": list(source_precedence.get("fields") or []),
             "contradictions": list(source_precedence.get("contradictions") or []),
+        },
+        "btc5_daily_pnl": {
+            "source": "reports/runtime_truth_latest.json.btc5_daily_pnl",
+            "et_day_fill_count": btc5_et_day.get("fill_count"),
+            "et_day_realized_pnl_usd": btc5_et_day.get("gross_realized_pnl_usd"),
+            "et_day_net_after_estimated_rebate_usd": btc5_et_day.get("net_after_rebate_pnl_usd"),
+            "rolling_24h_fill_count": btc5_rolling_24h.get("fill_count"),
+            "rolling_24h_realized_pnl_usd": btc5_rolling_24h.get("gross_realized_pnl_usd"),
+            "rolling_24h_net_after_estimated_rebate_usd": btc5_rolling_24h.get("net_after_rebate_pnl_usd"),
+        },
+        "polymarket_tie_out": {
+            "reporting_precedence": wallet_reconciliation_summary.get("reporting_precedence"),
+            "reporting_precedence_reason": wallet_reconciliation_summary.get(
+                "reporting_precedence_reason"
+            ),
+            "selected_wallet_reporting_source": wallet_reporting_field.get("selected_source"),
+            "selected_wallet_reporting_freshness": wallet_reporting_field.get("freshness"),
+            "wallet_export_source_artifact": wallet_reconciliation_summary.get("source_artifact"),
+            "wallet_export_age_hours": wallet_reconciliation_summary.get("source_age_hours"),
+            "wallet_export_freshness_label": wallet_reconciliation_summary.get(
+                "wallet_export_freshness_label"
+            ),
+            "wallet_export_candidate_conflict_status": wallet_reconciliation_summary.get(
+                "candidate_conflict_status"
+            ),
+            "portfolio_total_usd": polymarket_wallet.get("total_wallet_value_usd"),
+            "free_collateral_usd": polymarket_wallet.get("free_collateral_usd"),
+            "reserved_order_usd": polymarket_wallet.get("reserved_order_usd"),
+            "live_orders": polymarket_wallet.get("live_orders_count"),
+            "open_positions": polymarket_wallet.get("open_positions_count"),
+            "closed_positions": polymarket_wallet.get("closed_positions_count"),
+            "btc5_et_day_realized_pnl_usd": btc5_et_day.get("gross_realized_pnl_usd"),
+            "btc5_rolling_24h_realized_pnl_usd": btc5_rolling_24h.get("gross_realized_pnl_usd"),
+            "after_midnight_et_net_trading_cash_flow_usd": wallet_reconciliation_summary.get(
+                "after_midnight_et_net_trading_cash_flow_usd"
+            ),
         },
         "wallet_flow": {
             "status": wallet_flow["status"],

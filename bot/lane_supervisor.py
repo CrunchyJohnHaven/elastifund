@@ -10,6 +10,8 @@ Produces:
 For weather candidates, appends selected shadow candidates to
 data/kalshi_weather_supervisor_queue.jsonl so the Kalshi weather service
 path can consume them without enabling live order submission.
+For Alpaca candidates, appends selected entries to
+data/alpaca_supervisor_queue.jsonl for the Alpaca executor lane.
 """
 from __future__ import annotations
 
@@ -32,9 +34,11 @@ DEFAULT_THESIS_PATH = REPO_ROOT / "reports" / "thesis_bundle.json"
 _LEGACY_THESIS_CANDIDATES_PATH = REPO_ROOT / "reports" / "autoresearch" / "thesis_candidates.json"
 DEFAULT_OUTPUT_PATH = REPO_ROOT / "reports" / "autoresearch" / "supervisor_selection.json"
 DEFAULT_WEATHER_QUEUE_PATH = REPO_ROOT / "data" / "kalshi_weather_supervisor_queue.jsonl"
+DEFAULT_ALPACA_QUEUE_PATH = REPO_ROOT / "data" / "alpaca_supervisor_queue.jsonl"
 
 # Minimum spread-adjusted edge to qualify a weather candidate for selection
 MIN_WEATHER_EDGE = 0.03
+MIN_ALPACA_EDGE = 0.01
 # Maximum candidates routed per supervisor cycle per lane
 MAX_CANDIDATES_PER_LANE = 3
 
@@ -61,9 +65,10 @@ def _select_per_lane(
         lane = str(thesis.get("lane") or "unknown")
         rank = float(thesis.get("rank_score") or 0.0)
         mode = str(thesis.get("execution_mode") or "shadow")
+        min_edge = MIN_ALPACA_EDGE if lane == "alpaca" else MIN_WEATHER_EDGE
 
         # Live-mode lanes (btc5) always included; shadow lanes need minimum edge
-        if mode != "live" and rank < MIN_WEATHER_EDGE:
+        if mode != "live" and rank < min_edge:
             continue
         by_lane.setdefault(lane, []).append(thesis)
 
@@ -104,13 +109,57 @@ def _route_weather_candidates(
     return routed
 
 
+def _route_alpaca_candidates(
+    selections: list[dict[str, Any]],
+    queue_path: Path,
+    now: datetime,
+) -> int:
+    """Append selected Alpaca candidates to the Alpaca supervisor queue."""
+    if not selections:
+        return 0
+    queue_path.parent.mkdir(parents=True, exist_ok=True)
+    routed = 0
+    with queue_path.open("a", encoding="utf-8") as fh:
+        for thesis in selections:
+            row = {
+                "queued_at": _iso_z(now),
+                "thesis_id": thesis.get("thesis_id"),
+                "ticker": thesis.get("ticker"),
+                "symbol": thesis.get("ticker"),
+                "side": thesis.get("side"),
+                "rank_score": thesis.get("rank_score"),
+                "spread_adjusted_edge": thesis.get("spread_adjusted_edge"),
+                "expected_edge_bps": thesis.get("expected_edge_bps"),
+                "model_probability": thesis.get("model_probability"),
+                "prob_positive": thesis.get("prob_positive"),
+                "execution_mode": thesis.get("execution_mode", "paper"),
+                "variant_id": thesis.get("variant_id"),
+                "recommended_notional_usd": thesis.get("recommended_notional_usd"),
+                "hold_bars": thesis.get("hold_bars"),
+                "stop_loss_bps": thesis.get("stop_loss_bps"),
+                "take_profit_bps": thesis.get("take_profit_bps"),
+                "last_price": thesis.get("last_price"),
+                "momentum_bps": thesis.get("momentum_bps"),
+                "trend_gap_bps": thesis.get("trend_gap_bps"),
+                "volatility_bps": thesis.get("volatility_bps"),
+                "spread_bps": thesis.get("spread_bps"),
+                "replay_trade_count": thesis.get("replay_trade_count"),
+                "source": "lane_supervisor",
+            }
+            fh.write(json.dumps(row) + "\n")
+            routed += 1
+    return routed
+
+
 def run_supervisor(
     *,
     thesis_path: Path = DEFAULT_THESIS_PATH,
     output_path: Path = DEFAULT_OUTPUT_PATH,
     weather_queue_path: Path = DEFAULT_WEATHER_QUEUE_PATH,
+    alpaca_queue_path: Path = DEFAULT_ALPACA_QUEUE_PATH,
     now: datetime | None = None,
     route_weather: bool = True,
+    route_alpaca: bool = True,
 ) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc)
 
@@ -143,6 +192,14 @@ def run_supervisor(
             now,
         )
 
+    alpaca_routed = 0
+    if route_alpaca and "alpaca" in selected_by_lane:
+        alpaca_routed = _route_alpaca_candidates(
+            selected_by_lane["alpaca"],
+            alpaca_queue_path,
+            now,
+        )
+
     lane_actions: dict[str, Any] = {}
     for lane, selections in selected_by_lane.items():
         top = selections[0] if selections else {}
@@ -154,7 +211,9 @@ def run_supervisor(
             ),
             "top_thesis_id": top.get("thesis_id"),
             "execution_mode": top.get("execution_mode"),
-            "routed_to_queue": weather_routed if lane == "weather" else 0,
+            "routed_to_queue": (
+                weather_routed if lane == "weather" else alpaca_routed if lane == "alpaca" else 0
+            ),
         }
 
     result: dict[str, Any] = {
@@ -165,7 +224,9 @@ def run_supervisor(
         "lanes_with_selections": sorted(selected_by_lane.keys()),
         "lane_actions": lane_actions,
         "weather_candidates_routed": weather_routed,
+        "alpaca_candidates_routed": alpaca_routed,
         "weather_queue_path": str(weather_queue_path),
+        "alpaca_queue_path": str(alpaca_queue_path),
         "selected_by_lane": selected_by_lane,
     }
 
@@ -179,14 +240,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--thesis-path", type=Path, default=DEFAULT_THESIS_PATH)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
     parser.add_argument("--weather-queue", type=Path, default=DEFAULT_WEATHER_QUEUE_PATH)
+    parser.add_argument("--alpaca-queue", type=Path, default=DEFAULT_ALPACA_QUEUE_PATH)
     parser.add_argument("--no-route-weather", action="store_true")
+    parser.add_argument("--no-route-alpaca", action="store_true")
     args = parser.parse_args(argv)
 
     result = run_supervisor(
         thesis_path=args.thesis_path,
         output_path=args.output,
         weather_queue_path=args.weather_queue,
+        alpaca_queue_path=args.alpaca_queue,
         route_weather=not args.no_route_weather,
+        route_alpaca=not args.no_route_alpaca,
     )
 
     print(f"Wrote {args.output}")

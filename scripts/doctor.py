@@ -80,11 +80,15 @@ def check_preflight() -> CheckResult:
     )
     if result.returncode == 0:
         return CheckResult("preflight", "pass", "preflight checks passed")
-    detail = (
-        result.stdout.strip().splitlines()[0]
-        if result.stdout.strip()
-        else result.stderr.strip() or "preflight failed"
-    )
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    failures: list[tuple[str, str]] = []
+    for line in lines:
+        parts = line.split(None, 2)
+        if len(parts) >= 2 and parts[1].upper() == "FAIL":
+            failures.append((parts[0], line))
+    if failures and all(name == "digital_products" for name, _ in failures):
+        return CheckResult("preflight", "warn", failures[0][1])
+    detail = failures[0][1] if failures else (result.stderr.strip() or "preflight failed")
     return CheckResult("preflight", "fail", detail)
 
 

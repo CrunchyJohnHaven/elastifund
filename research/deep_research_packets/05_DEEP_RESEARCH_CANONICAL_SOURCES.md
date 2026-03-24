@@ -1,8 +1,8 @@
 # Deep Research Packet 05: Canonical Source Index
 
-This is the source index for the numbered deep-research packets at repo root.
+This is the source index for the numbered deep-research packet set.
 
-The numbered root packets are attachment-friendly summaries. The canonical details still live in the files below.
+The numbered packets are attachment-friendly summaries. The canonical details still live in the files below.
 
 ## Core Project Context
 
@@ -41,12 +41,13 @@ The numbered root packets are attachment-friendly summaries. The canonical detai
 
 ## How To Use These Packets
 
-Attach the numbered root packets first:
+Attach the numbered packets first from `research/deep_research_packets/`:
 
 1. `01_DEEP_RESEARCH_CURRENT_STATE.md`
 2. `02_DEEP_RESEARCH_SYSTEM_ARCHITECTURE.md`
 3. `03_DEEP_RESEARCH_ACTIVE_LANES_AND_GATES.md`
 4. `04_DEEP_RESEARCH_PRIORITIES_AND_OPEN_QUESTIONS.md`
 5. `05_DEEP_RESEARCH_CANONICAL_SOURCES.md`
+6. `06_DEEP_RESEARCH_PUBLIC_DATA_TAIL_AND_ALPACA_DESIGN.md`
 
 If a research pass needs more depth on one lane, attach the corresponding canonical source file from the lists above.

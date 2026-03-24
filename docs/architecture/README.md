@@ -62,3 +62,8 @@ Use this order for staged deployment work:
 - Canonical commands and verification flows live in [scripts/README.md](../../scripts/README.md).
 - Local shadow entrypoints live in [../ops/LOCAL_TWIN_ENTRYPOINTS.md](../ops/LOCAL_TWIN_ENTRYPOINTS.md).
 
+## Related Strategy Surfaces
+
+- Tail-calibration strategy policy and gates live in [../strategy/tail_calibration_harness.md](../strategy/tail_calibration_harness.md).
+- The durable research synthesis for public-data execution, tail calibration, and Alpaca design lives in [../../research/deep_research_packets/06_DEEP_RESEARCH_PUBLIC_DATA_TAIL_AND_ALPACA_DESIGN.md](../../research/deep_research_packets/06_DEEP_RESEARCH_PUBLIC_DATA_TAIL_AND_ALPACA_DESIGN.md).
+- The durable BTC5 oracle-aligned modeling and fill-conditioning doctrine lives in [../../research/deep_research_packets/10_DEEP_RESEARCH_BTC5_ORACLE_ALIGNED_PROBABILITY_AND_FILL_MODEL.md](../../research/deep_research_packets/10_DEEP_RESEARCH_BTC5_ORACLE_ALIGNED_PROBABILITY_AND_FILL_MODEL.md).

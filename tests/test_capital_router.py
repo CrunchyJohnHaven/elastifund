@@ -65,12 +65,12 @@ def small_router() -> CapitalRouter:
 class TestDefaultRoutingTable:
     def test_has_eight_lanes(self, router: CapitalRouter) -> None:
         table = router.get_routing_table()
-        assert len(table) == 8
+        assert len(table) == 9
 
     def test_sorted_by_priority(self, router: CapitalRouter) -> None:
         table = router.get_routing_table()
         priorities = [row["priority"] for row in table]
-        assert priorities == ["P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7"]
+        assert priorities == ["P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"]
 
     def test_structural_lanes_before_directional(self, router: CapitalRouter) -> None:
         table = router.get_routing_table()
@@ -93,7 +93,7 @@ class TestDefaultRoutingTable:
     def test_directional_btc5_is_p7(self, router: CapitalRouter) -> None:
         table = router.get_routing_table()
         assert table[-1]["lane"] == "directional_btc5"
-        assert table[-1]["priority"] == "P7"
+        assert table[-1]["priority"] == "P8"
 
     def test_all_lanes_use_maker_orders(self, router: CapitalRouter) -> None:
         table = router.get_routing_table()
@@ -216,7 +216,7 @@ class TestFreezeUnfreeze:
 class TestAllocation:
     def test_allocation_returns_all_lanes(self, router: CapitalRouter) -> None:
         alloc = router.allocate(1000.0)
-        assert len(alloc) == 8
+        assert len(alloc) == 9
 
     def test_disabled_lanes_get_zero(self, router: CapitalRouter) -> None:
         alloc = router.allocate(1000.0)
@@ -322,7 +322,7 @@ class TestEdgeCases:
 class TestLaneConfigValidation:
     def test_invalid_priority_raises(self) -> None:
         with pytest.raises(ValueError, match="Priority"):
-            LaneConfig(lane_name="bad", priority=8)
+            LaneConfig(lane_name="bad", priority=9)
 
     def test_negative_priority_raises(self) -> None:
         with pytest.raises(ValueError, match="Priority"):
@@ -349,7 +349,7 @@ class TestLaneConfigValidation:
 class TestDefaultConfigs:
     def test_default_configs_valid(self) -> None:
         configs = _default_lane_configs()
-        assert len(configs) == 8
+        assert len(configs) == 9
 
     def test_no_duplicate_priorities(self) -> None:
         configs = _default_lane_configs()
@@ -368,3 +368,47 @@ class TestDefaultConfigs:
         assert ds.reserve_pct == 0.20
         assert ds.per_market_cap_usd == 10.0
         assert ds.max_markets == 6
+
+
+class TestBestStructuralAllocation:
+    def test_allocate_best_structural_lane_picks_single_winner(self, router: CapitalRouter) -> None:
+        result = router.allocate_best_structural_lane(
+            [
+                {
+                    "lane": "pair_completion",
+                    "promotion_ready": True,
+                    "score": 5.0,
+                    "net_after_fee_expectancy": 0.6,
+                    "partial_fill_breach_rate": 0.06,
+                    "recommended_capital_usd": 75.0,
+                },
+                {
+                    "lane": "neg_risk",
+                    "promotion_ready": True,
+                    "score": 4.0,
+                    "net_after_fee_expectancy": 0.9,
+                    "partial_fill_breach_rate": 0.0,
+                    "recommended_capital_usd": 100.0,
+                },
+            ]
+        )
+
+        assert result["recommended_live_lane"] == "dual_sided_pair"
+        assert result["recommended_size_usd"] == pytest.approx(75.0)
+        assert len(result["approved_queue"]) == 1
+        assert result["capital_blockers"] == []
+
+    def test_allocate_best_structural_lane_blocks_unready_candidates(self, router: CapitalRouter) -> None:
+        result = router.allocate_best_structural_lane(
+            [
+                {
+                    "lane": "resolution_sniper",
+                    "promotion_ready": False,
+                    "current_blockers": ["resolution_half_life_below_latency_floor"],
+                }
+            ]
+        )
+
+        assert result["recommended_live_lane"] is None
+        assert result["recommended_size_usd"] == 0.0
+        assert "resolution_half_life_below_latency_floor" in result["capital_blockers"]

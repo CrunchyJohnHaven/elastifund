@@ -18,9 +18,14 @@ from typing import Optional
 
 import yaml
 
-from fill_model import FillResult, simulate_fill
-from metrics import SimulationReport, TradeRecord, build_report
-from sizing import compute_position_size
+try:
+    from .fill_model import FillResult, simulate_fill
+    from .metrics import SimulationReport, TradeRecord, build_report
+    from .sizing import compute_position_size
+except ImportError:  # pragma: no cover - legacy direct-script compatibility
+    from fill_model import FillResult, simulate_fill
+    from metrics import SimulationReport, TradeRecord, build_report
+    from sizing import compute_position_size
 
 
 # Calibration map from 532-market backtest (same as production)

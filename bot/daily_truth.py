@@ -306,12 +306,21 @@ class DailyTruthTracker:
         """Return P&L for the current ET calendar day."""
         now = _now_utc()
         date_et = _et_date_for_utc(now)
+        return self.get_pnl_for_date(date_et, staleness_ref=now)
+
+    def get_pnl_for_date(
+        self,
+        date_et: str,
+        *,
+        staleness_ref: Optional[datetime] = None,
+    ) -> DailyPnL:
+        """Return P&L for a specific ET calendar day."""
         conn = self._get_conn()
         rows = conn.execute(
             "SELECT * FROM daily_truth_fills WHERE date_et = ? ORDER BY timestamp_utc",
             (date_et,),
         ).fetchall()
-        return self._build_daily_pnl(date_et, rows, staleness_ref=now)
+        return self._build_daily_pnl(date_et, rows, staleness_ref=staleness_ref)
 
     def get_rolling_24h_pnl(self) -> DailyPnL:
         """Return P&L for the rolling 24-hour window."""
@@ -365,9 +374,8 @@ class DailyTruthTracker:
 
         derived_pnl = round(wallet_balance - deposit_total, 4)
 
-        # Get tape P&L for today
-        today = self.get_today_pnl()
-        tape_pnl = today.net_pnl if today.fills > 0 else None
+        tape_day = self.get_pnl_for_date(date_et, staleness_ref=timestamp)
+        tape_pnl = tape_day.net_pnl if tape_day.fills > 0 else None
         drift = round(derived_pnl - tape_pnl, 4) if tape_pnl is not None else None
 
         conn = self._get_conn()

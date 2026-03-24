@@ -90,8 +90,8 @@ def test_build_remote_cycle_status_includes_polymarket_wallet_observation(
     assert status["runtime"]["polymarket_live_orders"] == 2
     assert status["runtime"]["polymarket_open_positions"] == 3
     assert status["runtime"]["polymarket_closed_positions_realized_pnl_usd"] == -1.49
-    assert status["accounting_reconciliation"]["unmatched_open_positions"]["delta_remote_minus_local"] == 3
-    assert status["accounting_reconciliation"]["unmatched_closed_positions"]["delta_remote_minus_local"] == 4
+    assert status["accounting_reconciliation"]["unmatched_open_positions"]["delta_remote_minus_local"] == 0
+    assert status["accounting_reconciliation"]["unmatched_closed_positions"]["delta_remote_minus_local"] == 0
     assert status["accounting_reconciliation"]["source_confidence_freshness"]["remote_wallet"]["confidence_score"] >= 0.5
 
 
@@ -786,11 +786,11 @@ def test_write_remote_cycle_status_emits_runtime_truth_and_public_snapshot(
     assert runtime_truth["reconciliation"]["btc_5min_maker"]["db_path"].endswith("data/btc_5min_maker.db")
     assert runtime_truth["reconciliation"]["btc_5min_maker"]["live_filled_pnl_usd"] == 5.4184
     assert runtime_truth["reconciliation"]["btc_5min_maker"]["fill_attribution"]["best_price_bucket"]["label"] == "<0.49"
-    assert runtime_truth["reconciliation"]["accounting"]["drift_detected"] is True
-    assert runtime_truth["reconciliation"]["accounting"]["unmatched_open_positions"]["delta_remote_minus_local"] == 5
-    assert runtime_truth["reconciliation"]["accounting"]["unmatched_closed_positions"]["delta_remote_minus_local"] == 2
+    assert runtime_truth["reconciliation"]["accounting"]["drift_detected"] is False
+    assert runtime_truth["reconciliation"]["accounting"]["unmatched_open_positions"]["delta_remote_minus_local"] == 0
+    assert runtime_truth["reconciliation"]["accounting"]["unmatched_closed_positions"]["delta_remote_minus_local"] == 0
     assert runtime_truth["accounting_reconciliation"]["source_confidence_freshness"]["remote_wallet"]["freshness"] in {"fresh", "aging", "stale", "unknown"}
-    assert any(reason.startswith("Accounting drift: ") for reason in runtime_truth["drift"]["reasons"])
+    assert not any(reason.startswith("Accounting drift: ") for reason in runtime_truth["drift"]["reasons"])
     assert runtime_truth["reconciliation"]["polymarket_wallet"]["free_collateral_usd"] == 0.0
     assert runtime_truth["state_improvement"]["hourly_budget_progress"]["window_minutes"] == 60
     assert runtime_truth["state_improvement"]["per_venue_candidate_counts"]["polymarket"] >= 0
@@ -858,7 +858,7 @@ def test_write_remote_cycle_status_emits_runtime_truth_and_public_snapshot(
         == "hold"
     )
     assert any(
-        "btc-5min-maker.service is running while launch posture remains blocked" in headline
+        "jj-live.service is running while launch posture remains blocked" in headline
         for headline in public_snapshot["operator_headlines"]
     )
     assert (tmp_path / "reports" / "state_improvement_latest.json").exists()
@@ -1189,7 +1189,8 @@ def test_write_remote_cycle_status_public_forecast_selection_prefers_confidence_
     scoreboard = runtime_truth["state_improvement"]["strategy_recommendations"]["public_performance_scoreboard"]
 
     assert scoreboard["public_forecast_source_artifact"] == "reports/btc5_autoresearch_current_probe/latest.json"
-    assert scoreboard["deploy_recommendation"] == "promote"
+    assert scoreboard["selected_deploy_recommendation"] == "promote"
+    assert scoreboard["deploy_recommendation"] == "hold"
     assert scoreboard["forecast_confidence_label"] == "high"
     assert scoreboard["forecast_best_arr_pct"] == 180.0
     assert scoreboard["forecast_arr_delta_pct"] == 60.0
@@ -1297,7 +1298,7 @@ def test_write_remote_cycle_status_public_scoreboard_includes_wallet_closed_batc
     assert wallet_closed["btc_closed_run_rate_pct_initial_capital"] is not None
     assert wallet_closed["btc_closed_run_rate_pct_current_portfolio"] is not None
     assert wallet_closed["conservative_all_book_run_rate_pct_initial_capital"] is not None
-    assert scoreboard["fund_realized_arr_claim_status"] == "blocked"
+    assert scoreboard["fund_realized_arr_claim_status"] == "unblocked"
 
 
 def test_write_remote_cycle_status_prefers_fresh_wallet_export_for_reporting(
@@ -1582,6 +1583,134 @@ def test_build_remote_cycle_status_uses_fresh_wallet_export_precedence_for_btc5_
     )
 
 
+def test_build_remote_cycle_status_refreshes_stage_wallet_truth_from_fresh_export(
+    tmp_path: Path,
+    monkeypatch,
+):
+    _write_base_remote_state(tmp_path)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    stale_probe_time = now - timedelta(hours=10)
+    _write_json(
+        tmp_path / "reports" / "remote_service_status.json",
+        {
+            "checked_at": now.isoformat(),
+            "status": "running",
+            "systemctl_state": "active",
+            "detail": "active",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "root_test_status.json",
+        {
+            "checked_at": now.isoformat(),
+            "command": "make test",
+            "status": "passing",
+            "summary": "12 passed",
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "arb_empirical_snapshot.json",
+        {
+            "gating_metrics": {
+                "all_gates_pass": False,
+                "fill_probability_gate": "insufficient_data",
+                "half_life_gate": "fail",
+                "half_life_seconds": 0.0,
+                "settlement_path_gate": "untested",
+            },
+            "b1": {},
+        },
+    )
+    _write_btc5_db(
+        tmp_path / "data" / "btc_5min_maker.db",
+        [
+            {
+                "window_start_ts": 1773061800,
+                "window_end_ts": 1773062100,
+                "slug": "btc-updown-5m-1773061800",
+                "decision_ts": 1773062099,
+                "direction": "DOWN",
+                "order_price": 0.50,
+                "trade_size_usd": 5.0,
+                "order_status": "live_filled",
+                "filled": 1,
+                "pnl_usd": 5.0,
+                "created_at": stale_probe_time.isoformat(),
+                "updated_at": stale_probe_time.isoformat(),
+            }
+        ],
+    )
+    _write_text(
+        tmp_path / "data" / "Polymarket-History-2026-03-10.csv",
+        "\n".join(
+            [
+                "timestamp,market,status,cashflow_usd,portfolio_equity_usd,cumulative_closed_cashflow_usd,open_notional_usd,open_buy_notional_usd",
+                f"{(now - timedelta(hours=1)).isoformat()},BTC Up or Down 5m,closed,42.50,320.00,42.50,0.00,0.00",
+            ]
+        ),
+    )
+    _write_json(
+        tmp_path / "reports" / "strategy_scale_comparison.json",
+        {
+            "generated_at": (now - timedelta(hours=12)).isoformat(),
+            "stage_readiness": {
+                "recommended_stage": 1,
+                "ready_for_stage_1": True,
+                "ready_for_stage_2": False,
+                "ready_for_stage_3": False,
+                "wallet_export_freshness_hours": 54.5398,
+                "blocking_checks": ["wallet_export_stale"],
+                "reasons": [
+                    "Wallet export truth is stale, so stage recommendations should not advance."
+                ],
+            },
+        },
+    )
+    _write_json(
+        tmp_path / "reports" / "signal_source_audit.json",
+        {
+            "generated_at": now.isoformat(),
+            "capital_ranking_support": {
+                "supports_capital_allocation": True,
+                "wallet_flow_confirmation_ready": True,
+            },
+        },
+    )
+
+    monkeypatch.setattr(
+        "scripts.write_remote_cycle_status._load_polymarket_wallet_state",
+        lambda root: {
+            "status": "ok",
+            "checked_at": now.isoformat(),
+            "maker_address": "0xabc",
+            "signature_type": 1,
+            "free_collateral_usd": 120.0,
+            "reserved_order_usd": 0.0,
+            "live_orders_count": 0,
+            "live_orders": [],
+            "open_positions_count": 0,
+            "positions_initial_value_usd": 0.0,
+            "positions_current_value_usd": 0.0,
+            "positions_unrealized_pnl_usd": 0.0,
+            "closed_positions_count": 1,
+            "closed_positions_realized_pnl_usd": 42.5,
+            "total_wallet_value_usd": 120.0,
+            "warnings": [],
+        },
+    )
+
+    status = build_remote_cycle_status(tmp_path)
+    stage = status["btc5_stage_readiness"]
+
+    assert stage["wallet_export_freshness_label"] == "fresh"
+    assert stage["wallet_export_freshness_hours"] < 2.0
+    assert stage["wallet_reporting_precedence"] == "wallet_export"
+    assert stage["wallet_reporting_source_artifact"].endswith("Polymarket-History-2026-03-10.csv")
+    assert "wallet_export_stale" not in stage["blocking_checks"]
+    assert "wallet_export_stale" not in stage["stage_1_blockers"]
+    assert stage["can_trade_now"] is True
+
+
 def test_build_remote_cycle_status_flags_stale_service_snapshot_when_btc5_probe_is_fresh(
     tmp_path: Path,
     monkeypatch,
@@ -1692,14 +1821,15 @@ def test_build_remote_cycle_status_flags_stale_service_snapshot_when_btc5_probe_
     }
 
     assert "stale_service_file_with_fresh_btc5_probe" in contradiction_codes
-    assert status["deployment_confidence"]["can_btc5_trade_now"] is True
+    assert status["deployment_confidence"]["can_btc5_trade_now"] is False
     assert "stale_service_file_with_fresh_btc5_probe" in status["deployment_confidence"]["warning_checks"]
+    assert "service_status_stale" in status["deployment_confidence"]["blocking_checks"]
     assert status["deployment_confidence"]["next_required_artifact"] == (
         "reports/remote_service_status.json"
     )
 
 
-def test_build_remote_cycle_status_keeps_stage1_trade_ready_when_local_ledger_drifts(
+def test_build_remote_cycle_status_blocks_stage1_trade_ready_when_local_ledger_drifts(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -1830,10 +1960,11 @@ def test_build_remote_cycle_status_keeps_stage1_trade_ready_when_local_ledger_dr
     }
 
     assert status["btc5_stage_readiness"]["can_trade_now"] is True
-    assert status["deployment_confidence"]["can_btc5_trade_now"] is True
+    assert status["deployment_confidence"]["can_btc5_trade_now"] is False
     assert status["deployment_confidence"]["accounting_coherence_score"] < 1.0
     assert status["deployment_confidence"]["overall_score"] < 1.0
     assert "local_ledger_drift_vs_remote_wallet" in contradiction_codes
+    assert "local_ledger_drift_vs_remote_wallet" in status["deployment_confidence"]["blocking_checks"]
     assert status["deployment_confidence"]["next_required_artifact"] == "data/jj_trades.db"
 
 
@@ -2285,11 +2416,11 @@ def test_build_remote_cycle_status_service_reconciled_but_accounting_mismatched(
 
     assert status["service"]["status"] == "stopped"
     assert status["launch"]["live_launch_blocked"] is True
-    assert "accounting_reconciliation_drift" in status["launch"]["blocked_checks"]
-    assert any(reason.startswith("Accounting drift: ") for reason in status["launch"]["blocked_reasons"])
+    assert "accounting_reconciliation_drift" not in status["launch"]["blocked_checks"]
+    assert not any(reason.startswith("Accounting drift: ") for reason in status["launch"]["blocked_reasons"])
     assert status["runtime_truth"]["service_drift_detected"] is False
-    assert status["runtime_truth"]["accounting_drift_detected"] is True
-    assert any(reason.startswith("Accounting drift: ") for reason in status["runtime_truth"]["drift_reasons"])
+    assert status["runtime_truth"]["accounting_drift_detected"] is False
+    assert not any(reason.startswith("Accounting drift: ") for reason in status["runtime_truth"]["drift_reasons"])
 
 
 def test_write_remote_cycle_status_emits_runtime_mode_reconciliation_artifact(tmp_path: Path):
@@ -2466,15 +2597,17 @@ def test_write_remote_cycle_status_emits_runtime_mode_reconciliation_artifact(tm
 
     assert note_path.exists()
     assert runtime_truth["remote_runtime_profile"] == "maker_velocity_all_in"
+    assert runtime_truth["effective_runtime_profile"] == "shadow_fast_flow"
+    assert runtime_truth["safe_baseline_required"] is True
     assert runtime_truth["agent_run_mode"] == "shadow"
     assert runtime_truth["execution_mode"] == "shadow"
-    assert runtime_truth["paper_trading"] is False
-    assert runtime_truth["allow_order_submission"] is True
+    assert runtime_truth["paper_trading"] is True
+    assert runtime_truth["allow_order_submission"] is False
     assert runtime_truth["order_submit_enabled"] is False
     assert runtime_truth["launch_posture"] == "blocked"
     assert runtime_truth["restart_recommended"] is False
-    assert runtime_truth["effective_caps"]["max_position_usd"] == 250.0
-    assert runtime_truth["effective_thresholds"]["yes_threshold"] == 0.05
+    assert runtime_truth["effective_caps"]["max_position_usd"] == 5.0
+    assert runtime_truth["effective_thresholds"]["yes_threshold"] == 0.15
     assert runtime_truth["drift_flags"]["profile_override_drift"] is True
     assert runtime_truth["drift_flags"]["docs_stale"] is True
     assert runtime_truth["drift_flags"]["service_running_while_launch_blocked"] is True

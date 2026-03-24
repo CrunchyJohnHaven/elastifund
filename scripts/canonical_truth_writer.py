@@ -179,6 +179,7 @@ def compute_closed_pnl(closed: list[dict]) -> float:
             or pos.get("pnl")
             or pos.get("profit")
             or pos.get("netCashflow")
+            or pos.get("realizedPnl")
         )
     return round(total, 4)
 
@@ -243,22 +244,70 @@ def _classify_control_posture(
     agent_run_mode: str,
     execution_mode: str,
     finance_verdict: str,
+    allow_order_submission: bool | None,
 ) -> str:
     live_modes = {"live", "live_stage1", "stage1_live"}
     shadow_modes = {"shadow", "paper", "probe", "shadow_probe"}
 
+    if allow_order_submission is False:
+        return "blocked"
+    if finance_verdict in {"blocked", "expansion_blocked"}:
+        return "blocked"
+    if btc5_deploy_mode.lower() in shadow_modes or str(execution_mode).lower() in shadow_modes:
+        return "shadow"
     if btc5_deploy_mode.lower() in live_modes:
         return "live"
-    if btc5_deploy_mode.lower() in shadow_modes:
-        return "shadow"
     if str(agent_run_mode).lower() == "live" and str(execution_mode).lower() in {
         "live",
         "micro_live",
     }:
         return "live"
-    if finance_verdict in {"blocked", "expansion_blocked"}:
-        return "blocked"
     return "shadow"
+
+
+def _extract_remote_wallet_counts(runtime_truth: dict[str, Any]) -> dict[str, Any]:
+    accounting = runtime_truth.get("accounting_reconciliation")
+    if isinstance(accounting, dict):
+        remote_wallet = accounting.get("remote_wallet_counts")
+        if isinstance(remote_wallet, dict):
+            return remote_wallet
+    wallet_block = runtime_truth.get("polymarket_wallet")
+    if isinstance(wallet_block, dict):
+        return wallet_block
+    return {}
+
+
+def _build_truth_mismatches(
+    runtime_truth: dict[str, Any],
+    *,
+    positions: list[dict],
+    closed: list[dict],
+) -> list[str]:
+    mismatches: list[str] = []
+    trade_proof = runtime_truth.get("trade_proof") if isinstance(runtime_truth.get("trade_proof"), dict) else {}
+    proof_status = str(trade_proof.get("proof_status") or "").strip().lower()
+    latest_filled_trade_at = str(trade_proof.get("latest_filled_trade_at") or "").strip()
+
+    if latest_filled_trade_at and proof_status == "no_fill_yet":
+        mismatches.append("trade_proof_latest_fill_conflicts_with_no_fill_yet")
+
+    reported_open_positions = runtime_truth.get("open_positions_count")
+    if reported_open_positions is not None:
+        try:
+            if int(reported_open_positions) != len(positions):
+                mismatches.append("runtime_truth_open_positions_mismatch")
+        except (TypeError, ValueError):
+            mismatches.append("runtime_truth_open_positions_unparseable")
+
+    reported_closed_positions = runtime_truth.get("closed_positions_count")
+    if reported_closed_positions is not None:
+        try:
+            if int(reported_closed_positions) != len(closed):
+                mismatches.append("runtime_truth_closed_positions_mismatch")
+        except (TypeError, ValueError):
+            mismatches.append("runtime_truth_closed_positions_unparseable")
+
+    return mismatches
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +328,12 @@ def build_canonical_truth(
     open_cost, open_mark = compute_open_pnl(positions)
     closed_pnl = compute_closed_pnl(closed)
     unrealized_pnl = round(open_mark - open_cost, 4)
-    estimated_total = round(initial_deposit + closed_pnl + unrealized_pnl, 4)
+    reconstructed_total = round(initial_deposit + closed_pnl + unrealized_pnl, 4)
+    remote_wallet = _extract_remote_wallet_counts(runtime_truth)
+    remote_total_value = _safe_float(remote_wallet.get("total_wallet_value_usd"))
+    remote_free_collateral = _safe_float(remote_wallet.get("free_collateral_usd"))
+    estimated_total = round(remote_total_value or reconstructed_total, 4)
+    available_cash = round(remote_free_collateral or open_mark, 4)
 
     agent_run_mode = str(
         runtime_truth.get("agent_run_mode") or runtime_truth.get("mode") or "unknown"
@@ -290,12 +344,21 @@ def build_canonical_truth(
     )
     finance_btc5 = finance_gate.get("btc5_baseline") or finance_gate.get("btc5", {}) or {}
     finance_verdict = str(finance_btc5.get("verdict", "unknown"))
+    trade_proof = runtime_truth.get("trade_proof") if isinstance(runtime_truth.get("trade_proof"), dict) else {}
+    allow_order_submission = runtime_truth.get("allow_order_submission")
+    if isinstance(allow_order_submission, str):
+        allow_order_submission = allow_order_submission.strip().lower() in {"1", "true", "yes", "on"}
 
     posture = _classify_control_posture(
-        btc5_deploy_mode, agent_run_mode, execution_mode, finance_verdict
+        btc5_deploy_mode,
+        agent_run_mode,
+        execution_mode,
+        finance_verdict,
+        allow_order_submission,
     )
 
     rt_age = _runtime_truth_age_seconds(runtime_truth)
+    truth_mismatches = _build_truth_mismatches(runtime_truth, positions=positions, closed=closed)
     blockers = list(
         runtime_truth.get("blockers")
         or runtime_truth.get("hard_blockers")
@@ -309,12 +372,22 @@ def build_canonical_truth(
         blockers.append("control_posture_blocked")
     if finance_verdict in {"blocked", "expansion_blocked"}:
         blockers.append("finance_gate_blocked")
+    if truth_mismatches:
+        blockers.extend(truth_mismatches)
+
+    blockers = list(dict.fromkeys(str(item) for item in blockers if str(item).strip()))
     if blockers:
         status = "blocked"
     elif rt_age is not None and rt_age > 600:
         status = "stale"
     else:
         status = "fresh"
+
+    truth_status = "green"
+    if blockers:
+        truth_status = "blocked"
+    elif rt_age is None or rt_age > 600:
+        truth_status = "degraded"
 
     return {
         "schema": "canonical_operator_truth_v1",
@@ -326,7 +399,11 @@ def build_canonical_truth(
         "open_mark_usd": open_mark,
         "unrealized_pnl_usd": unrealized_pnl,
         "closed_pnl_usd": closed_pnl,
+        "available_cash_usd": available_cash,
         "estimated_total_value_usd": estimated_total,
+        "estimated_total_value_method": "remote_wallet_counts" if remote_total_value > 0 else "pnl_reconstruction",
+        "remote_wallet_total_value_usd": round(remote_total_value, 4),
+        "remote_wallet_free_collateral_usd": round(remote_free_collateral, 4),
         # ── Position counts ───────────────────────────────────────────────────
         "open_positions_count": len(positions),
         "closed_positions_count": len(closed),
@@ -335,7 +412,15 @@ def build_canonical_truth(
         "agent_run_mode": agent_run_mode,
         "execution_mode": execution_mode,
         "control_posture": posture,
-        "capital_live": posture == "live",
+        "capital_live": posture == "live" and truth_status == "green",
+        "truth_status": truth_status,
+        "truth_mismatches": truth_mismatches,
+        "trade_proof": {
+            "proof_status": trade_proof.get("proof_status"),
+            "fill_confirmed": bool(trade_proof.get("fill_confirmed")),
+            "latest_filled_trade_at": trade_proof.get("latest_filled_trade_at"),
+            "source_of_truth": trade_proof.get("source_of_truth"),
+        },
         # ── Finance gate ──────────────────────────────────────────────────────
         "finance_gate_btc5_verdict": finance_verdict,
         # ── Evidence quality ──────────────────────────────────────────────────
@@ -371,8 +456,8 @@ def update_account_csv(truth: dict) -> None:
         "institution": "Polymarket",
         "currency": "USD",
         "balance_usd": truth["estimated_total_value_usd"],
-        "available_cash_usd": truth["open_mark_usd"],
-        "source": "canonical_truth_api",
+        "available_cash_usd": truth["available_cash_usd"],
+        "source": f"canonical_truth_{truth.get('estimated_total_value_method', 'api')}",
     }
     with ACCOUNT_CSV_PATH.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)

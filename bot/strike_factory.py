@@ -41,10 +41,13 @@ DEFAULT_TAPE_DB_PATH = Path("data/tape/strike_factory.db")
 DEFAULT_PROMOTION_DB_PATH = Path("data/promotion_manager.db")
 DEFAULT_RESOLUTION_MARKETS_PATH = Path("reports/parallel/current_btc5_dual_sided_markets.json")
 DEFAULT_LAUNCH_ORDER = [
-    "resolution",
-    "whale",
     "neg_risk",
+    "resolution_sniper",
+    "resolution",
+    "stale_quote",
+    "weather_settlement_timing",
     "cross_plat",
+    "whale",
     "leader_follower",
     "llm_tournament",
     "btc5",

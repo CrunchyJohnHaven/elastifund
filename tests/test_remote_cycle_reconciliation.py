@@ -356,3 +356,73 @@ def test_apply_canonical_launch_packet_to_status_propagates_required_outputs_and
     assert payload["runtime_truth"]["hold_repair"]["active"] is True
     assert payload["runtime_truth"]["required_outputs"] == reconciled["required_outputs"]
     assert payload["runtime_truth"]["one_next_cycle_action"] == payload["one_next_cycle_action"]
+
+
+def test_apply_canonical_launch_packet_drops_fresh_selected_runtime_package_stale_branch(
+    tmp_path: Path,
+) -> None:
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    snapshot = _runtime_truth_snapshot(now)
+    snapshot["btc5_selected_package"]["age_hours"] = 0.0
+    launch_packet = _launch_packet(now)
+
+    reconciled = apply_canonical_launch_packet(
+        snapshot,
+        root=tmp_path,
+        launch_packet=launch_packet,
+        launch_packet_latest_path=Path("reports/launch_packet_latest.json"),
+        launch_packet_timestamped_path=Path("reports/runtime/launch_packets/launch_packet_test.json"),
+    )
+
+    stale_hold_repair = reconciled["stale_hold_repair"]
+    assert all(
+        branch["check"] != "selected_runtime_package_stale"
+        for branch in stale_hold_repair["repair_branches"]
+    )
+    assert all(
+        "selected_runtime_package_stale" not in str(reason)
+        for reason in stale_hold_repair["block_reasons"]
+    )
+    assert any(
+        branch["check"] == "wallet_export_stale"
+        for branch in stale_hold_repair["repair_branches"]
+    )
+
+
+def test_apply_canonical_launch_packet_uses_launch_packet_submission_contract_fields(
+    tmp_path: Path,
+) -> None:
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    snapshot = _runtime_truth_snapshot(now)
+    snapshot["agent_run_mode"] = "shadow"
+    snapshot["execution_mode"] = "shadow"
+    snapshot["paper_trading"] = True
+    snapshot["allow_order_submission"] = False
+    snapshot["order_submit_enabled"] = False
+    launch_packet = _launch_packet(now)
+    launch_packet["submission_contract_consensus"] = {
+        "launch_posture_clear": True,
+        "allow_order_submission": True,
+        "paper_trading_disabled": True,
+    }
+    launch_packet["live_order_submission_allowed"] = True
+
+    reconciled = apply_canonical_launch_packet(
+        snapshot,
+        root=tmp_path,
+        launch_packet=launch_packet,
+        launch_packet_latest_path=Path("reports/launch_packet_latest.json"),
+        launch_packet_timestamped_path=Path("reports/runtime/launch_packets/launch_packet_test.json"),
+    )
+
+    assert reconciled["agent_run_mode"] == "live"
+    assert reconciled["execution_mode"] == "live"
+    assert reconciled["paper_trading"] is False
+    assert reconciled["allow_order_submission"] is True
+    assert reconciled["order_submit_enabled"] is True
+    assert reconciled["live_order_submission_allowed"] is True
+    assert reconciled["runtime_contract"]["submission_contract_consensus"] == {
+        "launch_posture_clear": True,
+        "allow_order_submission": True,
+        "paper_trading_disabled": True,
+    }

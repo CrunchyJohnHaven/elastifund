@@ -54,6 +54,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from bot.capital_router import CapitalRouter  # noqa: E402
 from scripts.report_envelope import write_report
 
 logging.basicConfig(
@@ -72,8 +73,43 @@ OUTPUT_PATH = REPORTS / "promotion_bundle.json"
 # Sub-component lab artifacts — demoted from top-level decision systems to gate inputs
 CAPITAL_LAB_PATH = REPORTS / "capital_lab" / "latest.json"
 COUNTERFACTUAL_LAB_PATH = REPORTS / "counterfactual_lab" / "latest.json"
+CANONICAL_TRUTH_PATH = REPORTS / "canonical_operator_truth.json"
+SIMULATION_RANKED_PATH = REPORTS / "simulation" / "ranked_candidates.json"
+STRUCTURAL_ALPHA_DIR = REPORTS / "structural_alpha"
+STRUCTURAL_LIVE_QUEUE_PATH = STRUCTURAL_ALPHA_DIR / "live_queue.json"
+STRUCTURAL_LANE_SNAPSHOT_PATH = STRUCTURAL_ALPHA_DIR / "structural_lane_snapshot.json"
 
 INTERVAL = int(os.environ.get("PROMOTION_INTERVAL_SECONDS", "1800"))
+
+# ---------------------------------------------------------------------------
+# Structural fast-track gate definitions
+# ---------------------------------------------------------------------------
+# Deterministic microstructure lanes (pair_completion, neg_risk) may bypass
+# the generic 200-event / 7-day replay/off_policy/world_league gates when
+# they meet the tighter, bounded-risk thresholds below.
+STRUCTURAL_FAST_TRACK_GATES: dict[str, dict[str, Any]] = {
+    "pair_completion": {
+        "min_replay_opportunities": 50,
+        "min_shadow_opportunities": 25,
+        "min_shadow_clean_completions": 10,
+        "min_micro_live_settled": 10,
+        "max_truth_mismatches": 0,
+        "max_stale_evidence_executions": 0,
+        "require_positive_net_pnl": True,
+    },
+    "neg_risk": {
+        "min_replay_opportunities": 20,
+        "min_shadow_opportunities": 10,
+        "min_micro_live_settled": 10,
+        "max_taxonomy_ambiguity": 0,
+        "require_bounded_worst_case": True,
+    },
+}
+
+# Lane verdict constants
+LANE_APPROVED = "approved"
+LANE_BLOCKED = "blocked"
+LANE_INSUFFICIENT = "insufficient_data"
 
 # Promotion gate thresholds
 REPLAY_MIN_SCENARIOS = int(os.environ.get("PROMO_REPLAY_MIN_SCENARIOS", "5"))
@@ -106,6 +142,54 @@ def load_json(path: Path) -> dict[str, Any] | None:
         return d if isinstance(d, dict) else None
     except Exception:
         return None
+
+
+def _load_ranked_structural_candidates() -> list[dict[str, Any]]:
+    live_queue = load_json(STRUCTURAL_LIVE_QUEUE_PATH)
+    if live_queue is not None:
+        ranked = live_queue.get("ranked_lanes")
+        if isinstance(ranked, list):
+            return [item for item in ranked if isinstance(item, dict)]
+    payload = load_json(SIMULATION_RANKED_PATH)
+    if payload is None:
+        return []
+    ranked = payload.get("ranked_candidates")
+    if isinstance(ranked, list):
+        return [item for item in ranked if isinstance(item, dict)]
+    return []
+
+
+def _write_structural_artifacts(
+    *,
+    queue_payload: dict[str, Any],
+    snapshot_payload: dict[str, Any],
+) -> None:
+    STRUCTURAL_ALPHA_DIR.mkdir(parents=True, exist_ok=True)
+    queue_blockers = list(queue_payload.get("capital_blockers") or [])
+    queue_status = "fresh" if queue_payload.get("recommended_live_lane") and not queue_blockers else "blocked"
+    write_report(
+        STRUCTURAL_LIVE_QUEUE_PATH,
+        artifact="structural_live_queue",
+        payload=queue_payload,
+        status=queue_status,
+        source_of_truth="reports/simulation/ranked_candidates.json; reports/canonical_operator_truth.json; reports/promotion_bundle.json",
+        freshness_sla_seconds=1800,
+        blockers=queue_blockers,
+        summary=(
+            f"recommended_live_lane={queue_payload.get('recommended_live_lane') or 'none'} "
+            f"size_usd={float(queue_payload.get('recommended_size_usd') or 0.0):.2f}"
+        ),
+    )
+    write_report(
+        STRUCTURAL_LANE_SNAPSHOT_PATH,
+        artifact="structural_lane_snapshot",
+        payload=snapshot_payload,
+        status=queue_status,
+        source_of_truth="reports/simulation/ranked_candidates.json; reports/canonical_operator_truth.json; reports/promotion_bundle.json",
+        freshness_sla_seconds=1800,
+        blockers=queue_blockers,
+        summary=f"lanes={len(snapshot_payload.get('lanes') or [])}",
+    )
 
 
 def age_seconds(iso: str) -> float:
@@ -141,19 +225,25 @@ def _load_promo_history() -> dict[str, Any]:
 
 def _evaluate_evidence_freshness(
     thesis_bundle: dict[str, Any] | None,
+    lane: str = "",
 ) -> dict[str, Any]:
-    """Hard gate: evidence bundle and runtime truth must be fresh enough.
+    """Lane-aware hard gate: evidence bundle and runtime truth must be fresh enough.
 
-    Checks two things:
-    1. thesis_bundle was generated within EVIDENCE_FRESHNESS_MAX_AGE (24h default)
-    2. runtime_truth_latest.json exists and was generated within RUNTIME_TRUTH_MAX_AGE (6h default)
+    Previously this gate was global — any stale signal blocked all lanes.  The
+    new behaviour is lane-specific:
 
-    This gate runs BEFORE replay and off_policy gates.  If evidence is stale,
-    nothing downstream can be trusted.
+    * Stale weather evidence disables ONLY the weather lane.
+    * A missing / stale runtime truth file disables ONLY lanes that rely on it
+      (btc5 and any lane whose verdict key lives in runtime_truth_latest.json).
+    * Truth mismatch (wallet/ledger disagreement) disables ALL new live capital
+      — this remains global and is handled separately in evaluate_thesis.
+
+    The ``lane`` parameter is the normalised lane string extracted from the
+    thesis (e.g. "btc5", "weather", "pair_completion", "neg_risk", "").
     """
     reasons: list[str] = []
 
-    # --- thesis bundle freshness ---
+    # --- thesis bundle freshness (applies to all lanes) ---
     if thesis_bundle is None:
         reasons.append("evidence bundle (thesis_bundle.json) missing")
     else:
@@ -167,45 +257,68 @@ def _evaluate_evidence_freshness(
                 f"(max {EVIDENCE_FRESHNESS_MAX_AGE / 3600:.0f}h)"
             )
 
-    # --- runtime truth freshness ---
-    rt = load_json(RUNTIME_TRUTH_LATEST_PATH)
-    if rt is None:
-        reasons.append("runtime_truth_latest.json missing")
-    else:
-        rt_gen = rt.get("generated_at") or ""
-        rt_age = age_seconds(rt_gen)
-        if rt_age < 0:
-            reasons.append("runtime_truth_latest.json has no valid generated_at timestamp")
-        elif rt_age > RUNTIME_TRUTH_MAX_AGE:
+    # --- runtime truth freshness (lane-specific) ---
+    # Weather evidence staleness only disables the weather lane.
+    # Lanes that don't depend on runtime_truth_latest.json are not penalised.
+    lanes_requiring_runtime_truth = {"btc5", "weather"}
+    if lane in lanes_requiring_runtime_truth or not lane:
+        rt = load_json(RUNTIME_TRUTH_LATEST_PATH)
+        if rt is None:
             reasons.append(
-                f"runtime_truth_latest.json is {rt_age / 3600:.1f}h old "
-                f"(max {RUNTIME_TRUTH_MAX_AGE / 3600:.0f}h)"
+                f"runtime_truth_latest.json missing "
+                f"(required for lane='{lane or 'global'}')"
             )
+        else:
+            rt_gen = rt.get("generated_at") or ""
+            rt_age = age_seconds(rt_gen)
+            if rt_age < 0:
+                reasons.append("runtime_truth_latest.json has no valid generated_at timestamp")
+            elif rt_age > RUNTIME_TRUTH_MAX_AGE:
+                # Weather staleness: block weather lane only (caller handles this)
+                reasons.append(
+                    f"runtime_truth_latest.json is {rt_age / 3600:.1f}h old "
+                    f"(max {RUNTIME_TRUTH_MAX_AGE / 3600:.0f}h; "
+                    f"disables lane='{lane or 'global'}' only)"
+                )
 
     passed = len(reasons) == 0
     return {
         "gate": "evidence_freshness",
         "passed": passed,
+        "lane": lane or "global",
         "reasons": reasons,
         "note": "fresh" if passed else "; ".join(reasons),
     }
 
 
-def _evaluate_btc5_pnl_truth() -> dict[str, Any]:
-    """Hard gate: BTC5 PnL must be present and non-negative for promotion.
+def _evaluate_btc5_pnl_truth(lane: str = "") -> dict[str, Any]:
+    """Lane-aware hard gate: BTC5 negative PnL blocks ONLY the BTC5 expansion lane.
 
-    Reads runtime_truth_latest.json and checks:
-    1. If fills exist but PnL is null/missing -> FAIL (data integrity)
-    2. If cumulative PnL is negative AND profit_factor < 1.0 -> FAIL (promotion blocked)
+    Previously this gate ran for every thesis regardless of lane, which caused
+    global deadlock whenever BTC5 was underwater.  The new behaviour:
 
-    A negative-PnL failure blocks promotion but does NOT trigger demotion —
-    the strategy stays at its current stage.
+    * For non-BTC5 lanes the gate auto-passes (BTC5 health is irrelevant).
+    * For the BTC5 lane the original logic is preserved:
+        1. Fills present but PnL null -> FAIL (data integrity)
+        2. Negative cumulative PnL AND profit_factor < 1.0 -> FAIL (expansion blocked)
+
+    The ``lane`` parameter is the normalised lane string from the thesis.
     """
+    # Non-BTC5 lanes are unaffected by BTC5 PnL
+    if lane and "btc5" not in lane:
+        return {
+            "gate": "btc5_pnl_truth",
+            "passed": True,
+            "lane": lane,
+            "note": f"auto-pass: lane='{lane}' does not depend on BTC5 PnL",
+        }
+
     rt = load_json(RUNTIME_TRUTH_LATEST_PATH)
     if rt is None:
         return {
             "gate": "btc5_pnl_truth",
             "passed": False,
+            "lane": lane or "global",
             "note": "runtime_truth_latest.json missing — cannot verify BTC5 PnL",
         }
 
@@ -227,16 +340,17 @@ def _evaluate_btc5_pnl_truth() -> dict[str, Any]:
         return {
             "gate": "btc5_pnl_truth",
             "passed": False,
+            "lane": lane or "btc5",
             "fill_rows": fill_rows,
             "pnl_usd": None,
             "profit_factor": profit_factor,
             "note": (
                 f"BTC5 has {fill_rows} fills but PnL is null — "
-                "data integrity failure, promotion blocked"
+                "data integrity failure, BTC5 expansion blocked"
             ),
         }
 
-    # Gate 2: negative cumulative PnL AND profit_factor < 1.0 -> promotion blocked
+    # Gate 2: negative cumulative PnL AND profit_factor < 1.0 -> expansion blocked
     has_pnl = pnl is not None
     pnl_negative = has_pnl and pnl < 0
     pf_below_one = profit_factor is not None and profit_factor < 1.0
@@ -247,13 +361,14 @@ def _evaluate_btc5_pnl_truth() -> dict[str, Any]:
         return {
             "gate": "btc5_pnl_truth",
             "passed": False,
+            "lane": lane or "btc5",
             "fill_rows": fill_rows,
             "pnl_usd": pnl,
             "profit_factor": profit_factor,
             "note": (
                 f"BTC5 cumulative PnL=${pnl:.2f} with "
                 f"profit_factor={profit_factor} — "
-                "negative P&L blocks promotion (strategy holds at current stage)"
+                "negative P&L blocks BTC5 expansion only (other lanes unaffected)"
             ),
         }
 
@@ -262,6 +377,7 @@ def _evaluate_btc5_pnl_truth() -> dict[str, Any]:
     return {
         "gate": "btc5_pnl_truth",
         "passed": passed,
+        "lane": lane or "btc5",
         "fill_rows": fill_rows,
         "pnl_usd": pnl,
         "profit_factor": profit_factor,
@@ -383,8 +499,13 @@ def _evaluate_execution_quality(thesis: dict, history: dict[str, Any]) -> dict[s
         return {"gate": "execution_quality", "passed": True, "score": 1.0, "note": "auto-pass (no capital)"}
 
     hist = history.get(thesis["thesis_id"]) or {}
-    fill_rate = hist.get("fill_rate") or 0.0
-    toxic_rate = hist.get("toxic_flow_rate") or 0.0
+    fill_rate = hist.get("fill_rate")
+    toxic_rate = hist.get("toxic_flow_rate")
+    if fill_rate is None and _resolve_lane(thesis) in STRUCTURAL_FAST_TRACK_GATES:
+        fill_rate = thesis.get("execution_realism_score")
+        toxic_rate = 0.0
+    fill_rate = fill_rate or 0.0
+    toxic_rate = toxic_rate or 0.0
     score = fill_rate * (1.0 - toxic_rate)
     passed = score >= EXECUTION_QUALITY_MIN
     return {
@@ -395,6 +516,152 @@ def _evaluate_execution_quality(thesis: dict, history: dict[str, Any]) -> dict[s
         "score": round(score, 4),
         "minimum": EXECUTION_QUALITY_MIN,
         "note": f"score {score:.3f} ({'pass' if passed else 'fail'})",
+    }
+
+
+def evaluate_structural_fast_track(lane_id: str, stats: dict[str, Any]) -> dict[str, Any]:
+    """Evaluate whether a structural lane can proceed to micro-live without
+    meeting the generic 200-event / 7-day replay/off_policy/world_league gates.
+
+    Structural lanes (pair_completion, neg_risk) are deterministic and
+    bounded-risk — they do not need the full statistical flywheel that
+    statistical-alpha lanes require.  This function checks the lower,
+    lane-specific thresholds defined in STRUCTURAL_FAST_TRACK_GATES.
+
+    Parameters
+    ----------
+    lane_id : str
+        Normalised lane identifier, e.g. "pair_completion" or "neg_risk".
+    stats : dict
+        Runtime statistics for the lane.  Expected keys mirror the gate
+        definition (e.g. "replay_opportunities", "shadow_opportunities", etc.).
+        Missing keys are treated as zero / False.
+
+    Returns
+    -------
+    dict with keys:
+        approved : bool   — True if the lane may skip generic gates
+        reasons  : list[str] — human-readable gate outcomes (pass and fail)
+        stage    : str    — "micro_live" if approved, "shadow" otherwise
+        lane_id  : str    — echoed back for traceability
+    """
+    gate_def = STRUCTURAL_FAST_TRACK_GATES.get(lane_id)
+    if gate_def is None:
+        return {
+            "approved": False,
+            "reasons": [f"lane '{lane_id}' is not in STRUCTURAL_FAST_TRACK_GATES"],
+            "stage": "shadow",
+            "lane_id": lane_id,
+        }
+
+    reasons: list[str] = []
+    failures: list[str] = []
+
+    def _check_min(key: str, stat_key: str | None = None) -> None:
+        threshold = gate_def[key]
+        actual = int(stats.get(stat_key or key) or 0)
+        if actual >= threshold:
+            reasons.append(f"{key}: {actual} >= {threshold} (pass)")
+        else:
+            failures.append(f"{key}: {actual} < {threshold} required (fail)")
+
+    def _check_max(key: str, stat_key: str | None = None) -> None:
+        threshold = gate_def[key]
+        actual = int(stats.get(stat_key or key) or 0)
+        if actual <= threshold:
+            reasons.append(f"{key}: {actual} <= {threshold} (pass)")
+        else:
+            failures.append(f"{key}: {actual} > {threshold} allowed (fail)")
+
+    def _check_bool(key: str, stat_key: str | None = None) -> None:
+        required = bool(gate_def[key])
+        actual = bool(stats.get(stat_key or key, False))
+        if not required:
+            reasons.append(f"{key}: not required (pass)")
+        elif actual:
+            reasons.append(f"{key}: satisfied (pass)")
+        else:
+            failures.append(f"{key}: required but not satisfied (fail)")
+
+    # Evaluate each key in the gate definition
+    for key in gate_def:
+        if key.startswith("min_"):
+            _check_min(key)
+        elif key.startswith("max_"):
+            _check_max(key)
+        elif key.startswith("require_"):
+            _check_bool(key)
+        else:
+            reasons.append(f"{key}: unrecognised gate key, skipped")
+
+    approved = len(failures) == 0
+    if not approved:
+        simulation_fills = int(stats.get("simulation_fills") or 0)
+        if simulation_fills > 0:
+            simulation_checks: list[tuple[bool, str]] = [
+                (
+                    str(stats.get("truth_dependency_status") or "").strip().lower() == "green",
+                    f"truth_dependency_status={stats.get('truth_dependency_status') or 'missing'}",
+                ),
+                (
+                    bool(stats.get("promotion_fast_track_ready")),
+                    f"promotion_fast_track_ready={bool(stats.get('promotion_fast_track_ready'))}",
+                ),
+                (
+                    float(stats.get("edge_after_fees_usd") or 0.0) > 0.0,
+                    f"edge_after_fees_usd={float(stats.get('edge_after_fees_usd') or 0.0):.4f}",
+                ),
+                (
+                    float(stats.get("execution_realism_score") or 0.0) >= 0.80,
+                    f"execution_realism_score={float(stats.get('execution_realism_score') or 0.0):.3f}",
+                ),
+            ]
+            if lane_id == "pair_completion":
+                simulation_checks.extend(
+                    [
+                        (simulation_fills >= 50, f"simulation_fills={simulation_fills}"),
+                        (
+                            float(stats.get("partial_fill_breach_rate") or 0.0) <= 0.10,
+                            f"partial_fill_breach_rate={float(stats.get('partial_fill_breach_rate') or 0.0):.3f}",
+                        ),
+                        (
+                            float(stats.get("max_trapped_capital_usd") or 0.0) <= 15.0,
+                            f"max_trapped_capital_usd={float(stats.get('max_trapped_capital_usd') or 0.0):.2f}",
+                        ),
+                    ]
+                )
+            elif lane_id == "neg_risk":
+                simulation_checks.extend(
+                    [
+                        (simulation_fills >= 20, f"simulation_fills={simulation_fills}"),
+                        (
+                            int(stats.get("taxonomy_ambiguity") or 0) == 0,
+                            f"taxonomy_ambiguity={int(stats.get('taxonomy_ambiguity') or 0)}",
+                        ),
+                        (
+                            bool(stats.get("bounded_worst_case", False)),
+                            f"bounded_worst_case={bool(stats.get('bounded_worst_case', False))}",
+                        ),
+                    ]
+                )
+            sim_reasons = [
+                f"{detail} ({'pass' if passed else 'fail'})"
+                for passed, detail in simulation_checks
+            ]
+            if all(passed for passed, _ in simulation_checks):
+                return {
+                    "approved": True,
+                    "reasons": reasons + failures + sim_reasons,
+                    "stage": "micro_live",
+                    "lane_id": lane_id,
+                    "path": "simulation_fast_track",
+                }
+            failures.extend(sim_reasons)
+    return {
+        "approved": approved,
+        "reasons": reasons + failures,
+        "stage": "micro_live" if approved else "shadow",
+        "lane_id": lane_id,
     }
 
 
@@ -460,6 +727,201 @@ class PromoDecision(str):
     KILL = "KILL"
 
 
+def _resolve_lane(thesis: dict) -> str:
+    """Return a normalised lane string from a thesis dict.
+
+    Checks ``lane`` first, then falls back to ``source``.  Returns an empty
+    string if neither key is present.  The returned string is lower-cased and
+    stripped so callers can do simple ``in`` / ``==`` membership tests.
+    """
+    raw = str(thesis.get("lane") or thesis.get("source") or "").strip().lower()
+    return raw
+
+
+def _check_wallet_ledger_mismatch(thesis_bundle: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Global gate: wallet/ledger disagreement disables ALL new live capital.
+
+    Returns a failed gate dict if a mismatch is detected, otherwise None
+    (meaning no mismatch found and the global gate passes).
+
+    This is intentionally kept global — a truth mismatch means the accounting
+    layer cannot be trusted for any lane.
+    """
+    rt = load_json(RUNTIME_TRUTH_LATEST_PATH)
+    if rt is None:
+        # Cannot verify — treat as pass (freshness gate handles the missing file case)
+        return None
+
+    mismatch = rt.get("wallet_ledger_mismatch")
+    if mismatch:
+        return {
+            "gate": "wallet_ledger_truth",
+            "passed": False,
+            "note": (
+                "wallet/ledger disagreement detected — ALL new live capital disabled "
+                f"until reconciled (mismatch={mismatch})"
+            ),
+        }
+    return None
+
+
+def _truth_gate_from_canonical_truth() -> dict[str, Any] | None:
+    truth = load_json(CANONICAL_TRUTH_PATH)
+    if truth is None:
+        return None
+    truth_status = str(truth.get("truth_status") or "").strip().lower()
+    if truth_status in {"degraded", "blocked"}:
+        blockers = list(truth.get("truth_mismatches") or truth.get("blockers") or [])
+        return {
+            "gate": "canonical_truth",
+            "passed": False,
+            "note": (
+                f"canonical truth is {truth_status}; "
+                f"blockers={', '.join(str(item) for item in blockers[:3]) or 'unspecified'}"
+            ),
+            "truth_status": truth_status,
+        }
+    return None
+
+
+def _structural_requirement_blockers(candidate: dict[str, Any]) -> list[str]:
+    lane = str(candidate.get("lane") or "")
+    blockers: list[str] = []
+    fills = int(candidate.get("fills_simulated") or 0)
+    expectancy = float(candidate.get("net_after_fee_expectancy") or 0.0)
+    breach = float(candidate.get("partial_fill_breach_rate") or 1.0)
+    half_life_ms = float(candidate.get("opportunity_half_life_ms") or 0.0)
+    truth_dependency = str(candidate.get("truth_dependency_status") or "unknown").lower()
+
+    if truth_dependency != "green":
+        blockers.append(f"{lane}_truth_dependency_{truth_dependency}")
+
+    if lane == "pair_completion":
+        if fills < 50:
+            blockers.append("pair_completion_replay_opportunities_below_50")
+        if breach > 0.10:
+            blockers.append("pair_completion_partial_fill_breach_above_threshold")
+        if expectancy <= 0:
+            blockers.append("pair_completion_negative_expectancy")
+    elif lane == "neg_risk":
+        taxonomy_ambiguity = float((candidate.get("parameters_tested") or {}).get("taxonomy_ambiguity", 1))
+        if fills < 20:
+            blockers.append("neg_risk_replay_opportunities_below_20")
+        if taxonomy_ambiguity != 0:
+            blockers.append("neg_risk_taxonomy_ambiguity_nonzero")
+        if expectancy <= 0:
+            blockers.append("neg_risk_negative_expectancy")
+    elif lane == "resolution_sniper":
+        if half_life_ms <= 250000:
+            blockers.append("resolution_sniper_half_life_below_latency_floor")
+        if breach > 0.15:
+            blockers.append("resolution_sniper_decay_too_fast")
+    elif lane == "weather_settlement_timing":
+        if fills < 20:
+            blockers.append("weather_settlement_timing_replay_depth_thin")
+    return blockers
+
+
+def _build_structural_lane_snapshots(
+    ranked_candidates: list[dict[str, Any]],
+    *,
+    truth_status: str,
+) -> list[dict[str, Any]]:
+    truth_is_green = truth_status == "green"
+    per_lane: dict[str, dict[str, Any]] = {}
+    for candidate in ranked_candidates:
+        lane = str(candidate.get("lane") or "").strip()
+        if not lane:
+            continue
+        score = float(candidate.get("moonshot_score") or 0.0)
+        if lane not in per_lane or score > float(per_lane[lane].get("moonshot_score") or 0.0):
+            per_lane[lane] = candidate
+
+    snapshots: list[dict[str, Any]] = []
+    for lane, candidate in sorted(per_lane.items(), key=lambda item: -float(item[1].get("moonshot_score") or 0.0)):
+        blockers = list(candidate.get("current_blockers") or _structural_requirement_blockers(candidate))
+        if not truth_is_green:
+            blockers = list(dict.fromkeys([f"truth_status_{truth_status}", *blockers]))
+        evidence_fresh = bool(candidate.get("evidence_fresh", truth_is_green))
+        simulation_ready = bool(candidate.get("simulation_ready", bool(candidate.get("fills_simulated"))))
+        requested_promotion_ready = bool(
+            candidate.get(
+                "promotion_ready",
+                evidence_fresh and simulation_ready and not blockers and bool(candidate.get("promotion_fast_track_ready")),
+            )
+        )
+        promotion_ready = bool(
+            truth_is_green
+            and requested_promotion_ready
+            and evidence_fresh
+            and simulation_ready
+            and not blockers
+            and bool(candidate.get("promotion_fast_track_ready"))
+        )
+        raw_score = float(candidate.get("moonshot_score") or 0.0)
+        priority_rank_raw = candidate.get("priority_rank")
+        priority_rank = 99 if priority_rank_raw is None else int(priority_rank_raw)
+        routing_score = raw_score + max(0.0, 20.0 - (priority_rank * 5.0))
+        snapshots.append(
+            {
+                "schema": "structural_lane_snapshot.v1",
+                "lane": lane,
+                "strategy_id": candidate.get("strategy_id"),
+                "evidence_fresh": evidence_fresh,
+                "simulation_ready": simulation_ready,
+                "promotion_ready": promotion_ready,
+                "recommended_capital_usd": float(candidate.get("recommended_capital_usd") or 0.0),
+                "current_blockers": blockers,
+                "score": routing_score,
+                "raw_score": raw_score,
+                "net_after_fee_expectancy": float(candidate.get("net_after_fee_expectancy") or 0.0),
+                "partial_fill_breach_rate": float(candidate.get("partial_fill_breach_rate") or 0.0),
+                "opportunity_half_life_ms": float(candidate.get("opportunity_half_life_ms") or 0.0),
+            }
+        )
+    return snapshots
+
+
+def _build_structural_theses_from_ranked_candidates(
+    ranked_candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    theses: list[dict[str, Any]] = []
+    for candidate in ranked_candidates:
+        lane = str(candidate.get("lane") or "").strip()
+        if lane not in STRUCTURAL_FAST_TRACK_GATES:
+            continue
+        theses.append(
+            {
+                "thesis_id": f"structural:{lane}:{candidate.get('strategy_id') or lane}",
+                "type": "structural_edge",
+                "source": "structural_live_queue",
+                "lane": lane,
+                "description": f"{lane} structural candidate from {candidate.get('scenario_set') or 'simulation'}",
+                "requires_capital": True,
+                "confidence": max(
+                    0.50,
+                    min(0.99, float(candidate.get("execution_realism") or 0.0)),
+                ),
+                "execution_realism_score": float(candidate.get("execution_realism") or 0.0),
+                "simulation_fills": int(candidate.get("fills_simulated") or 0),
+                "edge_after_fees_usd": float(candidate.get("net_after_fee_expectancy") or 0.0),
+                "partial_fill_breach_rate": float(candidate.get("partial_fill_breach_rate") or 0.0),
+                "max_trapped_capital_usd": float(candidate.get("max_trapped_capital_usd") or 0.0),
+                "truth_dependency_status": str(candidate.get("truth_dependency_status") or "unknown"),
+                "promotion_fast_track_ready": bool(candidate.get("promotion_fast_track_ready")),
+                "bounded_worst_case": bool(
+                    (candidate.get("promotion_inputs") or {}).get("bounded_worst_case", lane != "neg_risk")
+                ),
+                "taxonomy_ambiguity": int(
+                    (candidate.get("promotion_inputs") or {}).get("taxonomy_ambiguity") or 0
+                ),
+                "recommended_capital_usd": float(candidate.get("recommended_capital_usd") or 0.0),
+                "current_blockers": list(candidate.get("current_blockers") or []),
+            }
+        )
+    return theses
+
+
 def evaluate_thesis(
     thesis: dict,
     history: dict[str, Any],
@@ -469,20 +931,102 @@ def evaluate_thesis(
     counterfactual_lab: dict[str, Any] | None = None,
     thesis_bundle: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    gates = [
-        # Hard gates first — stale evidence or negative PnL blocks everything
-        _evaluate_evidence_freshness(thesis_bundle),
-        _evaluate_btc5_pnl_truth(),
-        # Standard promotion gates
-        _evaluate_replay(thesis, history, capital_lab=capital_lab),
-        _evaluate_off_policy(thesis, history, counterfactual_lab=counterfactual_lab),
-        _evaluate_world_league(thesis, history, all_theses),
-        _evaluate_execution_quality(thesis, history),
-    ]
-    all_passed = all(g["passed"] for g in gates)
-    any_failed = any(not g["passed"] for g in gates)
+    lane = _resolve_lane(thesis)
 
-    # Kill if thesis type is risk_alert and concentration > 40%
+    # ------------------------------------------------------------------
+    # Global gate: wallet/ledger mismatch disables ALL new live capital.
+    # Check this first so it appears prominently in the output.
+    # ------------------------------------------------------------------
+    wallet_gate = _check_wallet_ledger_mismatch(thesis_bundle)
+    canonical_truth_gate = _truth_gate_from_canonical_truth()
+
+    # ------------------------------------------------------------------
+    # Hard gates (now lane-aware):
+    #   - evidence_freshness: stale weather evidence -> weather lane only
+    #   - btc5_pnl_truth: negative PnL -> btc5 lane only
+    # ------------------------------------------------------------------
+    freshness_gate = _evaluate_evidence_freshness(thesis_bundle, lane=lane)
+    btc5_gate = _evaluate_btc5_pnl_truth(lane=lane)
+
+    # ------------------------------------------------------------------
+    # Structural fast-track: deterministic lanes (pair_completion, neg_risk)
+    # may skip generic replay/off_policy/world_league gates when they meet
+    # the lower, bounded-risk thresholds in STRUCTURAL_FAST_TRACK_GATES.
+    # Check this BEFORE building the generic gate list.
+    # ------------------------------------------------------------------
+    structural_ft: dict[str, Any] | None = None
+    use_fast_track = False
+
+    if lane in STRUCTURAL_FAST_TRACK_GATES:
+        # Gather the lane's runtime stats from capital_lab or thesis itself
+        lane_stats: dict[str, Any] = {}
+        if capital_lab:
+            lane_stats = (capital_lab.get("lanes") or {}).get(lane) or {}
+        # Allow thesis-embedded stats to supplement (keys may vary by lane)
+        for k in thesis:
+            if k not in lane_stats:
+                lane_stats.setdefault(k, thesis[k])
+
+        structural_ft = evaluate_structural_fast_track(lane, lane_stats)
+        use_fast_track = structural_ft["approved"]
+
+    # ------------------------------------------------------------------
+    # Build gate list: fast-track lanes skip replay/off_policy/world_league.
+    # Hard gates and execution_quality always run.
+    # ------------------------------------------------------------------
+    gates: list[dict[str, Any]] = []
+
+    # Global wallet/ledger mismatch gate (if triggered)
+    if wallet_gate is not None:
+        gates.append(wallet_gate)
+    if canonical_truth_gate is not None:
+        gates.append(canonical_truth_gate)
+
+    # Lane-specific hard gates
+    gates.append(freshness_gate)
+    gates.append(btc5_gate)
+
+    if use_fast_track:
+        # Structural fast-track: skip the generic statistical gates
+        gates.append({
+            "gate": "structural_fast_track",
+            "passed": True,
+            "lane": lane,
+            "stage": structural_ft["stage"],
+            "reasons": structural_ft["reasons"],
+            "note": (
+                f"structural fast-track approved for lane='{lane}'; "
+                "replay/off_policy/world_league gates bypassed"
+            ),
+        })
+    else:
+        # Generic statistical gates
+        gates.append(_evaluate_replay(thesis, history, capital_lab=capital_lab))
+        gates.append(_evaluate_off_policy(thesis, history, counterfactual_lab=counterfactual_lab))
+        gates.append(_evaluate_world_league(thesis, history, all_theses))
+
+    # Execution quality always runs (applies to all lanes)
+    gates.append(_evaluate_execution_quality(thesis, history))
+
+    all_passed = all(g["passed"] for g in gates)
+
+    # ------------------------------------------------------------------
+    # Compute per-lane verdict (approved / blocked / insufficient_data)
+    # ------------------------------------------------------------------
+    failed_gates = [g for g in gates if not g["passed"]]
+    if all_passed:
+        lane_verdict = LANE_APPROVED
+    elif any(
+        g.get("gate") in {"wallet_ledger_truth", "evidence_freshness"}
+        for g in failed_gates
+    ):
+        # A structural blocker — data is actively wrong, not just sparse
+        lane_verdict = LANE_BLOCKED
+    else:
+        # Failed due to insufficient data (no fills, no replay history, etc.)
+        lane_verdict = LANE_INSUFFICIENT
+
+    # Kill if thesis type is risk_alert
     if thesis.get("type") == "risk_alert":
         decision = PromoDecision.HOLD  # risk alerts don't get capital
     elif all_passed:
@@ -493,10 +1037,12 @@ def evaluate_thesis(
     kelly = _compute_kelly_size(thesis, history)
     counterfactual = _counterfactual(thesis, history)
 
-    return {
+    result: dict[str, Any] = {
         "thesis_id": thesis["thesis_id"],
         "thesis_type": thesis.get("type"),
         "source": thesis.get("source"),
+        "lane": lane or None,
+        "lane_verdict": lane_verdict,
         "description": thesis.get("description", "")[:120],
         "gates": gates,
         "gates_passed": sum(1 for g in gates if g["passed"]),
@@ -506,31 +1052,34 @@ def evaluate_thesis(
         "kelly_sizing": kelly,
         "counterfactual": counterfactual,
     }
+    if structural_ft is not None:
+        result["structural_fast_track"] = structural_ft
+    return result
 
 
 def assemble_promotion() -> dict[str, Any]:
     thesis_bundle = load_json(THESIS_PATH)
+    ranked_structural_candidates = _load_ranked_structural_candidates()
+    canonical_truth = load_json(CANONICAL_TRUTH_PATH) or {}
+
     if thesis_bundle is None:
-        logger.warning("[promotion] thesis_bundle.json not found — skipping")
-        bundle = _empty_bundle("thesis_bundle missing")
-        write_report(
-            OUTPUT_PATH,
-            artifact="promotion_bundle",
-            payload=bundle,
-            status="blocked",
-            source_of_truth="reports/thesis_bundle.json; reports/capital_lab/latest.json; reports/counterfactual_lab/latest.json",
-            freshness_sla_seconds=1800,
-            blockers=[bundle["blocked_reason"]],
-            summary="promotion bundle blocked: thesis bundle missing",
-        )
-        return bundle
+        logger.warning("[promotion] thesis_bundle.json not found — continuing with structural simulation candidates only")
+        thesis_bundle = {
+            "generated_at": utc_now(),
+            "status": "structural_only",
+            "theses": [],
+        }
 
     gen = thesis_bundle.get("generated_at") or ""
     age = age_seconds(gen)
     if age > 3600:
         logger.warning("[promotion] thesis bundle is %.0fh old", age / 3600)
 
-    theses = thesis_bundle.get("theses") or []
+    theses = list(thesis_bundle.get("theses") or [])
+    existing_ids = {str(item.get("thesis_id") or "") for item in theses if isinstance(item, dict)}
+    for structural_thesis in _build_structural_theses_from_ranked_candidates(ranked_structural_candidates):
+        if structural_thesis["thesis_id"] not in existing_ids:
+            theses.append(structural_thesis)
     history = _load_promo_history()
 
     # Load sub-component lab artifacts as gate inputs (not decision authorities)
@@ -561,8 +1110,8 @@ def assemble_promotion() -> dict[str, Any]:
 
     thesis_status = str(thesis_bundle.get("status") or "fresh").strip().lower()
     blockers: list[str] = []
-    if not theses:
-        blockers.append("no_theses")
+    if not theses and not ranked_structural_candidates:
+        blockers.append("no_theses_or_structural_candidates")
     if capital_lab is None:
         blockers.append("capital_lab_missing")
     if counterfactual_lab is None:
@@ -571,7 +1120,40 @@ def assemble_promotion() -> dict[str, Any]:
         blockers.append(f"thesis_bundle_age_seconds>{1800}")
     if thesis_status in {"blocked", "error"}:
         blockers.append("thesis_bundle_blocked")
-    status = "blocked" if not theses or thesis_status in {"blocked", "error"} else ("stale" if blockers else "fresh")
+    truth_status = str(canonical_truth.get("truth_status") or "unknown").strip().lower()
+    structural_lane_snapshots = _build_structural_lane_snapshots(
+        ranked_structural_candidates,
+        truth_status=truth_status,
+    )
+    capital_router = CapitalRouter(total_capital=1000.0)
+    structural_allocation = capital_router.allocate_best_structural_lane(structural_lane_snapshots)
+
+    if truth_status in {"degraded", "blocked"}:
+        structural_allocation = {
+            "recommended_live_lane": None,
+            "recommended_size_usd": 0.0,
+            "approved_queue": [],
+            "capital_blockers": list(
+                dict.fromkeys(
+                    [f"truth_status_{truth_status}", *list(structural_allocation.get("capital_blockers") or [])]
+                )
+            ),
+        }
+
+    for snapshot in structural_lane_snapshots:
+        if snapshot["lane"] == structural_allocation.get("recommended_live_lane"):
+            snapshot["recommended_capital_usd"] = float(structural_allocation.get("recommended_size_usd") or 0.0)
+        elif truth_status in {"degraded", "blocked"}:
+            snapshot["recommended_capital_usd"] = 0.0
+
+    proof_status = "ready" if structural_allocation.get("recommended_live_lane") else "blocked"
+    capital_blockers = list(structural_allocation.get("capital_blockers") or [])
+    if truth_status in {"degraded", "blocked"}:
+        capital_blockers = list(dict.fromkeys([f"truth_status_{truth_status}", *capital_blockers]))
+
+    status = "blocked" if (not theses and not ranked_structural_candidates) else ("stale" if blockers else "fresh")
+    if capital_blockers:
+        status = "blocked"
 
     bundle: dict[str, Any] = {
         "artifact": "promotion_bundle",
@@ -585,7 +1167,43 @@ def assemble_promotion() -> dict[str, Any]:
         "evaluations": evaluations,
         "status": status,
         "blockers": blockers,
+        "recommended_live_lane": structural_allocation.get("recommended_live_lane"),
+        "recommended_size_usd": structural_allocation.get("recommended_size_usd"),
+        "proof_status": proof_status,
+        "capital_blockers": capital_blockers,
+        "structural_lane_snapshots": structural_lane_snapshots,
+        "structural_live_queue": structural_allocation.get("approved_queue") or [],
+        "best_live_ready_structural_lane": next(
+            (snapshot for snapshot in structural_lane_snapshots if snapshot.get("promotion_ready")),
+            None,
+        ),
+        "next_capital_recommendation": {
+            "lane": structural_allocation.get("recommended_live_lane"),
+            "capital_usd": float(structural_allocation.get("recommended_size_usd") or 0.0),
+            "blockers": capital_blockers,
+        },
+        "truth_status": truth_status,
     }
+
+    structural_queue_payload = {
+        "schema": "structural_live_queue.v1",
+        "generated_at": bundle["generated_at"],
+        "recommended_live_lane": bundle["recommended_live_lane"],
+        "recommended_size_usd": bundle["recommended_size_usd"],
+        "proof_status": proof_status,
+        "capital_blockers": capital_blockers,
+        "queue": bundle["structural_live_queue"],
+    }
+    structural_snapshot_payload = {
+        "schema": "structural_lane_snapshot.v1",
+        "generated_at": bundle["generated_at"],
+        "truth_status": truth_status,
+        "lanes": structural_lane_snapshots,
+    }
+    _write_structural_artifacts(
+        queue_payload=structural_queue_payload,
+        snapshot_payload=structural_snapshot_payload,
+    )
 
     write_report(
         OUTPUT_PATH,
@@ -594,13 +1212,15 @@ def assemble_promotion() -> dict[str, Any]:
         status=status,
         source_of_truth=(
             "reports/thesis_bundle.json; reports/capital_lab/latest.json; "
-            "reports/counterfactual_lab/latest.json"
+            "reports/counterfactual_lab/latest.json; reports/canonical_operator_truth.json; "
+            "reports/simulation/ranked_candidates.json"
         ),
         freshness_sla_seconds=1800,
         blockers=blockers or ([bundle["blocked_reason"]] if bundle.get("blocked_reason") else []),
         summary=(
             f"{len(approved)} approved, {len(held)} held, {len(killed)} killed, "
-            f"capital={total_capital_usd:.2f}"
+            f"capital={total_capital_usd:.2f}, "
+            f"structural_lane={bundle.get('recommended_live_lane') or 'none'}"
         ),
     )
     logger.info(

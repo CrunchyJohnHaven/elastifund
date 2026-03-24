@@ -35,6 +35,7 @@ Canonical assessment and current-state surfaces:
 ## Imported Research
 
 - `research/imports/` holds third-party or external ingest material.
+- `research/imports/deep_research_report_2026-03-23_btc5_probability_model.md` records the March 23 BTC5 probability-model and fill-conditioned maker-execution ingest.
 - `research/deep_research_packets/` holds structured handoff/context packets.
 
 ## Unexecuted Prompt Lane

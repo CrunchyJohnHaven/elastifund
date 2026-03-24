@@ -37,6 +37,16 @@ from typing import Any, Optional
 
 logger = logging.getLogger("JJ.capital_router")
 
+STRUCTURAL_LANE_ALIASES: dict[str, str] = {
+    "pair_completion": "dual_sided_pair",
+    "dual_sided_pair": "dual_sided_pair",
+    "neg_risk": "neg_risk",
+    "neg_risk_basket": "neg_risk",
+    "resolution": "resolution_sniper",
+    "resolution_sniper": "resolution_sniper",
+    "weather_settlement_timing": "weather_settlement_timing",
+}
+
 
 # ---------------------------------------------------------------------------
 # Re-export PromotionStage for convenience; fall back to local definition
@@ -69,7 +79,7 @@ class LaneConfig:
     """Configuration for a single capital lane."""
 
     lane_name: str
-    priority: int                       # P0 (highest) to P7 (lowest)
+    priority: int                       # P0 (highest) to P8 (lowest)
     enabled: bool = True
     max_capital_pct: float = 0.10       # Max fraction of total capital
     min_edge: float = 0.01             # Minimum edge to deploy
@@ -83,8 +93,8 @@ class LaneConfig:
     max_markets: int = 6
 
     def __post_init__(self) -> None:
-        if self.priority < 0 or self.priority > 7:
-            raise ValueError(f"Priority must be 0-7, got {self.priority}")
+        if self.priority < 0 or self.priority > 8:
+            raise ValueError(f"Priority must be 0-8, got {self.priority}")
         if self.max_capital_pct < 0.0 or self.max_capital_pct > 1.0:
             raise ValueError(f"max_capital_pct must be 0.0-1.0, got {self.max_capital_pct}")
         if self.order_type not in ("maker", "taker"):
@@ -149,8 +159,17 @@ def _default_lane_configs() -> list[LaneConfig]:
             max_markets=6,
         ),
         LaneConfig(
-            lane_name="whale_copy",
+            lane_name="weather_settlement_timing",
             priority=4,
+            enabled=True,
+            max_capital_pct=0.10,
+            min_edge=0.01,
+            order_type="maker",
+            stage=int(PromotionStage.SHADOW),
+        ),
+        LaneConfig(
+            lane_name="whale_copy",
+            priority=5,
             enabled=True,
             max_capital_pct=0.10,
             min_edge=0.02,
@@ -159,7 +178,7 @@ def _default_lane_configs() -> list[LaneConfig]:
         ),
         LaneConfig(
             lane_name="semantic_lead_lag",
-            priority=5,
+            priority=6,
             enabled=True,
             max_capital_pct=0.10,
             min_edge=0.02,
@@ -168,7 +187,7 @@ def _default_lane_configs() -> list[LaneConfig]:
         ),
         LaneConfig(
             lane_name="llm_tournament",
-            priority=6,
+            priority=7,
             enabled=False,  # Too expensive per signal for now
             max_capital_pct=0.08,
             min_edge=0.03,
@@ -177,7 +196,7 @@ def _default_lane_configs() -> list[LaneConfig]:
         ),
         LaneConfig(
             lane_name="directional_btc5",
-            priority=7,
+            priority=8,
             enabled=False,  # FROZEN — lost money March 22 predicting BTC direction
             max_capital_pct=0.10,
             min_edge=0.03,
@@ -226,6 +245,7 @@ class CapitalRouter:
 
     def get_lane_budget(self, lane_name: str) -> float:
         """Return dollar budget for a lane. Zero if disabled or unknown."""
+        lane_name = STRUCTURAL_LANE_ALIASES.get(lane_name, lane_name)
         lc = self._lanes.get(lane_name)
         if lc is None or not lc.enabled:
             return 0.0
@@ -233,12 +253,65 @@ class CapitalRouter:
 
     def is_lane_enabled(self, lane_name: str) -> bool:
         """Return True if the lane exists and is enabled."""
+        lane_name = STRUCTURAL_LANE_ALIASES.get(lane_name, lane_name)
         lc = self._lanes.get(lane_name)
         return lc is not None and lc.enabled
 
     def get_lane_config(self, lane_name: str) -> Optional[LaneConfig]:
         """Return LaneConfig for a lane, or None if unknown."""
+        lane_name = STRUCTURAL_LANE_ALIASES.get(lane_name, lane_name)
         return self._lanes.get(lane_name)
+
+    def allocate_best_structural_lane(self, candidates: list[dict[str, Any]]) -> dict[str, Any]:
+        """Allocate structural capital to exactly one approved lane.
+
+        This is the structural-first path used by the local lab: we keep
+        reserve capital intact instead of dribbling money into several weak
+        lanes at once.
+        """
+        eligible: list[dict[str, Any]] = []
+        blockers: list[str] = []
+        for candidate in candidates:
+            raw_lane = str(candidate.get("lane") or "").strip()
+            lane = STRUCTURAL_LANE_ALIASES.get(raw_lane, raw_lane)
+            if not lane:
+                continue
+            if not self.is_lane_enabled(lane):
+                blockers.append(f"{lane}_disabled")
+                continue
+            if not bool(candidate.get("promotion_ready")):
+                blockers.extend(str(item) for item in (candidate.get("current_blockers") or [f"{lane}_not_ready"]))
+                continue
+            eligible.append({**candidate, "lane": lane})
+
+        eligible.sort(
+            key=lambda item: (
+                -float(item.get("score") or item.get("moonshot_score") or 0.0),
+                -float(item.get("net_after_fee_expectancy") or 0.0),
+                float(item.get("partial_fill_breach_rate") or 1.0),
+            )
+        )
+
+        if not eligible:
+            return {
+                "recommended_live_lane": None,
+                "recommended_size_usd": 0.0,
+                "approved_queue": [],
+                "capital_blockers": list(dict.fromkeys(blockers or ["no_structural_lane_ready"])),
+            }
+
+        winner = eligible[0]
+        budget = round(self.get_lane_budget(winner["lane"]), 2)
+        recommended = round(
+            min(budget, float(winner.get("recommended_capital_usd") or budget)),
+            2,
+        )
+        return {
+            "recommended_live_lane": winner["lane"],
+            "recommended_size_usd": recommended,
+            "approved_queue": [{**winner, "recommended_capital_usd": recommended}],
+            "capital_blockers": [],
+        }
 
     # -- Freeze / unfreeze ---------------------------------------------------
 

@@ -179,7 +179,7 @@ def test_parse_session_guardrail_overrides_preserves_zero_direction_caps() -> No
     )
 
     assert len(overrides) == 1
-    assert overrides[0].up_max_buy_price is None  # 0.0 normalizes to None (non-positive)
+    assert overrides[0].up_max_buy_price == pytest.approx(0.0)
     assert overrides[0].down_max_buy_price == pytest.approx(0.48)
 
 

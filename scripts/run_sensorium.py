@@ -45,6 +45,8 @@ OUTPUT_PATH = PROJECT_ROOT / "reports" / "parallel" / "instance01_sensorium_late
 # ---------------------------------------------------------------------------
 SOURCES: dict[str, Path] = {
     "canonical_operator_truth":     PROJECT_ROOT / "reports" / "canonical_operator_truth.json",
+    "local_live_status":            PROJECT_ROOT / "reports" / "local_live_status.json",
+    "local_feedback_loop":          PROJECT_ROOT / "reports" / "local_feedback_loop.json",
     "weather_divergence_shadow":     PROJECT_ROOT / "reports" / "parallel" / "instance04_weather_divergence_shadow.json",
     "btc5_market":                   PROJECT_ROOT / "reports" / "autoresearch" / "btc5_market" / "latest.json",
     "btc5_command_node":             PROJECT_ROOT / "reports" / "autoresearch" / "command_node" / "latest.json",
@@ -55,6 +57,8 @@ SOURCES: dict[str, Path] = {
 # Seconds before an artifact is considered stale for sensorium purposes
 STALE_THRESHOLDS: dict[str, int] = {
     "canonical_operator_truth":  3600,
+    "local_live_status":         900,
+    "local_feedback_loop":       900,
     "weather_divergence_shadow": 7200,
     "btc5_market":               86400,
     "btc5_command_node":         86400,
@@ -286,6 +290,188 @@ def _extract_weather_observations(weather: dict[str, Any]) -> list[dict[str, Any
             stale_threshold=stale_threshold,
         ))
 
+    return observations
+
+
+def _extract_local_live_observations(local_live_status: dict[str, Any]) -> list[dict[str, Any]]:
+    observations: list[dict[str, Any]] = []
+    if not local_live_status:
+        return observations
+
+    age = _artifact_age_seconds(local_live_status)
+    stale_threshold = STALE_THRESHOLDS["local_live_status"]
+    venues = local_live_status.get("venues") or {}
+    if not isinstance(venues, dict):
+        return observations
+
+    live_enabled_count = 0
+    feedback_ready_count = 0
+    for venue, payload in venues.items():
+        if not isinstance(payload, dict):
+            continue
+        effective_mode = str(payload.get("effective_mode") or "unknown").strip().lower()
+        blockers = list(payload.get("blockers") or [])
+        feedback_ready = bool(payload.get("feedback_loop_ready"))
+        if effective_mode == "live":
+            live_enabled_count += 1
+        if feedback_ready:
+            feedback_ready_count += 1
+        signal = "positive" if effective_mode == "live" else ("negative" if blockers else "flat")
+        observations.append(_obs(
+            obs_id=f"local_live:{venue}:mode",
+            category="local_live",
+            signal=signal,
+            value=1.0 if effective_mode == "live" else (-1.0 if blockers else 0.0),
+            confidence=0.9 if age >= 0 and age < stale_threshold else 0.3,
+            source="local_live_status",
+            age_seconds=age,
+            stale_threshold=stale_threshold,
+        ))
+        observations.append(_obs(
+            obs_id=f"local_live:{venue}:blocker_count",
+            category="local_live",
+            signal="negative" if blockers else "positive",
+            value=float(len(blockers)),
+            confidence=0.85 if age >= 0 and age < stale_threshold else 0.3,
+            source="local_live_status",
+            age_seconds=age,
+            stale_threshold=stale_threshold,
+        ))
+
+    observations.append(_obs(
+        obs_id="local_live:venue_live_count",
+        category="local_live",
+        signal="positive" if live_enabled_count > 0 else "flat",
+        value=float(live_enabled_count),
+        confidence=0.9 if age >= 0 and age < stale_threshold else 0.3,
+        source="local_live_status",
+        age_seconds=age,
+        stale_threshold=stale_threshold,
+    ))
+    observations.append(_obs(
+        obs_id="local_live:feedback_ready_count",
+        category="local_live",
+        signal="positive" if feedback_ready_count >= len(venues) else "flat",
+        value=float(feedback_ready_count),
+        confidence=0.9 if age >= 0 and age < stale_threshold else 0.3,
+        source="local_live_status",
+        age_seconds=age,
+        stale_threshold=stale_threshold,
+    ))
+    return observations
+
+
+def _extract_local_feedback_observations(local_feedback: dict[str, Any]) -> list[dict[str, Any]]:
+    observations: list[dict[str, Any]] = []
+    if not local_feedback:
+        return observations
+
+    age = _artifact_age_seconds(local_feedback)
+    stale_threshold = STALE_THRESHOLDS["local_feedback_loop"]
+    venues = local_feedback.get("venues") or {}
+    if not isinstance(venues, dict):
+        return observations
+
+    mutation_hints = list(local_feedback.get("mutation_hints") or [])
+    feedback_ready_count = 0
+    for venue, payload in venues.items():
+        if not isinstance(payload, dict):
+            continue
+        feedback_ready = bool(payload.get("feedback_ready"))
+        activity_count = float(payload.get("recent_activity_count_24h") or 0.0)
+        hint_count = float(len(payload.get("hints") or []))
+        if feedback_ready:
+            feedback_ready_count += 1
+
+        observations.append(_obs(
+            obs_id=f"local_feedback:{venue}:activity_24h",
+            category="local_feedback",
+            signal="positive" if activity_count > 0 else ("negative" if feedback_ready else "flat"),
+            value=activity_count,
+            confidence=0.85 if age >= 0 and age < stale_threshold else 0.3,
+            source="local_feedback_loop",
+            age_seconds=age,
+            stale_threshold=stale_threshold,
+        ))
+        observations.append(_obs(
+            obs_id=f"local_feedback:{venue}:hint_count",
+            category="local_feedback",
+            signal="negative" if hint_count > 0 else "positive",
+            value=hint_count,
+            confidence=0.85 if age >= 0 and age < stale_threshold else 0.3,
+            source="local_feedback_loop",
+            age_seconds=age,
+            stale_threshold=stale_threshold,
+        ))
+
+        if venue == "alpaca":
+            candidate_count = float(payload.get("candidate_count") or 0.0)
+            observations.append(_obs(
+                obs_id="local_feedback:alpaca:candidate_count",
+                category="local_feedback",
+                signal="positive" if candidate_count > 0 else "negative",
+                value=candidate_count,
+                confidence=0.9 if age >= 0 and age < stale_threshold else 0.3,
+                source="local_feedback_loop",
+                age_seconds=age,
+                stale_threshold=stale_threshold,
+            ))
+        elif venue == "kalshi":
+            match_rate = float(payload.get("settlement_match_rate") or 0.0)
+            observations.append(_obs(
+                obs_id="local_feedback:kalshi:settlement_match_rate",
+                category="local_feedback",
+                signal="positive" if match_rate >= 0.99 else ("negative" if match_rate < 0.8 else "flat"),
+                value=match_rate,
+                confidence=0.9 if age >= 0 and age < stale_threshold else 0.3,
+                source="local_feedback_loop",
+                age_seconds=age,
+                stale_threshold=stale_threshold,
+            ))
+        elif venue == "polymarket":
+            trailing_pnl = float(payload.get("trailing_12_live_filled_pnl_usd") or 0.0)
+            resolved_rows = float(payload.get("resolved_rows") or 0.0)
+            observations.append(_obs(
+                obs_id="local_feedback:polymarket:trailing_12_pnl_usd",
+                category="local_feedback",
+                signal="positive" if trailing_pnl > 0 else ("negative" if resolved_rows >= 12 else "flat"),
+                value=trailing_pnl,
+                confidence=0.9 if age >= 0 and age < stale_threshold else 0.3,
+                source="local_feedback_loop",
+                age_seconds=age,
+                stale_threshold=stale_threshold,
+            ))
+            observations.append(_obs(
+                obs_id="local_feedback:polymarket:resolved_rows",
+                category="local_feedback",
+                signal="positive" if resolved_rows > 0 else "negative",
+                value=resolved_rows,
+                confidence=0.85 if age >= 0 and age < stale_threshold else 0.3,
+                source="local_feedback_loop",
+                age_seconds=age,
+                stale_threshold=stale_threshold,
+            ))
+
+    observations.append(_obs(
+        obs_id="local_feedback:feedback_ready_count",
+        category="local_feedback",
+        signal="positive" if feedback_ready_count >= len(venues) else "flat",
+        value=float(feedback_ready_count),
+        confidence=0.9 if age >= 0 and age < stale_threshold else 0.3,
+        source="local_feedback_loop",
+        age_seconds=age,
+        stale_threshold=stale_threshold,
+    ))
+    observations.append(_obs(
+        obs_id="local_feedback:mutation_hint_count",
+        category="local_feedback",
+        signal="negative" if mutation_hints else "positive",
+        value=float(len(mutation_hints)),
+        confidence=0.9 if age >= 0 and age < stale_threshold else 0.3,
+        source="local_feedback_loop",
+        age_seconds=age,
+        stale_threshold=stale_threshold,
+    ))
     return observations
 
 
@@ -537,6 +723,8 @@ def build_sensorium(check_only: bool = False) -> dict[str, Any]:
     source_count = sum(1 for v in loaded.values() if v)
 
     canonical  = loaded["canonical_operator_truth"]
+    local_live = loaded["local_live_status"]
+    local_feedback = loaded["local_feedback_loop"]
     weather    = loaded["weather_divergence_shadow"]
     btc5_mkt   = loaded["btc5_market"]
     btc5_cn    = loaded["btc5_command_node"]
@@ -546,6 +734,8 @@ def build_sensorium(check_only: bool = False) -> dict[str, Any]:
     # --- Build observations ---
     observations: list[dict[str, Any]] = []
     observations.extend(_extract_capital_observations(canonical, wr, fin))
+    observations.extend(_extract_local_live_observations(local_live))
+    observations.extend(_extract_local_feedback_observations(local_feedback))
     observations.extend(_extract_weather_observations(weather))
     observations.extend(_extract_btc5_observations(btc5_mkt, btc5_cn))
     observations.extend(_extract_concentration_observation(wr))
@@ -617,7 +807,7 @@ def main() -> int:
     negative = signals.count("negative")
     stale_obs = sum(1 for o in artifact["observations"] if o["stale"])
     print(
-        f"[sensorium] {obs_count} obs | sources={source_count}/6 "
+        f"[sensorium] {obs_count} obs | sources={source_count}/8 "
         f"| +{positive} -{negative} stale={stale_obs} "
         f"| -> {OUTPUT_PATH.relative_to(PROJECT_ROOT)}"
     )

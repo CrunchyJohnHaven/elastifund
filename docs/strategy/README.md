@@ -20,6 +20,7 @@ This index is the canonical entrypoint for `docs/strategy/`.
 - `combinatorial_arb_implementation_deep_dive.md`
 - `risk_framework_correlated_binaries.md`
 - `resolution_rule_edge_playbook.md`
+- `tail_calibration_harness.md`
 
 ## Acceptance Criteria
 

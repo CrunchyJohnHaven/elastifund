@@ -12,8 +12,8 @@ from typing import Any
 
 
 CANDIDATE_CONTRACT_VERSION = 1
-MUTATION_SURFACE = {'model_name': 'empirical_backoff_v1__escalated_blend',
- 'model_version': 3,
+MUTATION_SURFACE = {'model_name': 'empirical_backoff_v1__escalated_blend__j4',
+ 'model_version': 4,
  'feature_levels': [['direction', 'session_name', 'price_bucket', 'delta_bucket'],
                     ['direction', 'session_name', 'delta_bucket'],
                     ['direction', 'session_name', 'price_bucket'],
@@ -22,9 +22,9 @@ MUTATION_SURFACE = {'model_name': 'empirical_backoff_v1__escalated_blend',
                     ['direction'],
                     []],
  'target_priors': {'p_up': 0.775, 'fill_rate': 0.465385, 'pnl_pct': 0.091391},
- 'target_smoothing': {'p_up': 2.0, 'fill_rate': 3.0, 'pnl_pct': 4.0},
+ 'target_smoothing': {'p_up': 1.0, 'fill_rate': 3.125, 'pnl_pct': 3.9167},
  'global_backstop_weight_min': 0.03,
- 'global_backstop_weight_max': 0.62,
+ 'global_backstop_weight_max': 0.61,
  'pnl_fill_blend_base': 0.42,
  'pnl_fill_blend_scale': 0.58,
  'pnl_clamp_abs': 1.8}

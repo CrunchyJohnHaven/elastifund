@@ -64,7 +64,7 @@
 
 | # | Strategy | Original Kill Reason | New Evidence | Next Step |
 |---|----------|---------------------|--------------|-----------|
-| RE1 | Chainlink vs Binance Basis Lag (MAKER-ONLY) | 1.56% taker fee exceeds spread (2026-03-06) | Maker orders = 0% fee + 20% rebate pool. Gemini dispatch #77 confirms maker-only execution revives this edge. RTDS_MAKER_EDGE_IMPLEMENTATION.md spec aligned. | Build Shadow Validator: 72h empirical data capture with maker fill-rate simulation. If fill rate >15% and EV positive post-costs, promote to BUILDING. |
+| RE1 | Chainlink vs Binance Basis Lag (MAKER-ONLY) | 1.56% taker fee exceeds spread (2026-03-06) | Maker orders = 0% fee + 20% rebate pool. Gemini dispatch #77 confirms maker-only execution revives this edge. The 2026-03-23 probability-model ingest adds a stricter contract rule: labels and candle state must be Chainlink-native, ties resolve Up, and maker EV must be fill-conditioned. | Audit Chainlink open/close/tie extraction first, then run a 72h shadow validator with maker queue replay, information-curve logging by `tau`, and fill-conditioned EV. Promote only if oracle alignment is clean and realized fill-conditioned edge stays positive post-costs. |
 
 ## TESTED & REJECTED (10)
 

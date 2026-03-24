@@ -42,6 +42,7 @@ REMOTE_SERVICE_STATUS_PATH = REPO_ROOT / "reports" / "remote_service_status.json
 BTC5_REMOTE_SERVICE_STATUS_PATH = REPO_ROOT / "reports" / "btc5_remote_service_status.json"
 BTC5_DEPLOY_ACTIVATION_PATH = REPO_ROOT / "reports" / "btc5_deploy_activation.json"
 BTC5_AUTORESEARCH_LATEST_PATH = REPO_ROOT / "reports" / "btc5_autoresearch" / "latest.json"
+LAUNCH_PACKET_LATEST_PATH = REPO_ROOT / "reports" / "launch_packet_latest.json"
 FINANCE_LATEST_PATH = REPO_ROOT / "reports" / "finance" / "latest.json"
 ROLLOUT_CONTROL_LATEST_PATH = REPO_ROOT / "reports" / "rollout_control" / "latest.json"
 
@@ -88,7 +89,8 @@ STAGE_ENV_NUMERIC_DEFAULTS = (
     ("BTC5_RISK_FRACTION", "0.02"),
     ("BTC5_MAX_TRADE_USD", "10"),
     ("BTC5_MIN_TRADE_USD", "5"),
-    ("BTC5_DAILY_LOSS_LIMIT_USD", "5"),
+    ("BTC5_DAILY_LOSS_LIMIT_USD", "25"),
+    ("BTC5_STAGE1_DAILY_LOSS_LIMIT_USD", "25"),
     ("BTC5_STAGE2_MAX_TRADE_USD", "15"),
     ("BTC5_STAGE3_MAX_TRADE_USD", "20"),
 )
@@ -104,6 +106,7 @@ STAGE_ENV_RENDER_ORDER = (
     "BTC5_STAGE3_MAX_TRADE_USD",
     "BTC5_MIN_TRADE_USD",
     "BTC5_DAILY_LOSS_LIMIT_USD",
+    "BTC5_STAGE1_DAILY_LOSS_LIMIT_USD",
 )
 
 
@@ -146,6 +149,191 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return float(default)
+
+
+def _bool_or_none(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def _first_nonempty(*values: Any) -> Any:
+    for value in values:
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _resolve_launch_packet(
+    *,
+    remote_cycle_status: dict[str, Any],
+    launch_packet: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    explicit = dict(launch_packet or {})
+    if explicit:
+        return explicit
+    return dict(remote_cycle_status.get("launch_packet") or {})
+
+
+def _build_launch_authority(
+    *,
+    remote_cycle_status: dict[str, Any],
+    launch_packet: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    launch = dict(remote_cycle_status.get("launch") or {})
+    resolved_packet = _resolve_launch_packet(
+        remote_cycle_status=remote_cycle_status,
+        launch_packet=launch_packet,
+    )
+    launch_verdict = dict(resolved_packet.get("launch_verdict") or {})
+    launch_contract = dict(resolved_packet.get("contract") or {})
+    submission_contract_consensus = dict(
+        resolved_packet.get("submission_contract_consensus") or {}
+    )
+    mandatory_outputs = dict(resolved_packet.get("mandatory_outputs") or {})
+    authority_available = bool(
+        resolved_packet
+        or any(
+            key in remote_cycle_status
+            for key in ("launch_posture", "allow_order_submission", "paper_trading", "order_submit_enabled")
+        )
+        or bool(launch)
+    )
+    launch_posture = str(
+        _first_nonempty(
+            launch_verdict.get("posture"),
+            launch_contract.get("launch_posture"),
+            resolved_packet.get("launch_posture"),
+            launch.get("posture"),
+            remote_cycle_status.get("launch_posture"),
+            "",
+        )
+    ).strip().lower()
+    allow_order_submission = _bool_or_none(
+        _first_nonempty(
+            launch_contract.get("allow_order_submission"),
+            resolved_packet.get("allow_order_submission"),
+            launch.get("allow_order_submission"),
+            remote_cycle_status.get("allow_order_submission"),
+        )
+    )
+    order_submit_enabled = _bool_or_none(
+        _first_nonempty(
+            launch_contract.get("order_submit_enabled"),
+            resolved_packet.get("order_submit_enabled"),
+            remote_cycle_status.get("order_submit_enabled"),
+        )
+    )
+    paper_trading = _bool_or_none(
+        _first_nonempty(
+            launch_contract.get("paper_trading"),
+            resolved_packet.get("paper_trading"),
+            remote_cycle_status.get("paper_trading"),
+        )
+    )
+    live_order_submission_allowed = _bool_or_none(
+        resolved_packet.get("live_order_submission_allowed")
+    )
+    if live_order_submission_allowed is None:
+        live_order_submission_allowed = bool(
+            launch_posture == "clear"
+            and allow_order_submission is True
+            and order_submit_enabled is True
+            and paper_trading is False
+        )
+    launch_posture_clear = bool(
+        submission_contract_consensus.get("launch_posture_clear")
+        if "launch_posture_clear" in submission_contract_consensus
+        else launch_posture == "clear"
+    )
+    allow_submission_consensus = bool(
+        submission_contract_consensus.get("allow_order_submission")
+        if "allow_order_submission" in submission_contract_consensus
+        else allow_order_submission is True
+    )
+    paper_trading_disabled = bool(
+        submission_contract_consensus.get("paper_trading_disabled")
+        if "paper_trading_disabled" in submission_contract_consensus
+        else paper_trading is False
+    )
+    live_launch_blocked = _bool_or_none(
+        _first_nonempty(
+            launch_verdict.get("live_launch_blocked"),
+            resolved_packet.get("live_launch_blocked"),
+            launch.get("live_launch_blocked"),
+        )
+    )
+    allow_execution = _bool_or_none(
+        _first_nonempty(
+            launch_verdict.get("allow_execution"),
+            resolved_packet.get("allow_execution"),
+        )
+    )
+    baseline_live_allowed = _bool_or_none(
+        _first_nonempty(
+            launch_verdict.get("baseline_live_allowed"),
+            resolved_packet.get("baseline_live_allowed"),
+            remote_cycle_status.get("btc5_baseline_live_allowed"),
+        )
+    )
+    block_reasons = [
+        str(item).strip()
+        for item in list(
+            mandatory_outputs.get("block_reasons")
+            or resolved_packet.get("block_reasons")
+            or launch.get("blocked_reasons")
+            or []
+        )
+        if str(item).strip()
+    ]
+    failed_checks = [
+        str(item).strip()
+        for item in list(launch_contract.get("hard_failed_checks") or launch_contract.get("failed_checks") or [])
+        if str(item).strip()
+    ]
+    authority_green = bool(
+        authority_available
+        and launch_posture == "clear"
+        and allow_order_submission is True
+        and order_submit_enabled is True
+        and paper_trading is False
+        and live_order_submission_allowed is True
+        and launch_posture_clear
+        and allow_submission_consensus
+        and paper_trading_disabled
+        and live_launch_blocked is not True
+        and allow_execution is not False
+    )
+    return {
+        "authority_available": authority_available,
+        "launch_packet": resolved_packet,
+        "launch_verdict": launch_verdict,
+        "launch_contract": launch_contract,
+        "submission_contract_consensus": {
+            "launch_posture_clear": launch_posture_clear,
+            "allow_order_submission": allow_submission_consensus,
+            "paper_trading_disabled": paper_trading_disabled,
+        },
+        "launch_posture": launch_posture or None,
+        "allow_order_submission": allow_order_submission,
+        "order_submit_enabled": order_submit_enabled,
+        "paper_trading": paper_trading,
+        "live_order_submission_allowed": live_order_submission_allowed,
+        "live_launch_blocked": live_launch_blocked,
+        "allow_execution": allow_execution,
+        "baseline_live_allowed": baseline_live_allowed,
+        "block_reasons": block_reasons,
+        "failed_checks": failed_checks,
+        "authority_green": authority_green,
+        "source_path": "reports/launch_packet_latest.json",
+    }
 
 
 def _baseline_block_reasons(remote_cycle_status: dict[str, Any]) -> list[str]:
@@ -225,6 +413,7 @@ def _build_baseline_contract(
     decision: RolloutDecision,
     validation: dict[str, Any] | None,
     remote_cycle_status: dict[str, Any],
+    launch_packet: dict[str, Any] | None,
     remote_service_status: dict[str, Any],
     finance_latest: dict[str, Any],
     rollout_control: dict[str, Any],
@@ -235,17 +424,29 @@ def _build_baseline_contract(
     deployment_confidence = dict(remote_cycle_status.get("deployment_confidence") or {})
     selected_package = dict(remote_cycle_status.get("btc5_selected_package") or {})
     finance_gate = dict(finance_latest.get("finance_gate") or {})
+    launch_authority = _build_launch_authority(
+        remote_cycle_status=remote_cycle_status,
+        launch_packet=launch_packet,
+    )
 
     baseline_live_allowed = bool(
-        remote_cycle_status.get("btc5_baseline_live_allowed")
-        if remote_cycle_status.get("btc5_baseline_live_allowed") is not None
-        else stage_readiness.get("baseline_live_allowed", decision.deploy_mode == "live_stage1")
+        launch_authority.get("authority_green")
+        if launch_authority.get("authority_available")
+        else (
+            launch_authority.get("baseline_live_allowed")
+            if launch_authority.get("baseline_live_allowed") is not None
+            else stage_readiness.get("baseline_live_allowed", decision.deploy_mode == "live_stage1")
+        )
     )
     baseline_live_ok = bool(
         baseline_live_allowed
         and decision.deploy_mode == "live_stage1"
         and decision.paper_trading is False
         and service_running
+        and (
+            not launch_authority.get("authority_available")
+            or bool(launch_authority.get("authority_green"))
+        )
         and (validation or {}).get("rollback_required") is not True
     )
     if baseline_live_ok:
@@ -316,6 +517,15 @@ def _build_baseline_contract(
         "baseline_live_allowed": baseline_live_allowed,
         "baseline_mode": decision.deploy_mode,
         "service_running": service_running,
+        "launch_authority_source": launch_authority.get("source_path"),
+        "launch_authority_green": launch_authority.get("authority_green"),
+        "launch_submission_contract": {
+            "launch_posture": launch_authority.get("launch_posture"),
+            "allow_order_submission": launch_authority.get("allow_order_submission"),
+            "order_submit_enabled": launch_authority.get("order_submit_enabled"),
+            "paper_trading": launch_authority.get("paper_trading"),
+            "live_order_submission_allowed": launch_authority.get("live_order_submission_allowed"),
+        },
         "stage_upgrade_status": "stage_upgrade_blocked" if stage_upgrade_blocked else "stage_upgrade_ready",
         "stage_upgrade_blocked": stage_upgrade_blocked,
         "stage_upgrade_blockers": stage_upgrade_blockers,
@@ -339,6 +549,7 @@ def _build_baseline_contract(
             ),
         },
         "source_precedence": [
+            "reports/launch_packet_latest.json",
             "reports/runtime_truth_latest.json or reports/remote_cycle_status.json",
             "reports/instance2_btc5_baseline/latest.json",
             "reports/btc5_autoresearch/latest.json",
@@ -354,7 +565,8 @@ def _build_baseline_contract(
             or ""
         ).strip() or None,
         "one_next_cycle_action": (
-            f"Keep canonical live profile "
+            launch_authority.get("launch_packet", {}).get("one_next_cycle_action")
+            or f"Keep canonical live profile "
             f"{selected_package.get('canonical_live_profile') or selected_package.get('selected_active_profile_name') or 'unknown'} "
             f"at flat stage-1 size via baseline_guard.v1 inside autoprompt gating"
         ),
@@ -530,32 +742,20 @@ def resolve_ssh_key(cli_key: Path | None) -> Path | None:
     return discover_ssh_key(REPO_ROOT)
 
 
-def select_rollout_decision(remote_cycle_status: dict[str, Any]) -> RolloutDecision:
+def select_rollout_decision(
+    remote_cycle_status: dict[str, Any],
+    *,
+    launch_packet: dict[str, Any] | None = None,
+) -> RolloutDecision:
     btc5_stage_readiness = dict(remote_cycle_status.get("btc5_stage_readiness") or {})
     deployment_confidence = dict(remote_cycle_status.get("deployment_confidence") or {})
     validated_package = dict(deployment_confidence.get("validated_package") or {})
-    root_tests = dict(remote_cycle_status.get("root_tests") or {})
-    service = dict(remote_cycle_status.get("service") or {})
-    capital = dict(remote_cycle_status.get("capital") or {})
-    runtime = dict(remote_cycle_status.get("runtime") or {})
-    polymarket_wallet = dict(remote_cycle_status.get("polymarket_wallet") or {})
-    launch = dict(remote_cycle_status.get("launch") or {})
-    selected_package = dict(remote_cycle_status.get("btc5_selected_package") or {})
-    baseline_live_allowed = bool(
-        remote_cycle_status.get("btc5_baseline_live_allowed")
-        if remote_cycle_status.get("btc5_baseline_live_allowed") is not None
-        else (
-            deployment_confidence.get("baseline_live_allowed")
-            if deployment_confidence.get("baseline_live_allowed") is not None
-            else btc5_stage_readiness.get("baseline_live_allowed")
-        )
+    launch_authority = _build_launch_authority(
+        remote_cycle_status=remote_cycle_status,
+        launch_packet=launch_packet,
     )
-    baseline_live_status = str(
-        deployment_confidence.get("baseline_live_status")
-        or btc5_stage_readiness.get("baseline_live_status")
-        or ""
-    ).strip().lower()
-    baseline_trade_now_status = str(btc5_stage_readiness.get("trade_now_status") or "").strip().lower()
+    accounting_reconciliation = dict(remote_cycle_status.get("accounting_reconciliation") or {})
+    selected_package = dict(remote_cycle_status.get("btc5_selected_package") or {})
     allowed_stage_value = (
         deployment_confidence.get("allowed_stage")
         if "allowed_stage" in deployment_confidence
@@ -568,38 +768,11 @@ def select_rollout_decision(remote_cycle_status: dict[str, Any]) -> RolloutDecis
         if "can_btc5_trade_now" in deployment_confidence
         else btc5_stage_readiness.get("can_trade_now")
     )
-    validated_for_live_stage1 = bool(validated_package.get("validated_for_live_stage1"))
-    stage_1_blockers = [
-        str(item).strip()
-        for item in list(deployment_confidence.get("stage_1_blockers") or [])
-        if str(item).strip()
-    ]
-    advisory_stage_1_blockers = {
-        "wallet_export_btc_open_markets_not_zero",
-        "stage_1_wallet_reconciliation_not_ready",
-        "btc5_forecast_not_promote_high",
-        "selected_runtime_package_not_promote",
-        "runtime_package_load_pending",
-        "validated_runtime_package_not_loaded",
-        "confirmation_coverage_insufficient",
-    }
-    bounded_restart_stage_1_blockers = advisory_stage_1_blockers | {
-        "wallet_reconciliation_stale",
-        "trailing_12_live_filled_not_positive",
-    }
-    non_advisory_stage_1_blockers = [
-        blocker for blocker in stage_1_blockers if blocker not in advisory_stage_1_blockers
-    ]
-    non_advisory_bounded_restart_stage_1_blockers = [
-        blocker for blocker in stage_1_blockers if blocker not in bounded_restart_stage_1_blockers
-    ]
-    launch_blocked_checks = [
-        str(item).strip()
-        for item in list(launch.get("blocked_checks") or [])
-        if str(item).strip()
-    ]
-    selected_best_profile_name = str(selected_package.get("selected_best_profile_name") or "").strip()
-    selected_active_profile_name = str(selected_package.get("selected_active_profile_name") or "").strip()
+    validated_for_live_stage1 = bool(
+        validated_package.get("validated_for_live_stage1")
+        if validated_package
+        else selected_package.get("validated_for_live_stage1")
+    )
     selected_package_confidence_label = str(
         selected_package.get("selected_package_confidence_label") or confidence_label
     ).strip().lower()
@@ -608,92 +781,146 @@ def select_rollout_decision(remote_cycle_status: dict[str, Any]) -> RolloutDecis
     ).strip().lower()
     validation_live_filled_rows = int(_safe_float(selected_package.get("validation_live_filled_rows"), 0.0) or 0)
     generalization_ratio = _safe_float(selected_package.get("generalization_ratio"), 0.0)
-    stage1_live_candidate = bool(selected_package.get("stage1_live_candidate"))
-    has_capital_on_platform = (
-        _safe_float(capital.get("deployed_capital_usd"), 0.0) > 0.0
-        or _safe_float(polymarket_wallet.get("free_collateral_usd"), 0.0) >= 100.0
+    stage_1_blockers = {
+        str(item).strip()
+        for item in list(deployment_confidence.get("stage_1_blockers") or [])
+        if str(item).strip()
+    }
+    blocking_checks = {
+        *stage_1_blockers,
+        *{
+            str(item).strip()
+            for item in list(deployment_confidence.get("blocking_checks") or [])
+            if str(item).strip()
+        },
+        *{
+            str(item).strip()
+            for item in list(selected_package.get("blocking_checks") or [])
+            if str(item).strip()
+        },
+        *{
+            str(item).strip()
+            for item in list(btc5_stage_readiness.get("trade_now_blocking_checks") or [])
+            if str(item).strip()
+        },
+        *{
+            str(item).strip()
+            for item in list(launch_authority.get("block_reasons") or [])
+            if str(item).strip()
+        },
+    }
+    launch_posture = str(launch_authority.get("launch_posture") or "").strip().lower()
+    allow_order_submission = bool(launch_authority.get("allow_order_submission"))
+    paper_trading = launch_authority.get("paper_trading")
+    live_order_submission_allowed = bool(launch_authority.get("live_order_submission_allowed"))
+    recent_12_live_pnl = _safe_float(
+        _first_nonempty(
+            (((remote_cycle_status.get("btc_5min_maker") or {}).get("intraday_live_summary") or {}).get("recent_12_pnl_usd")),
+            selected_package.get("trailing_12_live_filled_pnl_usd"),
+            remote_cycle_status.get("trailing_12_live_pnl"),
+        ),
+        0.0,
     )
-    baseline_live_override = bool(
-        root_tests.get("status") == "passing"
-        and service.get("status") == "running"
-        and has_capital_on_platform
-        and _safe_float(polymarket_wallet.get("free_collateral_usd"), 0.0) > 0.0
-        and (
-            int(runtime.get("closed_trades") or 0) > 0
-            or int((remote_cycle_status.get("btc_5min_maker") or {}).get("live_filled_rows") or 0) >= 50
+    confirmation_coverage_sufficient = _bool_or_none(
+        _first_nonempty(
+            deployment_confidence.get("confirmation_coverage_sufficient"),
+            selected_package.get("confirmation_coverage_sufficient"),
         )
-        and not non_advisory_stage_1_blockers
-        and not launch_blocked_checks
     )
-    advisory_restart_launch_checks = {"no_closed_trades", "mode_alignment", "finance_gate_blocked"}
-    bounded_live_restart_override = bool(
-        root_tests.get("status") == "passing"
-        and service.get("status") == "running"
-        and has_capital_on_platform
-        and _safe_float(polymarket_wallet.get("free_collateral_usd"), 0.0) > 0.0
-        and stage1_live_candidate
-        and selected_best_profile_name
-        and selected_active_profile_name
-        and selected_best_profile_name != selected_active_profile_name
-        and selected_package_confidence_label in {"high", "medium"}
-        and selected_deploy_recommendation in {"promote", "shadow_only"}
-        and validation_live_filled_rows >= 12
-        and generalization_ratio >= 0.80
-        and not non_advisory_bounded_restart_stage_1_blockers
-        and set(launch_blocked_checks).issubset(advisory_restart_launch_checks)
+    if confirmation_coverage_sufficient is None:
+        confirmation_label = str(
+            _first_nonempty(
+                deployment_confidence.get("confirmation_coverage_label"),
+                deployment_confidence.get("confirmation_support_status"),
+                selected_package.get("confirmation_coverage_status"),
+                "",
+            )
+        ).strip().lower()
+        confirmation_coverage_sufficient = (
+            confirmation_label in {"sufficient", "ready", "green", "high", "medium", "supported"}
+            and "confirmation_coverage_insufficient" not in blocking_checks
+        )
+    truth_blockers_present = bool(
+        accounting_reconciliation.get("drift_detected")
+        or launch_authority.get("live_launch_blocked") is True
+        or (
+            {
+                "accounting_reconciliation_drift",
+                "local_ledger_drift_vs_remote_wallet",
+                "trade_count_divergence_requires_repair_branch",
+                "wallet_export_candidate_conflict_requires_repair_branch",
+                "control_posture_blocked_requires_repair_branch",
+                "trade_proof_fill_conflict_requires_repair_branch",
+            }
+            & blocking_checks
+        )
     )
-    explicit_baseline_contract_override = bool(
-        baseline_live_allowed
-        and baseline_live_status in {"unblocked", "ready", "allowed"}
-        and baseline_trade_now_status in {"unblocked", "ready", "allowed"}
-        and root_tests.get("status") == "passing"
-        and service.get("status") == "running"
-        and has_capital_on_platform
-        and _safe_float(polymarket_wallet.get("free_collateral_usd"), 0.0) > 0.0
-        and bool(remote_cycle_status.get("allow_order_submission"))
-    )
-
-    bootstrap_live_override = bool(
-        os.environ.get("BTC5_BOOTSTRAP_LIVE_OVERRIDE", "").strip().lower() in {"1", "true", "yes"}
-        and root_tests.get("status") == "passing"
-        and service.get("status") == "running"
-        and _safe_float(polymarket_wallet.get("free_collateral_usd"), 0.0) >= 100.0
-    )
-    live_stage_allowed = (
+    truth_green = bool(launch_authority.get("authority_green") and not truth_blockers_present)
+    package_green = bool(
         validated_for_live_stage1
         and can_trade_now
         and allowed_stage >= 1
-        and confidence_label in {"medium", "high"}
+        and selected_deploy_recommendation == "promote"
+        and selected_package_confidence_label in {"medium", "high"}
+        and generalization_ratio >= 0.70
+        and validation_live_filled_rows >= 12
+        and confirmation_coverage_sufficient
+        and recent_12_live_pnl > 0.0
+        and not truth_blockers_present
     )
+    live_stage_allowed = truth_green and package_green
     rationale: list[str] = []
-    if live_stage_allowed or explicit_baseline_contract_override or baseline_live_override or bounded_live_restart_override or bootstrap_live_override:
-        rationale.append("validated_package_and_truth_surface_allow_bounded_stage_1")
-        if explicit_baseline_contract_override and not live_stage_allowed:
-            rationale.append("explicit_baseline_live_contract_override")
-        if baseline_live_override and not live_stage_allowed:
-            rationale.append("continuous_live_baseline_override")
-        if bounded_live_restart_override and not live_stage_allowed:
-            rationale.append("bounded_live_restart_override")
-        if bootstrap_live_override and not live_stage_allowed:
-            rationale.append("bootstrap_live_override_free_collateral_sufficient")
+    if live_stage_allowed:
+        rationale.append("launch_packet_and_btc5_package_gates_green")
         return RolloutDecision(
             deploy_mode="live_stage1",
             paper_trading=False,
             desired_stage=1,
             allowed_stage=max(allowed_stage, 1),
-            confidence_label=confidence_label,
-            can_trade_now=(can_trade_now or baseline_live_override or bounded_live_restart_override or bootstrap_live_override),
+            confidence_label=selected_package_confidence_label or confidence_label,
+            can_trade_now=True,
             rationale=tuple(rationale),
         )
 
-    if not can_trade_now:
+    if not truth_green:
         rationale.append("truth_surface_blocks_live_stage_1")
+    if not launch_authority.get("authority_available"):
+        rationale.append("launch_packet_missing")
+    if launch_posture != "clear":
+        rationale.append(f"launch_posture_{launch_posture or 'unknown'}")
+    if not allow_order_submission:
+        rationale.append("launch_packet_disables_order_submission")
+    if launch_authority.get("order_submit_enabled") is not True:
+        rationale.append("launch_packet_order_submit_disabled")
+    if paper_trading is not False:
+        rationale.append("launch_packet_keeps_paper_trading_enabled")
+    if not live_order_submission_allowed:
+        rationale.append("launch_packet_does_not_permit_live_submission")
+    if not all(
+        bool((launch_authority.get("submission_contract_consensus") or {}).get(key))
+        for key in ("launch_posture_clear", "allow_order_submission", "paper_trading_disabled")
+    ):
+        rationale.append("launch_packet_permission_consensus_missing")
+    if truth_blockers_present:
+        rationale.append("truth_or_accounting_drift_blockers_present")
     if not validated_for_live_stage1:
         rationale.append("validated_btc5_package_not_ready_for_live_stage1")
+    if selected_deploy_recommendation != "promote":
+        rationale.append("selected_runtime_package_not_promote")
+    if selected_package_confidence_label not in {"medium", "high"}:
+        rationale.append(f"selected_package_confidence_{selected_package_confidence_label}")
+    if generalization_ratio < 0.70:
+        rationale.append("selected_runtime_package_generalization_below_0.70")
+    if validation_live_filled_rows < 12:
+        rationale.append("insufficient_trailing_12_live_fills")
+    if not confirmation_coverage_sufficient:
+        rationale.append("confirmation_coverage_insufficient")
+    if recent_12_live_pnl <= 0.0:
+        rationale.append("trailing_12_live_filled_not_positive")
+    if not can_trade_now:
+        rationale.append("deployment_confidence_blocks_trade_now")
     if allowed_stage < 1:
         rationale.append("allowed_stage_below_1")
-    if confidence_label not in {"medium", "high"}:
-        rationale.append(f"deployment_confidence_{confidence_label}")
     if not rationale:
         rationale.append("fallback_to_shadow_probe")
     return RolloutDecision(
@@ -701,8 +928,8 @@ def select_rollout_decision(remote_cycle_status: dict[str, Any]) -> RolloutDecis
         paper_trading=True,
         desired_stage=1,
         allowed_stage=allowed_stage,
-        confidence_label=confidence_label,
-        can_trade_now=can_trade_now,
+        confidence_label=selected_package_confidence_label or confidence_label,
+        can_trade_now=False,
         rationale=tuple(rationale),
     )
 
@@ -901,6 +1128,7 @@ TRACKED_OVERRIDE_KEYS = {{
     'BTC5_MAX_TRADE_USD',
     'BTC5_MIN_TRADE_USD',
     'BTC5_DAILY_LOSS_LIMIT_USD',
+    'BTC5_STAGE1_DAILY_LOSS_LIMIT_USD',
     'BTC5_STAGE1_MAX_TRADE_USD',
     'BTC5_STAGE2_MAX_TRADE_USD',
     'BTC5_STAGE3_MAX_TRADE_USD',
@@ -912,6 +1140,7 @@ REQUIRED_STAGE_OVERRIDE_KEYS = (
     'BTC5_MAX_TRADE_USD',
     'BTC5_MIN_TRADE_USD',
     'BTC5_DAILY_LOSS_LIMIT_USD',
+    'BTC5_STAGE1_DAILY_LOSS_LIMIT_USD',
 )
 
 def load_env_file(path: Path) -> dict[str, object]:
@@ -1065,14 +1294,30 @@ def _probe_freshness_block(remote_cycle_status: dict[str, Any]) -> dict[str, Any
     }
 
 
-def _evaluate_refresh_contract(remote_cycle_status: dict[str, Any]) -> dict[str, Any]:
+def _evaluate_refresh_contract(
+    *,
+    remote_cycle_status: dict[str, Any],
+    launch_packet: dict[str, Any] | None,
+) -> dict[str, Any]:
     data_cadence = dict(remote_cycle_status.get("data_cadence") or {})
     service = dict(remote_cycle_status.get("service") or {})
     trade_proof = dict(remote_cycle_status.get("trade_proof") or {})
+    launch_authority = _build_launch_authority(
+        remote_cycle_status=remote_cycle_status,
+        launch_packet=launch_packet,
+    )
     generated_at = _parse_datetime(remote_cycle_status.get("generated_at"))
+    launch_generated_at = _parse_datetime(
+        (launch_authority.get("launch_packet") or {}).get("generated_at")
+    )
     age_minutes = (
         round(max(0.0, (datetime.now(timezone.utc) - generated_at).total_seconds()) / 60.0, 4)
         if generated_at is not None
+        else None
+    )
+    launch_age_minutes = (
+        round(max(0.0, (datetime.now(timezone.utc) - launch_generated_at).total_seconds()) / 60.0, 4)
+        if launch_generated_at is not None
         else None
     )
     freshness_sla_minutes = int(
@@ -1085,11 +1330,50 @@ def _evaluate_refresh_contract(remote_cycle_status: dict[str, Any]) -> dict[str,
         critical_errors.append("remote_cycle_status_generated_at_missing")
     elif age_minutes is not None and age_minutes > freshness_sla_minutes:
         critical_errors.append("remote_cycle_status_not_fresh")
+    if launch_authority.get("authority_available") and launch_generated_at is None:
+        critical_errors.append("launch_packet_generated_at_missing")
+    elif launch_age_minutes is not None and launch_age_minutes > freshness_sla_minutes:
+        critical_errors.append("launch_packet_not_fresh")
     if bool(data_cadence.get("stale")):
         critical_errors.append("post_refresh_data_cadence_stale")
     service_name = str(service.get("service_name") or "").strip()
     if service_name and service_name != REMOTE_BTC5_SERVICE:
         critical_errors.append("primary_service_mismatch")
+    runtime_launch_posture = str(remote_cycle_status.get("launch_posture") or "").strip().lower()
+    if (
+        runtime_launch_posture
+        and str(launch_authority.get("launch_posture") or "").strip().lower()
+        and runtime_launch_posture != str(launch_authority.get("launch_posture") or "").strip().lower()
+    ):
+        critical_errors.append("launch_packet_runtime_truth_mismatch_launch_posture")
+    runtime_allow_order_submission = _bool_or_none(remote_cycle_status.get("allow_order_submission"))
+    if (
+        runtime_allow_order_submission is not None
+        and launch_authority.get("allow_order_submission") is not None
+        and runtime_allow_order_submission != launch_authority.get("allow_order_submission")
+    ):
+        critical_errors.append("launch_packet_runtime_truth_mismatch_allow_order_submission")
+    runtime_paper_trading = _bool_or_none(remote_cycle_status.get("paper_trading"))
+    if (
+        runtime_paper_trading is not None
+        and launch_authority.get("paper_trading") is not None
+        and runtime_paper_trading != launch_authority.get("paper_trading")
+    ):
+        critical_errors.append("launch_packet_runtime_truth_mismatch_paper_trading")
+    runtime_order_submit_enabled = _bool_or_none(remote_cycle_status.get("order_submit_enabled"))
+    if (
+        runtime_order_submit_enabled is not None
+        and launch_authority.get("order_submit_enabled") is not None
+        and runtime_order_submit_enabled != launch_authority.get("order_submit_enabled")
+    ):
+        critical_errors.append("launch_packet_runtime_truth_mismatch_order_submit_enabled")
+    runtime_live_submission_allowed = _bool_or_none(remote_cycle_status.get("live_order_submission_allowed"))
+    if (
+        runtime_live_submission_allowed is not None
+        and launch_authority.get("live_order_submission_allowed") is not None
+        and runtime_live_submission_allowed != launch_authority.get("live_order_submission_allowed")
+    ):
+        critical_errors.append("launch_packet_runtime_truth_mismatch_live_order_submission_allowed")
     if not trade_proof:
         critical_errors.append("trade_proof_missing")
     else:
@@ -1107,9 +1391,22 @@ def _evaluate_refresh_contract(remote_cycle_status: dict[str, Any]) -> dict[str,
         "critical_errors": critical_errors,
         "generated_at": generated_at.isoformat() if generated_at is not None else None,
         "age_minutes": age_minutes,
+        "launch_generated_at": launch_generated_at.isoformat() if launch_generated_at is not None else None,
+        "launch_age_minutes": launch_age_minutes,
         "freshness_sla_minutes": freshness_sla_minutes,
         "service_name": service_name or None,
         "trade_proof": trade_proof,
+        "launch_authority": {
+            "authority_available": launch_authority.get("authority_available"),
+            "authority_green": launch_authority.get("authority_green"),
+            "launch_posture": launch_authority.get("launch_posture"),
+            "allow_order_submission": launch_authority.get("allow_order_submission"),
+            "order_submit_enabled": launch_authority.get("order_submit_enabled"),
+            "paper_trading": launch_authority.get("paper_trading"),
+            "live_order_submission_allowed": launch_authority.get("live_order_submission_allowed"),
+            "live_launch_blocked": launch_authority.get("live_launch_blocked"),
+            "block_reasons": list(launch_authority.get("block_reasons") or []),
+        },
     }
 
 
@@ -1118,13 +1415,17 @@ def evaluate_post_deploy(
     decision: RolloutDecision,
     activation: dict[str, Any],
     remote_cycle_status: dict[str, Any],
+    launch_packet: dict[str, Any] | None = None,
     remote_service_status: dict[str, Any],
     deploy_returncode: int,
 ) -> dict[str, Any]:
     activation_checks = dict(activation.get("verification_checks") or {})
     stage_in_effect = dict(activation.get("stage_in_effect") or {})
     probe_freshness = _probe_freshness_block(remote_cycle_status)
-    refresh_contract = _evaluate_refresh_contract(remote_cycle_status)
+    refresh_contract = _evaluate_refresh_contract(
+        remote_cycle_status=remote_cycle_status,
+        launch_packet=launch_packet,
+    )
     service_running = (
         activation.get("service_status") == "running"
         and remote_service_status.get("status") == "running"
@@ -1153,6 +1454,23 @@ def evaluate_post_deploy(
         for error in refresh_contract["critical_errors"]
         if error not in critical_errors
     )
+    launch_authority = dict(refresh_contract.get("launch_authority") or {})
+    if decision.deploy_mode == "live_stage1":
+        if not launch_authority.get("authority_available"):
+            critical_errors.append("launch_packet_missing")
+        elif not launch_authority.get("authority_green"):
+            if str(launch_authority.get("launch_posture") or "").strip().lower() != "clear":
+                critical_errors.append("post_refresh_launch_posture_not_clear")
+            if launch_authority.get("allow_order_submission") is not True:
+                critical_errors.append("post_refresh_allow_order_submission_false")
+            if launch_authority.get("order_submit_enabled") is not True:
+                critical_errors.append("post_refresh_order_submit_disabled")
+            if launch_authority.get("paper_trading") is not False:
+                critical_errors.append("post_refresh_paper_trading_enabled")
+            if launch_authority.get("live_order_submission_allowed") is not True:
+                critical_errors.append("post_refresh_live_submission_not_allowed")
+            if launch_authority.get("live_launch_blocked") is True:
+                critical_errors.append("post_refresh_launch_packet_blocked")
 
     return {
         "valid": not critical_errors,
@@ -1205,6 +1523,7 @@ def build_rollout_artifact(
     rollback_report: dict[str, Any] | None,
     remote_cycle_status: dict[str, Any],
     remote_service_status: dict[str, Any],
+    launch_packet: dict[str, Any] | None = None,
     finance_latest: dict[str, Any] | None = None,
     rollout_control: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -1213,10 +1532,15 @@ def build_rollout_artifact(
     service_status = str(remote_service_status.get("status") or "unknown")
     finance_latest = dict(finance_latest or {})
     rollout_control = dict(rollout_control or {})
+    launch_authority = _build_launch_authority(
+        remote_cycle_status=remote_cycle_status,
+        launch_packet=launch_packet,
+    )
     baseline_contract = _build_baseline_contract(
         decision=decision,
         validation=validation,
         remote_cycle_status=remote_cycle_status,
+        launch_packet=launch_packet,
         remote_service_status=remote_service_status,
         finance_latest=finance_latest,
         rollout_control=rollout_control,
@@ -1233,6 +1557,18 @@ def build_rollout_artifact(
         "service_running": service_status == "running",
         "baseline_contract": baseline_contract,
         "baseline_guard": baseline_guard,
+        "launch_authority": {
+            "source": launch_authority.get("source_path"),
+            "launch_posture": launch_authority.get("launch_posture"),
+            "allow_order_submission": launch_authority.get("allow_order_submission"),
+            "order_submit_enabled": launch_authority.get("order_submit_enabled"),
+            "paper_trading": launch_authority.get("paper_trading"),
+            "live_order_submission_allowed": launch_authority.get("live_order_submission_allowed"),
+            "live_launch_blocked": launch_authority.get("live_launch_blocked"),
+            "authority_green": launch_authority.get("authority_green"),
+            "failed_checks": list(launch_authority.get("failed_checks") or []),
+            "block_reasons": list(launch_authority.get("block_reasons") or []),
+        },
         "selected_package": {
             "selection_source": selected_package.get("selection_source"),
             "selected_deploy_recommendation": selected_package.get("selected_deploy_recommendation"),
@@ -1295,6 +1631,14 @@ def build_rollout_artifact(
             "btc5_stage_readiness": remote_cycle_status.get("btc5_stage_readiness"),
             "deployment_confidence": remote_cycle_status.get("deployment_confidence"),
             "btc5_selected_package": remote_cycle_status.get("btc5_selected_package"),
+            "launch_packet": {
+                "launch_posture": launch_authority.get("launch_posture"),
+                "allow_order_submission": launch_authority.get("allow_order_submission"),
+                "order_submit_enabled": launch_authority.get("order_submit_enabled"),
+                "paper_trading": launch_authority.get("paper_trading"),
+                "live_order_submission_allowed": launch_authority.get("live_order_submission_allowed"),
+                "authority_green": launch_authority.get("authority_green"),
+            },
             "btc_5min_maker": {
                 "checked_at": ((remote_cycle_status.get("btc_5min_maker") or {}).get("checked_at")),
             },
@@ -1344,9 +1688,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     remote_cycle_status = _load_json(REMOTE_CYCLE_STATUS_PATH)
+    launch_packet = _load_json(LAUNCH_PACKET_LATEST_PATH)
     finance_latest = _load_json(FINANCE_LATEST_PATH)
     rollout_control = _load_json(ROLLOUT_CONTROL_LATEST_PATH)
-    decision = select_rollout_decision(remote_cycle_status)
+    decision = select_rollout_decision(
+        remote_cycle_status,
+        launch_packet=launch_packet,
+    )
     stage_env_text = render_stage_env(_read_local_env(STAGE_ENV_PATH), decision)
     selected_runtime_override_text = render_selected_runtime_override_env(
         decision=decision,
@@ -1368,6 +1716,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             },
             rollback_report=None,
             remote_cycle_status=remote_cycle_status,
+            launch_packet=launch_packet,
             remote_service_status=_load_json(BTC5_REMOTE_SERVICE_STATUS_PATH),
             finance_latest=finance_latest,
             rollout_control=rollout_control,
@@ -1410,10 +1759,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     refresh_runtime_truth()
     remote_cycle_status = _load_json(REMOTE_CYCLE_STATUS_PATH)
+    launch_packet = _load_json(LAUNCH_PACKET_LATEST_PATH)
     validation = evaluate_post_deploy(
         decision=decision,
         activation=activation,
         remote_cycle_status=remote_cycle_status,
+        launch_packet=launch_packet,
         remote_service_status=remote_service_status,
         deploy_returncode=0 if deploy_result is None else deploy_result.returncode,
     )
@@ -1432,6 +1783,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "reason": "skip_deploy_mode_has_no_backup_restore_contract",
                 },
                 remote_cycle_status=remote_cycle_status,
+                launch_packet=launch_packet,
                 remote_service_status=remote_service_status,
                 finance_latest=finance_latest,
                 rollout_control=rollout_control,
@@ -1449,6 +1801,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         remote_service_status = capture_btc5_service_status_file(host=host, key_path=key_path)
         refresh_runtime_truth()
         remote_cycle_status = _load_json(REMOTE_CYCLE_STATUS_PATH)
+        launch_packet = _load_json(LAUNCH_PACKET_LATEST_PATH)
 
     build_rollout_artifact(
         output_path=args.output.resolve(),
@@ -1458,6 +1811,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         validation=validation,
         rollback_report=rollback_report,
         remote_cycle_status=remote_cycle_status,
+        launch_packet=launch_packet,
         remote_service_status=remote_service_status,
         finance_latest=finance_latest,
         rollout_control=rollout_control,

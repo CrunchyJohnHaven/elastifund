@@ -8,6 +8,9 @@ from typing import Any
 from scripts.remote_cycle_common import dedupe_preserve_order, relative_path_text
 
 
+RESEARCH_ARTIFACT_STALE_HOURS = 6.0
+
+
 def _parse_datetime_like(value: Any) -> datetime | None:
     if value in (None, ""):
         return None
@@ -363,6 +366,14 @@ def _build_stale_hold_repair(
             age_hours = _float_or_none(stage_readiness.get("age_hours")) or _float_or_none(
                 selected_package.get("age_hours")
             )
+
+        if normalized in {
+            "selected_runtime_package_stale",
+            "strategy_scale_comparison_stale",
+            "signal_source_audit_stale",
+            "stage_upgrade_probe_stale",
+        } and age_hours is not None and age_hours <= RESEARCH_ARTIFACT_STALE_HOURS:
+            continue
 
         age_text = f"{age_hours:.4f}" if age_hours is not None else "unknown"
         reason_label = (
@@ -1126,6 +1137,22 @@ def apply_canonical_launch_packet(
     )
     launch_payload["blocked_checks"] = [item for item in launch_payload.get("blocked_checks") or [] if item]
     snapshot["launch"] = launch_payload
+    if contract.get("agent_run_mode") is not None:
+        snapshot["agent_run_mode"] = contract.get("agent_run_mode")
+    if contract.get("execution_mode") is not None:
+        snapshot["execution_mode"] = contract.get("execution_mode")
+    if contract.get("paper_trading") is not None:
+        snapshot["paper_trading"] = _bool_or_none(contract.get("paper_trading"))
+    if contract.get("allow_order_submission") is not None:
+        snapshot["allow_order_submission"] = bool(contract.get("allow_order_submission"))
+    if contract.get("order_submit_enabled") is not None:
+        snapshot["order_submit_enabled"] = bool(contract.get("order_submit_enabled"))
+    snapshot["submission_contract_consensus"] = dict(
+        launch_packet.get("submission_contract_consensus") or {}
+    )
+    snapshot["live_order_submission_allowed"] = bool(
+        launch_packet.get("live_order_submission_allowed")
+    )
 
     snapshot.setdefault("summary", {}).update(
         {
@@ -1169,6 +1196,13 @@ def apply_canonical_launch_packet(
         "execution_mode": snapshot.get("execution_mode"),
         "paper_trading": snapshot.get("paper_trading"),
         "allow_order_submission": snapshot.get("allow_order_submission"),
+        "order_submit_enabled": snapshot.get("order_submit_enabled"),
+        "submission_contract_consensus": dict(
+            launch_packet.get("submission_contract_consensus") or {}
+        ),
+        "live_order_submission_allowed": bool(
+            launch_packet.get("live_order_submission_allowed")
+        ),
         "primary_service": expected_primary_service,
         "observed_service_name": observed_service_name,
         "mode_alignment": mode_alignment_status,
@@ -1289,6 +1323,22 @@ def apply_canonical_launch_packet_to_status(
         or "unknown"
     ).strip() or "unknown"
     payload["launch_packet"] = launch_packet
+    if contract.get("agent_run_mode") is not None:
+        payload["agent_run_mode"] = contract.get("agent_run_mode")
+    if contract.get("execution_mode") is not None:
+        payload["execution_mode"] = contract.get("execution_mode")
+    if contract.get("paper_trading") is not None:
+        payload["paper_trading"] = _bool_or_none(contract.get("paper_trading"))
+    if contract.get("allow_order_submission") is not None:
+        payload["allow_order_submission"] = bool(contract.get("allow_order_submission"))
+    if contract.get("order_submit_enabled") is not None:
+        payload["order_submit_enabled"] = bool(contract.get("order_submit_enabled"))
+    payload["submission_contract_consensus"] = dict(
+        launch_packet.get("submission_contract_consensus") or {}
+    )
+    payload["live_order_submission_allowed"] = bool(
+        launch_packet.get("live_order_submission_allowed")
+    )
     payload["finance_gate_pass"] = bool(mandatory_outputs.get("finance_gate_pass"))
     payload["treasury_gate_pass"] = treasury_gate_pass
     payload["stage1_live_trading_allowed"] = bool(mandatory_outputs.get("finance_gate_pass"))
@@ -1309,16 +1359,34 @@ def apply_canonical_launch_packet_to_status(
         "selected_runtime_profile": (payload.get("runtime_mode") or {}).get("selected_runtime_profile"),
         "effective_runtime_profile": (payload.get("runtime_mode") or {}).get("effective_runtime_profile"),
         "remote_runtime_profile": (payload.get("runtime_truth") or {}).get("remote_runtime_profile"),
-        "agent_run_mode": (payload.get("runtime_truth") or {}).get("agent_run_mode"),
+        "agent_run_mode": payload.get("agent_run_mode"),
         "execution_mode": payload.get("execution_mode"),
         "paper_trading": payload.get("paper_trading"),
         "allow_order_submission": payload.get("allow_order_submission"),
+        "order_submit_enabled": payload.get("order_submit_enabled"),
+        "submission_contract_consensus": dict(
+            launch_packet.get("submission_contract_consensus") or {}
+        ),
+        "live_order_submission_allowed": bool(
+            launch_packet.get("live_order_submission_allowed")
+        ),
         "primary_service": expected_primary_service,
         "observed_service_name": observed_service_name,
         "mode_alignment": mode_alignment_status,
     }
     payload.setdefault("runtime_truth", {}).update(
         {
+            "agent_run_mode": payload.get("agent_run_mode"),
+            "execution_mode": payload.get("execution_mode"),
+            "paper_trading": payload.get("paper_trading"),
+            "allow_order_submission": payload.get("allow_order_submission"),
+            "order_submit_enabled": payload.get("order_submit_enabled"),
+            "submission_contract_consensus": dict(
+                launch_packet.get("submission_contract_consensus") or {}
+            ),
+            "live_order_submission_allowed": bool(
+                launch_packet.get("live_order_submission_allowed")
+            ),
             "launch_posture": launch_verdict.get("posture"),
             "live_launch_blocked": bool(launch_verdict.get("live_launch_blocked")),
             "launch_packet": canonical_launch_packet,

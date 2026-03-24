@@ -62,7 +62,7 @@ echo ""
 echo "[STEP 2] Regenerating strategy scale comparison..."
 echo "  Output: reports/strategy_scale_comparison.json"
 python3 backtest/run_scale_comparison_core.py \
-    --mode live \
+    --mode quick \
     2>&1 | tail -5
 SCALE_EXIT=$?
 if [ $SCALE_EXIT -eq 0 ]; then
@@ -83,7 +83,6 @@ python3 scripts/run_btc5_autoresearch_cycle.py \
     --strategy-env config/btc5_strategy.env \
     --override-env state/btc5_autoresearch.env \
     --report-dir reports/btc5_autoresearch \
-    --paths \
     2>&1 | tail -5
 AUTORESEARCH_EXIT=$?
 if [ $AUTORESEARCH_EXIT -eq 0 ]; then
@@ -138,7 +137,6 @@ if [ -f scripts/run_btc5_autoresearch_cycle.py ]; then
         --strategy-env config/btc5_strategy.env \
         --override-env state/btc5_autoresearch.env \
         --report-dir reports/btc5_autoresearch_current_probe \
-        --paths \
         2>&1 | tail -3
     echo "  [OK] current probe refreshed"
 else

@@ -57,6 +57,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger("WalletFlow")
 
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return bool(default)
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -97,6 +104,10 @@ PRIOR_SURFACE_FILE = Path(
     )
 )
 BOOTSTRAP_MAX_AGE_HOURS = 24
+WALLET_FLOW_PAPER_MODE = _env_flag("WALLET_FLOW_PAPER_MODE", False)
+WALLET_FLOW_SIGNAL_LOG_FILE = Path(
+    os.environ.get("WALLET_FLOW_SIGNAL_LOG_FILE", "data/wallet_flow_signals.log")
+)
 
 # Realized-edge heuristics
 REALIZED_MIN_SAMPLE = 5
@@ -148,6 +159,8 @@ class WalletFlowSignal:
     avg_smart_score: float      # Average activity score of agreeing wallets
     signal_age_seconds: float   # How old the earliest trade in consensus is
     timestamp: str
+    slug: Optional[str] = None
+    agreeing_wallets: List[str] = field(default_factory=list)
     wallet_consensus_wallets: Optional[int] = None
     wallet_consensus_notional_usd: Optional[float] = None
     wallet_consensus_share: Optional[float] = None
@@ -1455,21 +1468,39 @@ def ensure_bootstrap_artifacts(
 class FlowMonitor:
     """Monitors real-time trade flow for smart wallet activity."""
 
-    def __init__(self, smart_wallets: dict):
+    def __init__(
+        self,
+        smart_wallets: dict,
+        *,
+        top_k: int | None = None,
+        lookback_seconds: int | None = None,
+        active_condition_ids: Optional[List[str]] = None,
+    ):
         """
         Args:
             smart_wallets: {address: WalletScore} dict of tracked wallets
         """
-        self.smart_wallets = smart_wallets
-        self.last_seen_timestamp = int(time.time()) - 300  # Start 5 min ago
+        ranked_wallets = sorted(
+            smart_wallets.items(),
+            key=lambda item: float(getattr(item[1], "activity_score", 0.0) or 0.0),
+            reverse=True,
+        )
+        self.top_k = max(1, int(top_k or len(ranked_wallets) or 1))
+        self.smart_wallets = dict(ranked_wallets[: self.top_k])
+        self.lookback_seconds = max(60, int(lookback_seconds or (CONSENSUS_WINDOW_MINUTES * 60)))
+        self.active_condition_ids = [str(cid).strip() for cid in (active_condition_ids or []) if str(cid).strip()]
+        self.last_seen_timestamp = int(time.time()) - self.lookback_seconds
         self._recent_trades = []  # Rolling window of recent smart trades
 
     def poll_trades(self) -> list:
         """Fetch new trades since last poll. Returns list of smart wallet trades."""
         try:
+            params: Dict[str, Any] = {"limit": 100}
+            if len(self.active_condition_ids) == 1:
+                params["conditionId"] = self.active_condition_ids[0]
             resp = requests.get(
                 f"{DATA_API}/trades",
-                params={"limit": 100},
+                params=params,
                 timeout=10,
             )
             if resp.status_code != 200:
@@ -1490,6 +1521,9 @@ class FlowMonitor:
 
             wallet = t.get("proxyWallet", "")
             if wallet in self.smart_wallets:
+                condition_id = str(t.get("conditionId", "") or "")
+                if self.active_condition_ids and condition_id not in self.active_condition_ids:
+                    continue
                 # Enrich with effective outcome
                 side = t.get("side", "")
                 outcome_index = t.get("outcomeIndex", 0)
@@ -1501,7 +1535,7 @@ class FlowMonitor:
         self.last_seen_timestamp = max_ts
 
         # Trim rolling window to CONSENSUS_WINDOW_MINUTES
-        cutoff = int(time.time()) - (CONSENSUS_WINDOW_MINUTES * 60)
+        cutoff = int(time.time()) - self.lookback_seconds
         self._recent_trades = [
             t for t in self._recent_trades
             if int(t.get("timestamp", 0) or 0) > cutoff
@@ -1610,6 +1644,7 @@ class FlowMonitor:
             signal = WalletFlowSignal(
                 market_id=cid,
                 market_title=title,
+                slug=str(trades[0].get("slug") or trades[0].get("eventSlug") or "").strip() or None,
                 direction=direction,
                 outcome_name=outcome_name,
                 confidence=confidence,
@@ -1618,6 +1653,7 @@ class FlowMonitor:
                 avg_smart_score=avg_score,
                 signal_age_seconds=signal_age,
                 timestamp=datetime.now(timezone.utc).isoformat(),
+                agreeing_wallets=sorted(unique_wallets),
                 wallet_consensus_wallets=len(unique_wallets),
                 wallet_consensus_notional_usd=round(total_size, 4),
                 wallet_consensus_share=round(consensus_share, 4),
@@ -1647,6 +1683,26 @@ class FlowMonitor:
 # Module-level monitor for persistent state between scan calls
 _persistent_monitor: Optional[FlowMonitor] = None
 _monitor_initialized_at: float = 0
+_paper_signal_last_seen: Dict[str, int] = {}
+
+
+def _signal_timestamp_to_epoch(value: Any) -> int:
+    try:
+        return int(datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp())
+    except Exception:
+        return int(time.time())
+
+
+def _log_paper_signal(payload: Dict[str, Any]) -> None:
+    key = f"{payload.get('market_id','')}|{payload.get('direction','')}|{payload.get('timestamp',0)}"
+    last_seen = int(_paper_signal_last_seen.get(key, 0) or 0)
+    timestamp = int(payload.get("timestamp", 0) or 0)
+    if last_seen >= timestamp:
+        return
+    _paper_signal_last_seen[key] = timestamp
+    WALLET_FLOW_SIGNAL_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with WALLET_FLOW_SIGNAL_LOG_FILE.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, sort_keys=True) + "\n")
 
 
 def scan_for_signals() -> list:
@@ -1693,9 +1749,24 @@ def scan_for_signals() -> list:
     out: list[Dict[str, Any]] = []
     for signal in signals:
         if isinstance(signal, WalletFlowSignal):
-            out.append(asdict(signal))
+            payload = asdict(signal)
         elif isinstance(signal, dict):
-            out.append(signal)
+            payload = dict(signal)
+        else:
+            continue
+
+        payload["slug"] = payload.get("slug") or payload.get("event_slug")
+        payload["side"] = "BUY"
+        payload["outcome"] = payload.get("outcome_name")
+        payload["source"] = "wallet_flow"
+        payload["wallet_count"] = int(payload.get("smart_wallets_count", 0) or 0)
+        payload["top_k"] = int(getattr(_persistent_monitor, "top_k", len(smart) or 0) or 0)
+        payload["wallets"] = list(payload.get("agreeing_wallets") or [])
+        payload["timestamp"] = _signal_timestamp_to_epoch(payload.get("timestamp"))
+        out.append(payload)
+
+        if WALLET_FLOW_PAPER_MODE:
+            _log_paper_signal(payload)
     return out
 
 
@@ -1707,7 +1778,10 @@ def get_signals_for_engine() -> list:
     Returns list of signal dicts with: market_id, question, direction,
     market_price, estimated_prob, edge, confidence, reasoning, source, etc.
     """
-    raw_signals = _resolve_conflicting_market_signals(scan_for_signals())
+    raw_signals = scan_for_signals()
+    if WALLET_FLOW_PAPER_MODE:
+        return []
+    raw_signals = _resolve_conflicting_market_signals(raw_signals)
     engine_signals = []
 
     for sig in raw_signals:

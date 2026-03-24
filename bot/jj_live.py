@@ -273,6 +273,47 @@ except ImportError:
     except ImportError:
         ElasticAnomalyConsumer = None
 
+# Signal source #7: Latency Surface (truth feed vs venue lag)
+try:
+    from bot.latency_surface import LatencySurface, LatencySignal, TruthSource
+except ImportError:
+    try:
+        from latency_surface import LatencySurface, LatencySignal, TruthSource  # type: ignore
+    except ImportError:
+        LatencySurface = None
+        LatencySignal = None
+        TruthSource = None
+
+# Signal source #8: Favorite-Longshot Bias Harvester
+try:
+    from bot.flb_harvester import FLBHarvester, FLBSignal
+except ImportError:
+    try:
+        from flb_harvester import FLBHarvester, FLBSignal  # type: ignore
+    except ImportError:
+        FLBHarvester = None
+        FLBSignal = None
+
+# Signal source #9: Semantic Alignment (cross-platform convergence)
+try:
+    from bot.semantic_alignment import SemanticAlignmentEngine, SemanticArbSignal
+except ImportError:
+    try:
+        from semantic_alignment import SemanticAlignmentEngine, SemanticArbSignal  # type: ignore
+    except ImportError:
+        SemanticAlignmentEngine = None
+        SemanticArbSignal = None
+
+# Net edge accounting (cost formulas for all edge families)
+try:
+    from bot.net_edge_accounting import evaluate_edge, FeeSchedule
+except ImportError:
+    try:
+        from net_edge_accounting import evaluate_edge, FeeSchedule  # type: ignore
+    except ImportError:
+        evaluate_edge = None
+        FeeSchedule = None
+
 try:
     from bot.combinatorial_integration import (
         CombinatorialConfig,
@@ -5679,8 +5720,51 @@ class JJLive:
             bankroll = self.state.state.get("bankroll", 1000)
             self.strike_desk.update_capital(bankroll)
 
+            # Build sniper_markets from the cached market universe populated
+            # by the main scan cycle (_elastic_market_lookup is keyed by
+            # market_id and holds question/yes_price/token_ids/volume etc.).
+            # We deduplicate by condition_id so the same market isn't fed
+            # twice under different key aliases.
+            sniper_markets: list[dict] = []
+            _seen_sniper_ids: set[str] = set()
+            _lookup = getattr(self, "_elastic_market_lookup", {})
+            for _mid, _md in _lookup.items():
+                if not isinstance(_md, dict):
+                    continue
+                # Use the first non-empty ID as the dedup key
+                _cid = str(_md.get("condition_id", "") or _mid)
+                if _cid in _seen_sniper_ids:
+                    continue
+                _seen_sniper_ids.add(_cid)
+                _yes_price = float(_md.get("yes_price", 0.5) or 0.5)
+                # Approximate best_bid/best_ask from yes_price (spread ~2%)
+                _half_spread = 0.01
+                _best_bid = max(0.01, _yes_price - _half_spread)
+                _best_ask = min(0.99, _yes_price + _half_spread)
+                sniper_markets.append({
+                    "market_id": _mid,
+                    "condition_id": _cid,
+                    "question": str(_md.get("question", "")),
+                    "yes_price": _yes_price,
+                    "no_price": round(1.0 - _yes_price, 6),
+                    "best_bid": _best_bid,
+                    "best_ask": _best_ask,
+                    "mid": _yes_price,
+                    "bid_depth_usd": float(_md.get("liquidity", 0) or 0),
+                    "ask_depth_usd": float(_md.get("liquidity", 0) or 0),
+                    "volume_24h": float(_md.get("volume", 0) or 0),
+                    "token_ids": _md.get("token_ids", []),
+                })
+            if sniper_markets:
+                logger.info(
+                    "Strike desk: passing %d markets from cached scan universe to scan_all_lanes",
+                    len(sniper_markets),
+                )
+            else:
+                logger.debug("Strike desk: no cached market data available; scanners will use defaults")
+
             # Run all scanner lanes (graceful per-lane failure)
-            raw_signals = await self.strike_desk.scan_all_lanes()
+            raw_signals = await self.strike_desk.scan_all_lanes(sniper_markets=sniper_markets)
 
             # Ingest local structural scanner signal feed (pushed via SCP)
             _feed_path = Path("reports/structural_signal_feed.json")

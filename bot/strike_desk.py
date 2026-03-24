@@ -194,6 +194,12 @@ class ExecutionPacket:
     timestamp: float = field(default_factory=time.time)
     metadata: dict = field(default_factory=dict)
 
+    # Proof-carrying fields (required for structural execution)
+    post_only: bool = True
+    edge_after_fees_usd: float = 0.0
+    partial_fill_policy: str = "cancel_after_ttl"  # "cancel_after_ttl" or "hedge_taker"
+    promotion_stage: str = "shadow"  # "shadow", "micro_live", "seed", "scale"
+
     # Runtime tracking (set after creation)
     packet_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     status: str = "pending"  # "pending", "filled", "rejected", "expired"
@@ -662,13 +668,31 @@ class StrikeDesk:
 
         evidence = f"neg_risk|group={opportunity.market_group_id}|cost={opportunity.total_cost}|profit_pct={opportunity.profit_pct}"
 
+        # Build per-market direction+token_id map from calculate_optimal_portfolio
+        # when available (real ArbitrageOpportunity objects).  This resolves YES vs NO
+        # correctly for combinatorial legs where the NO token must be used.
+        portfolio: dict = {}
+        if callable(getattr(opportunity, "calculate_optimal_portfolio", None)):
+            try:
+                portfolio = opportunity.calculate_optimal_portfolio()
+            except Exception:
+                portfolio = {}
+
         for leg in opportunity.markets:
+            market_id = leg.get("market_id", "")
+            port_entry = portfolio.get(market_id, {})
+            direction = port_entry.get("side", "YES")
+            if direction == "NO":
+                token_id = leg.get("no_token_id", port_entry.get("token_id", ""))
+            else:
+                token_id = leg.get("token_id", port_entry.get("token_id", ""))
+            leg_price = leg.get("no_price", 0.0) if direction == "NO" else leg.get("yes_price", 0.0)
             pkt = ExecutionPacket(
                 strategy_id="neg_risk",
-                market_id=leg.get("market_id", ""),
+                market_id=market_id,
                 platform="polymarket",
-                direction="YES",
-                token_id=leg.get("token_id", ""),
+                direction=direction,
+                token_id=token_id,
                 size_usd=round(per_leg, 2),
                 edge_estimate=opportunity.profit_pct,
                 confidence=0.99,  # Guaranteed profit
@@ -682,7 +706,7 @@ class StrikeDesk:
                     "opportunity_type": opportunity.opportunity_type,
                     "total_cost": opportunity.total_cost,
                     "guaranteed_payout": opportunity.guaranteed_payout,
-                    "leg_price": leg.get("yes_price", 0.0),
+                    "leg_price": leg_price,
                 },
             )
             packet_ids.append(pkt.packet_id)
@@ -1493,11 +1517,15 @@ class StrikeDesk:
             "rejected": 0,
             "cancelled": 0,
             "abandoned": 0,
+            "abandoned_reason_taxonomy": {},
             "tape_events": 0,
         }
 
         if executor is None:
             summary["abandoned"] = len(packets)
+            summary["abandoned_reason_taxonomy"] = {
+                "shadow_no_executor": len(packets),
+            }
             return summary
 
         place_order = getattr(executor, "place_order", executor)

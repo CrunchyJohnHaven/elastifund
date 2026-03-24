@@ -3,6 +3,7 @@
 
 Reads:
 - reports/parallel/instance04_weather_divergence_shadow.json  (weather shadow)
+- reports/parallel/alpaca_crypto_lane.json                    (Alpaca crypto lane)
 - reports/autoresearch/latest.json                             (BTC5 autoresearch)
 
 Produces:
@@ -27,11 +28,13 @@ if str(REPO_ROOT) not in sys.path:
 DEFAULT_WEATHER_SHADOW_PATH = (
     REPO_ROOT / "reports" / "parallel" / "instance04_weather_divergence_shadow.json"
 )
+DEFAULT_ALPACA_LANE_PATH = REPO_ROOT / "reports" / "parallel" / "alpaca_crypto_lane.json"
 DEFAULT_BTC5_AUTORESEARCH_PATH = REPO_ROOT / "reports" / "autoresearch" / "latest.json"
 DEFAULT_OUTPUT_PATH = REPO_ROOT / "reports" / "autoresearch" / "thesis_candidates.json"
 
 # Artifacts older than this are flagged stale (2 hours)
 WEATHER_STALE_THRESHOLD_SECONDS = 7200
+ALPACA_STALE_THRESHOLD_SECONDS = 900
 BTC5_STALE_THRESHOLD_SECONDS = 86400
 
 
@@ -99,6 +102,59 @@ def _weather_to_theses(payload: dict[str, Any], now: datetime) -> list[dict[str,
     return sorted(theses, key=lambda t: t["rank_score"], reverse=True)
 
 
+def _alpaca_to_theses(payload: dict[str, Any], now: datetime) -> list[dict[str, Any]]:
+    age = _artifact_age_seconds(payload, now)
+    stale = age is not None and age > ALPACA_STALE_THRESHOLD_SECONDS
+
+    candidate_rows = payload.get("candidate_rows") or []
+    theses: list[dict[str, Any]] = []
+    for row in candidate_rows:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or "")
+        variant_id = str(row.get("variant_id") or "")
+        rank_score = float(row.get("rank_score") or 0.0)
+        expected_edge_bps = float(row.get("expected_edge_bps") or 0.0)
+        if not symbol or not variant_id or rank_score <= 0.0:
+            continue
+        theses.append(
+            {
+                "thesis_id": f"alpaca:{symbol}:{variant_id}",
+                "lane": "alpaca",
+                "venue": "alpaca",
+                "ticker": symbol,
+                "event_ticker": None,
+                "title": f"Alpaca crypto momentum {variant_id}",
+                "side": row.get("side") or "buy",
+                "model_probability": row.get("prob_positive"),
+                "market_type": "crypto_spot",
+                "target_date": None,
+                "spread_adjusted_edge": expected_edge_bps / 10_000.0,
+                "execution_mode": row.get("execution_mode") or "paper",
+                "source_artifact": "alpaca_crypto_lane",
+                "artifact_age_seconds": round(age, 1) if age is not None else None,
+                "artifact_stale": stale,
+                "city": None,
+                "generated_at": _iso_z(now),
+                "rank_score": rank_score,
+                "variant_id": variant_id,
+                "recommended_notional_usd": row.get("recommended_notional_usd"),
+                "hold_bars": row.get("hold_bars"),
+                "stop_loss_bps": row.get("stop_loss_bps"),
+                "take_profit_bps": row.get("take_profit_bps"),
+                "last_price": row.get("last_price"),
+                "prob_positive": row.get("prob_positive"),
+                "expected_edge_bps": expected_edge_bps,
+                "momentum_bps": row.get("momentum_bps"),
+                "trend_gap_bps": row.get("trend_gap_bps"),
+                "volatility_bps": row.get("volatility_bps"),
+                "spread_bps": row.get("spread_bps"),
+                "replay_trade_count": row.get("replay_trade_count"),
+            }
+        )
+    return sorted(theses, key=lambda t: t["rank_score"], reverse=True)
+
+
 def _btc5_to_thesis(payload: dict[str, Any], now: datetime) -> list[dict[str, Any]]:
     age = _artifact_age_seconds(payload, now)
     stale = age is not None and age > BTC5_STALE_THRESHOLD_SECONDS
@@ -136,18 +192,21 @@ def _btc5_to_thesis(payload: dict[str, Any], now: datetime) -> list[dict[str, An
 def build_thesis_candidates(
     *,
     weather_shadow_path: Path = DEFAULT_WEATHER_SHADOW_PATH,
+    alpaca_lane_path: Path = DEFAULT_ALPACA_LANE_PATH,
     btc5_autoresearch_path: Path = DEFAULT_BTC5_AUTORESEARCH_PATH,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc)
 
     weather_payload = _read_json(weather_shadow_path)
+    alpaca_payload = _read_json(alpaca_lane_path)
     btc5_payload = _read_json(btc5_autoresearch_path)
 
     weather_theses = _weather_to_theses(weather_payload, now)
+    alpaca_theses = _alpaca_to_theses(alpaca_payload, now)
     btc5_theses = _btc5_to_thesis(btc5_payload, now)
 
-    all_theses = weather_theses + btc5_theses
+    all_theses = weather_theses + alpaca_theses + btc5_theses
     all_theses.sort(key=lambda t: float(t.get("rank_score") or 0.0), reverse=True)
 
     lane_summaries: dict[str, Any] = {}
@@ -167,6 +226,7 @@ def build_thesis_candidates(
                 lane_summaries[lane]["top_edge"] = edge
 
     weather_age = _artifact_age_seconds(weather_payload, now)
+    alpaca_age = _artifact_age_seconds(alpaca_payload, now)
     btc5_age = _artifact_age_seconds(btc5_payload, now)
 
     return {
@@ -183,6 +243,13 @@ def build_thesis_candidates(
                 "age_seconds": round(weather_age, 1) if weather_age is not None else None,
                 "stale": weather_age is not None and weather_age > WEATHER_STALE_THRESHOLD_SECONDS,
             },
+            "alpaca_lane": {
+                "path": str(alpaca_lane_path),
+                "loaded": bool(alpaca_payload),
+                "artifact_name": alpaca_payload.get("artifact"),
+                "age_seconds": round(alpaca_age, 1) if alpaca_age is not None else None,
+                "stale": alpaca_age is not None and alpaca_age > ALPACA_STALE_THRESHOLD_SECONDS,
+            },
             "btc5_autoresearch": {
                 "path": str(btc5_autoresearch_path),
                 "loaded": bool(btc5_payload),
@@ -197,12 +264,14 @@ def build_thesis_candidates(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--weather-shadow", type=Path, default=DEFAULT_WEATHER_SHADOW_PATH)
+    parser.add_argument("--alpaca-lane", type=Path, default=DEFAULT_ALPACA_LANE_PATH)
     parser.add_argument("--btc5-autoresearch", type=Path, default=DEFAULT_BTC5_AUTORESEARCH_PATH)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
     args = parser.parse_args(argv)
 
     payload = build_thesis_candidates(
         weather_shadow_path=args.weather_shadow,
+        alpaca_lane_path=args.alpaca_lane,
         btc5_autoresearch_path=args.btc5_autoresearch,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)

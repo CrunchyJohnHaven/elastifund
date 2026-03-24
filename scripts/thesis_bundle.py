@@ -203,10 +203,15 @@ def _extract_thesis_foundry_theses(candidates_payload: dict[str, Any]) -> list[d
         rank_score = float(c.get("rank_score") or 0.0)
         execution_mode = str(c.get("execution_mode") or "shadow")
         requires_capital = execution_mode in ("live", "micro_live")
-        confidence = float(c.get("spread_adjusted_edge") or 0.0) if lane == "weather" else 0.55
+        if lane == "weather":
+            confidence = float(c.get("spread_adjusted_edge") or 0.0)
+        elif lane == "alpaca":
+            confidence = float(c.get("prob_positive") or c.get("model_probability") or 0.55)
+        else:
+            confidence = 0.55
 
         # Map thesis_foundry type to thesis_bundle type
-        thesis_type = "execution_edge" if lane == "btc5" else "weather_divergence"
+        thesis_type = "execution_edge" if lane == "btc5" else ("alpaca_momentum" if lane == "alpaca" else "weather_divergence")
 
         theses.append({
             "thesis_id": str(c.get("thesis_id") or f"foundry_{lane}_{len(theses)+1:03d}"),
@@ -228,6 +233,21 @@ def _extract_thesis_foundry_theses(candidates_payload: dict[str, Any]) -> list[d
             "execution_mode": execution_mode,
             "spread_adjusted_edge": c.get("spread_adjusted_edge"),
             "artifact_stale": bool(c.get("artifact_stale")),
+            # Alpaca-specific fields required by executor gate checks
+            "prob_positive": c.get("prob_positive"),
+            "model_probability": c.get("model_probability"),
+            "expected_edge_bps": c.get("expected_edge_bps"),
+            "variant_id": c.get("variant_id"),
+            "recommended_notional_usd": c.get("recommended_notional_usd"),
+            "hold_bars": c.get("hold_bars"),
+            "stop_loss_bps": c.get("stop_loss_bps"),
+            "take_profit_bps": c.get("take_profit_bps"),
+            "last_price": c.get("last_price"),
+            "momentum_bps": c.get("momentum_bps"),
+            "trend_gap_bps": c.get("trend_gap_bps"),
+            "volatility_bps": c.get("volatility_bps"),
+            "spread_bps": c.get("spread_bps"),
+            "replay_trade_count": c.get("replay_trade_count"),
         })
     return theses
 

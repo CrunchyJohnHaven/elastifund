@@ -377,6 +377,20 @@ def build_public_metrics_contract(
         "forecast_confidence_label": scoreboard["forecast_confidence_label"],
         "public_forecast_source_artifact": scoreboard["public_forecast_source_artifact"],
     }
+    polymarket_tie_out = (
+        get_path(public_runtime_snapshot, "polymarket_tie_out")
+        or get_path(runtime_truth, "polymarket_tie_out")
+        or get_path(
+            runtime_truth,
+            "state_improvement.strategy_recommendations.wallet_reconciliation_summary",
+        )
+        or {}
+    )
+    btc5_daily_pnl = (
+        get_path(public_runtime_snapshot, "btc5_daily_pnl")
+        or get_path(runtime_truth, "btc5_daily_pnl")
+        or {}
+    )
 
     contract = {
         "schema_version": "3.0.0",
@@ -384,6 +398,8 @@ def build_public_metrics_contract(
         "headline": headline,
         "scoreboard": scoreboard,
         "timebound_velocity": timebound_velocity,
+        "polymarket_tie_out": polymarket_tie_out,
+        "btc5_daily_pnl": btc5_daily_pnl,
         "confidence": {
             "label": scoreboard["forecast_confidence_label"],
             "reasons": scoreboard["forecast_confidence_reasons"],

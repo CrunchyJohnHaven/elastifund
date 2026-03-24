@@ -365,7 +365,6 @@ class DeribitIVFeed:
         if isinstance(row, (list, tuple)) and len(row) >= 3:
             instrument = str(row[0])
             mark_iv = _to_float(row[2])
-            mark_price = _to_float(row[1])
             if mark_iv is None:
                 return
             parsed = _parse_instrument(instrument)

@@ -2713,13 +2713,19 @@ def _source_freshness_confidence(
     }
 
 
-def _build_accounting_reconciliation(status: dict[str, Any], *, root: Path) -> dict[str, Any]:
+def _build_accounting_reconciliation(
+    status: dict[str, Any],
+    *,
+    root: Path,
+    service: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     runtime = status.get("runtime", {})
     capital = status.get("capital", {})
     polymarket_wallet = status.get("polymarket_wallet", {})
     btc5_maker = status.get("btc_5min_maker", {})
     wallet_reconciliation_override = status.get("wallet_reconciliation_override") or {}
     reconcile_with_wallet_truth = bool(wallet_reconciliation_override.get("active"))
+    service_status = str((service or {}).get("status") or "").strip().lower()
 
     jj_state = _load_json(root / "jj_state.json", default={})
     trade_counts = _load_trade_counts(root)
@@ -2765,6 +2771,49 @@ def _build_accounting_reconciliation(status: dict[str, Any], *, root: Path) -> d
     remote_open_positions = int(polymarket_wallet.get("open_positions_count") or 0)
     remote_closed_positions = int(polymarket_wallet.get("closed_positions_count") or 0)
     wallet_live_orders = int(polymarket_wallet.get("live_orders_count") or 0)
+
+    explicit_local_open_positions = (
+        _count_positions(jj_state.get("open_positions"))
+        if "open_positions" in jj_state
+        else 0
+    )
+    explicit_local_trade_history = (
+        str(trade_counts.get("source") or "").strip().lower() == "data/jj_trades.db"
+    )
+    local_ledger_has_activity = (
+        explicit_local_trade_history
+        or explicit_local_open_positions > 0
+        or int(_safe_float(jj_state.get("total_trades"), 0.0) or 0) > 0
+    )
+    wallet_truth_applied = reconcile_with_wallet_truth and bool(runtime.get("wallet_truth_applied"))
+    if wallet_truth_applied and (service_status != "running" or not local_ledger_has_activity):
+        local_open_positions = int(
+            _first_nonempty(
+                runtime.get("wallet_truth_open_positions"),
+                runtime.get("open_positions"),
+                remote_open_positions,
+                0,
+            )
+            or 0
+        )
+        local_closed_positions = int(
+            _first_nonempty(
+                runtime.get("wallet_truth_closed_trades"),
+                runtime.get("closed_trades"),
+                remote_closed_positions,
+                0,
+            )
+            or 0
+        )
+        local_total_trades = int(
+            _first_nonempty(
+                runtime.get("trade_db_total_trades"),
+                runtime.get("total_trades"),
+                local_open_positions + local_closed_positions,
+                0,
+            )
+            or 0
+        )
 
     btc5_status = str(btc5_maker.get("status") or "unavailable").strip().lower()
     btc5_live_filled_rows = int(btc5_maker.get("live_filled_rows") or 0)
@@ -2964,7 +3013,11 @@ def build_remote_cycle_status(
         polymarket_wallet=polymarket_wallet,
         btc5_maker=btc5_maker,
     )
-    accounting_reconciliation = _build_accounting_reconciliation(status, root=repo_root)
+    accounting_reconciliation = _build_accounting_reconciliation(
+        status,
+        root=repo_root,
+        service=service,
+    )
     status["accounting_reconciliation"] = accounting_reconciliation
     _refresh_remote_observation_cadence(
         status,
@@ -3057,6 +3110,10 @@ def build_remote_cycle_status(
         audit_summary=audit_summary,
         current_probe_summary=current_probe_summary,
     )
+    btc5_stage_readiness = _refresh_stage_readiness_with_wallet_truth(
+        btc5_stage_readiness=btc5_stage_readiness,
+        wallet_reconciliation_summary=wallet_reconciliation_summary,
+    )
     deployment_confidence = _build_deployment_confidence(
         service=service,
         accounting_reconciliation=accounting_reconciliation,
@@ -3071,15 +3128,27 @@ def build_remote_cycle_status(
     if isinstance(deployment_confidence, dict):
         btc5_stage_readiness = dict(btc5_stage_readiness)
         deployment_can_trade_now = bool(deployment_confidence.get("can_btc5_trade_now"))
+        deployment_stage_1_blockers = _dedupe_preserve_order(
+            list(deployment_confidence.get("stage_1_blockers") or [])
+        )
         btc5_stage_readiness.update(
             {
                 "deployment_can_trade_now": deployment_can_trade_now,
                 "deployment_trade_now_status": (
                     "unblocked" if deployment_can_trade_now else "blocked"
                 ),
-                "deployment_trade_now_blocking_checks": _dedupe_preserve_order(
-                    list(deployment_confidence.get("stage_1_blockers") or [])
-                ),
+                "deployment_trade_now_blocking_checks": deployment_stage_1_blockers,
+                "deployment_truth_blockers": [
+                    blocker
+                    for blocker in deployment_stage_1_blockers
+                    if blocker in {
+                        "accounting_reconciliation_drift",
+                        "local_ledger_drift_vs_remote_wallet",
+                        "trade_count_divergence_requires_repair_branch",
+                        "control_posture_blocked_requires_repair_branch",
+                        "trade_proof_fill_conflict_requires_repair_branch",
+                    }
+                ],
             }
         )
         if not deployment_can_trade_now:
@@ -3545,6 +3614,12 @@ def write_remote_cycle_status(
     runtime_mode_reconciliation_target.write_text(
         render_runtime_mode_reconciliation_markdown(runtime_mode_reconciliation)
     )
+    public_metrics_refresh = _refresh_public_metrics_artifacts(
+        root=repo_root,
+        public_runtime_snapshot_path=public_runtime_snapshot_target,
+        runtime_truth_path=runtime_truth_latest_target,
+        remote_cycle_status_path=json_target,
+    )
 
     return {
         "markdown": str(markdown_target),
@@ -3559,7 +3634,62 @@ def write_remote_cycle_status(
         "state_improvement_latest": str(state_improvement_latest_target),
         "state_improvement_timestamped": str(state_improvement_timestamped_target),
         "state_improvement_digest": str(state_improvement_digest_target),
+        "public_metrics_refresh": public_metrics_refresh,
         "status": status,
+    }
+
+
+def _refresh_public_metrics_artifacts(
+    *,
+    root: Path,
+    public_runtime_snapshot_path: Path,
+    runtime_truth_path: Path,
+    remote_cycle_status_path: Path,
+) -> dict[str, Any]:
+    try:
+        from scripts.render_public_metrics import (
+            build_public_metrics_contract as _build_public_metrics_contract,
+            render_arr_estimate_svg as _render_arr_estimate_svg,
+            render_improvement_velocity_svg as _render_improvement_velocity_svg,
+            write_json as _write_public_metrics_json,
+        )
+    except Exception as exc:  # pragma: no cover - surfaced as refresh status
+        return {
+            "status": "error",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    output_json = root / "improvement_velocity.json"
+    output_velocity_svg = root / "improvement_velocity.svg"
+    output_arr_svg = root / "arr_estimate.svg"
+    try:
+        contract = _build_public_metrics_contract(
+            public_runtime_snapshot_path=public_runtime_snapshot_path,
+            runtime_truth_path=runtime_truth_path,
+            remote_cycle_status_path=remote_cycle_status_path,
+            root_test_status_path=root / DEFAULT_ROOT_TEST_STATUS_PATH,
+            forecast_artifact_paths=[
+                root / "reports" / "btc5_autoresearch/latest.json",
+                root / "reports" / "btc5_autoresearch_current_probe/latest.json",
+                root / "reports" / "btc5_autoresearch_loop/latest.json",
+            ],
+            loop_history_path=root / "reports" / "btc5_autoresearch_loop/history.jsonl",
+            btc5_window_rows_path=root / DEFAULT_BTC5_WINDOW_ROWS_PATH,
+        )
+        _write_public_metrics_json(output_json, contract)
+        _render_improvement_velocity_svg(output_velocity_svg, contract)
+        _render_arr_estimate_svg(output_arr_svg, contract)
+    except Exception as exc:  # pragma: no cover - keep truth writer resilient
+        return {
+            "status": "error",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    return {
+        "status": "ok",
+        "json": str(output_json),
+        "velocity_svg": str(output_velocity_svg),
+        "arr_svg": str(output_arr_svg),
     }
 
 
@@ -3728,19 +3858,7 @@ def build_runtime_mode_reconciliation(
     finance_gate_pass = _bool_or_none(finance_gate.get("finance_gate_pass"))
     if finance_gate_pass is None:
         finance_gate_pass = str(finance_gate_status.get("status") or "").strip().lower() == "pass"
-    selected_package_summary = dict(runtime_truth_snapshot.get("btc5_selected_package") or {})
-    bounded_restart_advisory_checks = {"no_closed_trades", "finance_gate_blocked"}
-    bounded_stage1_live_override = bool(
-        service_state == "running"
-        and bool(finance_gate_pass)
-        and (
-            bool(selected_package_summary.get("stage1_live_candidate"))
-            or remote_mode_authoritative
-        )
-        and launch_blocked_checks.issubset(bounded_restart_advisory_checks)
-    )
-    if bounded_stage1_live_override:
-        launch_live_blocked = False
+    bounded_stage1_live_override = False
 
     neutralized_overrides: list[dict[str, Any]] = []
     if force_live_attempt_requested:
@@ -3928,7 +4046,9 @@ def build_runtime_mode_reconciliation(
         or "unknown"
     ).strip()
     local_paper_trading = _bool_or_none(guarded_mode.get("paper_trading"))
-    paper_trading = local_paper_trading
+    paper_trading = local_paper_trading if safe_baseline_required else remote_paper_trading
+    if paper_trading is None:
+        paper_trading = local_paper_trading
     raw_allow_order_submission = bool(guarded_mode.get("allow_order_submission"))
     force_live_attempt = False
 
@@ -5754,6 +5874,90 @@ def _build_btc5_stage_readiness(
     }
 
 
+def _refresh_stage_readiness_with_wallet_truth(
+    *,
+    btc5_stage_readiness: dict[str, Any],
+    wallet_reconciliation_summary: dict[str, Any],
+) -> dict[str, Any]:
+    stage_readiness = dict(btc5_stage_readiness or {})
+    wallet_summary = dict(wallet_reconciliation_summary or {})
+    if not stage_readiness:
+        return stage_readiness
+
+    reporting_precedence = str(wallet_summary.get("reporting_precedence") or "").strip().lower()
+    wallet_freshness_label = str(wallet_summary.get("wallet_export_freshness_label") or "").strip().lower()
+    wallet_source_age_hours = _float_or_none(wallet_summary.get("source_age_hours"))
+    wallet_source_artifact = wallet_summary.get("source_artifact")
+
+    if wallet_freshness_label:
+        stage_readiness["wallet_export_freshness_label"] = wallet_freshness_label
+    if wallet_source_age_hours is not None:
+        stage_readiness["wallet_export_freshness_hours"] = wallet_source_age_hours
+    if reporting_precedence:
+        stage_readiness["wallet_reporting_precedence"] = reporting_precedence
+    if wallet_source_artifact:
+        stage_readiness["wallet_reporting_source_artifact"] = wallet_source_artifact
+
+    if reporting_precedence != "wallet_export" or wallet_freshness_label not in {"fresh", "aging"}:
+        return stage_readiness
+
+    for key in (
+        "blocking_checks",
+        "stage_1_blockers",
+        "stage_2_blockers",
+        "stage_3_blockers",
+        "trade_now_blocking_checks",
+    ):
+        stage_readiness[key] = [
+            item
+            for item in list(stage_readiness.get(key) or [])
+            if str(item) != "wallet_export_stale"
+        ]
+
+    reasons = [
+        str(reason)
+        for reason in list(stage_readiness.get("reasons") or [])
+        if "Wallet export truth is stale" not in str(reason)
+    ]
+    trade_now_reasons = [
+        str(reason)
+        for reason in list(stage_readiness.get("trade_now_reasons") or [])
+        if "Wallet export truth is stale" not in str(reason)
+    ]
+    refresh_reason = (
+        f"Wallet export truth refreshed from {wallet_source_artifact} ({wallet_source_age_hours:.2f}h old)."
+        if wallet_source_artifact and wallet_source_age_hours is not None
+        else f"Wallet export truth refreshed from {wallet_source_artifact}."
+        if wallet_source_artifact
+        else None
+    )
+    if refresh_reason:
+        reasons.append(refresh_reason)
+        if trade_now_reasons:
+            trade_now_reasons.append(refresh_reason)
+
+    stage_readiness["reasons"] = _dedupe_preserve_order(reasons)
+    if trade_now_reasons:
+        stage_readiness["trade_now_reasons"] = _dedupe_preserve_order(trade_now_reasons)
+
+    stage_1_blockers = _dedupe_preserve_order(list(stage_readiness.get("stage_1_blockers") or []))
+    allowed_stage = int(stage_readiness.get("allowed_stage") or 0)
+    can_trade_now = allowed_stage >= 1 and not stage_1_blockers
+    stage_readiness["stage_1_blockers"] = stage_1_blockers
+    stage_readiness["trade_now_blocking_checks"] = list(stage_1_blockers)
+    stage_readiness["can_trade_now"] = can_trade_now
+    stage_readiness["trade_now_status"] = "unblocked" if can_trade_now else "blocked"
+    if can_trade_now:
+        stage_readiness["trade_now_reasons"] = []
+    elif not stage_readiness.get("trade_now_reasons"):
+        stage_readiness["trade_now_reasons"] = (
+            list(stage_readiness.get("reasons") or [])
+            or ["BTC5 stage_1 readiness is blocked by launch gating checks."]
+        )
+
+    return stage_readiness
+
+
 def _build_source_precedence(
     *,
     root: Path,
@@ -6110,6 +6314,11 @@ def _build_deployment_confidence(
         for item in list(source_precedence.get("contradictions") or [])
         if isinstance(item, dict) and str(item.get("code") or "").strip()
     ]
+    mandatory_truth_contradictions = [
+        code
+        for code in contradiction_codes
+        if code in {"local_ledger_drift_vs_remote_wallet"}
+    ]
     allow_stage1_without_selected_package = (
         not bool(selected_package_summary.get("exists"))
         and int(btc5_stage_readiness.get("allowed_stage") or 0) >= 1
@@ -6122,7 +6331,7 @@ def _build_deployment_confidence(
             if str(check) != "selected_runtime_package_missing"
         ]
     service_status_blocking_checks = []
-    if selected_package_summary.get("exists") and service_freshness.get("freshness") == "stale":
+    if service_freshness.get("freshness") == "stale":
         service_status_blocking_checks.append("service_status_stale")
     validated_for_live_stage1 = bool(
         selected_package_summary.get("validated_for_live_stage1")
@@ -6131,9 +6340,17 @@ def _build_deployment_confidence(
     trade_now_blocking_checks = list(
         btc5_stage_readiness.get("trade_now_blocking_checks") or []
     )
+    truth_alignment_contradictions = [
+        code
+        for code in contradiction_codes
+        if code in {"local_ledger_drift_vs_remote_wallet"}
+    ]
     accounting_drift_blocker = bool(
         accounting_reconciliation.get("drift_detected")
-        and not allow_stage1_without_selected_package
+        and (
+            not allow_stage1_without_selected_package
+            or bool(truth_alignment_contradictions)
+        )
     )
     stage_1_blockers = _dedupe_preserve_order(
         [
@@ -6146,6 +6363,7 @@ def _build_deployment_confidence(
                 if accounting_drift_blocker
                 else []
             ),
+            *truth_alignment_contradictions,
             *(
                 ["confirmation_coverage_insufficient"]
                 if confirmation_evidence_score < 0.4
@@ -6155,6 +6373,11 @@ def _build_deployment_confidence(
                 ["confirmation_evidence_stale"]
                 if confirmation_freshness_label == "stale"
                 else []
+            ),
+            *(
+                mandatory_truth_contradictions
+                if allow_stage1_without_selected_package
+                else contradiction_codes
             ),
             *(
                 contradiction_codes
@@ -6187,6 +6410,7 @@ def _build_deployment_confidence(
                 if accounting_drift_blocker
                 else []
             ),
+            *truth_alignment_contradictions,
             *(
                 ["confirmation_coverage_insufficient"]
                 if confirmation_evidence_score < 0.4
@@ -6196,6 +6420,11 @@ def _build_deployment_confidence(
                 ["confirmation_evidence_stale"]
                 if confirmation_freshness_label == "stale"
                 else []
+            ),
+            *(
+                mandatory_truth_contradictions
+                if allow_stage1_without_selected_package
+                else contradiction_codes
             ),
             *(
                 contradiction_codes
@@ -6398,6 +6627,11 @@ def _attach_control_plane_consistency(snapshot: dict[str, Any], *, root: Path) -
     if observed_service_name and observed_service_name != expected_primary_service:
         service_mismatch_reasons.append(
             f"service_target_mismatch: expected {expected_primary_service}, observed {observed_service_name}"
+        )
+    elif launch_posture == "blocked" and service_state == "running":
+        service_mismatch_reasons.append(
+            "service_target_mismatch: expected no active primary service while launch posture is blocked, "
+            f"observed {observed_service_name or expected_primary_service}"
         )
     if bool(drift_flags.get("service_running_while_launch_blocked")):
         service_mismatch_reasons.append("jj_live_non_primary_running_while_launch_blocked")
@@ -7650,6 +7884,7 @@ def _build_launch_status(
 
     blocked_checks: list[str] = []
     blocked_reasons: list[str] = []
+    service_running = service["status"] == "running"
 
     if root_tests["status"] != "passing" and not runtime_validation_passed:
         blocked_checks.append("root_tests_not_passing")
@@ -7685,13 +7920,13 @@ def _build_launch_status(
         blocked_reasons.append(
             "Remote runtime validation did not complete successfully; launch-control truth is not confirmed."
         )
-    if runtime.get("closed_trades", 0) <= 0:
+    if service_running and runtime.get("closed_trades", 0) <= 0:
         blocked_checks.append("no_closed_trades")
         blocked_reasons.append("No closed trades are available for calibration yet.")
-    if status["capital"]["deployed_capital_usd"] <= 0:
+    if service_running and status["capital"]["deployed_capital_usd"] <= 0:
         blocked_checks.append("no_deployed_capital")
         blocked_reasons.append("No capital is currently deployed.")
-    if status["polymarket_wallet"].get("status") == "ok":
+    if service_running and status["polymarket_wallet"].get("status") == "ok":
         actual_deployable = _safe_float(
             status["capital"].get("polymarket_actual_deployable_usd"),
             0.0,
@@ -7730,7 +7965,11 @@ def _build_launch_status(
                 f"(delta {closed_delta:+d}); "
                 f"capital delta={_format_money(accounting_delta)}."
             )
-    if accounting_reconciliation.get("drift_detected") and "accounting_reconciliation_drift" not in blocked_checks:
+    if (
+        service_running
+        and accounting_reconciliation.get("drift_detected")
+        and "accounting_reconciliation_drift" not in blocked_checks
+    ):
         open_delta = int(
             (accounting_reconciliation.get("unmatched_open_positions") or {}).get(
                 "delta_remote_minus_local", 0
@@ -8373,12 +8612,15 @@ def _build_champion_lane_contract(
     champion_candidate_count = int(fast_market_search.get("btc5_candidate_count") or 0)
     can_trade_now = bool(deployment_confidence.get("can_btc5_trade_now"))
     shadow_candidate_available = bool(fast_market_search.get("shadow_candidate_available"))
+    selected_package_live_stage1_ready = bool(selected_package_summary.get("validated_for_live_stage1"))
     ignorable_shadow_truth_blockers = {
         "service_status_stale",
         "stale_service_file_with_fresh_btc5_probe",
+        "accounting_reconciliation_drift",
+        "local_ledger_drift_vs_remote_wallet",
     }
     hard_truth_blockers = list(truth_blockers)
-    if champion_candidate_count > 0 and shadow_candidate_available:
+    if champion_candidate_count > 0 and (shadow_candidate_available or selected_package_live_stage1_ready):
         hard_truth_blockers = [
             blocker
             for blocker in truth_blockers
@@ -8388,10 +8630,16 @@ def _build_champion_lane_contract(
     if hard_truth_blockers:
         status = "hold_repair"
         decision_reason = "truth_surface_repair_required_before_champion_lane_can_run"
-    elif can_trade_now:
+    elif can_trade_now or (
+        champion_candidate_count > 0
+        and selected_package_live_stage1_ready
+        and not capital_blockers
+        and not candidate_blockers
+        and not confirmation_blockers
+    ):
         status = "candidate_ready"
         decision_reason = "btc5_is_the_only_tradeable_champion_lane"
-    elif champion_candidate_count > 0 and shadow_candidate_available:
+    elif champion_candidate_count > 0 and (shadow_candidate_available or selected_package_live_stage1_ready):
         status = "shadow_only"
         decision_reason = "btc5_has_a_shadow_candidate_but_live_promotion_is_still_blocked"
     else:
@@ -9014,11 +9262,25 @@ def _build_truth_lattice(
         for key, value in trade_observations.items()
         if key in contract_trade_keys
     }
+    ignored_trade_observations: dict[str, str] = {}
+    local_trade_db_total = int(contract_trade_observations.get("runtime.trade_db_total_trades") or 0)
+    runtime_closed_plus_open = int(contract_trade_observations.get("runtime.closed_plus_open") or 0)
+    wallet_open_plus_closed = int(contract_trade_observations.get("wallet.open_plus_closed") or 0)
+    if (
+        local_trade_db_total > 0
+        and runtime_closed_plus_open > 0
+        and wallet_open_plus_closed > 0
+        and runtime_closed_plus_open == wallet_open_plus_closed
+        and local_trade_db_total < runtime_closed_plus_open
+    ):
+        ignored_trade_observations["runtime.trade_db_total_trades"] = (
+            "local_trade_db_lags_reconciled_runtime_and_remote_wallet_counts"
+        )
     distinct_positive_trade_counts = sorted(
         {
             value
-            for value in contract_trade_observations.values()
-            if value > 0
+            for key, value in contract_trade_observations.items()
+            if value > 0 and key not in ignored_trade_observations
         }
     )
     if len(distinct_positive_trade_counts) > 1:
@@ -9028,8 +9290,6 @@ def _build_truth_lattice(
     wallet_summary = wallet_reconciliation_summary if isinstance(wallet_reconciliation_summary, dict) else {}
     wallet_export_candidate_conflicts = list(wallet_summary.get("candidate_conflicts") or [])
     wallet_reporting_precedence = str(wallet_summary.get("reporting_precedence") or "").strip().lower()
-    if wallet_export_candidate_conflicts and wallet_reporting_precedence == "wallet_export":
-        broken_reasons.append("wallet_export_candidate_conflict_requires_repair_branch")
 
     broken_reasons = _dedupe_preserve_order(broken_reasons)
     repair_branch_required = bool(broken_reasons)
@@ -9041,11 +9301,6 @@ def _build_truth_lattice(
     elif "forecast_deploy_recommendation_conflict_requires_repair_branch" in broken_reasons:
         next_action = (
             "Repair contradictory forecast deploy recommendations across BTC5 artifacts, then rerun "
-            "`python3 scripts/write_remote_cycle_status.py` before promoting any lane."
-        )
-    elif "wallet_export_candidate_conflict_requires_repair_branch" in broken_reasons:
-        next_action = (
-            "Reconcile conflicting Polymarket wallet exports that are currently being used for reporting, then rerun "
             "`python3 scripts/write_remote_cycle_status.py` before promoting any lane."
         )
     else:
@@ -9071,6 +9326,7 @@ def _build_truth_lattice(
             "total_trades_observations": trade_observations,
             "contract_trade_observations": contract_trade_observations,
             "distinct_positive_trade_counts": distinct_positive_trade_counts,
+            "ignored_trade_observations": ignored_trade_observations,
             "forecast_considered_artifacts": list(
                 public_performance_scoreboard.get("forecast_considered_artifacts") or []
             ),
@@ -9078,6 +9334,9 @@ def _build_truth_lattice(
                 "forecast_selection_reason"
             ),
             "wallet_export_candidate_conflicts": wallet_export_candidate_conflicts,
+            "wallet_export_candidate_conflicts_advisory": bool(
+                wallet_export_candidate_conflicts and wallet_reporting_precedence == "wallet_export"
+            ),
         },
         "one_next_cycle_action": next_action,
     }
@@ -9162,7 +9421,12 @@ def _apply_shared_truth_contract(
         or "unknown"
     ).strip().lower()
     allow_order_submission = bool(snapshot.get("allow_order_submission"))
+    order_submit_enabled = bool(snapshot.get("order_submit_enabled"))
+    agent_run_mode = str(snapshot.get("agent_run_mode") or "unknown").strip().lower()
+    execution_mode = str(snapshot.get("execution_mode") or "unknown").strip().lower()
+    paper_trading = _bool_or_none(snapshot.get("paper_trading"))
     deployment_confidence = dict(snapshot.get("deployment_confidence") or {})
+    trade_proof = dict(snapshot.get("trade_proof") or {})
     confirmation_label = str(
         _first_nonempty(
             deployment_confidence.get("confirmation_coverage_label"),
@@ -9180,12 +9444,49 @@ def _apply_shared_truth_contract(
         if str(item).strip()
     }
     deploy_conflict = bool(public_performance_scoreboard.get("deploy_recommendation_conflict"))
+    selected_deploy_recommendation = str(
+        public_performance_scoreboard.get("selected_deploy_recommendation") or ""
+    ).strip().lower()
+    forecast_confidence_label = str(
+        public_performance_scoreboard.get("forecast_confidence_label") or "unknown"
+    ).strip().lower()
+    validation_live_filled_rows = int(
+        _safe_float(public_performance_scoreboard.get("validation_live_filled_rows"), 0.0) or 0
+    )
+    promote_ready_forecast_consensus = (
+        selected_deploy_recommendation == "promote"
+        and forecast_confidence_label in {"high", "medium"}
+        and validation_live_filled_rows >= 6
+    )
     wallet_export_candidate_conflicts = list(wallet_reconciliation_summary.get("candidate_conflicts") or [])
     wallet_reporting_precedence = str(wallet_reconciliation_summary.get("reporting_precedence") or "").strip().lower()
     launch_contract_not_runnable = (
         launch_posture == "blocked"
         and service_state != "running"
         and not allow_order_submission
+    )
+    control_posture_blocked = bool(
+        launch_posture == "blocked"
+        and (
+            agent_run_mode in {"live", "micro_live"}
+            or execution_mode in {"live", "micro_live"}
+            or paper_trading is False
+            or allow_order_submission
+            or order_submit_enabled
+        )
+    )
+    trade_proof_fill_conflict = bool(
+        (
+            str(trade_proof.get("proof_status") or "").strip().lower() == "no_fill_yet"
+            and (
+                bool(trade_proof.get("fill_confirmed"))
+                or bool(str(trade_proof.get("latest_filled_trade_at") or "").strip())
+            )
+        )
+        or (
+            str(trade_proof.get("proof_status") or "").strip().lower() == "fill_confirmed"
+            and not bool(trade_proof.get("fill_confirmed"))
+        )
     )
     confirmation_not_decision_ready = (
         confirmation_label in {"missing", "weak", "stale", "unknown"}
@@ -9200,14 +9501,16 @@ def _apply_shared_truth_contract(
         )
     )
 
+    if control_posture_blocked:
+        broken_reasons.append("control_posture_blocked_requires_repair_branch")
     if launch_contract_not_runnable:
         broken_reasons.append("launch_contract_not_runnable_requires_repair_branch")
     if launch_contract_not_runnable and confirmation_not_decision_ready:
         broken_reasons.append("launch_contract_confirmation_not_ready_requires_repair_branch")
-    if deploy_conflict:
+    if trade_proof_fill_conflict:
+        broken_reasons.append("trade_proof_fill_conflict_requires_repair_branch")
+    if deploy_conflict and not promote_ready_forecast_consensus:
         broken_reasons.append("forecast_deploy_recommendation_conflict_requires_repair_branch")
-    if wallet_export_candidate_conflicts and wallet_reporting_precedence == "wallet_export":
-        broken_reasons.append("wallet_export_candidate_conflict_requires_repair_branch")
 
     broken_reasons = _dedupe_preserve_order(broken_reasons)
     repair_branch_required = bool(broken_reasons)
@@ -9216,10 +9519,15 @@ def _apply_shared_truth_contract(
         truth_lattice.get("one_next_cycle_action")
         or "Truth lattice is coherent; continue with the current launch and champion-lane contract."
     )
-    if "wallet_export_candidate_conflict_requires_repair_branch" in broken_reasons:
+    if "trade_proof_fill_conflict_requires_repair_branch" in broken_reasons:
         one_next_cycle_action = (
-            "Reconcile conflicting Polymarket wallet-export candidates before any strategy promotion; "
-            "keep the newest export, explain the drift, then rerun `python3 scripts/write_remote_cycle_status.py`."
+            "Repair the BTC5 fill-proof contradiction before any live decision; "
+            "proof_status, fill_confirmed, and latest_filled_trade_at must agree in one cycle."
+        )
+    elif "control_posture_blocked_requires_repair_branch" in broken_reasons:
+        one_next_cycle_action = (
+            "Repair the blocked BTC5 control posture before any live decision; "
+            "launch_posture, execution_mode, paper_trading, and allow_order_submission must agree."
         )
     elif "launch_contract_confirmation_not_ready_requires_repair_branch" in broken_reasons:
         one_next_cycle_action = (
@@ -9241,7 +9549,11 @@ def _apply_shared_truth_contract(
                 **dict(truth_lattice.get("selected_values") or {}),
                 "launch_posture": launch_posture,
                 "service_state": service_state,
+                "agent_run_mode": agent_run_mode,
+                "execution_mode": execution_mode,
+                "paper_trading": paper_trading,
                 "allow_order_submission": allow_order_submission,
+                "order_submit_enabled": order_submit_enabled,
                 "confirmation_coverage_label": confirmation_label,
                 "wallet_reporting_precedence": wallet_reporting_precedence or None,
                 "truth_gate_status": truth_gate_status,
@@ -9249,9 +9561,17 @@ def _apply_shared_truth_contract(
             "observations": {
                 **dict(truth_lattice.get("observations") or {}),
                 "launch_contract_not_runnable": launch_contract_not_runnable,
+                "control_posture_blocked": control_posture_blocked,
                 "confirmation_not_decision_ready": confirmation_not_decision_ready,
                 "confirmation_blocking_checks": sorted(confirmation_blocking_checks),
                 "wallet_export_candidate_conflicts": wallet_export_candidate_conflicts,
+                "wallet_export_candidate_conflicts_advisory": bool(
+                    wallet_export_candidate_conflicts and wallet_reporting_precedence == "wallet_export"
+                ),
+                "trade_proof_fill_conflict": trade_proof_fill_conflict,
+                "trade_proof_status": trade_proof.get("proof_status"),
+                "trade_proof_fill_confirmed": bool(trade_proof.get("fill_confirmed")),
+                "trade_proof_latest_filled_trade_at": trade_proof.get("latest_filled_trade_at"),
             },
             "one_next_cycle_action": one_next_cycle_action,
         }
@@ -9599,6 +9919,10 @@ def _build_public_performance_scoreboard(
         velocity_gain_pct_per_day = round((velocity_gain_pct / velocity_window_hours) * 24.0, 4)
     intraday_summary = dict(btc5_maker.get("intraday_live_summary") or {})
     closed_batch = dict(polymarket_wallet.get("closed_batch_metrics") or {})
+    has_closed_wallet_realization = (
+        int(_safe_float(closed_batch.get("btc_contracts_resolved"), 0.0) or 0) > 0
+        or abs(_safe_float(closed_batch.get("btc_closed_cashflow_usd"), 0.0)) > 0.0
+    )
     wallet_reconciliation_summary = {
         "source_class": "polymarket_data_api",
         "source_artifact": "polymarket_wallet_probe",
@@ -9712,7 +10036,7 @@ def _build_public_performance_scoreboard(
             reporting_precedence_reason = "btc5_probe_retained_as_reporting_source"
     wallet_reconciliation_summary["reporting_precedence"] = reporting_precedence
     wallet_reconciliation_summary["reporting_precedence_reason"] = reporting_precedence_reason
-    if not drift_open and reporting_precedence != "wallet_export":
+    if not drift_open and reporting_precedence != "wallet_export" and not has_closed_wallet_realization:
         fund_claim_status = "blocked"
         fund_claim_reason = (
             "fund_realized_arr_claim_blocked_until_ledger_wallet_reconciliation_and_wallet_export_precedence_close"
@@ -10755,6 +11079,20 @@ def _build_btc5_trade_proof(
         )
     )
     proof_status = "fill_confirmed" if fill_confirmed else "no_fill_yet"
+    if not fill_confirmed:
+        latest_filled_trade_at = None
+        trade_size_usd = None
+        order_price = None
+    proof_source_of_truth = str(
+        attribution.get("source_of_truth")
+        or trade_confirmation.get("source_of_truth")
+        or ""
+    ).strip()
+    if proof_source_of_truth:
+        if "reports/runtime_truth_latest.json" not in proof_source_of_truth:
+            proof_source_of_truth = f"reports/runtime_truth_latest.json; {proof_source_of_truth}"
+    else:
+        proof_source_of_truth = "reports/runtime_truth_latest.json"
     payload = {
         "artifact": "btc5_trade_proof",
         "schema_version": 1,
@@ -10767,12 +11105,7 @@ def _build_btc5_trade_proof(
             or PRIMARY_RUNTIME_SERVICE_NAME
         ).strip()
         or PRIMARY_RUNTIME_SERVICE_NAME,
-        "source_of_truth": str(
-            attribution.get("source_of_truth")
-            or trade_confirmation.get("source_of_truth")
-            or ""
-        ).strip()
-        or None,
+        "source_of_truth": proof_source_of_truth,
         "lane_id": str(attribution.get("lane_id") or trade_confirmation.get("lane_id") or "").strip() or None,
         "strategy_family": str(
             attribution.get("strategy_family")
@@ -10818,79 +11151,7 @@ def _build_btc5_trade_proof(
 
 
 def _compute_execution_notional_summary(*, root: Path, now: datetime, btc5_maker: dict[str, Any]) -> dict[str, Any]:
-    db_path = root / DEFAULT_TRADES_DB_PATH
-    if not db_path.exists():
-        result = {
-            "hourly_notional_usd": 0.0,
-            "hourly_trade_count": 0,
-            "per_venue_notional_usd": {
-                "polymarket_hourly": 0.0,
-                "kalshi_hourly": 0.0,
-                "polymarket_total": 0.0,
-                "kalshi_total": 0.0,
-                "combined_hourly": 0.0,
-                "combined_total": 0.0,
-            },
-            "per_venue_trade_counts": {
-                "polymarket_hourly": 0,
-                "kalshi_hourly": 0,
-                "polymarket_total": 0,
-                "kalshi_total": 0,
-                "combined_hourly": 0,
-                "combined_total": 0,
-            },
-            "source": "missing_data/jj_trades.db",
-        }
-        fallback = _summarize_recent_btc5_execution(btc5_maker=btc5_maker, now=now)
-        if fallback["hourly_trade_count"] > 0:
-            result["hourly_notional_usd"] = fallback["hourly_notional_usd"]
-            result["hourly_trade_count"] = fallback["hourly_trade_count"]
-            result["per_venue_notional_usd"]["polymarket_hourly"] = fallback["hourly_notional_usd"]
-            result["per_venue_notional_usd"]["combined_hourly"] = fallback["hourly_notional_usd"]
-            result["per_venue_trade_counts"]["polymarket_hourly"] = fallback["hourly_trade_count"]
-            result["per_venue_trade_counts"]["combined_hourly"] = fallback["hourly_trade_count"]
-            result["source"] = f"{result['source']}+{fallback['source']}.recent_live_filled"
-        return result
-
-    conn: sqlite3.Connection | None = None
-    try:
-        conn = sqlite3.connect(db_path)
-        columns = {
-            str(row[1])
-            for row in conn.execute("PRAGMA table_info(trades)")
-        }
-        if "position_size_usd" not in columns:
-            return {
-                "hourly_notional_usd": 0.0,
-                "hourly_trade_count": 0,
-                "per_venue_notional_usd": {
-                    "polymarket_hourly": 0.0,
-                    "kalshi_hourly": 0.0,
-                    "polymarket_total": 0.0,
-                    "kalshi_total": 0.0,
-                    "combined_hourly": 0.0,
-                    "combined_total": 0.0,
-                },
-                "per_venue_trade_counts": {
-                    "polymarket_hourly": 0,
-                    "kalshi_hourly": 0,
-                    "polymarket_total": 0,
-                    "kalshi_total": 0,
-                    "combined_hourly": 0,
-                    "combined_total": 0,
-                },
-                "source": "data/jj_trades.db#trades.position_size_usd_missing",
-            }
-        if "timestamp" not in columns and "source" not in columns:
-            query = "SELECT '' AS timestamp, position_size_usd, '' AS source FROM trades"
-        elif "timestamp" not in columns:
-            query = "SELECT '' AS timestamp, position_size_usd, source FROM trades"
-        elif "source" not in columns:
-            query = "SELECT timestamp, position_size_usd, '' AS source FROM trades"
-        else:
-            query = "SELECT timestamp, position_size_usd, source FROM trades"
-        rows = list(conn.execute(query))
-    except sqlite3.DatabaseError:
+    def _empty_result(source: str) -> dict[str, Any]:
         return {
             "hourly_notional_usd": 0.0,
             "hourly_trade_count": 0,
@@ -10910,8 +11171,46 @@ def _compute_execution_notional_summary(*, root: Path, now: datetime, btc5_maker
                 "combined_hourly": 0,
                 "combined_total": 0,
             },
-            "source": "data/jj_trades.db#read_error",
+            "source": source,
         }
+
+    def _with_btc5_fallback(source: str) -> dict[str, Any]:
+        result = _empty_result(source)
+        fallback = _summarize_recent_btc5_execution(btc5_maker=btc5_maker, now=now)
+        if fallback["hourly_trade_count"] > 0:
+            result["hourly_notional_usd"] = fallback["hourly_notional_usd"]
+            result["hourly_trade_count"] = fallback["hourly_trade_count"]
+            result["per_venue_notional_usd"]["polymarket_hourly"] = fallback["hourly_notional_usd"]
+            result["per_venue_notional_usd"]["combined_hourly"] = fallback["hourly_notional_usd"]
+            result["per_venue_trade_counts"]["polymarket_hourly"] = fallback["hourly_trade_count"]
+            result["per_venue_trade_counts"]["combined_hourly"] = fallback["hourly_trade_count"]
+            result["source"] = f"{source}+{fallback['source']}.recent_live_filled"
+        return result
+
+    db_path = root / DEFAULT_TRADES_DB_PATH
+    if not db_path.exists():
+        return _with_btc5_fallback("missing_data/jj_trades.db")
+
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(db_path)
+        columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(trades)")
+        }
+        if "position_size_usd" not in columns:
+            return _with_btc5_fallback("data/jj_trades.db#trades.position_size_usd_missing")
+        if "timestamp" not in columns and "source" not in columns:
+            query = "SELECT '' AS timestamp, position_size_usd, '' AS source FROM trades"
+        elif "timestamp" not in columns:
+            query = "SELECT '' AS timestamp, position_size_usd, source FROM trades"
+        elif "source" not in columns:
+            query = "SELECT timestamp, position_size_usd, '' AS source FROM trades"
+        else:
+            query = "SELECT timestamp, position_size_usd, source FROM trades"
+        rows = list(conn.execute(query))
+    except sqlite3.DatabaseError:
+        return _with_btc5_fallback("data/jj_trades.db#read_error")
     finally:
         try:
             if conn is not None:
@@ -11352,6 +11651,11 @@ def _load_latest_deploy_evidence(root: Path) -> dict[str, Any]:
     else:
         process_state = "unknown"
     validation = _summarize_deploy_validation(payload)
+    paper_trading = remote_mode.get("paper_trading")
+    if paper_trading is None:
+        paper_trading = _bool_or_none(remote_values.get("PAPER_TRADING"))
+    if paper_trading is None:
+        paper_trading = _bool_or_none(remote_values.get("BTC5_PAPER_TRADING"))
 
     return {
         "path": _relative_path_text(root, latest_path),
@@ -11360,7 +11664,7 @@ def _load_latest_deploy_evidence(root: Path) -> dict[str, Any]:
         "remote_values": remote_values,
         "remote_runtime_profile": remote_mode.get("runtime_profile"),
         "agent_run_mode": remote_mode.get("agent_run_mode"),
-        "paper_trading": remote_mode.get("paper_trading"),
+        "paper_trading": paper_trading,
         "service_state": service_state,
         "process_state": process_state,
         "remote_probe": remote_probe,

@@ -554,6 +554,17 @@ def build_canonical_launch_packet(
     )
     launch_posture = "blocked" if canonical_blocked else "clear"
     allow_execution = not canonical_blocked
+    submission_contract_consensus = {
+        "launch_posture_clear": launch_posture == "clear",
+        "allow_order_submission": bool(contract.get("allow_order_submission")),
+        "paper_trading_disabled": contract.get("paper_trading") is False,
+    }
+    live_order_submission_allowed = bool(
+        submission_contract_consensus["launch_posture_clear"]
+        and submission_contract_consensus["allow_order_submission"]
+        and submission_contract_consensus["paper_trading_disabled"]
+        and bool(contract.get("order_submit_enabled"))
+    )
 
     one_next_cycle_action = str(launch.get("next_operator_action") or "").strip()
     if drift_kill_triggered:
@@ -657,6 +668,8 @@ def build_canonical_launch_packet(
         "service_name_resolution": runtime_truth_snapshot.get("service_name_resolution"),
         "allow_order_submission": contract.get("allow_order_submission"),
         "order_submit_enabled": contract.get("order_submit_enabled"),
+        "submission_contract_consensus": submission_contract_consensus,
+        "live_order_submission_allowed": live_order_submission_allowed,
         "canonical_live_profile_id": canonical_live_profile_id,
         "canonical_live_package_hash": canonical_live_package_hash,
         "one_next_cycle_action": mandatory_outputs.get("one_next_cycle_action"),

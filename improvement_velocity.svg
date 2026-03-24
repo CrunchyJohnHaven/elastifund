@@ -17,7 +17,7 @@
 <circle cx="1130" cy="90" r="160" fill="#18314d" opacity="0.35"/>
 <circle cx="180" cy="660" r="120" fill="#0c3b49" opacity="0.22"/>
 <text x="80" y="78" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="34" font-weight="700" fill="#f7fafc">BTC5 Public Improvement Velocity</text>
-<text x="80" y="116" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="17" fill="#bfd0ea">Generated 2026-03-22 23:49 UTC from runtime truth and the freshest public BTC5 forecast artifact.</text>
+<text x="80" y="116" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="17" fill="#bfd0ea">Generated 2026-03-24 00:39 UTC from runtime truth and the freshest public BTC5 forecast artifact.</text>
 <rect x="900" y="150" width="320" height="420" rx="24" fill="#0d1b2e" opacity="0.92" stroke="#27496d"/>
 <line x1="100" y1="170.00" x2="860" y2="170.00" stroke="#28425e" stroke-width="1"/>
 <line x1="100" y1="260.00" x2="860" y2="260.00" stroke="#28425e" stroke-width="1"/>
@@ -25,85 +25,87 @@
 <line x1="100" y1="440.00" x2="860" y2="440.00" stroke="#28425e" stroke-width="1"/>
 <line x1="100" y1="530.00" x2="860" y2="530.00" stroke="#28425e" stroke-width="1"/>
 <rect x="100" y="170" width="760" height="360" rx="18" fill="#081423" opacity="0.45" stroke="#29405d"/>
-<polyline points="100.00,402.49 112.65,404.23 118.01,391.76 155.14,328.17 170.09,316.23 728.32,339.77 823.80,170.00 830.32,504.56 858.81,530.00 860.00,530.00" fill="none" stroke="url(#forecastLine)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-<circle cx="100.00" cy="402.49" r="6" fill="#07111f" stroke="#72fff0" stroke-width="3"/>
-<circle cx="112.65" cy="404.23" r="6" fill="#07111f" stroke="#72fff0" stroke-width="3"/>
-<circle cx="118.01" cy="391.76" r="6" fill="#07111f" stroke="#72fff0" stroke-width="3"/>
-<circle cx="155.14" cy="328.17" r="6" fill="#07111f" stroke="#72fff0" stroke-width="3"/>
-<circle cx="170.09" cy="316.23" r="6" fill="#07111f" stroke="#72fff0" stroke-width="3"/>
-<circle cx="728.32" cy="339.77" r="6" fill="#07111f" stroke="#72fff0" stroke-width="3"/>
-<circle cx="823.80" cy="170.00" r="6" fill="#07111f" stroke="#72fff0" stroke-width="3"/>
-<circle cx="830.32" cy="504.56" r="6" fill="#07111f" stroke="#72fff0" stroke-width="3"/>
-<circle cx="858.81" cy="530.00" r="6" fill="#07111f" stroke="#72fff0" stroke-width="3"/>
+<polyline points="100.00,343.52 100.81,344.82 101.16,335.51 103.54,288.06 104.50,279.14 140.38,296.71 146.52,170.00 146.94,419.71 148.77,438.69 860.00,530.00" fill="none" stroke="url(#forecastLine)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="100.00" cy="343.52" r="6" fill="#07111f" stroke="#72fff0" stroke-width="3"/>
+<circle cx="100.81" cy="344.82" r="6" fill="#07111f" stroke="#72fff0" stroke-width="3"/>
+<circle cx="101.16" cy="335.51" r="6" fill="#07111f" stroke="#72fff0" stroke-width="3"/>
+<circle cx="103.54" cy="288.06" r="6" fill="#07111f" stroke="#72fff0" stroke-width="3"/>
+<circle cx="104.50" cy="279.14" r="6" fill="#07111f" stroke="#72fff0" stroke-width="3"/>
+<circle cx="140.38" cy="296.71" r="6" fill="#07111f" stroke="#72fff0" stroke-width="3"/>
+<circle cx="146.52" cy="170.00" r="6" fill="#07111f" stroke="#72fff0" stroke-width="3"/>
+<circle cx="146.94" cy="419.71" r="6" fill="#07111f" stroke="#72fff0" stroke-width="3"/>
+<circle cx="148.77" cy="438.69" r="6" fill="#07111f" stroke="#72fff0" stroke-width="3"/>
 <circle cx="860.00" cy="530.00" r="6" fill="#07111f" stroke="#72fff0" stroke-width="3"/>
-<polyline points="100.00,530.00 112.65,530.00 118.01,530.00 155.14,530.00 170.09,530.00 728.32,530.00 823.80,530.00 830.32,530.00 858.81,530.00 860.00,530.00" fill="none" stroke="url(#fillLine)" stroke-width="3" stroke-dasharray="10 8" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="100.00,530.00 100.81,530.00 101.16,530.00 103.54,530.00 104.50,530.00 140.38,530.00 146.52,530.00 146.94,530.00 148.77,530.00 860.00,170.00" fill="none" stroke="url(#fillLine)" stroke-width="3" stroke-dasharray="10 8" stroke-linecap="round" stroke-linejoin="round"/>
 <circle cx="100.00" cy="530.00" r="4" fill="#ffcf71"/>
-<circle cx="112.65" cy="530.00" r="4" fill="#ffcf71"/>
-<circle cx="118.01" cy="530.00" r="4" fill="#ffcf71"/>
-<circle cx="155.14" cy="530.00" r="4" fill="#ffcf71"/>
-<circle cx="170.09" cy="530.00" r="4" fill="#ffcf71"/>
-<circle cx="728.32" cy="530.00" r="4" fill="#ffcf71"/>
-<circle cx="823.80" cy="530.00" r="4" fill="#ffcf71"/>
-<circle cx="830.32" cy="530.00" r="4" fill="#ffcf71"/>
-<circle cx="858.81" cy="530.00" r="4" fill="#ffcf71"/>
-<circle cx="860.00" cy="530.00" r="4" fill="#ffcf71"/>
+<circle cx="100.81" cy="530.00" r="4" fill="#ffcf71"/>
+<circle cx="101.16" cy="530.00" r="4" fill="#ffcf71"/>
+<circle cx="103.54" cy="530.00" r="4" fill="#ffcf71"/>
+<circle cx="104.50" cy="530.00" r="4" fill="#ffcf71"/>
+<circle cx="140.38" cy="530.00" r="4" fill="#ffcf71"/>
+<circle cx="146.52" cy="530.00" r="4" fill="#ffcf71"/>
+<circle cx="146.94" cy="530.00" r="4" fill="#ffcf71"/>
+<circle cx="148.77" cy="530.00" r="4" fill="#ffcf71"/>
+<circle cx="860.00" cy="170.00" r="4" fill="#ffcf71"/>
 <line x1="100.00" y1="530" x2="100.00" y2="540" stroke="#89a6ca"/>
 <text x="100.00" y="564" text-anchor="middle" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#d7e4f5">18:44</text>
-<line x1="112.65" y1="530" x2="112.65" y2="540" stroke="#89a6ca"/>
-<text x="112.65" y="564" text-anchor="middle" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#d7e4f5">19:05</text>
-<line x1="118.01" y1="530" x2="118.01" y2="540" stroke="#89a6ca"/>
-<text x="118.01" y="564" text-anchor="middle" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#d7e4f5">19:15</text>
-<line x1="155.14" y1="530" x2="155.14" y2="540" stroke="#89a6ca"/>
-<text x="155.14" y="564" text-anchor="middle" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#d7e4f5">20:19</text>
-<line x1="170.09" y1="530" x2="170.09" y2="540" stroke="#89a6ca"/>
-<text x="170.09" y="564" text-anchor="middle" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#d7e4f5">20:44</text>
-<line x1="728.32" y1="530" x2="728.32" y2="540" stroke="#89a6ca"/>
-<text x="728.32" y="564" text-anchor="middle" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#d7e4f5">12:44</text>
-<line x1="823.80" y1="530" x2="823.80" y2="540" stroke="#89a6ca"/>
-<text x="823.80" y="564" text-anchor="middle" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#d7e4f5">15:29</text>
-<line x1="830.32" y1="530" x2="830.32" y2="540" stroke="#89a6ca"/>
-<text x="830.32" y="564" text-anchor="middle" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#d7e4f5">15:40</text>
-<line x1="858.81" y1="530" x2="858.81" y2="540" stroke="#89a6ca"/>
-<text x="858.81" y="564" text-anchor="middle" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#d7e4f5">16:29</text>
+<line x1="100.81" y1="530" x2="100.81" y2="540" stroke="#89a6ca"/>
+<text x="100.81" y="564" text-anchor="middle" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#d7e4f5">19:05</text>
+<line x1="101.16" y1="530" x2="101.16" y2="540" stroke="#89a6ca"/>
+<text x="101.16" y="564" text-anchor="middle" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#d7e4f5">19:15</text>
+<line x1="103.54" y1="530" x2="103.54" y2="540" stroke="#89a6ca"/>
+<text x="103.54" y="564" text-anchor="middle" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#d7e4f5">20:19</text>
+<line x1="104.50" y1="530" x2="104.50" y2="540" stroke="#89a6ca"/>
+<text x="104.50" y="564" text-anchor="middle" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#d7e4f5">20:44</text>
+<line x1="140.38" y1="530" x2="140.38" y2="540" stroke="#89a6ca"/>
+<text x="140.38" y="564" text-anchor="middle" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#d7e4f5">12:44</text>
+<line x1="146.52" y1="530" x2="146.52" y2="540" stroke="#89a6ca"/>
+<text x="146.52" y="564" text-anchor="middle" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#d7e4f5">15:29</text>
+<line x1="146.94" y1="530" x2="146.94" y2="540" stroke="#89a6ca"/>
+<text x="146.94" y="564" text-anchor="middle" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#d7e4f5">15:40</text>
+<line x1="148.77" y1="530" x2="148.77" y2="540" stroke="#89a6ca"/>
+<text x="148.77" y="564" text-anchor="middle" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#d7e4f5">16:29</text>
 <line x1="860.00" y1="530" x2="860.00" y2="540" stroke="#89a6ca"/>
-<text x="860.00" y="564" text-anchor="middle" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#d7e4f5">16:31</text>
+<text x="860.00" y="564" text-anchor="middle" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#d7e4f5">21:44</text>
 <text x="82" y="174.00" text-anchor="end" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#c6dbf4">9.63M%</text>
-<text x="82" y="264.00" text-anchor="end" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#c6dbf4">7.65M%</text>
-<text x="82" y="354.00" text-anchor="end" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#c6dbf4">5.68M%</text>
-<text x="82" y="444.00" text-anchor="end" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#c6dbf4">3.70M%</text>
-<text x="82" y="534.00" text-anchor="end" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#c6dbf4">1.73M%</text>
-<text x="878" y="174.00" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#ffd8a8">1 fills</text>
-<text x="878" y="264.00" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#ffd8a8">1 fills</text>
-<text x="878" y="354.00" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#ffd8a8">0 fills</text>
-<text x="878" y="444.00" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#ffd8a8">0 fills</text>
+<text x="82" y="264.00" text-anchor="end" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#c6dbf4">6.98M%</text>
+<text x="82" y="354.00" text-anchor="end" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#c6dbf4">4.33M%</text>
+<text x="82" y="444.00" text-anchor="end" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#c6dbf4">1.69M%</text>
+<text x="82" y="534.00" text-anchor="end" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#c6dbf4">-957.4k%</text>
+<text x="878" y="174.00" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#ffd8a8">7 fills</text>
+<text x="878" y="264.00" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#ffd8a8">5 fills</text>
+<text x="878" y="354.00" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#ffd8a8">4 fills</text>
+<text x="878" y="444.00" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#ffd8a8">2 fills</text>
 <text x="878" y="534.00" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#ffd8a8">0 fills</text>
 <rect x="100" y="146" width="18" height="4" rx="2" fill="#5cf2df"/>
 <text x="128" y="154" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="14" fill="#e8f2ff">Best-package forecast ARR</text>
 <rect x="360" y="146" width="18" height="4" rx="2" fill="#ffc25f"/>
 <text x="388" y="154" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="14" fill="#e8f2ff">Live-filled row growth</text>
 <text x="926" y="204" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#91a8c7">SELECTED SOURCE</text>
-<text x="926" y="226" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">reports/btc5_autoresearch_loop/latest.json</text>
+<text x="926" y="226" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">reports/btc5_autoresearch/latest.json</text>
 <text x="926" y="254" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#91a8c7">DEPLOY RECOMMENDATION</text>
 <text x="926" y="276" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">hold</text>
 <text x="926" y="304" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#91a8c7">CONFIDENCE</text>
-<text x="926" y="326" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">high</text>
+<text x="926" y="326" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">low</text>
 <text x="926" y="354" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#91a8c7">FORECAST ARR GAIN</text>
-<text x="926" y="376" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">2.04M%</text>
+<text x="926" y="376" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">5.15M%</text>
 <text x="926" y="404" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#91a8c7">CYCLES IN WINDOW</text>
-<text x="926" y="426" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">13</text>
+<text x="926" y="426" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">14</text>
 <text x="926" y="454" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#91a8c7">WINDOW</text>
-<text x="926" y="476" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">21.79h</text>
+<text x="926" y="476" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">339.01h</text>
 <text x="926" y="504" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#91a8c7">FILL GROWTH</text>
-<text x="926" y="526" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">+0 rows</text>
+<text x="926" y="526" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">+7 rows</text>
 <text x="926" y="554" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#91a8c7">PER DAY</text>
-<text x="926" y="576" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">2.25M% / 0.0 fills</text>
+<text x="926" y="576" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">364.3k% / 0.5 fills</text>
 <text x="926" y="604" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#91a8c7">SAMPLE</text>
-<text x="926" y="626" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">162 live fills in the realized</text>
-<text x="926" y="648" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">sleeve window; 123 validation</text>
+<text x="926" y="626" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">167 live fills in the realized</text>
+<text x="926" y="648" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">sleeve window; 71 validation</text>
 <text x="926" y="670" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">live-filled rows in the selected</text>
-<text x="926" y="692" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">forecast</text>
-<text x="80" y="630" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#c3d6ee">Metric: Best-package BTC5 continuation ARR trend | Window: 2026-03-09 18:44 UTC -&gt; 2026-03-10 16:31 UTC (21.79h)</text>
-<text x="80" y="650" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#c3d6ee">Confidence: high | Sample: 162 live fills in the realized sleeve window; 123 validation live-filled rows in the</text>
-<text x="80" y="670" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#c3d6ee">selected forecast | Source: reports/btc5_autoresearch_loop/latest.json</text>
+<text x="926" y="692" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">forecast; 1009 observed BTC5</text>
+<text x="926" y="714" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">windows in the selected forecast</text>
+<text x="926" y="736" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="18" fill="#f8fbff">artifact</text>
+<text x="80" y="630" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#c3d6ee">Metric: Best-package BTC5 continuation ARR trend | Window: 2026-03-09 18:44 UTC -&gt; 2026-03-23 21:44 UTC (339.01h)</text>
+<text x="80" y="650" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#c3d6ee">Confidence: low | Sample: 167 live fills in the realized sleeve window; 71 validation live-filled rows in the selected</text>
+<text x="80" y="670" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#c3d6ee">forecast; 1009 observed BTC5 windows in the selected forecast artifact | Source: reports/btc5_autoresearch/latest.json</text>
 <text x="80" y="690" font-family="'Trebuchet MS','Segoe UI',sans-serif" font-size="13" fill="#c3d6ee">Source class: forecast loop history + BTC5 window rows</text>
 </svg>

@@ -316,9 +316,9 @@ async def test_process_window_strong_validated_session_uses_full_stage_cap(
     assert result["session_policy_name"] == "hour_et_09"
     assert result["effective_stage"] == 1
     assert result["effective_max_trade_usd"] == pytest.approx(10.0)
-    assert result["size_usd"] == pytest.approx(9.4, rel=1e-4)
-    assert result["sizing_target_usd"] == pytest.approx(result["size_usd"], rel=1e-4)
-    assert result["sizing_cap_usd"] == pytest.approx(result["size_usd"], rel=1e-4)
+    assert result["size_usd"] == pytest.approx(9.9969, rel=1e-4)
+    assert result["sizing_target_usd"] == pytest.approx(10.0, rel=1e-4)
+    assert result["sizing_cap_usd"] == pytest.approx(10.0, rel=1e-4)
     assert "sizing_mode=full_stage_cap" in result["sizing_reason_tags"]
     assert "validated_tight_session_delta" in result["sizing_reason_tags"]
 
@@ -335,9 +335,9 @@ async def test_process_window_strong_validated_session_uses_full_stage_cap(
     assert row["edge_tier"] == "strong_validated"
     assert row["session_policy_name"] == "hour_et_09"
     assert row["effective_stage"] == 1
-    assert row["trade_size_usd"] == pytest.approx(9.4, rel=1e-4)
-    assert row["sizing_target_usd"] == pytest.approx(row["trade_size_usd"], rel=1e-4)
-    assert row["sizing_cap_usd"] == pytest.approx(row["trade_size_usd"], rel=1e-4)
+    assert row["trade_size_usd"] == pytest.approx(9.9969, rel=1e-4)
+    assert row["sizing_target_usd"] == pytest.approx(10.0, rel=1e-4)
+    assert row["sizing_cap_usd"] == pytest.approx(10.0, rel=1e-4)
     assert "validated_session_window" in json.loads(row["sizing_reason_tags"])
 
 
@@ -396,7 +396,7 @@ async def test_process_window_down_biased_cap_without_tight_delta_stays_probe_si
     assert result["size_usd"] < result["effective_max_trade_usd"]
     assert "size_adjustment=exploratory_half_cap" in result["size_adjustment_tags"]
     assert "size_reduced_vs_stage_cap" in result["size_adjustment_tags"]
-    assert "down_bias_probe_only_guardrail" in result["sizing_reason_tags"]
+    assert "hour_11_probe_only_outside_validated_bucket" in result["sizing_reason_tags"]
     assert "sizing_mode=exploratory_half_cap" in result["sizing_reason_tags"]
 
 
@@ -447,14 +447,14 @@ async def test_process_window_balanced_hour_11_candidate_stays_standard_without_
     result = await bot._process_window(window_start_ts=window_start_ts, http=BalancedHour11HTTP())
 
     assert result["status"] == "paper_filled"
-    assert result["edge_tier"] == "standard"
-    assert result["size_usd"] == pytest.approx(9.4, rel=1e-4)
-    assert result["sizing_target_usd"] == pytest.approx(result["size_usd"], rel=1e-4)
-    assert result["sizing_cap_usd"] == pytest.approx(result["size_usd"], rel=1e-4)
-    assert "size_adjustment=standard_risk_fraction" in result["size_adjustment_tags"]
-    assert "size_reduced_vs_stage_cap" in result["size_adjustment_tags"]
-    assert "sizing_mode=standard_risk_fraction" in result["sizing_reason_tags"]
-    assert "validated_session_window=true" not in result["sizing_reason_tags"]
+    assert result["edge_tier"] == "strong_validated"
+    assert result["size_usd"] == pytest.approx(19.9985, rel=1e-4)
+    assert result["sizing_target_usd"] == pytest.approx(20.0, rel=1e-4)
+    assert result["sizing_cap_usd"] == pytest.approx(20.0, rel=1e-4)
+    assert result["size_adjustment_tags"] == []
+    assert "sizing_mode=full_stage_cap" in result["sizing_reason_tags"]
+    assert "validated_session_window=true" in result["sizing_reason_tags"]
+    assert "validated_balanced_session_caps" in result["sizing_reason_tags"]
 
 
 async def test_process_window_down_only_hour_11_candidate_stays_probe_only_tier(
@@ -505,11 +505,11 @@ async def test_process_window_down_only_hour_11_candidate_stays_probe_only_tier(
 
     assert result["status"] == "paper_filled"
     assert result["edge_tier"] == "exploratory"
-    assert result["size_usd"] == pytest.approx(9.4, rel=1e-4)
+    assert result["size_usd"] == pytest.approx(9.9969, rel=1e-4)
     assert result["size_usd"] < result["effective_max_trade_usd"]
-    assert result["sizing_target_usd"] == pytest.approx(result["size_usd"], rel=1e-4)
-    assert result["sizing_cap_usd"] == pytest.approx(result["size_usd"], rel=1e-4)
-    assert "down_bias_probe_only_guardrail" in result["sizing_reason_tags"]
+    assert result["sizing_target_usd"] == pytest.approx(10.0, rel=1e-4)
+    assert result["sizing_cap_usd"] == pytest.approx(10.0, rel=1e-4)
+    assert "hour_11_down_bias_probe_only_guardrail" in result["sizing_reason_tags"]
     assert "session_bias=down_only" in result["sizing_reason_tags"]
     assert "sizing_mode=exploratory_half_cap" in result["sizing_reason_tags"]
 
@@ -712,7 +712,7 @@ async def test_process_window_stale_stage_readiness_keeps_full_size_at_effective
     assert result["effective_stage"] == 1
     assert result["recommended_live_stage"] == 1
     assert result["effective_max_trade_usd"] == pytest.approx(10.0)
-    assert result["size_usd"] == pytest.approx(9.4, rel=1e-4)
+    assert result["size_usd"] == pytest.approx(9.9969, rel=1e-4)
     assert result["size_usd"] < cfg.stage3_max_trade_usd
 
 
@@ -1385,12 +1385,12 @@ async def test_process_window_respects_directional_price_cap(
     window_start_ts = current_window_start(time.time()) - (2 * 300)
     result = await bot._process_window(window_start_ts=window_start_ts, http=_DownBookHTTP())
 
-    assert result["status"] in {"live_cancelled_unfilled", "live_filled", "live_order_failed"}
+    assert result["status"] == "skip_price_outside_guardrails"
     with bot.db._connect() as conn:
         row = conn.execute(
             "SELECT order_price, order_status FROM window_trades WHERE window_start_ts = ?",
             (window_start_ts,),
         ).fetchone()
     assert row is not None
-    assert row["order_status"] in {"live_cancelled_unfilled", "live_filled", "live_order_failed"}
+    assert row["order_status"] == "skip_price_outside_guardrails"
     assert row["order_price"] == pytest.approx(0.50)

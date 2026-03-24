@@ -21,8 +21,12 @@ from pathlib import Path
 
 import yaml
 
-from engine import PaperTradeSimulator
-from metrics import SimulationReport
+try:
+    from .engine import PaperTradeSimulator
+    from .metrics import SimulationReport
+except ImportError:  # pragma: no cover - legacy direct-script compatibility
+    from engine import PaperTradeSimulator
+    from metrics import SimulationReport
 
 
 DEFAULT_CONFIG = Path(__file__).parent / "config.yaml"

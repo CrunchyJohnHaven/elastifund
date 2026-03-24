@@ -41,6 +41,8 @@ from scripts.trade_attribution_contract import (  # noqa: E402
     build_trade_attribution_contract as _build_trade_attribution_contract_impl,
 )
 
+_core_load_btc5_maker_state = _core_status._load_btc5_maker_state
+
 
 DEFAULT_CONFIG_PATH = Path("config/remote_cycle_status.json")
 DEFAULT_MARKDOWN_PATH = Path("reports/remote_cycle_status.md")
@@ -7332,6 +7334,7 @@ def _sync_core_runtime_hooks():
     overrides = {
         "subprocess": subprocess,
         "_load_polymarket_wallet_state": _load_polymarket_wallet_state,
+        "_load_btc5_maker_state": _load_btc5_maker_state,
     }
     originals = {
         name: getattr(_core_status, name)
@@ -7382,8 +7385,7 @@ def _build_launch_status(
 
 
 def _load_btc5_maker_state(root: Path) -> dict[str, Any]:
-    with _sync_core_runtime_hooks():
-        return _core_status._load_btc5_maker_state(root)
+    return _core_load_btc5_maker_state(root)
 
 
 def build_trade_attribution_contract(
@@ -7444,6 +7446,10 @@ def _build_trade_proof_artifact(
     ).strip() or None
     if source_of_truth == "local_sqlite_db":
         source_of_truth = "reports/runtime_truth_latest.json; remote_sqlite_probe"
+    if not fill_confirmed:
+        latest_filled_trade_at = None
+        trade_size_usd = None
+        order_price = None
     proof = {
         "artifact": "btc5_trade_proof",
         "schema_version": 1,
@@ -7502,27 +7508,32 @@ def _write_trade_proof_outputs(
     runtime_truth_snapshot = json.loads(runtime_truth_path.read_text())
     remote_cycle_status = json.loads(status_path.read_text())
 
-    proof, attribution = _build_trade_proof_artifact(
-        root=root,
-        status=status or remote_cycle_status,
-        runtime_truth_snapshot=runtime_truth_snapshot,
+    proof = dict(
+        runtime_truth_snapshot.get("trade_proof")
+        or remote_cycle_status.get("trade_proof")
+        or {}
     )
+    attribution = dict(
+        runtime_truth_snapshot.get("attribution")
+        or remote_cycle_status.get("attribution")
+        or {}
+    )
+    if not proof:
+        proof, attribution = _build_trade_proof_artifact(
+            root=root,
+            status=status or remote_cycle_status,
+            runtime_truth_snapshot=runtime_truth_snapshot,
+        )
 
     runtime_truth_snapshot["trade_proof"] = proof
-    runtime_truth_snapshot["attribution"] = {
-        **dict(runtime_truth_snapshot.get("attribution") or {}),
-        **attribution,
-    }
+    runtime_truth_snapshot["attribution"] = dict(attribution)
     trade_confirmation = dict(runtime_truth_snapshot.get("trade_confirmation") or {})
     if proof.get("profile_id") not in (None, ""):
         trade_confirmation["profile_id"] = proof.get("profile_id")
     runtime_truth_snapshot["trade_confirmation"] = trade_confirmation
 
     remote_cycle_status["trade_proof"] = proof
-    remote_cycle_status["attribution"] = {
-        **dict(remote_cycle_status.get("attribution") or {}),
-        **attribution,
-    }
+    remote_cycle_status["attribution"] = dict(attribution)
     status.setdefault("runtime_truth", {})
     status["runtime_truth"]["trade_proof"] = proof
     status["runtime_truth"]["attribution"] = dict(runtime_truth_snapshot["attribution"])
@@ -7720,6 +7731,29 @@ def build_public_runtime_snapshot(runtime_truth_snapshot: dict[str, Any]) -> dic
         return _core_status.build_public_runtime_snapshot(runtime_truth_snapshot)
 
 
+def _write_legacy_timestamped_aliases(root: Path, written: dict[str, Any]) -> None:
+    """Mirror timestamped outputs into the legacy top-level reports directory."""
+
+    reports_dir = root / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    for key in (
+        "runtime_truth_timestamped",
+        "runtime_mode_reconciliation_markdown",
+        "state_improvement_timestamped",
+        "launch_packet_timestamped",
+    ):
+        source_text = str(written.get(key) or "").strip()
+        if not source_text:
+            continue
+        source_path = Path(source_text)
+        if not source_path.exists():
+            continue
+        alias_path = reports_dir / source_path.name
+        if source_path.resolve() == alias_path.resolve():
+            continue
+        alias_path.write_bytes(source_path.read_bytes())
+
+
 def write_remote_cycle_status(
     root: Path,
     *,
@@ -7756,7 +7790,9 @@ def write_remote_cycle_status(
             root_test_command=root_test_command,
             root_test_timeout_seconds=root_test_timeout_seconds,
         )
-    return _write_trade_proof_outputs(root=root.resolve(), written=written)
+    resolved_root = root.resolve()
+    _write_legacy_timestamped_aliases(resolved_root, written)
+    return _write_trade_proof_outputs(root=resolved_root, written=written)
 
 
 def main() -> None:

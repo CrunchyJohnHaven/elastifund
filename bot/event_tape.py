@@ -544,6 +544,125 @@ class EventTapeWriter:
         )
 
     # ------------------------------------------------------------------
+    # Non-optional event families (required by proof-carrying protocol)
+    # ------------------------------------------------------------------
+
+    def emit_fill_confirmed(
+        self,
+        market_id: str,
+        order_id: str,
+        strategy_id: str,
+        direction: str,
+        fill_price: float,
+        fill_shares: float,
+        fill_usd: float,
+        *,
+        source: str = "jj_live",
+        causation_seq: int | None = None,
+        correlation_id: str | None = None,
+    ) -> TapeEvent:
+        """Non-optional: every confirmed fill MUST emit this event.
+
+        Hard rule: if this event exists, trade_proof may never emit no_fill_yet.
+        """
+        return self.emit(
+            event_type="execution.fill_confirmed",
+            source=source,
+            payload={
+                "market_id": market_id,
+                "order_id": order_id,
+                "strategy_id": strategy_id,
+                "direction": direction,
+                "fill_price": fill_price,
+                "fill_shares": fill_shares,
+                "fill_usd": fill_usd,
+            },
+            causation_seq=causation_seq,
+            correlation_id=correlation_id,
+        )
+
+    def emit_wallet_snapshot(
+        self,
+        total_usd: float,
+        free_usd: float,
+        reserved_usd: float,
+        open_positions: int,
+        closed_positions: int,
+        *,
+        source: str = "wallet_recon",
+        causation_seq: int | None = None,
+        correlation_id: str | None = None,
+    ) -> TapeEvent:
+        """Non-optional: periodic wallet state capture."""
+        return self.emit(
+            event_type="wallet.snapshot",
+            source=source,
+            payload={
+                "total_usd": total_usd,
+                "free_usd": free_usd,
+                "reserved_usd": reserved_usd,
+                "open_positions": open_positions,
+                "closed_positions": closed_positions,
+            },
+            causation_seq=causation_seq,
+            correlation_id=correlation_id,
+        )
+
+    def emit_truth_mismatch(
+        self,
+        mismatch_type: str,
+        local_value: Any,
+        remote_value: Any,
+        missing_ids: list[str] | None = None,
+        *,
+        source: str = "reconciliation",
+        causation_seq: int | None = None,
+        correlation_id: str | None = None,
+    ) -> TapeEvent:
+        """Non-optional: wallet/ledger disagreement.
+
+        Hard rule: if emitted, live promotion is disabled until resolved.
+        """
+        return self.emit(
+            event_type="reconciliation.truth_mismatch",
+            source=source,
+            payload={
+                "mismatch_type": mismatch_type,
+                "local_value": local_value,
+                "remote_value": remote_value,
+                "missing_ids": missing_ids or [],
+                "live_promotion_disabled": True,
+            },
+            causation_seq=causation_seq,
+            correlation_id=correlation_id,
+        )
+
+    # ------------------------------------------------------------------
+    # Simulation events (local edge lab)
+    # ------------------------------------------------------------------
+
+    def emit_simulation(
+        self,
+        sim_type: str,
+        payload: dict[str, Any],
+        *,
+        source: str = "simulation_lab",
+        causation_seq: int | None = None,
+        correlation_id: str | None = None,
+    ) -> TapeEvent:
+        """Emit simulation.* events: started, completed, rejected.
+
+        Also supports: queue.estimate, candidate.discovered_external
+        """
+        return self.emit(
+            event_type=f"simulation.{sim_type}",
+            source=source,
+            payload=payload,
+            causation_seq=causation_seq,
+            correlation_id=correlation_id,
+        )
+
+    # ------------------------------------------------------------------
     # Query methods
     # ------------------------------------------------------------------
 

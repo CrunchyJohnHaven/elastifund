@@ -40,16 +40,39 @@ STATE_FILE = DATA_DIR / "local_monitor_state.json"
 PROXY_WALLET = "0xb2fef31cf185b75d0c9c77bd1f8fe9fd576f69a5"
 BASE_URL = "https://data-api.polymarket.com"
 DEFAULT_DEPOSIT = 1331.28
-
-VPS_HOST = "ubuntu@34.244.34.108"
-VPS_KEY = os.path.expanduser(
-    os.environ.get(
-        "LIGHTSAIL_KEY",
-        "~/Downloads/LightsailDefaultKey-eu-west-1.pem",
-    )
-)
 VPS_BTC5_DB = "/home/ubuntu/polymarket-trading-bot/data/btc_5min_maker.db"
 VPS_TIMEOUT = 10  # seconds
+
+
+def _load_repo_env(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, raw_value = line.split("=", 1)
+        key = key.strip()
+        value = raw_value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        if key:
+            values[key] = value
+    return values
+
+
+_REPO_ENV = _load_repo_env(PROJECT_ROOT / ".env")
+_VPS_USER = str(os.environ.get("VPS_USER") or _REPO_ENV.get("VPS_USER") or "ubuntu").strip()
+_VPS_IP = str(os.environ.get("VPS_IP") or _REPO_ENV.get("VPS_IP") or "34.244.34.108").strip()
+VPS_HOST = f"{_VPS_USER}@{_VPS_IP}"
+VPS_KEY = os.path.expanduser(
+    str(
+        os.environ.get("LIGHTSAIL_KEY")
+        or _REPO_ENV.get("LIGHTSAIL_KEY")
+        or "~/Downloads/LightsailDefaultKey-eu-west-1.pem"
+    ).strip()
+)
 
 # ---------------------------------------------------------------------------
 # Data classes

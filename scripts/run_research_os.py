@@ -62,6 +62,7 @@ OPTIONAL_INPUTS = {
     "sensorium":        REPORTS / "parallel" / "instance01_sensorium_latest.json",
     "novelty_discovery": REPORTS / "parallel" / "novelty_discovery.json",
     "novel_edge":        REPORTS / "parallel" / "novel_edge.json",
+    "local_feedback_loop": REPORTS / "local_feedback_loop.json",
 }
 
 # ---------------------------------------------------------------------------
@@ -480,6 +481,7 @@ def _build_opportunity_exchange(
     sensorium: dict | None,
     novelty_discovery: dict | None,
     novel_edge: dict | None,
+    local_feedback: dict | None,
 ) -> list[OpportunityItem]:
     opps: list[OpportunityItem] = []
 
@@ -613,6 +615,26 @@ def _build_opportunity_exchange(
                 rationale="From Instance 3 novel_edge pipeline — pre-validated for Elastifund context.",
             ))
 
+    if local_feedback:
+        hint_rows = local_feedback.get("mutation_hints") or []
+        for hint in hint_rows[:4]:
+            if not isinstance(hint, dict):
+                continue
+            summary = str(hint.get("summary") or "").strip()
+            if not summary:
+                continue
+            severity = str(hint.get("severity") or "medium").lower()
+            if severity not in {"critical", "high", "medium", "low"}:
+                severity = "medium"
+            opps.append(OpportunityItem(
+                opp_id=f"LOCAL-{hashlib.sha256(str(hint).encode()).hexdigest()[:6].upper()}",
+                lane=str(hint.get("lane") or hint.get("venue") or "market"),
+                opportunity_type="mutation_direction",
+                description=summary,
+                estimated_priority=severity,
+                rationale=str(hint.get("rationale") or "Derived from the canonical local feedback loop."),
+            ))
+
     # Structural opportunities from backlog
     opps.append(OpportunityItem(
         opp_id="STRUCT-001",
@@ -647,7 +669,10 @@ def _build_opportunity_exchange(
 # ---------------------------------------------------------------------------
 # Health summary
 # ---------------------------------------------------------------------------
-def _build_health_summary(snapshots: dict[str, LaneSnapshot]) -> dict:
+def _build_health_summary(
+    snapshots: dict[str, LaneSnapshot],
+    local_feedback: dict | None = None,
+) -> dict:
     loaded = [s for s in snapshots.values() if s.loaded]
     healthy = [s for s in loaded if s.status in ("healthy", "ok")]
     budget_exhausted = [
@@ -658,12 +683,26 @@ def _build_health_summary(snapshots: dict[str, LaneSnapshot]) -> dict:
         s.name for s in loaded
         if s.hours_since_keep and s.hours_since_keep > 48
     ]
+    venues = local_feedback.get("venues") if isinstance(local_feedback, dict) else {}
+    if not isinstance(venues, dict):
+        venues = {}
+    feedback_ready = [
+        name for name, payload in venues.items()
+        if isinstance(payload, dict) and payload.get("feedback_ready")
+    ]
+    live_enabled = [
+        name for name, payload in venues.items()
+        if isinstance(payload, dict) and str(payload.get("effective_mode") or "").lower() == "live"
+    ]
     return {
         "total_lanes": len(snapshots),
         "loaded_lanes": len(loaded),
         "healthy_lanes": len(healthy),
         "budget_exhausted_lanes": budget_exhausted,
         "long_without_keep": long_no_keep,
+        "local_feedback_loaded": bool(local_feedback),
+        "feedback_ready_venues": len(feedback_ready),
+        "live_enabled_venues": live_enabled,
         "overall_status": "healthy" if len(healthy) >= 2 else "degraded",
     }
 
@@ -688,6 +727,7 @@ def run(dry_run: bool = False) -> dict:
     sensorium = _load_json(OPTIONAL_INPUTS["sensorium"], "sensorium")
     novelty_discovery = _load_json(OPTIONAL_INPUTS["novelty_discovery"], "novelty_discovery")
     novel_edge = _load_json(OPTIONAL_INPUTS["novel_edge"], "novel_edge")
+    local_feedback = _load_json(OPTIONAL_INPUTS["local_feedback_loop"], "local_feedback_loop")
 
     missing_optionals = [
         k for k, p in OPTIONAL_INPUTS.items() if not p.exists()
@@ -702,9 +742,9 @@ def run(dry_run: bool = False) -> dict:
     mutation_wave = _build_mutation_wave(snapshots, lanes_raw)
     constitution = _build_strategy_constitution(snapshots, lanes_raw)
     opportunity_exchange = _build_opportunity_exchange(
-        snapshots, lanes_raw, sensorium, novelty_discovery, novel_edge
+        snapshots, lanes_raw, sensorium, novelty_discovery, novel_edge, local_feedback
     )
-    health = _build_health_summary(snapshots)
+    health = _build_health_summary(snapshots, local_feedback)
 
     # Compute run hash
     run_hash = hashlib.sha256(
@@ -725,6 +765,7 @@ def run(dry_run: bool = False) -> dict:
                 ("sensorium", sensorium),
                 ("novelty_discovery", novelty_discovery),
                 ("novel_edge", novel_edge),
+                ("local_feedback_loop", local_feedback),
             ]
         },
         "missing_optional_inputs": missing_optionals,
@@ -749,7 +790,7 @@ def run(dry_run: bool = False) -> dict:
                 "reports/autoresearch/latest.json; reports/autoresearch/btc5_market/latest.json; "
                 "reports/autoresearch/btc5_policy/latest.json; reports/autoresearch/command_node/latest.json; "
                 "reports/parallel/instance01_sensorium_latest.json; reports/parallel/novelty_discovery.json; "
-                "reports/parallel/novel_edge.json"
+                "reports/parallel/novel_edge.json; reports/local_feedback_loop.json"
             ),
             freshness_sla_seconds=3600,
             blockers=[] if mutation_wave else ["no_mutation_wave"],

@@ -3,6 +3,20 @@
 
 ---
 
+## 2026-03-23 Probability-Model Addendum
+
+The March 23, 2026 attached deep-research report materially tightens the modeling contract for this lane.
+
+- Settlement truth is Chainlink BTC/USD, not Binance spot. `DOWN` must be labeled as `S1 < S0`; ties resolve `UP` because `UP` wins on `S1 >= S0`.
+- Chainlink open price, price-to-beat, intra-candle delta, and time-remaining state should be the primary model inputs. Binance stays in the stack as a microstructure and basis feature, not the settlement label.
+- The recommended production model is two-layer: a fast diffusion-style baseline on `{delta_from_open, time_remaining, EWMA_volatility}` plus a small residual model for microstructure and seasonality, then beta calibration.
+- Maker execution requires a separate fill model and a fill-conditioned adverse-selection adjustment using Polymarket `book`, `price_change`, and `last_trade_price` data.
+- Default maker window should start narrow at `T-30s` to `T-10s` until the information curve and fill curve are measured on our own logs.
+
+This means the RTDS/WebSocket architecture below still matters, but the older “Binance is the answer key” framing is no longer sufficient and should not guide label construction or promotion decisions.
+
+---
+
 ## PART 1: WHAT WE'RE PROPOSING (Plain English)
 
 ### The Core Idea
@@ -13,7 +27,7 @@ We're proposing a **complete rewrite of the crypto candle market trading path** 
 
 This is NOT a new strategy concept. It's the same oracle latency edge we've already researched. What's new is the **specific implementation path** based on infrastructure we didn't know we had access to:
 
-1. **Polymarket's RTDS feed** (`wss://ws-live-data.polymarket.com`) streams BOTH the real Binance price AND the Chainlink oracle price, side by side, for free, no auth required. When those two prices diverge near candle close, the resolution outcome is nearly certain.
+1. **Polymarket's RTDS feed** (`wss://ws-live-data.polymarket.com`) streams BOTH the real Binance price AND the Chainlink oracle price, side by side, for free, no auth required. The trading signal comes from how those streams diverge, but the contract itself resolves on the Chainlink series.
 
 2. **Our Dublin VPS is 5–10ms from Polymarket's CLOB** (which runs in AWS London, not the US). We don't need to move servers.
 
@@ -29,11 +43,11 @@ This is NOT a new strategy concept. It's the same oracle latency edge we've alre
 
 **Each candle cycle (runs continuously):**
 
-1. **T-300s to T-60s (observation window):** Stream prices from all three sources. Track the candle open price, current Binance spot, current Chainlink oracle price, and the Polymarket market odds. Do nothing. Just watch.
+1. **T-300s to T-60s (observation window):** Stream prices from all three sources. Track the candle open price on the Chainlink series, the current Chainlink price-to-beat, Binance spot for basis and flow context, and the Polymarket market odds. Do nothing. Just watch.
 
-2. **T-60s to T-10s (decision window):** Compare Binance spot to candle open. If BTC is meaningfully above open → candle likely closes Up. If below → likely Down. Cross-check: is the RTDS `crypto_prices_chainlink` feed lagging behind `crypto_prices`? If yes, the oracle hasn't caught up yet and the market odds may not reflect reality. This is our signal.
+2. **T-60s to T-10s (decision window):** Compare the current Chainlink price to the Chainlink open price, and standardize that displacement by time remaining and local volatility. Use Binance spot and RTDS divergence as auxiliary evidence about microstructure and basis, not as the settlement label. If the Chainlink series still trails the faster price path, the order book may be mispricing the actual resolution state.
 
-3. **T-60s to T-10s (order placement):** If confidence is high (Binance price clearly on one side of the open, confirmed by RTDS divergence), post aggressive maker limit orders on the winning outcome. "Aggressive" means pricing at or near the current best ask (for buying) — we want to be at the front of the FIFO queue. We do NOT cross the spread (that would be a taker order with fees).
+3. **T-60s to T-10s (order placement):** If confidence is high after the outcome model and fill model agree on positive fill-conditioned edge, post aggressive maker limit orders on the winning outcome. "Aggressive" means pricing at or near the current best ask (for buying) — we want to be at the front of the FIFO queue. We do NOT cross the spread (that would be a taker order with fees).
 
 4. **T-10s to T-0s (hold or cancel):** If the price reverses, cancel unfilled orders. If orders are filled, hold to resolution. The candle resolves, we collect $1/share on correct predictions minus our entry cost.
 
@@ -47,7 +61,7 @@ This is NOT a new strategy concept. It's the same oracle latency edge we've alre
 | Crypto strategy | None (skips crypto markets) | RTDS dual-stream divergence + maker orders |
 | Order type | Taker orders | Maker-only (0% fees) |
 | Latency to CLOB | ~5000ms (REST round-trip + poll interval) | ~15-35ms (WebSocket + EIP-712 sign + submit) |
-| Signal source | Claude LLM probability | Binance spot price vs candle open + oracle lag |
+| Signal source | Claude LLM probability | Chainlink delta-to-open + RTDS/Binance/Polymarket microstructure |
 | Decision timing | Whenever poll happens | Final 60 seconds of each candle |
 
 **This does NOT replace the LLM analyzer for slow markets.** The LLM path (politics, weather, geopolitical) stays exactly as-is. This is a parallel system for the crypto candle markets we currently skip entirely.
@@ -58,7 +72,7 @@ This is NOT a new strategy concept. It's the same oracle latency edge we've alre
 
 ### What I think works (70% confident)
 
-**The signal is real.** Binance BTC spot price is the ground truth for how 5-minute candles resolve. If BTC is $68,500 and the candle opened at $68,000 with 30 seconds left, the candle is closing Up. This isn't a prediction — it's reading the answer before the test is graded. The oracle lag (Chainlink updating slower than Binance) means Polymarket odds sometimes don't reflect this reality until the final seconds. The RTDS feed literally gives us both prices simultaneously.
+**The signal is real, but the contract truth is Chainlink.** Chainlink BTC/USD is the series Polymarket uses to resolve these 5-minute candles. Binance spot is still useful because it can move faster and reveal short-horizon microstructure pressure, but the answer key is the Chainlink open/close rule, with ties resolving Up. The RTDS feed literally gives us both prices simultaneously, which is why the divergence is valuable.
 
 **Maker orders at 0% fees are a structural advantage.** The Feb 18 fee change made taker arb unprofitable but left maker orders untouched. This is confirmed by multiple sources. The math works: if we enter at $0.60 on the winning side with maker orders, we pay $0.60 and receive $1.00 at resolution = $0.40 profit per share, zero fees.
 
