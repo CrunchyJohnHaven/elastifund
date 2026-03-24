@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: help bootstrap bootstrap-lite bootstrap-runtime doctor onboard quickstart preflight hygiene verify-static verify-fastpath test-select test-fixture-ownership test-research-sim test-platform test verify test-root test-polymarket test-nontrading smoke-nontrading btc5-autoresearch-local btc5-autoresearch-local-autopush btc5-arr-report btc5-hypothesis-lab btc5-regime-policy-lab btc5-hypothesis-frontier strike-factory-local deploy-write-manifest deploy-dry-run api-specs clean
+.PHONY: help bootstrap bootstrap-lite bootstrap-runtime doctor onboard quickstart preflight hygiene verify-static verify-fastpath test-select test-fixture-ownership test-research-sim test-platform test verify test-root test-polymarket test-nontrading smoke-nontrading btc5-autoresearch-local btc5-autoresearch-local-autopush btc5-arr-report btc5-hypothesis-lab btc5-regime-policy-lab btc5-hypothesis-frontier strike-factory-local deploy-write-manifest deploy-dry-run api-specs analyze-iv clean
 
 help:
 	@printf '%s\n' \
@@ -34,6 +34,7 @@ help:
 		'deploy-dry-run   Refresh bridge state, regenerate the manifest, and run the VPS deploy dry-run' \
 		'test-polymarket  Run the nested polymarket-bot test suite' \
 		'api-specs        Regenerate OpenAPI specs' \
+		'analyze-iv       Run Deribit IV correlation analysis on BTC5 data' \
 		'clean            Remove Python/test/Finder caches'
 
 bootstrap:
@@ -139,6 +140,9 @@ deploy-dry-run:
 
 test-polymarket:
 	cd polymarket-bot && $(PYTHON) -m pytest tests -q
+
+analyze-iv:
+	$(PYTHON) scripts/analyze_iv_edge.py --db-path data/btc_5min_maker.db
 
 api-specs:
 	$(PYTHON) scripts/export_openapi_specs.py
