@@ -153,7 +153,11 @@ data/
 !AEActivityApp/src/data/*.ts
 state/elastifund/
 state/local/
+state/alpaca_first_trade_state.json
+state/btc5_dual_autoresearch_state.json
 state/btc5_evidence_cache.json
 state/btc5_hypothesis_kill_list.json
 state/btc5_row_hash_cache.json
+state/flywheel_stale_state.json
+*.pre_symlink_backup
 exports/

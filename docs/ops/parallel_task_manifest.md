@@ -33,8 +33,7 @@ Instance 3 (A-6 sum-violation scanner) and the current B-1 graph/runtime were ex
 
 Artifacts generated:
 - [`logs/sum_violation_events.jsonl`](logs/sum_violation_events.jsonl)
-- [`reports/constraint_arb_shadow_report.md`](reports/constraint_arb_shadow_report.md)
-- [`reports/arb_empirical_snapshot.md`](reports/arb_empirical_snapshot.md)
+- [`reports/arb_empirical_snapshot.json`](reports/arb_empirical_snapshot.json)
 - [`data/constraint_arb.db`](data/constraint_arb.db)
 
 ## REPRIORITIZATION UPDATE — STRUCTURAL ARB (2026-03-07)
