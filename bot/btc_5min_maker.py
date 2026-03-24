@@ -4515,6 +4515,8 @@ class BTC5MinMakerBot:
                 payload["book_imbalance"] = book_imbalance
             if "decision_ts" not in payload:
                 payload["decision_ts"] = decision_ts
+            if "hour_filter_status" not in payload:
+                payload["hour_filter_status"] = _hour_status
             payload["reason"] = _join_reasons(
                 payload.get("reason"),
                 _reason_tag("decision_timing", decision_timing),
