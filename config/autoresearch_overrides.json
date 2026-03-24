@@ -1,14 +1,33 @@
 {
   "hard_bounds": {
     "BTC5_MIN_BUY_PRICE": {
-      "min": 0.85,
-      "max": 0.95
+      "min": 0.04,
+      "max": 0.55
     },
     "BTC5_DOWN_MAX_BUY_PRICE": {
-      "max": 0.95
+      "max": 0.55
     },
     "BTC5_UP_MAX_BUY_PRICE": {
-      "max": 0.95
+      "max": 0.55
     }
-  }
+  },
+  "promotion_stage": "validated",
+  "params": {
+    "BTC5_MIN_BUY_PRICE": 0.30,
+    "BTC5_DOWN_MAX_BUY_PRICE": 0.53,
+    "BTC5_UP_MAX_BUY_PRICE": 0.52,
+    "BTC5_MIN_DELTA": 0.0003,
+    "BTC5_MAX_ABS_DELTA": 0.008,
+    "BTC5_RISK_FRACTION": 0.01,
+    "BTC5_UP_LIVE_MODE": "shadow_only",
+    "BTC5_DAILY_LOSS_LIMIT_USD": 15
+  },
+  "active_genome": {
+    "genome_id": "dispatch_112_fix",
+    "generation": 1,
+    "fitness": 0.0,
+    "promoted_at": "2026-03-24T00:15:00.000000+00:00"
+  },
+  "lineage": [],
+  "last_evolution_cycle": null
 }

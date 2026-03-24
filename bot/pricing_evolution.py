@@ -11,9 +11,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-MIN_BUY_FLOOR = 0.85
-MAX_BUY_CAP = 0.98
+MIN_BUY_FLOOR = 0.04
+MAX_BUY_CAP = 0.55
 MAX_RISK_FRACTION = 0.33
+MIN_FITNESS_TO_PROMOTE = 0.05  # Don't promote genomes with near-zero fitness
 
 POPULATION_SIZE = 10
 SURVIVOR_COUNT = 3
@@ -67,8 +68,8 @@ def _normalize_side(value: Any) -> str:
 
 
 def _bounded_genome(genome: ParameterGenome) -> ParameterGenome:
-    min_buy = round(max(MIN_BUY_FLOOR, float(genome.min_buy_price)), 4)
-    max_buy = round(min(MAX_BUY_CAP, float(genome.max_buy_price)), 4)
+    min_buy = round(min(MAX_BUY_CAP, max(MIN_BUY_FLOOR, float(genome.min_buy_price))), 4)
+    max_buy = round(min(MAX_BUY_CAP, max(MIN_BUY_FLOOR, float(genome.max_buy_price))), 4)
     if max_buy < min_buy:
         max_buy = min_buy
     min_delta = max(0.0, float(genome.min_delta))
@@ -101,10 +102,10 @@ def _save_json(path: Path, payload: dict[str, Any]) -> None:
 def _genome_from_row(raw: dict[str, Any]) -> ParameterGenome:
     return _bounded_genome(
         ParameterGenome(
-            min_buy_price=_safe_float(raw.get("min_buy_price"), 0.90),
-            max_buy_price=_safe_float(raw.get("max_buy_price"), 0.95),
+            min_buy_price=_safe_float(raw.get("min_buy_price"), 0.30),
+            max_buy_price=_safe_float(raw.get("max_buy_price"), 0.53),
             min_delta=_safe_float(raw.get("min_delta"), 0.0003),
-            max_delta=_safe_float(raw.get("max_delta"), 0.005),
+            max_delta=_safe_float(raw.get("max_delta"), 0.008),
             generation=int(_safe_float(raw.get("generation"), 0)),
             fitness=_safe_float(raw.get("fitness"), 0.0),
         )
@@ -114,13 +115,13 @@ def _genome_from_row(raw: dict[str, Any]) -> ParameterGenome:
 def _baseline_genome() -> ParameterGenome:
     return _bounded_genome(
         ParameterGenome(
-            min_buy_price=_safe_float(os.environ.get("BTC5_MIN_BUY_PRICE"), 0.90),
+            min_buy_price=_safe_float(os.environ.get("BTC5_MIN_BUY_PRICE"), 0.30),
             max_buy_price=_safe_float(
                 os.environ.get("BTC5_DOWN_MAX_BUY_PRICE", os.environ.get("BTC5_UP_MAX_BUY_PRICE")),
-                0.95,
+                0.53,
             ),
             min_delta=_safe_float(os.environ.get("BTC5_MIN_DELTA"), 0.0003),
-            max_delta=_safe_float(os.environ.get("BTC5_MAX_ABS_DELTA"), 0.005),
+            max_delta=_safe_float(os.environ.get("BTC5_MAX_ABS_DELTA"), 0.008),
             generation=0,
             fitness=0.0,
         )
@@ -478,6 +479,11 @@ def _promote_genome(
 
     payload["promotion_stage"] = "validated"
     payload["params"] = params
+    payload["hard_bounds"] = {
+        "BTC5_MIN_BUY_PRICE": {"min": MIN_BUY_FLOOR, "max": MAX_BUY_CAP},
+        "BTC5_DOWN_MAX_BUY_PRICE": {"max": MAX_BUY_CAP},
+        "BTC5_UP_MAX_BUY_PRICE": {"max": MAX_BUY_CAP},
+    }
     payload["active_genome"] = {
         "genome_id": f"generation_{bounded.generation}",
         "generation": int(bounded.generation),
@@ -494,6 +500,16 @@ def _promote_genome(
     }
     _save_json(overrides_path, payload)
     return payload
+
+
+def _genomes_identical(a: ParameterGenome, b: ParameterGenome) -> bool:
+    """Check if two genomes have the same trading parameters."""
+    return (
+        abs(a.min_buy_price - b.min_buy_price) < 1e-6
+        and abs(a.max_buy_price - b.max_buy_price) < 1e-6
+        and abs(a.min_delta - b.min_delta) < 1e-8
+        and abs(a.max_delta - b.max_delta) < 1e-8
+    )
 
 
 def evolve_and_maybe_promote(
@@ -514,9 +530,43 @@ def evolve_and_maybe_promote(
         return evolution
 
     champion = _genome_from_row(dict(evolution.get("best_genome") or {}))
+
+    # GATE 1: Don't promote genomes with zero or near-zero fitness.
+    # A fitness of 0.0 means no qualifying data matched — the genome is blind.
+    if champion.fitness < MIN_FITNESS_TO_PROMOTE:
+        evolution["status"] = "skipped_low_fitness"
+        evolution["skip_reason"] = (
+            f"champion fitness {champion.fitness:.6f} < threshold {MIN_FITNESS_TO_PROMOTE}"
+        )
+        return evolution
+
+    # GATE 2: Don't re-promote identical genomes (parameter deduplication).
+    overrides_path_obj = Path(overrides_path)
+    existing = _load_json(overrides_path_obj)
+    existing_genome_raw = existing.get("active_genome")
+    if isinstance(existing_genome_raw, dict):
+        existing_params = existing.get("params", {})
+        existing_genome = _bounded_genome(ParameterGenome(
+            min_buy_price=_safe_float(existing_params.get("BTC5_MIN_BUY_PRICE"), 0),
+            max_buy_price=_safe_float(existing_params.get("BTC5_DOWN_MAX_BUY_PRICE"), 0),
+            min_delta=_safe_float(existing_params.get("BTC5_MIN_DELTA"), 0),
+            max_delta=_safe_float(existing_params.get("BTC5_MAX_ABS_DELTA"), 0),
+        ))
+        if _genomes_identical(champion, existing_genome):
+            evolution["status"] = "skipped_no_change"
+            evolution["skip_reason"] = "champion identical to currently promoted genome"
+            return evolution
+
+    # GATE 3: Champion must have been evaluated on at least 5 qualifying rows.
+    fills_considered = int(evolution.get("fills_considered", 0))
+    if fills_considered < 3:
+        evolution["status"] = "skipped_insufficient_fills"
+        evolution["skip_reason"] = f"only {fills_considered} fills evaluated, need >= 3"
+        return evolution
+
     _promote_genome(
         genome=champion,
-        overrides_path=Path(overrides_path),
+        overrides_path=overrides_path_obj,
         lookback_hours=int(lookback_hours),
         replay_rows=int(evolution.get("replay_rows", 0)),
     )
@@ -528,18 +578,22 @@ def run_pricing_evolution(
     *,
     db_path: str | Path,
     overrides_path: str | Path,
+    population_path: str | Path | None = None,
     lookback_hours: int = DEFAULT_LOOKBACK_HOURS,
     mutation_count: int | None = None,
     rng_seed: int | None = None,
 ) -> dict[str, Any]:
     """Compatibility wrapper used by existing autoresearch callers."""
 
-    result = evolve_and_maybe_promote(
-        db_path=db_path,
-        overrides_path=overrides_path,
-        lookback_hours=lookback_hours,
-        rng_seed=rng_seed,
-    )
+    kwargs: dict[str, Any] = {
+        "db_path": db_path,
+        "overrides_path": overrides_path,
+        "lookback_hours": lookback_hours,
+        "rng_seed": rng_seed,
+    }
+    if population_path is not None:
+        kwargs["population_path"] = population_path
+    result = evolve_and_maybe_promote(**kwargs)
     if result.get("status") != "promoted":
         return {
             "status": "insufficient_data",
