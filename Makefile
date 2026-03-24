@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: help bootstrap bootstrap-lite bootstrap-runtime doctor onboard quickstart preflight hygiene verify-static verify-fastpath test-select test-fixture-ownership test-research-sim test-platform test verify test-root test-polymarket test-nontrading smoke-nontrading btc5-autoresearch-local btc5-autoresearch-local-autopush btc5-arr-report btc5-hypothesis-lab btc5-regime-policy-lab btc5-hypothesis-frontier strike-factory-local deploy-write-manifest deploy-dry-run api-specs analyze-iv clean
+.PHONY: help bootstrap bootstrap-lite bootstrap-runtime doctor onboard quickstart preflight hygiene verify-static verify-fastpath test-select test-fixture-ownership test-research-sim test-platform test verify test-root test-polymarket test-nontrading smoke-nontrading btc5-autoresearch-local btc5-autoresearch-local-autopush btc5-arr-report btc5-hypothesis-lab btc5-regime-policy-lab btc5-hypothesis-frontier strike-factory-local deploy-write-manifest deploy-dry-run api-specs analyze-iv check-edge clean
 
 help:
 	@printf '%s\n' \
@@ -143,6 +143,9 @@ test-polymarket:
 
 analyze-iv:
 	$(PYTHON) scripts/analyze_iv_edge.py --db-path data/btc_5min_maker.db
+
+check-edge:
+	$(PYTHON) scripts/check_edge_recommendation.py
 
 api-specs:
 	$(PYTHON) scripts/export_openapi_specs.py

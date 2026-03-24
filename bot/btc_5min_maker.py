@@ -81,6 +81,23 @@ try:
 except Exception:  # pragma: no cover - optional dependency during staged rollout
     MomentumDetector = None  # type: ignore[assignment]
 
+try:
+    from bot.deribit_iv_feed import DeribitIVFeed
+except Exception:  # pragma: no cover - optional dependency during staged rollout
+    try:
+        from deribit_iv_feed import DeribitIVFeed  # type: ignore
+    except Exception:
+        DeribitIVFeed = None  # type: ignore[assignment]
+
+try:
+    from bot.rolling_edge_tracker import analyze as _edge_tracker_analyze, log_recommendation as _edge_tracker_log
+except Exception:  # pragma: no cover - optional dependency during staged rollout
+    try:
+        from rolling_edge_tracker import analyze as _edge_tracker_analyze, log_recommendation as _edge_tracker_log  # type: ignore
+    except Exception:
+        _edge_tracker_analyze = None  # type: ignore[assignment]
+        _edge_tracker_log = None  # type: ignore[assignment]
+
 logger = logging.getLogger("BTC5Maker")
 
 def _window_seconds_from_env(default: int = 300) -> int:
@@ -109,6 +126,7 @@ if not MARKET_SLUG_PREFIX:
 DEFAULT_DB_PATH = Path("data/btc_5min_maker.db")
 DEFAULT_ADAPTATION_LOG_PATH = Path("data/adaptation_log.json")
 DEFAULT_STREAK_LOG_PATH = Path("data/streak_log.json")
+DEFAULT_EDGE_TRACKER_LOG_PATH = Path("data/edge_tracker_log.json")
 CLOB_HARD_MIN_SHARES = 5.0
 CLOB_HARD_MIN_NOTIONAL_USD = 5.0
 PROBE_DEFAULT_UP_MAX_BUY_PRICE = 0.49
@@ -193,6 +211,67 @@ def _env_flag(name: str, default: bool) -> bool:
     if raw is None:
         return bool(default)
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_hour_set(raw: str | None) -> frozenset[int]:
+    """Parse a comma-separated list of ET hours (0-23) into a frozenset."""
+    if not raw or not str(raw).strip():
+        return frozenset()
+    hours: set[int] = set()
+    for token in str(raw).split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            h = int(token)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= h <= 23:
+            hours.add(h)
+    return frozenset(hours)
+
+
+def _hour_filter_status(hour_et: int, *, enabled: bool, suppress: frozenset[int], boost: frozenset[int]) -> str:
+    """Return 'suppressed', 'boosted', or 'neutral' for the given ET hour."""
+    if not enabled:
+        return "neutral"
+    if hour_et in suppress:
+        return "suppressed"
+    if hour_et in boost:
+        return "boosted"
+    return "neutral"
+
+
+def _direction_filter_status(
+    direction: str,
+    *,
+    mode: str,
+    down_bias_threshold: float,
+    confidence: float | None = None,
+) -> str:
+    """Return 'allowed', 'suppressed', or 'biased_pass'/'biased_block' for direction filter.
+
+    Modes:
+      'both'      — no filter, all directions allowed
+      'down_only' — suppress UP, allow DOWN
+      'up_only'   — suppress DOWN, allow UP
+      'down_bias' — allow DOWN always; allow UP only if confidence > threshold
+    """
+    normalized = str(direction or "").strip().upper()
+    if mode == "both":
+        return "allowed"
+    if mode == "down_only":
+        return "allowed" if normalized == "DOWN" else "suppressed"
+    if mode == "up_only":
+        return "allowed" if normalized == "UP" else "suppressed"
+    if mode == "down_bias":
+        if normalized == "DOWN":
+            return "allowed"
+        # UP in down_bias mode: check confidence
+        if confidence is not None and confidence > down_bias_threshold:
+            return "biased_pass"
+        return "biased_block"
+    return "allowed"
 
 
 def _join_reasons(*parts: str | None) -> str | None:
@@ -1106,6 +1185,9 @@ class MakerConfig:
         os.environ.get("BTC5_ADAPTATION_LOG_PATH", str(DEFAULT_ADAPTATION_LOG_PATH))
     )
     streak_log_path: Path = Path(os.environ.get("BTC5_STREAK_LOG_PATH", str(DEFAULT_STREAK_LOG_PATH)))
+    edge_tracker_log_path: Path = Path(
+        os.environ.get("BTC5_EDGE_TRACKER_LOG_PATH", str(DEFAULT_EDGE_TRACKER_LOG_PATH))
+    )
     enable_cross_asset_confirmation: bool = _env_flag("BTC5_ENABLE_CROSS_ASSET_CONFIRMATION", True)
     cross_asset_signals_path: Path = Path(
         os.environ.get("BTC5_CROSS_ASSET_SIGNALS_PATH", "data/cross_asset_signals.json")
@@ -1113,6 +1195,13 @@ class MakerConfig:
     cross_asset_signal_max_age_sec: int = int(os.environ.get("BTC5_CROSS_ASSET_SIGNAL_MAX_AGE_SEC", "900"))
     cross_asset_min_confidence: float = float(os.environ.get("BTC5_CROSS_ASSET_MIN_CONFIDENCE", "0.55"))
     cross_asset_edge_boost: float = float(os.environ.get("BTC5_CROSS_ASSET_EDGE_BOOST", "0.15"))
+    hour_filter_enabled: bool = _env_flag("BTC5_HOUR_FILTER_ENABLED", False)
+    suppress_hours_et: frozenset[int] = field(init=False, default_factory=frozenset)
+    boost_hours_et: frozenset[int] = field(init=False, default_factory=frozenset)
+    direction_mode: str = os.environ.get("BTC5_DIRECTION_MODE", "both").strip().lower()
+    down_bias_threshold: float = float(os.environ.get("BTC5_DOWN_BIAS_THRESHOLD", "0.60"))
+    direction_filter_enabled: bool = _env_flag("BTC5_DIRECTION_FILTER_ENABLED", False)
+    edge_tracker_cycle_interval: int = int(os.environ.get("BTC5_EDGE_TRACKER_CYCLE_INTERVAL", "100"))
     enable_momentum_persistence: bool = _env_flag("BTC5_ENABLE_MOMENTUM_PERSISTENCE", True)
     momentum_state_path: Path = Path(os.environ.get("BTC5_MOMENTUM_STATE_PATH", "data/momentum_state.json"))
     momentum_lookback_windows: int = int(os.environ.get("BTC5_MOMENTUM_LOOKBACK_WINDOWS", "96"))
@@ -1212,6 +1301,11 @@ class MakerConfig:
         self.cross_asset_signal_max_age_sec = max(60, int(self.cross_asset_signal_max_age_sec))
         self.cross_asset_min_confidence = max(0.0, min(1.0, float(self.cross_asset_min_confidence)))
         self.cross_asset_edge_boost = max(0.0, min(1.0, float(self.cross_asset_edge_boost)))
+        # Validate direction_mode
+        if self.direction_mode not in {"both", "down_only", "up_only", "down_bias"}:
+            self.direction_mode = "both"
+        self.down_bias_threshold = max(0.0, min(1.0, float(self.down_bias_threshold)))
+        self.edge_tracker_cycle_interval = max(10, int(self.edge_tracker_cycle_interval))
         # Parse allowed_sides from env (default: DOWN-only mode)
         raw_sides = os.environ.get("BTC5_ALLOWED_SIDES", "DOWN")
         parsed_sides: set[str] = set()
@@ -1220,6 +1314,9 @@ class MakerConfig:
             if s in {"UP", "DOWN"}:
                 parsed_sides.add(s)
         self.allowed_sides = frozenset(parsed_sides) if parsed_sides else frozenset({"DOWN"})
+        # Parse suppress/boost hour sets
+        self.suppress_hours_et = _parse_hour_set(os.environ.get("BTC5_SUPPRESS_HOURS_ET", ""))
+        self.boost_hours_et = _parse_hour_set(os.environ.get("BTC5_BOOST_HOURS_ET", ""))
         # Clamp max_entry_price
         self.max_entry_price = max(0.0, min(1.0, float(self.max_entry_price)))
         # Ensure entry window bounds are sane
@@ -1380,6 +1477,16 @@ class TradeDB:
                 ("wallet_notional", "REAL"),
                 ("realized_pnl_usd", "REAL"),
                 ("book_imbalance", "REAL"),
+                ("hour_filter_status", "TEXT"),
+                ("direction_filter_status", "TEXT"),
+                ("deribit_dvol", "REAL"),
+                ("deribit_atm_iv_call", "REAL"),
+                ("deribit_atm_iv_put", "REAL"),
+                ("deribit_put_call_skew", "REAL"),
+                ("deribit_rr_25d", "REAL"),
+                ("deribit_bf_25d", "REAL"),
+                ("deribit_underlying", "REAL"),
+                ("deribit_age_s", "REAL"),
             ):
                 if column_name not in existing:
                     conn.execute(f"ALTER TABLE window_trades ADD COLUMN {column_name} {column_type}")
@@ -1445,6 +1552,16 @@ class TradeDB:
             "wallet_count": row.get("wallet_count"),
             "wallet_notional": row.get("wallet_notional"),
             "realized_pnl_usd": row.get("realized_pnl_usd"),
+            "hour_filter_status": row.get("hour_filter_status"),
+            "direction_filter_status": row.get("direction_filter_status"),
+            "deribit_dvol": row.get("deribit_dvol"),
+            "deribit_atm_iv_call": row.get("deribit_atm_iv_call"),
+            "deribit_atm_iv_put": row.get("deribit_atm_iv_put"),
+            "deribit_put_call_skew": row.get("deribit_put_call_skew"),
+            "deribit_rr_25d": row.get("deribit_rr_25d"),
+            "deribit_bf_25d": row.get("deribit_bf_25d"),
+            "deribit_underlying": row.get("deribit_underlying"),
+            "deribit_age_s": row.get("deribit_age_s"),
             "resolved_side": row.get("resolved_side"),
             "won": row.get("won"),
             "pnl_usd": row.get("pnl_usd"),
@@ -1462,7 +1579,10 @@ class TradeDB:
                     order_price, trade_size_usd, shares, order_id, order_status,
                     filled, reason, risk_mode, edge_tier, sizing_reason_tags, loss_cluster_suppressed,
                     session_policy_name, effective_stage, wallet_copy, wallet_count, wallet_notional,
-                    realized_pnl_usd,
+                    realized_pnl_usd, hour_filter_status, direction_filter_status,
+                    deribit_dvol, deribit_atm_iv_call, deribit_atm_iv_put,
+                    deribit_put_call_skew, deribit_rr_25d, deribit_bf_25d,
+                    deribit_underlying, deribit_age_s,
                     resolved_side, won, pnl_usd, resolved_ts, time_to_resolution_sec,
                     created_at, updated_at
                 ) VALUES (
@@ -1471,7 +1591,10 @@ class TradeDB:
                     :order_price, :trade_size_usd, :shares, :order_id, :order_status,
                     :filled, :reason, :risk_mode, :edge_tier, :sizing_reason_tags, :loss_cluster_suppressed,
                     :session_policy_name, :effective_stage, :wallet_copy, :wallet_count, :wallet_notional,
-                    :realized_pnl_usd,
+                    :realized_pnl_usd, :hour_filter_status, :direction_filter_status,
+                    :deribit_dvol, :deribit_atm_iv_call, :deribit_atm_iv_put,
+                    :deribit_put_call_skew, :deribit_rr_25d, :deribit_bf_25d,
+                    :deribit_underlying, :deribit_age_s,
                     :resolved_side, :won, :pnl_usd, :resolved_ts, :time_to_resolution_sec,
                     :created_at, :updated_at
                 )
@@ -1502,6 +1625,16 @@ class TradeDB:
                     wallet_count=excluded.wallet_count,
                     wallet_notional=excluded.wallet_notional,
                     realized_pnl_usd=excluded.realized_pnl_usd,
+                    hour_filter_status=excluded.hour_filter_status,
+                    direction_filter_status=excluded.direction_filter_status,
+                    deribit_dvol=excluded.deribit_dvol,
+                    deribit_atm_iv_call=excluded.deribit_atm_iv_call,
+                    deribit_atm_iv_put=excluded.deribit_atm_iv_put,
+                    deribit_put_call_skew=excluded.deribit_put_call_skew,
+                    deribit_rr_25d=excluded.deribit_rr_25d,
+                    deribit_bf_25d=excluded.deribit_bf_25d,
+                    deribit_underlying=excluded.deribit_underlying,
+                    deribit_age_s=excluded.deribit_age_s,
                     resolved_side=excluded.resolved_side,
                     won=excluded.won,
                     pnl_usd=excluded.pnl_usd,
@@ -2418,6 +2551,7 @@ class BTC5MinMakerBot:
         self._resolution_poller_runtime_enabled = False
         self.smart_wallet_feed = self._build_smart_wallet_feed()
         self.momentum_detector = self._build_momentum_detector()
+        self.iv_feed = self._build_iv_feed()
         self._wallet_watch_started_windows: set[int] = set()
         self._rolling_fills_090: list[tuple[float, float, int]] = []
         self._rolling_wr: float = 0.0
@@ -2544,6 +2678,41 @@ class BTC5MinMakerBot:
         except Exception as exc:
             logger.warning("Failed to initialize momentum detector: %s", exc)
             return None
+
+    def _build_iv_feed(self) -> Any:
+        """Initialize Deribit IV feed for data collection (logging only)."""
+        if DeribitIVFeed is None:
+            return None
+        try:
+            feed = DeribitIVFeed()
+            logger.info("Deribit IV feed initialized (data collection mode)")
+            return feed
+        except Exception as exc:
+            logger.warning("Failed to initialize Deribit IV feed: %s", exc)
+            return None
+
+    def _snapshot_iv_data(self) -> dict[str, Any]:
+        """Pull current IV snapshot for decision logging. Returns empty dict if unavailable."""
+        if self.iv_feed is None:
+            return {}
+        try:
+            snap = self.iv_feed.snapshot()
+            if not snap.connected or snap.is_stale(60.0):
+                return {}
+            return {
+                "deribit_dvol": snap.dvol,
+                "deribit_atm_iv_call": snap.atm_iv_call,
+                "deribit_atm_iv_put": snap.atm_iv_put,
+                "deribit_put_call_skew": snap.put_call_skew,
+                "deribit_rr_25d": snap.rr_25d,
+                "deribit_bf_25d": snap.bf_25d,
+                "deribit_underlying": snap.underlying_price,
+                "deribit_age_s": round(snap.age_seconds(), 1),
+            }
+        except Exception as exc:
+            logger.debug("IV snapshot unavailable: %s", exc)
+            return {}
+
     def _adaptive_risk_fraction(self) -> float:
         if not self.cfg.adaptive_enabled:
             return float(self.cfg.risk_fraction)
@@ -4351,24 +4520,22 @@ class BTC5MinMakerBot:
                 _reason_tag("decision_timing", decision_timing),
                 _reason_tag("early_fallback_reason", early_fallback_reason),
             )
+            # Enrich with Deribit IV snapshot (logging only, no trade decisions)
+            iv_data = self._snapshot_iv_data()
+            for iv_key, iv_val in iv_data.items():
+                if iv_key not in payload or payload[iv_key] is None:
+                    payload[iv_key] = iv_val
             self.db.upsert_window(payload)
 
-        # --- BTC5 time-of-day kill (data shows heavy losses 22-03, 09-11 ET) ---
-        _BTC5_KILL_HOURS_ET = frozenset({22, 23, 0, 1, 2, 3, 9, 10, 11})
-        _win_dt = datetime.fromtimestamp(window_start_ts, tz=timezone.utc)
-        _win_et_hour = (_win_dt.hour - 4) % 24
-        if _win_et_hour in _BTC5_KILL_HOURS_ET:
-            logger.info(
-                "BTC5 TIME-KILL: ET hour %02d — skipping window %s",
-                _win_et_hour, slug,
-            )
-            return _result(
-                {
-                    "window_start_ts": window_start_ts,
-                    "status": "skip_time_of_day_kill",
-                    "decision_reason_tags": ["decision=skip", f"skip_reason=time_kill_et_{_win_et_hour:02d}"],
-                }
-            )
+        # --- Compute ET hour for configurable time-of-day filter ---
+        _win_dt_et = datetime.fromtimestamp(window_start_ts, tz=timezone.utc).astimezone(ET_ZONE)
+        _win_et_hour = _win_dt_et.hour
+        _hour_status = _hour_filter_status(
+            _win_et_hour,
+            enabled=self.cfg.hour_filter_enabled,
+            suppress=self.cfg.suppress_hours_et,
+            boost=self.cfg.boost_hours_et,
+        )
 
         if self.db.window_exists(window_start_ts):
             return _result({"window_start_ts": window_start_ts, "status": "skip_already_processed"})
@@ -4738,6 +4905,75 @@ class BTC5MinMakerBot:
                 "risk_mode": risk_mode,
                 "stage_gate_reason": stage_gate_reason,
             })
+
+        # --- Configurable time-of-day suppression (with counterfactual logging) ---
+        if _hour_status == "suppressed":
+            row = {
+                "window_start_ts": window_start_ts,
+                "window_end_ts": window_end_ts,
+                "slug": slug,
+                "direction": direction,
+                "open_price": open_price,
+                "current_price": current_price,
+                "delta": delta,
+                "order_status": "skip_suppressed_hour",
+                "hour_filter_status": "suppressed",
+                "reason": _join_reasons(
+                    session_reason,
+                    f"hour_et={_win_et_hour:02d} suppressed by BTC5_SUPPRESS_HOURS_ET",
+                ),
+            }
+            _persist(row)
+            logger.info(
+                "HOUR FILTER: ET hour %02d suppressed, direction=%s delta=%.6f (counterfactual logged)",
+                _win_et_hour, direction, abs(delta or 0.0),
+            )
+            return _result({
+                "window_start_ts": window_start_ts,
+                "status": "skip_suppressed_hour",
+                "delta": delta,
+                "direction": direction,
+                "hour_filter_status": "suppressed",
+                "hour_et": _win_et_hour,
+            })
+
+        # --- Direction bias filter (configurable via BTC5_DIRECTION_MODE) ---
+        if self.cfg.direction_filter_enabled and direction in {"UP", "DOWN"}:
+            _dir_confidence = abs(delta) / max(effective_max_abs_delta or 0.01, 0.001) if delta else None
+            dir_filter = _direction_filter_status(
+                direction,
+                mode=self.cfg.direction_mode,
+                down_bias_threshold=self.cfg.down_bias_threshold,
+                confidence=_dir_confidence,
+            )
+            if dir_filter in {"suppressed", "biased_block"}:
+                row = {
+                    "window_start_ts": window_start_ts,
+                    "window_end_ts": window_end_ts,
+                    "slug": slug,
+                    "direction": direction,
+                    "open_price": open_price,
+                    "current_price": current_price,
+                    "delta": delta,
+                    "order_status": f"skip_direction_mode_{dir_filter}",
+                    "direction_filter_status": dir_filter,
+                    "reason": _join_reasons(
+                        probe_reason,
+                        session_reason,
+                        _reason_tag("direction_mode", self.cfg.direction_mode),
+                        _reason_tag("direction", direction),
+                        _reason_tag("direction_filter", dir_filter),
+                    ),
+                }
+                _persist(row)
+                return _result({
+                    "window_start_ts": window_start_ts,
+                    "status": row["order_status"],
+                    "direction": direction,
+                    "delta": delta,
+                    "risk_mode": risk_mode,
+                    "direction_filter_status": dir_filter,
+                })
 
         if probe_mode and bool(probe_mode.get("requires_consecutive_signal")):
             prior_window_start = int(window_start_ts) - int(WINDOW_SECONDS)
@@ -5504,6 +5740,14 @@ class BTC5MinMakerBot:
             asyncio.create_task(trade_feed.run(stop_event)),
             asyncio.create_task(depth_feed.run(stop_event)),
         ]
+        # Start Deribit IV feed if available (data collection only)
+        iv_task = None
+        if self.iv_feed is not None:
+            try:
+                iv_task = asyncio.create_task(self.iv_feed.run_forever())
+                logger.info("Deribit IV feed background task started")
+            except Exception as exc:
+                logger.warning("Failed to start IV feed task: %s", exc)
 
         timeout = aiohttp.ClientTimeout(total=self.cfg.request_timeout_sec)
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -5538,6 +5782,22 @@ class BTC5MinMakerBot:
                     logger.info("Window result: %s", json.dumps(summary, sort_keys=True))
                     executed += 1
 
+                    # --- Rolling edge tracker (self-improving loop) ---
+                    if (
+                        _edge_tracker_analyze is not None
+                        and _edge_tracker_log is not None
+                        and executed % self.cfg.edge_tracker_cycle_interval == 0
+                    ):
+                        try:
+                            rec = _edge_tracker_analyze(self.cfg.db_path)
+                            _edge_tracker_log(rec, self.cfg.edge_tracker_log_path)
+                            logger.info(
+                                "edge_tracker recommendation: mode=%s confidence=%.2f reason=%s",
+                                rec.recommended_mode, rec.confidence, rec.reason,
+                            )
+                        except Exception as exc:
+                            logger.warning("Edge tracker analysis failed: %s", exc)
+
                     if not continuous and executed >= count:
                         break
             finally:
@@ -5549,6 +5809,12 @@ class BTC5MinMakerBot:
                 for task in feed_tasks:
                     with contextlib.suppress(asyncio.CancelledError):
                         await task
+                if iv_task is not None:
+                    if self.iv_feed is not None:
+                        self.iv_feed.stop()
+                    iv_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await iv_task
 
         # Resolve the most recent completed window if possible.
         async with aiohttp.ClientSession(timeout=timeout) as session:
