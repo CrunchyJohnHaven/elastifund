@@ -3,6 +3,9 @@
 Discovers, ranks, and fingerprints the most profitable Polymarket BTC5 traders,
 then generates testable trading hypotheses from their observed behavior.
 
+Related brief:
+- `research/wallet_intelligence/polywallet_reconstruct.md` for the focused deep-research handoff on elite fast-market wallet reconstruction.
+
 ## Pipeline Phases
 
 | Phase | Module | Input | Output |

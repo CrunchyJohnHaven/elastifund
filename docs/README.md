@@ -20,6 +20,7 @@ Canonical docs root index for durable operator and contributor guidance.
 ## Core Subdirectories
 
 - `docs/ops/`: runbooks, operator checklists, runtime contracts.
+- `docs/ops/historical/`: archived operational snapshots and migrated root handoff material.
 - `docs/strategy/`: strategy design, lane-level architecture, background references.
 - `docs/numbered/`: canonical governance and public-messaging manual (`00` through `12`).
 - `docs/api/`: API surface and schema docs.
