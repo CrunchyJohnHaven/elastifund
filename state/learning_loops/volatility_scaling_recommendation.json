@@ -1,0 +1,22 @@
+{
+  "generated_at": "2026-03-25T13:26:29.316141+00:00",
+  "action": "none",
+  "reason": "delta_skip_fraction_within_acceptable_range",
+  "skip_distribution": {
+    "skip_price_outside_guardrails": 169,
+    "skip_probe_confirmation_mismatch": 140,
+    "skip_adaptive_direction_suppressed": 23,
+    "skip_bad_book": 19,
+    "skip_probe_confirmation_pending": 14,
+    "skip_delta_too_small": 5,
+    "skip_size_too_small": 2,
+    "skip_delta_too_large": 1
+  },
+  "total_skips": 373,
+  "delta_skip_count": 1,
+  "delta_skip_fraction": 0.0027,
+  "threshold_fraction": 0.6,
+  "current_btc5_max_abs_delta": 0.01,
+  "proposed_btc5_max_abs_delta": null,
+  "manual_apply_command": null
+}

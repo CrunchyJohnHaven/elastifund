@@ -1,0 +1,25 @@
+{
+  "generated_at": "2026-03-25T13:26:29.332327+00:00",
+  "wallet_data_as_of": "2026-03-24T16:16:22.933371Z",
+  "initial_bankroll_usd": 247.51,
+  "open_positions": {
+    "count": 6,
+    "cost_basis_usd": 84.4,
+    "current_value_usd": 48.75,
+    "unrealized_pnl_usd": -35.65
+  },
+  "closed_positions": {
+    "count": 50,
+    "realized_pnl_usd": 839.19
+  },
+  "exposure_usd": 84.4,
+  "exposure_pct": 0.341,
+  "net_pnl_usd": 803.54,
+  "status": "OK",
+  "action": "none",
+  "thresholds": {
+    "warn_pct": 0.5,
+    "critical_pct": 0.8
+  },
+  "notes": "exposure_usd is the cost basis of open positions.  status=CRITICAL means >80% of the initial bankroll is locked in open positions; halt new trades until some resolve."
+}

@@ -26,15 +26,26 @@ REQUIRED_SECTIONS = (
     "microstructure_thresholds",
 )
 ALLOWED_TOP_LEVEL_KEYS = set(REQUIRED_SECTIONS) | {"schema_version", "description"}
-ALLOWED_EXECUTION_MODES = {"blocked", "shadow", "research"}
+ALLOWED_EXECUTION_MODES = {"blocked", "shadow", "research", "live"}
 ALLOWED_LAUNCH_GATES = {"blocked", "wallet_flow_ready", "none"}
 
 BOOLEAN_TRUE = {"1", "true", "yes", "on"}
 BOOLEAN_FALSE = {"0", "false", "no", "off"}
 
+EXPECTED_PAPER_TRADING_BY_MODE = {
+    "blocked": True,
+    "shadow": True,
+    "research": True,
+    "live": False,
+}
+
 
 class RuntimeProfileError(ValueError):
     """Raised when a runtime profile or override is invalid."""
+
+
+def expected_paper_trading_for_mode(execution_mode: str) -> bool | None:
+    return EXPECTED_PAPER_TRADING_BY_MODE.get(str(execution_mode).strip().lower())
 
 
 @dataclass(frozen=True)
@@ -60,6 +71,12 @@ class RuntimeModeConfig:
             raise RuntimeProfileError(f"unsupported execution_mode: {self.execution_mode}")
         if self.launch_gate not in ALLOWED_LAUNCH_GATES:
             raise RuntimeProfileError(f"unsupported launch_gate: {self.launch_gate}")
+        expected_paper = expected_paper_trading_for_mode(self.execution_mode)
+        if expected_paper is not None and self.paper_trading is not expected_paper:
+            raise RuntimeProfileError(
+                "mode.paper_trading must match execution_mode contract "
+                f"({self.execution_mode} -> paper_trading={expected_paper})"
+            )
 
 
 @dataclass

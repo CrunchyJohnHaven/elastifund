@@ -81,9 +81,10 @@ def extract_skip_distribution(db_path: str) -> dict:
     try:
         conn = sqlite3.connect(db_path)
         rows = conn.execute(
-            "SELECT skip_reason, COUNT(*) as cnt "
-            "FROM trades WHERE skip_reason IS NOT NULL AND skip_reason != '' "
-            "GROUP BY skip_reason ORDER BY cnt DESC"
+            "SELECT order_status, COUNT(*) as cnt "
+            "FROM window_trades "
+            "WHERE order_status IS NOT NULL AND order_status LIKE 'skip_%' "
+            "GROUP BY order_status ORDER BY cnt DESC"
         ).fetchall()
         conn.close()
         return {row[0]: row[1] for row in rows}
@@ -101,12 +102,12 @@ def extract_hour_performance(db_path: str) -> dict:
         conn = sqlite3.connect(db_path)
         # Attempt to get hour-level aggregation from filled trades
         rows = conn.execute(
-            "SELECT CAST(strftime('%%H', fill_time) AS INTEGER) as hour_utc, "
+            "SELECT CAST(strftime('%H', created_at) AS INTEGER) as hour_utc, "
             "COUNT(*) as cnt, "
-            "SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins, "
-            "SUM(pnl) as total_pnl "
-            "FROM trades "
-            "WHERE fill_time IS NOT NULL AND pnl IS NOT NULL "
+            "SUM(CASE WHEN pnl_usd > 0 THEN 1 ELSE 0 END) as wins, "
+            "SUM(pnl_usd) as total_pnl "
+            "FROM window_trades "
+            "WHERE filled = 1 AND pnl_usd IS NOT NULL "
             "GROUP BY hour_utc ORDER BY hour_utc"
         ).fetchall()
         conn.close()
@@ -134,10 +135,10 @@ def extract_direction_bias(db_path: str) -> dict:
         conn = sqlite3.connect(db_path)
         rows = conn.execute(
             "SELECT direction, COUNT(*) as cnt, "
-            "SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins, "
-            "SUM(pnl) as total_pnl "
-            "FROM trades "
-            "WHERE direction IS NOT NULL AND pnl IS NOT NULL "
+            "SUM(CASE WHEN pnl_usd > 0 THEN 1 ELSE 0 END) as wins, "
+            "SUM(pnl_usd) as total_pnl "
+            "FROM window_trades "
+            "WHERE filled = 1 AND direction IS NOT NULL AND pnl_usd IS NOT NULL "
             "GROUP BY direction"
         ).fetchall()
         conn.close()
@@ -200,7 +201,20 @@ def generate_implications(
             skip_dist.items(), key=lambda x: -x[1]
         )[:3]:
             pct = count / total_skips * 100
-            if "delta" in reason.lower() and pct > 40:
+            if "price_outside_guardrails" in reason.lower() and pct > 30:
+                implications.append(
+                    f"Price-outside-guardrails causes {pct:.0f}% of skips. "
+                    "Markets are trading outside the configured buy price bounds. "
+                    "Consider widening BTC5_UP_MAX_BUY_PRICE / BTC5_DOWN_MAX_BUY_PRICE or "
+                    "lowering BTC5_MIN_BUY_PRICE."
+                )
+            elif "probe_confirmation" in reason.lower() and pct > 20:
+                implications.append(
+                    f"Probe confirmation skips at {pct:.0f}%. "
+                    "Markets are being filtered by probe state. "
+                    "Consider whether probe constraints are too conservative."
+                )
+            elif "delta" in reason.lower() and pct > 40:
                 implications.append(
                     f"Delta filter causes {pct:.0f}% of skips. "
                     "Consider widening BTC5_MAX_ABS_DELTA."
@@ -214,6 +228,12 @@ def generate_implications(
                 implications.append(
                     f"Toxic order flow skip at {pct:.0f}%. "
                     "Consider time-of-day filtering to avoid high-toxicity windows."
+                )
+            elif "adaptive_direction" in reason.lower() and pct > 10:
+                implications.append(
+                    f"Adaptive direction suppression at {pct:.0f}%. "
+                    "The adaptive suppressor is blocking one direction. "
+                    "Review BTC5_ADAPT_SUPPRESS_WR_THRESHOLD and window fill count."
                 )
 
     # Hour-of-day implications
@@ -275,16 +295,38 @@ def build_feedback(
         skip_dist, hour_perf, direction_bias, param_analysis
     )
 
+    # Extract structured fields from the nested probe format
+    decision = probe.get("decision", {})
+    capital_stage = probe.get("capital_stage_recommendation", {})
+    one_sided_bias = probe.get("one_sided_bias_recommendation", {})
+    active_profile = probe.get("active_profile", {})
+    arr = probe.get("arr_tracking", {})
+    package_confidence = probe.get("package_confidence_label", "unknown")
+    package_missing = probe.get("package_missing_evidence", [])
+    stage_not_ready = probe.get("stage_not_ready_reason_tags", [])
+    trailing_12_pnl = probe.get("trailing_12_live_filled_pnl_usd")
+    trailing_40_pnl = probe.get("trailing_40_live_filled_pnl_usd")
+    validation_fills = probe.get("validation_live_filled_rows", 0)
+    generalization_ratio = probe.get("generalization_ratio")
+
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source": "btc5_autoresearch",
         "current_probe": {
-            "hypothesis_id": probe.get("hypothesis_id", "unknown"),
-            "status": probe.get("status", "unknown"),
-            "direction_bias": probe.get("direction_bias", "none"),
-            "parameters": probe.get("parameters", {}),
-            "evidence_fills": probe.get("evidence_fills", 0),
-            "evidence_grade": probe.get("evidence_grade", "none"),
+            "decision_action": decision.get("action", "unknown"),
+            "decision_reason": decision.get("reason", "unknown"),
+            "deploy_recommendation": probe.get("deploy_recommendation", "unknown"),
+            "package_confidence": package_confidence,
+            "package_missing_evidence": package_missing,
+            "stage_not_ready_reasons": stage_not_ready,
+            "active_profile": active_profile,
+            "validation_live_filled_rows": validation_fills,
+            "generalization_ratio": generalization_ratio,
+            "trailing_12_live_filled_pnl_usd": trailing_12_pnl,
+            "trailing_40_live_filled_pnl_usd": trailing_40_pnl,
+            "arr_tracking": arr,
+            "one_sided_bias": one_sided_bias,
+            "capital_stage": capital_stage,
         },
         "active_overrides": env_overrides,
         "skip_distribution": skip_dist,

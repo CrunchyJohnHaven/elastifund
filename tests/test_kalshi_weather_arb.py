@@ -8,6 +8,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from kalshi.weather_arb import (
     ForecastSnapshot,
+    KalshiSession,
+    WeatherSignal,
     _adaptive_temp_std,
     _already_ordered_tickers,
     _current_hourly_usage,
@@ -21,6 +23,7 @@ from kalshi.weather_arb import (
     load_forecast_snapshot_archive,
     log_settlement_outcomes,
     parse_temperature_contract,
+    place_order,
     reconcile_decisions_with_settlements,
     temperature_probability,
 )
@@ -614,3 +617,34 @@ def test_log_settlement_outcomes_appends_matched_row_for_legacy_order(tmp_path: 
     assert rows[0]["notional_usd"] == 4.0
     assert rows[0]["matched"] is True
     assert rows[0]["match_status"] == "matched"
+
+
+def test_live_order_failure_is_logged_as_decision_blocker() -> None:
+    class _FailingPortfolio:
+        def create_order(self, **payload):  # type: ignore[no-untyped-def]
+            raise RuntimeError("401 unauthorized")
+
+    signal = WeatherSignal(
+        timestamp="2026-03-24T12:00:00+00:00",
+        city="NYC",
+        market_ticker="KXRAINNYCM-TEST",
+        market_title="Will it rain in NYC tomorrow?",
+        market_type="rain",
+        side="yes",
+        edge=0.15,
+        model_probability=0.72,
+        order_probability=0.57,
+        spread=0.02,
+        reason="nws edge",
+    )
+
+    order = place_order(
+        KalshiSession(portfolio_api=_FailingPortfolio(), auth_configured=True),
+        signal,
+        5.0,
+        execute=True,
+    )
+
+    assert order["status"] == "blocked"
+    assert order["reason"] == "kalshi_auth_failed"
+    assert "401" in order["error"]

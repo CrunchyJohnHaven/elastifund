@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from bot.proof_types import (
     LearningRecord,
+    build_mutation_package,
     build_evidence_record,
     build_kernel_cycle_packet,
     build_promotion_ticket,
+    build_runtime_truth_contract_snapshot,
     build_thesis_record,
+    build_wallet_truth_snapshot,
 )
 
 
@@ -87,3 +90,64 @@ def test_kernel_cycle_packet_serializes_nested_bundles():
     assert payload["source_of_truth_map"]["evidence"] == "reports/evidence_bundle.json"
     assert payload["promotion_bundle"][0]["ticket_id"] == ticket.ticket_id
     assert payload["learning_bundle"][0]["thesis_ref"] == thesis.thesis_id
+
+
+def test_truth_snapshots_and_mutation_package_have_stable_ids():
+    wallet_snapshot_1 = build_wallet_truth_snapshot(
+        generated_at="2026-03-24T08:00:00Z",
+        wallet_address="0xabc",
+        control_posture="blocked",
+        truth_status="blocked",
+        open_positions_count=2,
+        closed_positions_count=50,
+        estimated_total_value_usd=1106.78,
+        available_cash_usd=1059.0,
+        capital_live=False,
+        source_of_truth={"runtime_truth": "reports/runtime_truth_latest.json"},
+        blockers=["runtime_truth_stale"],
+        mismatches=["wallet_balance_drift"],
+        metadata={"execution_mode": "shadow"},
+    )
+    wallet_snapshot_2 = build_wallet_truth_snapshot(
+        generated_at="2026-03-24T08:00:00Z",
+        wallet_address="0xabc",
+        control_posture="blocked",
+        truth_status="blocked",
+        open_positions_count=2,
+        closed_positions_count=50,
+        estimated_total_value_usd=1106.78,
+        available_cash_usd=1059.0,
+        capital_live=False,
+        source_of_truth={"runtime_truth": "reports/runtime_truth_latest.json"},
+        blockers=["runtime_truth_stale"],
+        mismatches=["wallet_balance_drift"],
+        metadata={"execution_mode": "shadow"},
+    )
+    runtime_snapshot = build_runtime_truth_contract_snapshot(
+        generated_at="2026-03-24T08:00:00Z",
+        selected_runtime_profile="maker_velocity_live",
+        execution_mode="live",
+        agent_run_mode="shadow",
+        launch_posture="blocked",
+        service_state="unknown",
+        allow_order_submission=False,
+        truth_gate_status="blocked",
+        baseline_live_allowed=False,
+        blockers=["paper_mode_consistency"],
+        artifacts={"runtime_truth_latest_json": "reports/runtime_truth_latest.json"},
+        summary="runtime truth snapshot",
+    )
+    mutation_package = build_mutation_package(
+        created_at="2026-03-24T08:05:00Z",
+        mutation_kind="runtime_profile_repair",
+        summary="Tighten runtime truth contract",
+        change_set={"profile": "maker_velocity_live", "execution_mode": "live"},
+        replay_corpus=["march11_btc_win", "march24_btc_loss"],
+        acceptance_metrics={"attribution_coverage_min": 0.9},
+        selected_runtime_package={"package_hash": "pkg-1"},
+        rollback_target={"profile": "blocked_safe"},
+    )
+
+    assert wallet_snapshot_1.snapshot_id == wallet_snapshot_2.snapshot_id
+    assert runtime_snapshot.to_dict()["execution_mode"] == "live"
+    assert mutation_package.to_dict()["rollback_target"]["profile"] == "blocked_safe"

@@ -12,6 +12,7 @@ from bot.alpaca_first_trade import (  # noqa: E402
     build_alpaca_trade_alert,
     send_alpaca_trade_alert,
 )
+from bot.alpaca_client import AlpacaClientError  # noqa: E402
 
 
 class FakeAlpacaClient:
@@ -59,6 +60,49 @@ class FakeAlpacaClient:
         }
 
 
+class LiveDeniedAlpacaClient(FakeAlpacaClient):
+    def get_account(self) -> dict:
+        return {
+            "cash": "1000.00",
+            "status": "ACTIVE",
+            "trading_blocked": False,
+            "account_blocked": False,
+            "transfers_blocked": False,
+            "crypto_status": "INACTIVE",
+        }
+
+    def get_asset(self, symbol: str) -> dict:
+        return {
+            "symbol": symbol,
+            "status": "active",
+            "tradable": True,
+            "class": "crypto",
+        }
+
+
+class LiveSubmitDeniedAlpacaClient(FakeAlpacaClient):
+    def get_account(self) -> dict:
+        return {
+            "cash": "1000.00",
+            "status": "ACTIVE",
+            "trading_blocked": False,
+            "account_blocked": False,
+            "transfers_blocked": False,
+            "crypto_status": "ACTIVE",
+        }
+
+    def get_asset(self, symbol: str) -> dict:
+        return {
+            "symbol": symbol,
+            "status": "active",
+            "tradable": True,
+            "class": "crypto",
+        }
+
+    def submit_order(self, **payload) -> dict:
+        raise AlpacaClientError('Alpaca API 422: {"message":"crypto orders not allowed for account"}')
+
+
 def test_run_lane_writes_candidate_report(tmp_path: Path) -> None:
     config = AlpacaFirstTradeConfig(
         mode="paper",
@@ -85,6 +129,7 @@ def test_execute_from_queue_submits_paper_order(tmp_path: Path) -> None:
         json.dumps(
             {
                 "thesis_id": "alpaca:BTC/USD:btcusd_momo_1",
+                "queued_at": "2026-03-24T16:00:00Z",
                 "ticker": "BTC/USD",
                 "symbol": "BTC/USD",
                 "variant_id": "btcusd_momo_1",
@@ -119,8 +164,145 @@ def test_execute_from_queue_submits_paper_order(tmp_path: Path) -> None:
     assert report["action"] == "entry"
     assert client.orders
     assert client.orders[0]["symbol"] == "BTC/USD"
+    assert client.orders[0]["notional_usd"] == 25.0
     saved_state = json.loads(config.state_path.read_text(encoding="utf-8"))
     assert saved_state["open_trade"]["symbol"] == "BTC/USD"
+
+
+def test_live_entry_preflight_blocks_account_level_crypto_denial_and_consumes_queue_entry(
+    tmp_path: Path,
+) -> None:
+    queue_path = tmp_path / "queue.jsonl"
+    queue_entry = {
+        "thesis_id": "alpaca:BTC/USD:btcusd_momo_1",
+        "queued_at": "2026-03-24T16:00:00Z",
+        "ticker": "BTC/USD",
+        "symbol": "BTC/USD",
+        "variant_id": "btcusd_momo_1",
+        "model_probability": 0.72,
+        "expected_edge_bps": 150.0,
+        "recommended_notional_usd": 25.0,
+        "hold_bars": 15,
+        "stop_loss_bps": 70.0,
+        "take_profit_bps": 150.0,
+    }
+    queue_path.write_text(json.dumps(queue_entry) + "\n", encoding="utf-8")
+    config = AlpacaFirstTradeConfig(
+        mode="live",
+        allow_live=True,
+        symbols=("BTC/USD",),
+        execution_path=tmp_path / "exec.json",
+        execution_history_path=tmp_path / "history.jsonl",
+        state_path=tmp_path / "state.json",
+        lane_path=tmp_path / "lane.json",
+        foundry_output_path=tmp_path / "foundry.json",
+        supervisor_output_path=tmp_path / "supervisor.json",
+        alpaca_queue_path=queue_path,
+    )
+    system = AlpacaFirstTradeSystem(config)
+    client = LiveDeniedAlpacaClient()
+
+    report = system.execute_from_queue(client)
+
+    assert report["status"] == "blocked"
+    assert "alpaca_crypto_not_enabled" in report["blockers"]
+    assert client.orders == []
+    saved_state = json.loads(config.state_path.read_text(encoding="utf-8"))
+    assert f"{queue_entry['thesis_id']}|{queue_entry['queued_at']}" in saved_state["consumed_thesis_ids"]
+
+
+def test_live_submit_error_is_blocked_and_quarantines_queue_entry(tmp_path: Path) -> None:
+    queue_path = tmp_path / "queue.jsonl"
+    queue_entry = {
+        "thesis_id": "alpaca:BTC/USD:btcusd_momo_2",
+        "queued_at": "2026-03-24T16:00:00Z",
+        "ticker": "BTC/USD",
+        "symbol": "BTC/USD",
+        "variant_id": "btcusd_momo_2",
+        "model_probability": 0.72,
+        "expected_edge_bps": 150.0,
+        "recommended_notional_usd": 25.0,
+        "hold_bars": 15,
+        "stop_loss_bps": 70.0,
+        "take_profit_bps": 150.0,
+    }
+    queue_path.write_text(json.dumps(queue_entry) + "\n", encoding="utf-8")
+    config = AlpacaFirstTradeConfig(
+        mode="live",
+        allow_live=True,
+        symbols=("BTC/USD",),
+        execution_path=tmp_path / "exec.json",
+        execution_history_path=tmp_path / "history.jsonl",
+        state_path=tmp_path / "state.json",
+        lane_path=tmp_path / "lane.json",
+        foundry_output_path=tmp_path / "foundry.json",
+        supervisor_output_path=tmp_path / "supervisor.json",
+        alpaca_queue_path=queue_path,
+    )
+    system = AlpacaFirstTradeSystem(config)
+
+    report = system.execute_from_queue(LiveSubmitDeniedAlpacaClient())
+
+    assert report["status"] == "blocked"
+    assert "alpaca_crypto_orders_not_allowed" in report["blockers"]
+    saved_state = json.loads(config.state_path.read_text(encoding="utf-8"))
+    assert f"{queue_entry['thesis_id']}|{queue_entry['queued_at']}" in saved_state["consumed_thesis_ids"]
+
+
+def test_rerouted_same_thesis_with_new_queue_timestamp_is_retryable(tmp_path: Path) -> None:
+    queue_path = tmp_path / "queue.jsonl"
+    queue_entries = [
+        {
+            "thesis_id": "alpaca:BTC/USD:btcusd_momo_3",
+            "queued_at": "2026-03-24T16:00:00Z",
+            "ticker": "BTC/USD",
+            "symbol": "BTC/USD",
+            "variant_id": "btcusd_momo_3",
+            "model_probability": 0.72,
+            "expected_edge_bps": 150.0,
+            "recommended_notional_usd": 25.0,
+            "hold_bars": 15,
+            "stop_loss_bps": 70.0,
+            "take_profit_bps": 150.0,
+        },
+        {
+            "thesis_id": "alpaca:BTC/USD:btcusd_momo_3",
+            "queued_at": "2026-03-24T16:05:00Z",
+            "ticker": "BTC/USD",
+            "symbol": "BTC/USD",
+            "variant_id": "btcusd_momo_3",
+            "model_probability": 0.72,
+            "expected_edge_bps": 150.0,
+            "recommended_notional_usd": 25.0,
+            "hold_bars": 15,
+            "stop_loss_bps": 70.0,
+            "take_profit_bps": 150.0,
+        },
+    ]
+    queue_path.write_text(
+        "".join(json.dumps(entry) + "\n" for entry in queue_entries),
+        encoding="utf-8",
+    )
+    config = AlpacaFirstTradeConfig(
+        mode="live",
+        allow_live=True,
+        symbols=("BTC/USD",),
+        execution_path=tmp_path / "exec.json",
+        execution_history_path=tmp_path / "history.jsonl",
+        state_path=tmp_path / "state.json",
+        lane_path=tmp_path / "lane.json",
+        foundry_output_path=tmp_path / "foundry.json",
+        supervisor_output_path=tmp_path / "supervisor.json",
+        alpaca_queue_path=queue_path,
+    )
+    system = AlpacaFirstTradeSystem(config)
+    state = system.load_state()
+    system._consume_queue_entry(state, queue_entries[0])
+
+    selected = system._select_next_queue_entry(system.load_state())
+
+    assert selected is not None
+    assert selected["queued_at"] == "2026-03-24T16:05:00Z"
 
 
 def test_build_alpaca_trade_alert_formats_entry() -> None:

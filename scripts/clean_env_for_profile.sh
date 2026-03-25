@@ -8,12 +8,12 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 Usage: ./scripts/clean_env_for_profile.sh [PROFILE_NAME]
 
 Strip runtime overrides from .env while preserving secrets and operator settings.
-Default profile: live_aggressive
+Default profile: shadow_fast_flow
 EOF
     exit 0
 fi
 
-PROFILE_NAME="${1:-live_aggressive}"
+PROFILE_NAME="${1:-shadow_fast_flow}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 ENV_FILE="$PROJECT_DIR/.env"

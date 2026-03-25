@@ -20,7 +20,7 @@ from scripts.write_remote_cycle_status import (  # noqa: E402
 globals().update({k: v for k, v in vars(_shared).items() if not k.startswith("__")})
 
 
-def test_load_latest_deploy_evidence_prefers_btc5_activation_report(tmp_path: Path) -> None:
+def test_load_latest_deploy_evidence_prefers_deploy_report_over_activation_artifact(tmp_path: Path) -> None:
     _write_base_remote_state(tmp_path)
     _write_json(
         tmp_path / "reports" / "deploy_20260309T112719Z.json",
@@ -66,18 +66,143 @@ def test_load_latest_deploy_evidence_prefers_btc5_activation_report(tmp_path: Pa
 
     evidence = _load_latest_deploy_evidence(tmp_path)
 
+    assert evidence["path"] == "reports/deploy_20260309T112719Z.json"
+    assert evidence["remote_runtime_profile"] == "shadow_fast_flow"
+    assert evidence["agent_run_mode"] == "shadow"
+    assert evidence["paper_trading"] is True
+    assert evidence["remote_values"]["JJ_RUNTIME_PROFILE"] == "shadow_fast_flow"
+    assert evidence["remote_values"]["PAPER_TRADING"] == "true"
+    assert evidence["remote_values"]["ELASTIFUND_AGENT_RUN_MODE"] == "shadow"
+
+
+def test_load_latest_deploy_evidence_uses_current_stage_env_for_activation_mode(tmp_path: Path) -> None:
+    _write_base_remote_state(tmp_path)
+    _write_text(
+        tmp_path / "state" / "btc5_capital_stage.env",
+        "\n".join(
+            [
+                "BTC5_DEPLOY_MODE=shadow_probe",
+                "BTC5_PAPER_TRADING=true",
+                "",
+            ]
+        ),
+    )
+    _write_json(
+        tmp_path / "reports" / "btc5_deploy_activation.json",
+        {
+            "checked_at": "2026-03-12T00:56:04+00:00",
+            "deploy_mode": "live_stage1",
+            "paper_trading": False,
+            "runtime_profile": "shadow_fast_flow",
+            "service_status": "running",
+            "verification_checks": {
+                "required_passed": True,
+                "failed_required_checks": [],
+            },
+            "override_env": {
+                "exists": True,
+                "tracked_values": {
+                    "BTC5_CAPITAL_STAGE": "1",
+                },
+            },
+        },
+    )
+
+    evidence = _load_latest_deploy_evidence(tmp_path)
+
     assert evidence["path"] == "reports/btc5_deploy_activation.json"
-    assert evidence["remote_runtime_profile"] == "maker_velocity_live"
-    assert evidence["agent_run_mode"] == "live"
-    assert evidence["paper_trading"] is False
-    assert evidence["remote_values"]["JJ_RUNTIME_PROFILE"] == "maker_velocity_live"
-    assert evidence["remote_values"]["PAPER_TRADING"] == "false"
-    assert evidence["remote_values"]["ELASTIFUND_AGENT_RUN_MODE"] == "live"
-    assert evidence["deploy_mode"] == "live_stage1"
-    assert evidence["required_passed"] is True
-    assert evidence["verification_checks"]["required_passed"] is True
-    assert evidence["process_state"] == "activation_verified"
-    assert evidence["validation"]["returncode"] == 0
+    assert evidence["deploy_mode"] == "shadow_probe"
+    assert evidence["agent_run_mode"] == "shadow"
+    assert evidence["paper_trading"] is True
+    assert evidence["remote_values"]["BTC5_DEPLOY_MODE"] == "shadow_probe"
+    assert evidence["remote_values"]["BTC5_PAPER_TRADING"] == "true"
+    assert evidence["remote_values"]["PAPER_TRADING"] == "true"
+    assert evidence["remote_values"]["ELASTIFUND_AGENT_RUN_MODE"] == "shadow"
+
+
+def test_load_latest_deploy_evidence_marks_old_activation_as_stale(tmp_path: Path) -> None:
+    _write_base_remote_state(tmp_path)
+    _write_json(
+        tmp_path / "reports" / "btc5_deploy_activation.json",
+        {
+            "checked_at": "2026-03-12T00:56:04+00:00",
+            "deploy_mode": "live_stage1",
+            "paper_trading": False,
+            "runtime_profile": "maker_velocity_live",
+            "service_status": "running",
+            "verification_checks": {"required_passed": True},
+            "override_env": {"exists": True, "tracked_values": {}},
+        },
+    )
+
+    evidence = _load_latest_deploy_evidence(tmp_path)
+
+    assert evidence["freshness"] == "stale"
+    assert evidence["age_minutes"] is not None
+
+
+def test_load_latest_deploy_evidence_prefers_current_stage_env_when_activation_mode_is_stale(
+    tmp_path: Path,
+) -> None:
+    _write_base_remote_state(tmp_path)
+    _write_text(
+        tmp_path / "state" / "btc5_capital_stage.env",
+        "\n".join(
+            [
+                "BTC5_DEPLOY_MODE=shadow_probe",
+                "BTC5_PAPER_TRADING=true",
+                "",
+            ]
+        ),
+    )
+    _write_json(
+        tmp_path / "reports" / "btc5_deploy_activation.json",
+        {
+            "checked_at": "2026-03-24T17:13:21+00:00",
+            "deploy_mode": "live_stage1",
+            "paper_trading": False,
+            "runtime_profile": "shadow_fast_flow",
+            "service_status": "running",
+            "verification_checks": {"required_passed": True},
+            "override_env": {"exists": True, "tracked_values": {}},
+        },
+    )
+
+    evidence = _load_latest_deploy_evidence(tmp_path)
+
+    assert evidence["deploy_mode"] == "shadow_probe"
+    assert evidence["paper_trading"] is True
+    assert evidence["agent_run_mode"] == "shadow"
+    assert evidence["remote_values"]["BTC5_DEPLOY_MODE"] == "shadow_probe"
+    assert evidence["remote_values"]["PAPER_TRADING"] == "true"
+    assert evidence["remote_values"]["BTC5_PAPER_TRADING"] == "true"
+
+
+def test_runtime_truth_contract_payload_is_typed_and_fail_closed() -> None:
+    payload = remote_cycle_status._build_runtime_truth_contract_payload(
+        {
+            "generated_at": "2026-03-24T08:30:00Z",
+            "effective_runtime_profile": "maker_velocity_live",
+            "execution_mode": "live",
+            "agent_run_mode": "shadow",
+            "launch_posture": "blocked",
+            "service_state": "unknown",
+            "allow_order_submission": False,
+            "truth_gate_status": "blocked",
+            "baseline_live_allowed": False,
+            "blockers": ["paper_mode_consistency", "wallet_truth_not_green"],
+            "artifacts": {
+                "runtime_truth_latest_json": "reports/runtime_truth_latest.json",
+            },
+            "summary": "runtime truth snapshot",
+        }
+    )
+
+    assert payload["snapshot_id"]
+    assert payload["selected_runtime_profile"] == "maker_velocity_live"
+    assert payload["execution_mode"] == "live"
+    assert payload["baseline_live_allowed"] is False
+    assert "wallet_truth_not_green" in payload["blockers"]
 
 
 def test_prepare_local_runtime_profile_evidence_merges_stage_env_override(tmp_path: Path) -> None:
@@ -217,6 +342,63 @@ def test_build_launch_status_treats_broad_root_test_failures_as_advisory_when_ru
     )
 
 
+def test_accounting_reconciliation_prefers_nonzero_trade_db_total_over_zero_jj_state(
+    tmp_path: Path,
+) -> None:
+    _write_json(
+        tmp_path / "jj_state.json",
+        {
+            "total_trades": 0,
+            "open_positions": {},
+        },
+    )
+    _write_trade_db(
+        tmp_path / "data" / "jj_trades.db",
+        [
+            {"market_id": "m1", "outcome": "won"},
+            {"market_id": "m2", "outcome": None},
+        ],
+    )
+
+    reconciliation = remote_cycle_status_core._build_accounting_reconciliation(
+        {
+            "runtime": {"trade_db_source": "data/jj_trades.db"},
+            "capital": {},
+            "polymarket_wallet": {
+                "status": "ok",
+                "open_positions_count": 0,
+                "closed_positions_count": 0,
+                "live_orders_count": 0,
+            },
+            "btc_5min_maker": {},
+        },
+        root=tmp_path,
+        service={"status": "stopped"},
+    )
+
+    assert reconciliation["local_ledger_counts"]["total_trades"] == 2
+
+
+def test_load_wallet_flow_status_uses_config_seed_but_stays_not_ready_without_scores_db(
+    tmp_path: Path,
+) -> None:
+    _write_json(
+        tmp_path / "config" / "smart_wallets.json",
+        {
+            "updated_at": "2026-03-24T08:00:00+00:00",
+            "wallets": [{"proxy_wallet": "0xabc"}],
+        },
+    )
+
+    status = remote_cycle_status_core._load_wallet_flow_status(tmp_path)
+
+    assert status["ready"] is False
+    assert status["wallet_count"] == 1
+    assert status["scores_source_path"] == "config/smart_wallets.json"
+    assert "missing_data/smart_wallets.json" not in status["reasons"]
+    assert "missing_data/wallet_scores.db" in status["reasons"]
+
+
 def test_apply_shared_truth_contract_to_status_backfills_btc5_compatibility_flags() -> None:
     status = _apply_shared_truth_contract_to_status(
         {
@@ -242,6 +424,87 @@ def test_apply_shared_truth_contract_to_status_backfills_btc5_compatibility_flag
     assert status["can_btc5_trade_now"] is True
     assert status["btc5_baseline_live_allowed"] is True
     assert status["btc5_stage_upgrade_can_trade_now"] is False
+
+
+def test_apply_shared_truth_contract_forces_submission_closed_during_hold_repair() -> None:
+    runtime_truth = remote_cycle_status_core._apply_shared_truth_contract(
+        {
+            "launch_posture": "blocked",
+            "allow_order_submission": True,
+            "order_submit_enabled": True,
+            "execution_mode": "live",
+            "agent_run_mode": "live",
+            "paper_trading": False,
+            "deployment_confidence": {
+                "blocking_checks": ["confirmation_coverage_insufficient"],
+                "confirmation_coverage_label": "unknown",
+            },
+            "trade_proof": {"proof_status": "fill_confirmed", "fill_confirmed": True},
+            "state_improvement": {
+                "strategy_recommendations": {
+                    "truth_lattice": {
+                        "one_next_cycle_action": "repair",
+                    },
+                    "wallet_reconciliation_summary": {},
+                    "public_performance_scoreboard": {},
+                    "champion_lane_contract": {},
+                }
+            },
+        }
+    )
+
+    assert runtime_truth["truth_gate_status"] == "hold_repair"
+    assert runtime_truth["allow_order_submission"] is False
+    assert runtime_truth["order_submit_enabled"] is False
+    assert runtime_truth["launch"]["allow_order_submission"] is False
+    assert runtime_truth["launch"]["order_submit_enabled"] is False
+    assert runtime_truth["summary"]["allow_order_submission"] is False
+    assert runtime_truth["summary"]["order_submit_enabled"] is False
+
+    status = _apply_shared_truth_contract_to_status(
+        {"launch": {}, "runtime_truth": {}},
+        runtime_truth_snapshot=runtime_truth,
+    )
+
+    assert status["truth_gate_status"] == "hold_repair"
+    assert status["allow_order_submission"] is False
+    assert status["order_submit_enabled"] is False
+    assert status["launch"]["allow_order_submission"] is False
+    assert status["launch"]["order_submit_enabled"] is False
+    assert status["runtime_truth"]["allow_order_submission"] is False
+    assert status["runtime_truth"]["order_submit_enabled"] is False
+
+
+def test_apply_shared_truth_contract_allows_blocked_shadow_posture_without_control_repair() -> None:
+    runtime_truth = remote_cycle_status_core._apply_shared_truth_contract(
+        {
+            "launch_posture": "blocked",
+            "allow_order_submission": True,
+            "order_submit_enabled": False,
+            "execution_mode": "shadow",
+            "agent_run_mode": "shadow",
+            "paper_trading": True,
+            "deployment_confidence": {
+                "blocking_checks": ["selected_runtime_package_stale"],
+                "confirmation_coverage_label": "medium",
+            },
+            "trade_proof": {"proof_status": "fill_confirmed", "fill_confirmed": True},
+            "state_improvement": {
+                "strategy_recommendations": {
+                    "truth_lattice": {
+                        "one_next_cycle_action": "repair",
+                    },
+                    "wallet_reconciliation_summary": {},
+                    "public_performance_scoreboard": {},
+                    "champion_lane_contract": {},
+                }
+            },
+        }
+    )
+
+    assert "control_posture_blocked_requires_repair_branch" not in runtime_truth["truth_lattice"]["broken_reasons"]
+    assert runtime_truth["allow_order_submission"] is False
+    assert runtime_truth["order_submit_enabled"] is False
 
 
 def test_load_btc5_maker_state_materializes_remote_window_row_cache(

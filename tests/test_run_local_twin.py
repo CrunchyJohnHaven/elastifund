@@ -97,6 +97,40 @@ def test_run_alpaca_invokes_live_mode_when_venue_is_enabled(monkeypatch) -> None
     assert captured["env_overrides"] == {"ALPACA_TRADING_MODE": "live"}
 
 
+def test_run_alpaca_persists_execution_error_as_blocker(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("ALPACA_TRADING_MODE", "paper")
+    monkeypatch.setenv("ALPACA_ALLOW_LIVE", "true")
+    monkeypatch.setenv("ALPACA_API_KEY_ID", "key")
+    monkeypatch.setenv("ALPACA_API_SECRET_KEY", "secret")
+    monkeypatch.setattr(local_twin, "REPO_ROOT", tmp_path)
+
+    written: list[tuple[str, dict[str, object]]] = []
+
+    def _fake_update(args, venue, payload):  # type: ignore[no-untyped-def]
+        written.append((venue, dict(payload)))
+
+    monkeypatch.setattr(local_twin, "_update_local_live_status", _fake_update)
+    monkeypatch.setattr(local_twin, "_run_script", lambda *args, **kwargs: 1)
+    monkeypatch.setattr(
+        local_twin,
+        "_load_json",
+        lambda path: {
+            "status": "error",
+            "summary": "alpaca first-trade executor hit an Alpaca API error",
+            "blockers": ["alpaca_api_error"],
+            "payload": {"error": 'Alpaca API 422: {"message":"crypto orders not allowed for account"}'},
+        } if "alpaca_first_trade/latest.json" in str(path) else None,
+    )
+
+    args = Namespace(local_live_venues="alpaca")
+    assert local_twin.run_alpaca(args) == 1
+    assert written[-1][0] == "alpaca"
+    payload = written[-1][1]
+    assert payload["last_execution_status"] == "error"
+    assert "alpaca_crypto_orders_not_allowed" in payload["blockers"]
+    assert payload["feedback_loop_ready"] is False
+
+
 def test_run_script_inherits_repo_env(monkeypatch, tmp_path: Path) -> None:
     script_path = tmp_path / "scripts" / "fake.py"
     script_path.parent.mkdir(parents=True, exist_ok=True)
@@ -155,6 +189,73 @@ def test_run_kalshi_downgrades_live_when_auth_is_placeholder(monkeypatch) -> Non
     assert captured["relpath"] == "kalshi/weather_arb.py"
     assert captured["extra_args"] == ["--mode", "paper"]
     assert captured["env_overrides"]["KALSHI_WEATHER_MODE"] == "paper"
+
+
+def test_run_kalshi_accepts_env_example_key_path(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+    key_path = tmp_path / "kalshi" / "kalshi_rsa_private.pem"
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+    key_path.write_text("test", encoding="utf-8")
+
+    monkeypatch.setattr(local_twin, "REPO_ROOT", tmp_path)
+    monkeypatch.setenv("KALSHI_API_KEY_ID", "real-kalshi-key")
+    monkeypatch.setenv("KALSHI_RSA_KEY_PATH", "kalshi/kalshi_rsa_private.pem")
+
+    def _fake_run_script(relpath: str, extra_args=None, env_overrides=None) -> int:
+        captured["relpath"] = relpath
+        captured["extra_args"] = list(extra_args or [])
+        captured["env_overrides"] = dict(env_overrides or {})
+        return 0
+
+    monkeypatch.setattr(local_twin, "_run_script", _fake_run_script)
+
+    args = Namespace(local_live_venues="kalshi")
+    assert local_twin.run_kalshi(args) == 0
+    assert captured["extra_args"] == ["--mode", "live", "--execute"]
+
+
+def test_run_kalshi_accepts_inline_private_key_env(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setenv("KALSHI_API_KEY_ID", "real-kalshi-key")
+    monkeypatch.setenv(
+        "KALSHI_RSA_PRIVATE_KEY",
+        "-----BEGIN "
+        + "RSA PRIVATE KEY-----\\nabc123\\n-----END "
+        + "RSA PRIVATE KEY-----",
+    )
+
+    def _fake_run_script(relpath: str, extra_args=None, env_overrides=None) -> int:
+        captured["relpath"] = relpath
+        captured["extra_args"] = list(extra_args or [])
+        captured["env_overrides"] = dict(env_overrides or {})
+        return 0
+
+    monkeypatch.setattr(local_twin, "_run_script", _fake_run_script)
+
+    args = Namespace(local_live_venues="kalshi")
+    assert local_twin.run_kalshi(args) == 0
+    assert captured["extra_args"] == ["--mode", "live", "--execute"]
+
+
+def test_run_kalshi_marks_nonzero_exit_as_not_feedback_ready(monkeypatch) -> None:
+    written: list[tuple[str, dict[str, object]]] = []
+
+    monkeypatch.setenv("KALSHI_API_KEY_ID", "your-kalshi-key-id-here")
+    monkeypatch.setenv("KALSHI_RSA_KEY_PATH", "/tmp/kalshi.pem")
+
+    def _fake_update(args, venue, payload):  # type: ignore[no-untyped-def]
+        written.append((venue, dict(payload)))
+
+    monkeypatch.setattr(local_twin, "_update_local_live_status", _fake_update)
+    monkeypatch.setattr(local_twin, "_run_script", lambda *args, **kwargs: 1)
+
+    args = Namespace(local_live_venues="kalshi")
+    assert local_twin.run_kalshi(args) == 1
+    assert written[-1][0] == "kalshi"
+    payload = written[-1][1]
+    assert payload["feedback_loop_ready"] is False
+    assert "kalshi_lane_process_failed" in payload["blockers"]
 
 
 def test_run_polymarket_downgrades_live_when_btc5_gate_blocked(monkeypatch) -> None:

@@ -14,7 +14,7 @@ EnvironmentFile=-/home/ubuntu/polymarket-trading-bot/config/btc5_strategy.env
 EnvironmentFile=-/home/ubuntu/polymarket-trading-bot/state/btc5_autoresearch.env
 EnvironmentFile=-/home/ubuntu/polymarket-trading-bot/state/btc5_capital_stage.env
 Environment="PYTHONPATH=/home/ubuntu/polymarket-trading-bot:/home/ubuntu/polymarket-trading-bot/bot:/home/ubuntu/polymarket-trading-bot/polymarket-bot" "BTC5_ENABLE_RECENT_REGIME_SKEW=1" "BTC5_RECENT_REGIME_FILLS=12" "BTC5_REGIME_MIN_FILLS_PER_DIRECTION=5" "BTC5_REGIME_MIN_PNL_GAP_USD=20" "BTC5_REGIME_WEAKER_DIRECTION_QUOTE_TICKS=0" "BTC5_ENABLE_PROBE_AFTER_DAILY_LOSS=1" "BTC5_ENABLE_PROBE_AFTER_RECENT_LOSS=1" "BTC5_PROBE_RECENT_FILLS=8" "BTC5_PROBE_RECENT_MIN_PNL_USD=-30.0" "BTC5_PROBE_QUOTE_TICKS=0" "BTC5_RETRY_POST_ONLY_CROSS=1" "BTC5_RETRY_POST_ONLY_SAFETY_TICKS=1"
-ExecStart=/usr/bin/python3 bot/btc_5min_maker.py --continuous --live
+ExecStart=/bin/bash /home/ubuntu/polymarket-trading-bot/scripts/run_btc5_service.sh
 Restart=on-failure
 RestartSec=30
 StandardOutput=journal

@@ -115,7 +115,7 @@ It is the bridge from "interesting trading lab" to "company-relevant self-improv
 
 ## What Has Improved (System Changelog)
 
-This is the autoresearch-style improvement log. Each entry represents a validated change to the live system, not a plan or hypothesis.
+This is the autoresearch-style improvement log. It records implemented system changes, but it is not a claim that the launch contract is green or that multi-venue live trading is currently authorized.
 
 ### Cycle 2 — Structural Alpha & Microstructure Defense (Current)
 
@@ -127,8 +127,8 @@ This is the autoresearch-style improvement log. Each entry represents a validate
 - **A-6 and B-1 structural alpha lanes killed 2026-03-13.** Zero evidence after 5-day kill-watch. Full rationale in `research/what_doesnt_work_diary_v1.md`.
 - **Wallet reconciliation completed on 2026-03-14.** Root cause was wrong wallet address for data API queries; wallet-authoritative value is now tracked as $458.13 Polymarket with +$207.31 realized net P&L.
 - **Maker-only execution enforced.** 100% post-only orders. Zero taker fees. Maker rebates on every fill. This single change (Dispatch #75) eliminated the fee drag that killed earlier strategies.
-- **Six signal sources wired into the live loop.** LLM probability estimation, smart wallet flow detection, LMSR Bayesian pricing, cross-platform arbitrage, VPIN/OFI microstructure, and semantic lead-lag. Each can be independently enabled or disabled per runtime profile.
-- **Automated kill rules operational.** Semantic decay, toxicity survival, cost stress polynomial, and calibration enforcement — all running in production. Strategies that fail these die automatically.
+- **Six signal sources are implemented in the codebase.** They are not all approved for live capital, and the current proving-ground reset keeps BTC5 on Polymarket as the only candidate sleeve for graduation.
+- **Automated kill rules are implemented in the runtime.** They remain part of the proving ground, but current launch posture still depends on wallet truth, replay, and promotion artifacts agreeing.
 - **WebSocket CLOB feed integrated.** Real-time order book data flowing into VPIN and OFI calculations for microstructure-aware execution.
 - **Calibration locked.** Static Platt A=0.5914, B=-0.3977 validated on 532 markets (Brier 0.2134). Beats all rolling windows tested. No drift detected.
 

@@ -94,7 +94,7 @@ def test_maker_velocity_all_in_profile_concentrates_on_fast_crypto() -> None:
     bundle = load_runtime_profile(env={"JJ_RUNTIME_PROFILE": "maker_velocity_all_in"})
 
     assert bundle.selected_profile == "maker_velocity_all_in"
-    assert bundle.config["mode"]["effective_execution_mode"] == "shadow"
+    assert bundle.config["mode"]["effective_execution_mode"] == "live"
     assert bundle.config["mode"]["paper_trading"] is False
     assert bundle.config["mode"]["allow_order_submission"] is True
     assert bundle.config["feature_flags"]["fast_flow_only"] is True
@@ -118,7 +118,7 @@ def test_maker_velocity_live_profile_is_fast_turn_crypto_only() -> None:
     bundle = load_runtime_profile(env={"JJ_RUNTIME_PROFILE": "maker_velocity_live"})
 
     assert bundle.selected_profile == "maker_velocity_live"
-    assert bundle.config["mode"]["effective_execution_mode"] == "shadow"
+    assert bundle.config["mode"]["effective_execution_mode"] == "live"
     assert bundle.config["mode"]["paper_trading"] is False
     assert bundle.config["mode"]["allow_order_submission"] is True
     assert bundle.config["feature_flags"]["fast_flow_only"] is True

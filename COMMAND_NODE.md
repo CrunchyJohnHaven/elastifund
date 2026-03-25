@@ -158,7 +158,7 @@ The entire runtime truth drift was caused by a single configuration bug: `.env` 
 
 1. **Local jj_trades.db still empty** — Trades were placed through the BTC5 maker path (`data/btc_5min_maker.db`), not `jj_live.py`. The main trade ledger has 0 rows. Structural issue: two separate code paths write to two separate databases.
 
-2. **Profile-vs-effective drift** — The checked-in `maker_velocity_live` profile and the effective runtime may still diverge. Verify by comparing profile JSON against VPS runtime state.
+2. **Profile-vs-effective drift** — The checked-in `shadow_fast_flow` baseline and the effective runtime may still diverge. Verify by comparing the selected profile and managed stage env against VPS runtime state; do not assume any live profile is authoritative.
 
 3. **Pipeline verdict stale** — `FAST_TRADE_EDGE_ANALYSIS.md` says REJECT ALL (5+ days old). Pipeline and execution layer are fully decoupled.
 

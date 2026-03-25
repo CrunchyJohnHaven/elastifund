@@ -13,6 +13,7 @@ If code does not need live runtime integration and is reused by more than one ex
 ## Placement Rules For New Experiment Code
 
 - Add shared feature transforms in `feature_engineering.py` or `models/`.
+- Add shared venue-normalized historical ingest code under `src/data/` when it feeds more than one strategy, simulator, or calibration lane.
 - Add new signal families under `strategies/` with strategy-specific logic only.
 - Add orchestration and reporting glue in `research_loop.py`, `hypothesis_manager.py`, or `reporting.py`.
 - Put one-off analysis runners in `backtest/` or `simulator/`, not in `src/`.

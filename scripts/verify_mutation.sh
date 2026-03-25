@@ -3,6 +3,22 @@
 # Waits N cycles, then checks whether fill rate improved.
 set -euo pipefail
 
+print_help() {
+  cat <<'EOF'
+Usage:
+  ./scripts/verify_mutation.sh [wait_minutes] [min_fill_pct]
+
+Defaults:
+  wait_minutes = 30
+  min_fill_pct = 20
+EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  print_help
+  exit 0
+fi
+
 DB="/home/ubuntu/polymarket-trading-bot/data/btc_5min_maker.db"
 WAIT_MINUTES="${1:-30}"
 MIN_FILL_PCT="${2:-20}"

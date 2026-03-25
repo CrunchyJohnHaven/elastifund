@@ -25,6 +25,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import scripts.remote_cycle_status_core as _core_status
+from bot.proof_types import (
+    build_runtime_truth_contract_snapshot as _build_runtime_truth_contract_snapshot,
+)
 from scripts.report_envelope import write_report
 from bot.runtime_profile import load_runtime_profile as load_runtime_profile_bundle
 from bot.runtime_profile import write_effective_runtime_profile as write_runtime_profile_bundle
@@ -48,6 +51,7 @@ DEFAULT_CONFIG_PATH = Path("config/remote_cycle_status.json")
 DEFAULT_MARKDOWN_PATH = Path("reports/remote_cycle_status.md")
 DEFAULT_JSON_PATH = Path("reports/remote_cycle_status.json")
 DEFAULT_RUNTIME_TRUTH_LATEST_PATH = Path("reports/runtime_truth_latest.json")
+DEFAULT_RUNTIME_TRUTH_SNAPSHOT_PATH = Path("reports/runtime_truth_snapshot_latest.json")
 DEFAULT_PUBLIC_RUNTIME_SNAPSHOT_PATH = Path("reports/public_runtime_snapshot.json")
 DEFAULT_STATE_IMPROVEMENT_LATEST_PATH = Path("reports/state_improvement_latest.json")
 DEFAULT_STATE_IMPROVEMENT_DIGEST_PATH = Path("reports/state_improvement_digest.md")
@@ -166,6 +170,46 @@ print(
         sort_keys=True,
     )
 )"""
+
+
+def _build_runtime_truth_contract_payload(runtime_truth_snapshot: dict[str, Any]) -> dict[str, Any]:
+    profile_name = str(
+        runtime_truth_snapshot.get("effective_runtime_profile")
+        or runtime_truth_snapshot.get("runtime_profile")
+        or runtime_truth_snapshot.get("selected_runtime_profile")
+        or "unknown"
+    )
+    service_block = dict(runtime_truth_snapshot.get("service") or {})
+    contract_snapshot = _build_runtime_truth_contract_snapshot(
+        generated_at=str(
+            runtime_truth_snapshot.get("generated_at")
+            or datetime.now(timezone.utc).isoformat()
+        ),
+        selected_runtime_profile=profile_name,
+        execution_mode=str(runtime_truth_snapshot.get("execution_mode") or "unknown"),
+        agent_run_mode=str(runtime_truth_snapshot.get("agent_run_mode") or "unknown"),
+        launch_posture=str(runtime_truth_snapshot.get("launch_posture") or "blocked"),
+        service_state=str(
+            runtime_truth_snapshot.get("service_state")
+            or service_block.get("status")
+            or "unknown"
+        ),
+        allow_order_submission=bool(runtime_truth_snapshot.get("allow_order_submission")),
+        truth_gate_status=str(
+            runtime_truth_snapshot.get("truth_gate_status")
+            or runtime_truth_snapshot.get("status")
+            or "unknown"
+        ),
+        baseline_live_allowed=bool(runtime_truth_snapshot.get("baseline_live_allowed")),
+        blockers=list(
+            runtime_truth_snapshot.get("truth_gate_blocking_checks")
+            or runtime_truth_snapshot.get("blockers")
+            or []
+        ),
+        artifacts=dict(runtime_truth_snapshot.get("artifacts") or {}),
+        summary=str(runtime_truth_snapshot.get("summary") or "runtime truth snapshot"),
+    )
+    return contract_snapshot.to_dict()
 BTC5_DB_PROBE_SCRIPT = """import json
 import sqlite3
 from pathlib import Path
@@ -2525,6 +2569,10 @@ def write_remote_cycle_status(
         repo_root,
         runtime_truth_latest_path or DEFAULT_RUNTIME_TRUTH_LATEST_PATH,
     )
+    runtime_truth_snapshot_target = _resolve_path(
+        repo_root,
+        DEFAULT_RUNTIME_TRUTH_SNAPSHOT_PATH,
+    )
     public_runtime_snapshot_target = _resolve_path(
         repo_root,
         public_runtime_snapshot_path or DEFAULT_PUBLIC_RUNTIME_SNAPSHOT_PATH,
@@ -2552,6 +2600,7 @@ def write_remote_cycle_status(
             "remote_cycle_status_markdown": str(markdown_target),
             "remote_cycle_status_json": str(json_target),
             "runtime_truth_latest_json": str(runtime_truth_latest_target),
+            "runtime_truth_snapshot_json": str(runtime_truth_snapshot_target),
             "runtime_truth_timestamped_json": str(runtime_truth_timestamped_target),
             "public_runtime_snapshot_json": str(public_runtime_snapshot_target),
             "state_improvement_latest_json": str(state_improvement_latest_target),
@@ -2606,6 +2655,7 @@ def write_remote_cycle_status(
 
     markdown_target.parent.mkdir(parents=True, exist_ok=True)
     runtime_truth_latest_target.parent.mkdir(parents=True, exist_ok=True)
+    runtime_truth_snapshot_target.parent.mkdir(parents=True, exist_ok=True)
     public_runtime_snapshot_target.parent.mkdir(parents=True, exist_ok=True)
     state_improvement_latest_target.parent.mkdir(parents=True, exist_ok=True)
     state_improvement_digest_target.parent.mkdir(parents=True, exist_ok=True)
@@ -2638,6 +2688,19 @@ def write_remote_cycle_status(
         freshness_sla_seconds=1800,
         blockers=list(runtime_truth_snapshot.get("truth_gate_blocking_checks") or runtime_truth_snapshot.get("blockers") or []),
         summary=str(runtime_truth_snapshot.get("summary") or runtime_truth_snapshot.get("truth_gate_status") or "runtime truth"),
+    )
+    write_report(
+        runtime_truth_snapshot_target,
+        artifact="runtime_truth_snapshot",
+        payload=_build_runtime_truth_contract_payload(runtime_truth_snapshot),
+        status=_runtime_truth_report_status(runtime_truth_snapshot, stale_after_seconds=1800),
+        source_of_truth=(
+            "reports/runtime_truth_latest.json; reports/canonical_operator_truth.json; "
+            "reports/remote_service_status.json"
+        ),
+        freshness_sla_seconds=1800,
+        blockers=list(runtime_truth_snapshot.get("truth_gate_blocking_checks") or runtime_truth_snapshot.get("blockers") or []),
+        summary=str(runtime_truth_snapshot.get("summary") or runtime_truth_snapshot.get("truth_gate_status") or "runtime truth snapshot"),
     )
     write_report(
         public_runtime_snapshot_target,

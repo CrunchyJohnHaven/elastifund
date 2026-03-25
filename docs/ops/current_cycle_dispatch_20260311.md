@@ -1,11 +1,13 @@
 # Current Cycle Dispatch - 2026-03-11
 
+Historical dispatch only. Do not treat this file as the active operator contract; use the latest runtime truth and launch packet artifacts instead.
+
 ## 1. Cycle Call
 
 This cycle is a bounded loss-recovery and truth-alignment cycle, not a scale-up cycle.
 
 - The newest runtime authority is [runtime_truth_latest.json](/Users/johnbradley/Desktop/Elastifund/reports/runtime_truth_latest.json) generated at `2026-03-11T15:02:32Z`.
-- That artifact says `launch_posture=blocked`, `execution_mode=live`, `allow_order_submission=true`, and `effective_runtime_profile=maker_velocity_live`.
+- At that historical point-in-time, the artifact said `launch_posture=blocked`, `execution_mode=live`, `allow_order_submission=true`, and `effective_runtime_profile=maker_velocity_live`.
 - The live BTC5 sleeve is still cumulatively positive: `223` live-filled rows and `+43.0575 USD` live-filled PnL, with the latest live fill at `2026-03-11T14:50:00Z`.
 - The current problem is local and recent: the latest five live-filled BTC5 rows sum to about `-6.98 USD`, and the recent 12-fill summary remains negative after estimated maker rebate.
 - Finance remains a real blocker. Runtime truth still carries `finance_gate_blocked:rollout_gates_blocked:snapshot_reconciliation_below_0_99,no_pending_actions`.

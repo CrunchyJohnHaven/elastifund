@@ -15,7 +15,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from bot.alpaca_client import AlpacaClient, AlpacaClientConfig, AlpacaClientError
+from bot.alpaca_client import (
+    AlpacaClient,
+    AlpacaClientConfig,
+    AlpacaClientError,
+    classify_alpaca_api_error,
+)
 from bot.proof_types import build_evidence_record, build_promotion_ticket, build_thesis_record
 from bot.thesis_foundry import DEFAULT_OUTPUT_PATH as DEFAULT_FOUNDRY_OUTPUT_PATH
 from bot.thesis_foundry import build_thesis_candidates
@@ -376,13 +381,80 @@ class AlpacaFirstTradeSystem:
                 return position
         return None
 
+    def _queue_entry_key(self, queue_entry: dict[str, Any]) -> str:
+        thesis_id = str(queue_entry.get("thesis_id") or "").strip()
+        queued_at = str(queue_entry.get("queued_at") or "").strip()
+        symbol = str(queue_entry.get("ticker") or queue_entry.get("symbol") or "").strip()
+        if thesis_id and queued_at:
+            return f"{thesis_id}|{queued_at}"
+        if thesis_id and symbol:
+            return f"{thesis_id}|{symbol}"
+        return thesis_id
+
     def _select_next_queue_entry(self, state: AlpacaFirstTradeState) -> dict[str, Any] | None:
         consumed = set(state.consumed_thesis_ids)
         for row in self._read_queue_rows():
-            thesis_id = str(row.get("thesis_id") or "")
-            if thesis_id and thesis_id not in consumed:
+            queue_entry_key = self._queue_entry_key(row)
+            if queue_entry_key and queue_entry_key not in consumed:
                 return row
         return None
+
+    def _consume_queue_entry(self, state: AlpacaFirstTradeState, queue_entry: dict[str, Any]) -> None:
+        queue_entry_key = self._queue_entry_key(queue_entry)
+        if not queue_entry_key:
+            return
+        state.consumed_thesis_ids.append(queue_entry_key)
+        state.consumed_thesis_ids = state.consumed_thesis_ids[-200:]
+        self.save_state(state)
+
+    def _preflight_live_entry(
+        self,
+        *,
+        client: AlpacaClient,
+        account: dict[str, Any],
+        symbol: str,
+    ) -> tuple[list[str], dict[str, Any]]:
+        blockers: list[str] = []
+        details: dict[str, Any] = {
+            "account": {
+                "status": account.get("status"),
+                "trading_blocked": account.get("trading_blocked"),
+                "account_blocked": account.get("account_blocked"),
+                "transfers_blocked": account.get("transfers_blocked"),
+                "crypto_status": account.get("crypto_status"),
+            }
+        }
+
+        if self.config.mode != "live":
+            return blockers, details
+
+        crypto_status = str(account.get("crypto_status") or "").strip().lower()
+        if crypto_status and crypto_status not in {"active", "enabled"}:
+            blockers.append("alpaca_crypto_not_enabled")
+
+        asset: dict[str, Any] = {}
+        get_asset = getattr(client, "get_asset", None)
+        if callable(get_asset):
+            try:
+                maybe_asset = get_asset(symbol)
+                if isinstance(maybe_asset, dict):
+                    asset = maybe_asset
+            except AlpacaClientError:
+                blockers.append("alpaca_asset_lookup_failed")
+        if asset:
+            details["asset"] = {
+                "symbol": asset.get("symbol"),
+                "status": asset.get("status"),
+                "tradable": asset.get("tradable"),
+                "class": asset.get("class") or asset.get("asset_class"),
+            }
+            if asset.get("tradable") is False:
+                blockers.append("alpaca_symbol_not_tradable")
+            asset_status = str(asset.get("status") or "").strip().lower()
+            if asset_status and asset_status not in {"active"}:
+                blockers.append("alpaca_asset_inactive")
+
+        return sorted(set(blockers)), details
 
     def _compute_realized_log_return(self, *, entry_price: float, exit_price: float) -> float | None:
         if entry_price <= 0 or exit_price <= 0:
@@ -559,6 +631,13 @@ class AlpacaFirstTradeSystem:
         if existing_positions:
             blockers.append("existing_positions_present")
 
+        live_preflight_blockers, live_preflight_details = self._preflight_live_entry(
+            client=client,
+            account=account,
+            symbol=symbol,
+        )
+        blockers.extend(live_preflight_blockers)
+
         evidence = build_evidence_record(
             source_module="alpaca_first_trade",
             evidence_type="alpaca_crypto_candidate",
@@ -593,9 +672,7 @@ class AlpacaFirstTradeSystem:
         )
 
         if blockers:
-            state.consumed_thesis_ids.append(str(queue_entry.get("thesis_id") or ""))
-            state.consumed_thesis_ids = state.consumed_thesis_ids[-200:]
-            self.save_state(state)
+            self._consume_queue_entry(state, queue_entry)
             return self._write_execution_report(
                 payload={
                     "mode": self.config.mode,
@@ -605,20 +682,43 @@ class AlpacaFirstTradeSystem:
                     "thesis_record": thesis.to_dict(),
                     "promotion_ticket": ticket.to_dict(),
                     "account_cash": available_cash,
+                    "live_preflight": live_preflight_details,
                 },
                 status="blocked",
-                blockers=blockers,
+                blockers=sorted(set(blockers)),
                 summary=f"alpaca first-trade candidate for {symbol} was blocked",
             )
 
-        order = client.submit_order(
-            symbol=symbol,
-            side="buy",
-            order_type="market",
-            time_in_force="gtc",
-            notional=f"{final_notional:.2f}",
-            client_order_id=f"alpaca-entry-{uuid.uuid4().hex[:12]}",
-        )
+        try:
+            order = client.submit_order(
+                symbol=symbol,
+                side="buy",
+                order_type="market",
+                time_in_force="gtc",
+                notional_usd=round(final_notional, 2),
+                client_order_id=f"alpaca-entry-{uuid.uuid4().hex[:12]}",
+            )
+        except AlpacaClientError as exc:
+            classification = classify_alpaca_api_error(exc)
+            if classification["status"] == "blocked":
+                self._consume_queue_entry(state, queue_entry)
+            return self._write_execution_report(
+                payload={
+                    "mode": self.config.mode,
+                    "action": "blocked" if classification["status"] == "blocked" else "error",
+                    "symbol": symbol,
+                    "queue_entry": queue_entry,
+                    "evidence_record": evidence.to_dict(),
+                    "thesis_record": thesis.to_dict(),
+                    "promotion_ticket": ticket.to_dict(),
+                    "account_cash": available_cash,
+                    "live_preflight": live_preflight_details,
+                    "error": classification["error"],
+                },
+                status=classification["status"],
+                blockers=list(classification["blockers"]),
+                summary=str(classification["summary"]),
+            )
         state.open_trade = {
             "thesis_id": queue_entry.get("thesis_id"),
             "variant_id": variant_id,
@@ -630,8 +730,7 @@ class AlpacaFirstTradeSystem:
             "stop_loss_bps": _safe_float(queue_entry.get("stop_loss_bps"), 70.0),
             "take_profit_bps": _safe_float(queue_entry.get("take_profit_bps"), 150.0),
         }
-        state.consumed_thesis_ids.append(str(queue_entry.get("thesis_id") or ""))
-        state.consumed_thesis_ids = state.consumed_thesis_ids[-200:]
+        self._consume_queue_entry(state, queue_entry)
         self.save_state(state)
 
         payload = {

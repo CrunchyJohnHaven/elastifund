@@ -13,6 +13,7 @@ Usage:
 
 Outputs:
     reports/canonical_operator_truth.json   — authoritative operator packet
+    reports/wallet_truth_snapshot_latest.json — typed wallet truth contract
     data/finance_imports/account_polymarket.csv  — refreshed balance row
 
 The March 22 wallet export and all subsequent exports are automatically
@@ -39,6 +40,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from bot.proof_types import build_wallet_truth_snapshot
 from scripts.report_envelope import write_report
 
 POLYMARKET_DATA_API = "https://data-api.polymarket.com"
@@ -46,6 +48,7 @@ INITIAL_DEPOSIT_USD = 247.51  # Canonical from CLAUDE.md; override via --initial
 
 # Output paths
 CANONICAL_TRUTH_PATH = REPO_ROOT / "reports" / "canonical_operator_truth.json"
+WALLET_TRUTH_SNAPSHOT_PATH = REPO_ROOT / "reports" / "wallet_truth_snapshot_latest.json"
 ACCOUNT_CSV_PATH = REPO_ROOT / "data" / "finance_imports" / "account_polymarket.csv"
 RUNTIME_TRUTH_PATH = REPO_ROOT / "reports" / "runtime_truth_latest.json"
 FINANCE_PATH = REPO_ROOT / "reports" / "finance" / "latest.json"
@@ -465,6 +468,41 @@ def update_account_csv(truth: dict) -> None:
         writer.writerow(row)
 
 
+def build_wallet_truth_snapshot_payload(truth: dict[str, Any]) -> dict[str, Any]:
+    source_of_truth = {
+        "runtime_truth": "reports/runtime_truth_latest.json",
+        "canonical_truth": "reports/canonical_operator_truth.json",
+        "finance_gate": "reports/finance/latest.json",
+        "positions_api": "https://data-api.polymarket.com/positions",
+    }
+    metadata = {
+        "btc5_deploy_mode": truth.get("btc5_deploy_mode"),
+        "execution_mode": truth.get("execution_mode"),
+        "agent_run_mode": truth.get("agent_run_mode"),
+        "estimated_total_value_method": truth.get("estimated_total_value_method"),
+        "remote_wallet_total_value_usd": truth.get("remote_wallet_total_value_usd"),
+        "remote_wallet_free_collateral_usd": truth.get("remote_wallet_free_collateral_usd"),
+        "latest_csv_export": truth.get("latest_csv_export"),
+        "runtime_truth_age_seconds": truth.get("runtime_truth_age_seconds"),
+    }
+    snapshot = build_wallet_truth_snapshot(
+        generated_at=str(truth.get("checked_at") or datetime.now(timezone.utc).isoformat()),
+        wallet_address=str(truth.get("wallet_address") or ""),
+        control_posture=str(truth.get("control_posture") or "blocked"),
+        truth_status=str(truth.get("truth_status") or "blocked"),
+        open_positions_count=int(truth.get("open_positions_count") or 0),
+        closed_positions_count=int(truth.get("closed_positions_count") or 0),
+        estimated_total_value_usd=float(truth.get("estimated_total_value_usd") or 0.0),
+        available_cash_usd=float(truth.get("available_cash_usd") or 0.0),
+        capital_live=bool(truth.get("capital_live")),
+        source_of_truth=source_of_truth,
+        blockers=list(truth.get("blockers") or []),
+        mismatches=list(truth.get("truth_mismatches") or []),
+        metadata=metadata,
+    )
+    return snapshot.to_dict()
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -597,6 +635,26 @@ def main(argv: list[str] | None = None) -> int:
             f"control_posture={truth['control_posture']} "
             f"open_positions={truth['open_positions_count']} "
             f"closed_pnl_usd={truth['closed_pnl_usd']:+.2f}"
+        ),
+    )
+    wallet_truth_snapshot_payload = build_wallet_truth_snapshot_payload(truth)
+    write_report(
+        WALLET_TRUTH_SNAPSHOT_PATH,
+        artifact="wallet_truth_snapshot",
+        payload=wallet_truth_snapshot_payload,
+        status="blocked"
+        if truth["blockers"]
+        else ("stale" if (rt_age is not None and rt_age > 3600) else "fresh"),
+        source_of_truth=(
+            "reports/runtime_truth_latest.json; reports/canonical_operator_truth.json; "
+            "reports/finance/latest.json; Polymarket data-api"
+        ),
+        freshness_sla_seconds=3600,
+        blockers=truth["blockers"],
+        summary=(
+            f"truth_status={truth['truth_status']} "
+            f"control_posture={truth['control_posture']} "
+            f"capital_live={truth['capital_live']}"
         ),
     )
 

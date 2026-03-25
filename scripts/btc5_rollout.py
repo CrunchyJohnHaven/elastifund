@@ -194,6 +194,7 @@ def _build_launch_authority(
     )
     launch_verdict = dict(resolved_packet.get("launch_verdict") or {})
     launch_contract = dict(resolved_packet.get("contract") or {})
+    state_permissions = dict(resolved_packet.get("state_permissions") or {})
     submission_contract_consensus = dict(
         resolved_packet.get("submission_contract_consensus") or {}
     )
@@ -279,8 +280,23 @@ def _build_launch_authority(
     baseline_live_allowed = _bool_or_none(
         _first_nonempty(
             launch_verdict.get("baseline_live_allowed"),
+            state_permissions.get("baseline_live_allowed"),
             resolved_packet.get("baseline_live_allowed"),
             remote_cycle_status.get("btc5_baseline_live_allowed"),
+        )
+    )
+    stage_upgrade_allowed = _bool_or_none(
+        _first_nonempty(
+            launch_verdict.get("stage_upgrade_allowed"),
+            state_permissions.get("stage_upgrade_allowed"),
+            resolved_packet.get("stage_upgrade_allowed"),
+        )
+    )
+    capital_expansion_allowed = _bool_or_none(
+        _first_nonempty(
+            launch_verdict.get("capital_expansion_allowed"),
+            state_permissions.get("capital_expansion_allowed"),
+            resolved_packet.get("capital_expansion_allowed"),
         )
     )
     block_reasons = [
@@ -329,6 +345,8 @@ def _build_launch_authority(
         "live_launch_blocked": live_launch_blocked,
         "allow_execution": allow_execution,
         "baseline_live_allowed": baseline_live_allowed,
+        "stage_upgrade_allowed": stage_upgrade_allowed,
+        "capital_expansion_allowed": capital_expansion_allowed,
         "block_reasons": block_reasons,
         "failed_checks": failed_checks,
         "authority_green": authority_green,
@@ -813,6 +831,7 @@ def select_rollout_decision(
     allow_order_submission = bool(launch_authority.get("allow_order_submission"))
     paper_trading = launch_authority.get("paper_trading")
     live_order_submission_allowed = bool(launch_authority.get("live_order_submission_allowed"))
+    baseline_live_allowed = bool(launch_authority.get("baseline_live_allowed"))
     recent_12_live_pnl = _safe_float(
         _first_nonempty(
             (((remote_cycle_status.get("btc_5min_maker") or {}).get("intraday_live_summary") or {}).get("recent_12_pnl_usd")),
@@ -884,6 +903,8 @@ def select_rollout_decision(
 
     if not truth_green:
         rationale.append("truth_surface_blocks_live_stage_1")
+    if baseline_live_allowed and not package_green:
+        rationale.append("launch_packet_baseline_live_allowed_but_package_not_green")
     if not launch_authority.get("authority_available"):
         rationale.append("launch_packet_missing")
     if launch_posture != "clear":
@@ -1122,6 +1143,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 TRACKED_OVERRIDE_KEYS = {{
+    'BTC5_DEPLOY_MODE',
+    'BTC5_PAPER_TRADING',
     'BTC5_CAPITAL_STAGE',
     'BTC5_BANKROLL_USD',
     'BTC5_RISK_FRACTION',
@@ -1134,6 +1157,8 @@ TRACKED_OVERRIDE_KEYS = {{
     'BTC5_STAGE3_MAX_TRADE_USD',
 }}
 REQUIRED_STAGE_OVERRIDE_KEYS = (
+    'BTC5_DEPLOY_MODE',
+    'BTC5_PAPER_TRADING',
     'BTC5_CAPITAL_STAGE',
     'BTC5_BANKROLL_USD',
     'BTC5_RISK_FRACTION',
@@ -1190,10 +1215,13 @@ cfg = MakerConfig()
 db = TradeDB(cfg.db_path)
 status = db.status_summary()
 service_name = {REMOTE_BTC5_SERVICE!r}
-deploy_mode = str(os.environ.get('BTC5_DEPLOY_MODE') or '').strip() or (
-    'shadow_probe' if cfg.paper_trading else 'live_stage1'
-)
-paper_trading = bool(cfg.paper_trading)
+def _bool_or_none(value):
+    text = str(value or '').strip().lower()
+    if text in ('1', 'true', 'yes', 'on'):
+        return True
+    if text in ('0', 'false', 'no', 'off'):
+        return False
+    return None
 
 systemctl_state = subprocess.run(
     ['systemctl', 'is-active', service_name],
@@ -1224,6 +1252,14 @@ stage_override_detail = env_file_details.get('state/btc5_capital_stage.env') or 
     'tracked_values': {{}},
 }}
 stage_override_values = dict(stage_override_detail.get('tracked_values') or {{}})
+deploy_mode = str(
+    stage_override_values.get('BTC5_DEPLOY_MODE')
+    or os.environ.get('BTC5_DEPLOY_MODE')
+    or ''
+).strip() or ('shadow_probe' if cfg.paper_trading else 'live_stage1')
+paper_trading = _bool_or_none(stage_override_values.get('BTC5_PAPER_TRADING'))
+if paper_trading is None:
+    paper_trading = bool(cfg.paper_trading)
 missing_override_keys = [
     key for key in REQUIRED_STAGE_OVERRIDE_KEYS if key not in stage_override_values
 ]

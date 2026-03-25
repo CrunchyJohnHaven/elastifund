@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from bot.kalshi_auth import load_kalshi_credentials
 from bot.cross_platform_arb import fetch_polymarket_markets, title_similarity
 from kalshi.weather_arb import fetch_open_markets, get_kalshi_client
 
@@ -435,27 +436,17 @@ def audit_crossvenue_matching(
     }
 
 
-def _kalshi_key_path() -> Optional[str]:
-    env_path = os.environ.get("KALSHI_RSA_KEY_PATH", "").strip()
-    candidates = [env_path, "bot/kalshi/kalshi_rsa_private.pem", "kalshi/kalshi_rsa_private.pem"]
-    for candidate in candidates:
-        if not candidate:
-            continue
-        if Path(candidate).exists():
-            return candidate
-    return None
-
-
 def validate_kalshi_auth_dryrun(*, max_pages: int = 1) -> dict[str, Any]:
-    api_key = os.environ.get("KALSHI_API_KEY_ID", "").strip()
-    key_path = _kalshi_key_path()
-    credentials_exist = bool(api_key and key_path)
+    credentials_exist = load_kalshi_credentials().configured
 
     if not credentials_exist:
         return {
             "credentials_present": False,
             "status": "skipped_no_credentials",
-            "details": "KALSHI_API_KEY_ID and RSA key not both present; using public scan path.",
+            "details": (
+                "KALSHI_API_KEY_ID and private key material are not both present; "
+                "using public scan path."
+            ),
         }
 
     try:

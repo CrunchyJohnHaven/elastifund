@@ -2737,16 +2737,24 @@ def _build_accounting_reconciliation(
             return len(value)
         return int(value or 0)
 
-    local_total_trades = int(
-        _first_nonempty(
-            jj_state.get("total_trades"),
-            trade_counts.get("total_trades"),
-            runtime.get("trade_db_total_trades"),
-            runtime.get("total_trades"),
-            0,
+    jj_state_total_trades = int(_safe_float(jj_state.get("total_trades"), 0.0) or 0)
+    trade_db_total_trades = int(_safe_float(trade_counts.get("total_trades"), 0.0) or 0)
+    runtime_trade_db_total = int(_safe_float(runtime.get("trade_db_total_trades"), 0.0) or 0)
+    if jj_state_total_trades <= 0 and trade_db_total_trades > 0:
+        local_total_trades = trade_db_total_trades
+    elif jj_state_total_trades <= 0 and runtime_trade_db_total > 0:
+        local_total_trades = runtime_trade_db_total
+    else:
+        local_total_trades = int(
+            _first_nonempty(
+                jj_state.get("total_trades"),
+                trade_counts.get("total_trades"),
+                runtime.get("trade_db_total_trades"),
+                runtime.get("total_trades"),
+                0,
+            )
+            or 0
         )
-        or 0
-    )
     local_closed_positions = int(
         _first_nonempty(
             trade_counts.get("closed_trades"),
@@ -2759,6 +2767,19 @@ def _build_accounting_reconciliation(
         local_open_positions = _count_positions(jj_state.get("open_positions"))
     else:
         local_open_positions = _count_positions(runtime.get("open_positions"))
+    wallet_mirror_open_positions = int(_safe_float(trade_counts.get("wallet_open_positions"), 0.0) or 0)
+    wallet_mirror_closed_positions = int(_safe_float(trade_counts.get("wallet_closed_positions"), 0.0) or 0)
+    wallet_mirror_available = (
+        str(trade_counts.get("wallet_position_source") or "").strip().lower()
+        == "data/jj_trades.db:wallet_position_mirror"
+    )
+    if wallet_mirror_available:
+        local_open_positions = wallet_mirror_open_positions
+        local_closed_positions = wallet_mirror_closed_positions
+        local_total_trades = max(
+            local_total_trades,
+            wallet_mirror_open_positions + wallet_mirror_closed_positions,
+        )
 
     wallet_status = str(polymarket_wallet.get("status") or "unavailable").strip().lower()
     remote_wallet_source = str(
@@ -2781,6 +2802,8 @@ def _build_accounting_reconciliation(
         str(trade_counts.get("source") or "").strip().lower() == "data/jj_trades.db"
     )
     local_ledger_has_activity = (
+        wallet_mirror_available
+        or
         explicit_local_trade_history
         or explicit_local_open_positions > 0
         or int(_safe_float(jj_state.get("total_trades"), 0.0) or 0) > 0
@@ -3841,11 +3864,24 @@ def build_runtime_mode_reconciliation(
         or remote_mode.get("execution_mode")
         or ""
     ).strip().lower()
+    deploy_evidence_freshness = str(deploy_evidence.get("freshness") or "unknown").strip().lower()
+    deploy_evidence_fresh = deploy_evidence_freshness in {"fresh", "aging"}
+    deploy_service_name = str(deploy_evidence.get("service_name") or "").strip()
+    current_service_name = str(
+        (status.get("service") or {}).get("service_name") or PRIMARY_RUNTIME_SERVICE_NAME
+    ).strip()
+    deploy_service_matches = (
+        not deploy_service_name
+        or not current_service_name
+        or deploy_service_name == current_service_name
+    )
     remote_mode_authoritative = bool(
         service_state == "running"
         and str(remote_runtime_profile or "").strip()
         and remote_agent_mode_from_env in {"live", "micro_live"}
         and remote_execution_mode in {"live", "micro_live"}
+        and deploy_evidence_fresh
+        and deploy_service_matches
     )
     launch_live_blocked = bool(status.get("launch", {}).get("live_launch_blocked"))
     launch_blocked_checks = {
@@ -3963,6 +3999,10 @@ def build_runtime_mode_reconciliation(
     guarded_signal_thresholds = dict(signal_thresholds)
     guarded_market_filters = dict(market_filters)
     effective_runtime_profile = selected_profile
+    if service_state == "running" and not deploy_evidence_fresh:
+        launch_guard_reasons.append("stale_deploy_evidence_advisory_only")
+    if service_state == "running" and not deploy_service_matches:
+        launch_guard_reasons.append("deploy_evidence_service_name_mismatch")
     if remote_mode_authoritative:
         guarded_mode = dict(remote_mode)
         guarded_flags = dict(remote_mode_config.get("feature_flags") or {})
@@ -4284,6 +4324,10 @@ def build_runtime_mode_reconciliation(
             "mode_field_inconsistency": bool(mode_inconsistency_reasons),
             "mode_field_inconsistency_reasons": mode_inconsistency_reasons,
             "remote_mode_authoritative": remote_mode_authoritative,
+            "deploy_evidence_freshness": deploy_evidence_freshness,
+            "deploy_evidence_age_minutes": deploy_evidence.get("age_minutes"),
+            "deploy_evidence_service_name": deploy_service_name or None,
+            "deploy_evidence_service_name_matches": deploy_service_matches,
             "service_running_while_launch_blocked": service_state == "running"
             and launch_posture == "blocked",
             "runtime_profile_effective_stale_before_refresh": bool(
@@ -4309,6 +4353,8 @@ def build_runtime_mode_reconciliation(
             "safe_baseline_required": safe_baseline_required,
             "bounded_stage1_live_override": bounded_stage1_live_override,
             "remote_mode_authoritative": remote_mode_authoritative,
+            "deploy_evidence_freshness": deploy_evidence_freshness,
+            "deploy_evidence_service_name_matches": deploy_service_matches,
             "lock_reasons": launch_guard_reasons,
             "neutralized_overrides": neutralized_overrides,
         },
@@ -7160,12 +7206,19 @@ def refresh_root_test_status(
 def _load_trade_counts(root: Path) -> dict[str, Any]:
     db_path = root / DEFAULT_TRADES_DB_PATH
     if not db_path.exists():
-        return {"source": "jj_state_fallback", "total_trades": 0, "closed_trades": 0}
+        return {
+            "source": "jj_state_fallback",
+            "total_trades": 0,
+            "closed_trades": 0,
+            "wallet_open_positions": 0,
+            "wallet_closed_positions": 0,
+            "wallet_position_source": "missing",
+        }
 
     conn: sqlite3.Connection | None = None
     try:
         conn = sqlite3.connect(db_path)
-        row = conn.execute(
+        trade_row = conn.execute(
             """
             SELECT
                 COUNT(*) AS total_trades,
@@ -7173,8 +7226,28 @@ def _load_trade_counts(root: Path) -> dict[str, Any]:
             FROM trades
             """
         ).fetchone()
+        tables = {
+            str(row[0])
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+        }
+        wallet_open_positions = 0
+        wallet_closed_positions = 0
+        wallet_position_source = "missing"
+        if "wallet_open_positions" in tables and "wallet_closed_positions" in tables:
+            open_row = conn.execute("SELECT COUNT(*) FROM wallet_open_positions").fetchone()
+            closed_row = conn.execute("SELECT COUNT(*) FROM wallet_closed_positions").fetchone()
+            wallet_open_positions = int(open_row[0] or 0) if open_row else 0
+            wallet_closed_positions = int(closed_row[0] or 0) if closed_row else 0
+            wallet_position_source = "data/jj_trades.db:wallet_position_mirror"
     except sqlite3.DatabaseError:
-        return {"source": "jj_state_fallback", "total_trades": 0, "closed_trades": 0}
+        return {
+            "source": "jj_state_fallback",
+            "total_trades": 0,
+            "closed_trades": 0,
+            "wallet_open_positions": 0,
+            "wallet_closed_positions": 0,
+            "wallet_position_source": "missing",
+        }
     finally:
         try:
             if conn is not None:
@@ -7182,12 +7255,15 @@ def _load_trade_counts(root: Path) -> dict[str, Any]:
         except Exception:
             pass
 
-    total_trades = int(row[0] or 0) if row else 0
-    closed_trades = int(row[1] or 0) if row else 0
+    total_trades = int(trade_row[0] or 0) if trade_row else 0
+    closed_trades = int(trade_row[1] or 0) if trade_row else 0
     return {
         "source": "data/jj_trades.db",
         "total_trades": total_trades,
         "closed_trades": closed_trades,
+        "wallet_open_positions": wallet_open_positions,
+        "wallet_closed_positions": wallet_closed_positions,
+        "wallet_position_source": wallet_position_source,
     }
 
 
@@ -7680,23 +7756,34 @@ def _normalize_pipeline_verification_payload(
 
 def _load_wallet_flow_status(root: Path) -> dict[str, Any]:
     scores_path = root / DEFAULT_WALLET_SCORES_PATH
+    fallback_scores_path = root / "config" / "smart_wallets.json"
     db_path = root / DEFAULT_WALLET_DB_PATH
 
     scores_exists = scores_path.exists()
+    fallback_scores_exists = fallback_scores_path.exists()
     db_exists = db_path.exists()
     reasons: list[str] = []
     wallet_count = 0
     last_updated = None
+    source_path = scores_path
 
     if not scores_exists:
-        reasons.append("missing_data/smart_wallets.json")
-    else:
+        if fallback_scores_exists:
+            source_path = fallback_scores_path
+        else:
+            reasons.append("missing_data/smart_wallets.json")
+
+    if source_path.exists():
         try:
-            payload = load_path(scores_path)
+            payload = load_path(source_path)
             wallet_count = _extract_wallet_count(payload)
             last_updated = _extract_wallet_last_updated(payload)
         except ValueError:
-            reasons.append("invalid_data/smart_wallets.json")
+            reasons.append(
+                "invalid_data/smart_wallets.json"
+                if source_path == scores_path
+                else "invalid_config/smart_wallets.json"
+            )
 
     if not db_exists:
         reasons.append("missing_data/wallet_scores.db")
@@ -7707,18 +7794,20 @@ def _load_wallet_flow_status(root: Path) -> dict[str, Any]:
     if last_updated is None:
         candidate_times = [
             _safe_iso_mtime(path)
-            for path in (scores_path, db_path)
+            for path in (source_path, db_path)
             if path.exists()
         ]
         last_updated = next((value for value in candidate_times if value), None)
 
-    ready = scores_exists and db_exists and wallet_count > 0
+    ready = source_path.exists() and db_exists and wallet_count > 0
     return {
         "status": "ready" if ready else "not_ready",
         "ready": ready,
         "reasons": reasons,
         "wallet_count": wallet_count,
         "scores_exists": scores_exists,
+        "scores_seed_exists": source_path.exists(),
+        "scores_source_path": _relative_path_text(root, source_path),
         "db_exists": db_exists,
         "last_updated": last_updated,
     }
@@ -9471,7 +9560,6 @@ def _apply_shared_truth_contract(
             agent_run_mode in {"live", "micro_live"}
             or execution_mode in {"live", "micro_live"}
             or paper_trading is False
-            or allow_order_submission
             or order_submit_enabled
         )
     )
@@ -9515,6 +9603,15 @@ def _apply_shared_truth_contract(
     broken_reasons = _dedupe_preserve_order(broken_reasons)
     repair_branch_required = bool(broken_reasons)
     truth_gate_status = "hold_repair" if repair_branch_required else "consistent"
+    publish_allow_order_submission = bool(
+        allow_order_submission
+        and launch_posture != "blocked"
+        and not repair_branch_required
+    )
+    publish_order_submit_enabled = bool(
+        order_submit_enabled
+        and publish_allow_order_submission
+    )
     one_next_cycle_action = str(
         truth_lattice.get("one_next_cycle_action")
         or "Truth lattice is coherent; continue with the current launch and champion-lane contract."
@@ -9611,12 +9708,20 @@ def _apply_shared_truth_contract(
     snapshot["truth_lattice"] = truth_lattice
     snapshot["truth_gate_status"] = truth_gate_status
     snapshot["truth_gate_blocking_checks"] = list(broken_reasons)
+    snapshot["allow_order_submission"] = publish_allow_order_submission
+    snapshot["order_submit_enabled"] = publish_order_submit_enabled
+    launch_block = dict(snapshot.get("launch") or {})
+    launch_block["allow_order_submission"] = publish_allow_order_submission
+    launch_block["order_submit_enabled"] = publish_order_submit_enabled
+    snapshot["launch"] = launch_block
     snapshot.update(_derive_btc5_selection_compat_fields(snapshot))
 
     summary = dict(snapshot.get("summary") or {})
     if repair_branch_required:
         summary["trading_cycle_status"] = "hold_repair"
         summary["one_next_cycle_action"] = one_next_cycle_action
+    summary["allow_order_submission"] = publish_allow_order_submission
+    summary["order_submit_enabled"] = publish_order_submit_enabled
     snapshot["summary"] = summary
     return snapshot
 
@@ -9633,11 +9738,15 @@ def _apply_shared_truth_contract_to_status(
     truth_gate_blocking_checks = list(runtime_truth_snapshot.get("truth_gate_blocking_checks") or [])
     state_permissions = dict(runtime_truth_snapshot.get("state_permissions") or {})
     operator_verdict = dict(runtime_truth_snapshot.get("operator_verdict") or {})
+    allow_order_submission = bool(runtime_truth_snapshot.get("allow_order_submission"))
+    order_submit_enabled = bool(runtime_truth_snapshot.get("order_submit_enabled"))
 
     status["truth_precedence"] = truth_precedence
     status["truth_lattice"] = truth_lattice
     status["truth_gate_status"] = truth_gate_status
     status["truth_gate_blocking_checks"] = truth_gate_blocking_checks
+    status["allow_order_submission"] = allow_order_submission
+    status["order_submit_enabled"] = order_submit_enabled
     status["attribution"] = dict(
         runtime_truth_snapshot.get("attribution") or status.get("attribution") or {}
     )
@@ -9668,6 +9777,8 @@ def _apply_shared_truth_contract_to_status(
             status[key] = runtime_truth_snapshot.get(key)
     status.setdefault("runtime_truth", {}).update(
         {
+            "allow_order_submission": allow_order_submission,
+            "order_submit_enabled": order_submit_enabled,
             "truth_precedence": truth_precedence,
             "truth_lattice": truth_lattice,
             "truth_gate_status": truth_gate_status,
@@ -9680,6 +9791,10 @@ def _apply_shared_truth_contract_to_status(
             **compatibility_fields,
         }
     )
+    launch = dict(status.get("launch") or {})
+    launch["allow_order_submission"] = allow_order_submission
+    launch["order_submit_enabled"] = order_submit_enabled
+    status["launch"] = launch
     if status.get("baseline_live_allowed") is None:
         derived_baseline_live_allowed = state_permissions.get("baseline_live_allowed")
         if derived_baseline_live_allowed is None:
@@ -11535,21 +11650,46 @@ def _build_effective_thresholds(
     }
 
 
+def _deploy_evidence_freshness(generated_at: Any) -> dict[str, Any]:
+    checked = _parse_datetime_like(generated_at)
+    age_minutes = (
+        round(max(0.0, (datetime.now(timezone.utc) - checked).total_seconds()) / 60.0, 1)
+        if checked is not None
+        else None
+    )
+    freshness = "unknown"
+    if age_minutes is not None:
+        if age_minutes <= 45.0:
+            freshness = "fresh"
+        elif age_minutes <= 360.0:
+            freshness = "aging"
+        else:
+            freshness = "stale"
+    return {
+        "age_minutes": age_minutes,
+        "freshness": freshness,
+    }
+
+
 def _load_latest_deploy_evidence(root: Path) -> dict[str, Any]:
     reports_dir = root / "reports"
-    candidates = [path for path in reports_dir.glob("deploy*.json") if path.is_file()]
+    deploy_candidates = [path for path in reports_dir.glob("deploy*.json") if path.is_file()]
     activation_path = root / BTC5_DEPLOY_ACTIVATION_PATH
-    if activation_path.is_file():
+    candidates = list(deploy_candidates)
+    if not candidates and activation_path.is_file():
         candidates.append(activation_path)
     if not candidates:
         return {
             "path": None,
             "generated_at": None,
+            "age_minutes": None,
+            "freshness": "unknown",
             "remote_env_exists": None,
             "remote_values": {},
             "remote_runtime_profile": None,
             "agent_run_mode": None,
             "paper_trading": None,
+            "service_name": None,
             "service_state": None,
             "process_state": "unknown",
             "remote_probe": {},
@@ -11567,21 +11707,36 @@ def _load_latest_deploy_evidence(root: Path) -> dict[str, Any]:
     if latest_path == activation_path:
         override_env = dict(payload.get("override_env") or {})
         tracked_values = dict(override_env.get("tracked_values") or {})
-        deploy_mode = str(payload.get("deploy_mode") or "").strip().lower()
+        current_stage_env = _parse_env_file(root / BTC5_CAPITAL_STAGE_ENV_PATH)
+        deploy_mode = str(
+            current_stage_env.get("BTC5_DEPLOY_MODE")
+            or payload.get("deploy_mode")
+            or ""
+        ).strip().lower()
         runtime_profile = str(payload.get("runtime_profile") or "").strip() or None
-        paper_trading = payload.get("paper_trading")
+        paper_trading = _bool_or_none(current_stage_env.get("BTC5_PAPER_TRADING"))
+        if paper_trading is None:
+            paper_trading = payload.get("paper_trading")
         if paper_trading is None:
             paper_trading = _bool_or_none(tracked_values.get("PAPER_TRADING"))
         if paper_trading is None:
             paper_trading = _bool_or_none(
                 tracked_values.get("BTC5_PAPER_TRADING")
             )
-        agent_run_mode = "live" if deploy_mode.startswith("live") else None
+        agent_run_mode = str(
+            tracked_values.get("ELASTIFUND_AGENT_RUN_MODE")
+            or ""
+        ).strip().lower() or None
+        if agent_run_mode is None and paper_trading is not None:
+            agent_run_mode = "shadow" if paper_trading else "live"
         remote_values = dict(tracked_values)
         if runtime_profile:
             remote_values["JJ_RUNTIME_PROFILE"] = runtime_profile
+        if deploy_mode:
+            remote_values["BTC5_DEPLOY_MODE"] = deploy_mode
         if paper_trading is not None:
             remote_values["PAPER_TRADING"] = "true" if bool(paper_trading) else "false"
+            remote_values["BTC5_PAPER_TRADING"] = "true" if bool(paper_trading) else "false"
         if agent_run_mode:
             remote_values["ELASTIFUND_AGENT_RUN_MODE"] = agent_run_mode
 
@@ -11605,15 +11760,20 @@ def _load_latest_deploy_evidence(root: Path) -> dict[str, Any]:
             if required_passed
             else ("not_running" if str(payload.get("service_status") or "").strip() == "stopped" else "activation_failed")
         )
+        freshness = _deploy_evidence_freshness(
+            _first_nonempty(payload.get("checked_at"), payload.get("generated_at"))
+        )
         return {
             "path": _relative_path_text(root, latest_path),
             "generated_at": _first_nonempty(payload.get("checked_at"), payload.get("generated_at")),
+            "age_minutes": freshness["age_minutes"],
+            "freshness": freshness["freshness"],
             "remote_env_exists": override_env.get("exists"),
             "remote_values": remote_values,
             "remote_runtime_profile": runtime_profile,
             "agent_run_mode": agent_run_mode,
             "paper_trading": paper_trading,
-            "deploy_mode": payload.get("deploy_mode"),
+            "deploy_mode": deploy_mode or payload.get("deploy_mode"),
             "service_name": payload.get("service_name"),
             "service_state": payload.get("service_status"),
             "process_state": process_state,
@@ -11651,20 +11811,28 @@ def _load_latest_deploy_evidence(root: Path) -> dict[str, Any]:
     else:
         process_state = "unknown"
     validation = _summarize_deploy_validation(payload)
-    paper_trading = remote_mode.get("paper_trading")
+    paper_trading = _bool_or_none(remote_mode.get("paper_trading"))
     if paper_trading is None:
         paper_trading = _bool_or_none(remote_values.get("PAPER_TRADING"))
     if paper_trading is None:
         paper_trading = _bool_or_none(remote_values.get("BTC5_PAPER_TRADING"))
+    freshness = _deploy_evidence_freshness(payload.get("generated_at"))
 
     return {
         "path": _relative_path_text(root, latest_path),
         "generated_at": payload.get("generated_at"),
+        "age_minutes": freshness["age_minutes"],
+        "freshness": freshness["freshness"],
         "remote_env_exists": remote_mode.get("remote_env_exists"),
         "remote_values": remote_values,
         "remote_runtime_profile": remote_mode.get("runtime_profile"),
         "agent_run_mode": remote_mode.get("agent_run_mode"),
         "paper_trading": paper_trading,
+        "service_name": _first_nonempty(
+            payload.get("service_name"),
+            post_service.get("service_name"),
+            pre_service.get("service_name"),
+        ),
         "service_state": service_state,
         "process_state": process_state,
         "remote_probe": remote_probe,

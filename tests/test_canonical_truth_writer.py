@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from scripts.canonical_truth_writer import build_canonical_truth
+from scripts.canonical_truth_writer import (
+    build_canonical_truth,
+    build_wallet_truth_snapshot_payload,
+)
 
 
 def test_build_canonical_truth_blocks_trade_proof_mismatch() -> None:
@@ -66,3 +69,31 @@ def test_build_canonical_truth_prefers_remote_wallet_counts(monkeypatch) -> None
     assert truth["estimated_total_value_method"] == "remote_wallet_counts"
     assert truth["control_posture"] == "blocked"
     assert truth["capital_live"] is False
+
+
+def test_build_wallet_truth_snapshot_payload_surfaces_hash_and_blockers() -> None:
+    payload = build_wallet_truth_snapshot_payload(
+        {
+            "checked_at": "2026-03-24T08:20:00Z",
+            "wallet_address": "0xabc",
+            "control_posture": "blocked",
+            "truth_status": "blocked",
+            "open_positions_count": 1,
+            "closed_positions_count": 5,
+            "estimated_total_value_usd": 1106.78,
+            "available_cash_usd": 1059.0,
+            "capital_live": False,
+            "blockers": ["runtime_truth_stale"],
+            "truth_mismatches": ["wallet_balance_drift"],
+            "btc5_deploy_mode": "shadow",
+            "execution_mode": "shadow",
+            "agent_run_mode": "shadow",
+            "estimated_total_value_method": "remote_wallet_counts",
+            "runtime_truth_age_seconds": 120.0,
+        }
+    )
+
+    assert payload["snapshot_id"]
+    assert payload["truth_status"] == "blocked"
+    assert payload["blockers"] == ["runtime_truth_stale"]
+    assert payload["mismatches"] == ["wallet_balance_drift"]

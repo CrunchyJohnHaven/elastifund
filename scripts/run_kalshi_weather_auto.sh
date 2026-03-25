@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
+export PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}"
 
 get_env_or_dotenv() {
   local key="$1"
@@ -24,7 +25,11 @@ get_env_or_dotenv() {
 }
 
 PYTHON_BIN="python3"
-if [ -f "$ROOT_DIR/.venv_kalshi/bin/python" ]; then
+if [ -f "$ROOT_DIR/.venv/bin/python" ]; then
+  PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
+elif [ -f "$ROOT_DIR/venv/bin/python3" ]; then
+  PYTHON_BIN="$ROOT_DIR/venv/bin/python3"
+elif [ -f "$ROOT_DIR/.venv_kalshi/bin/python" ]; then
   PYTHON_BIN="$ROOT_DIR/.venv_kalshi/bin/python"
 fi
 
@@ -39,7 +44,7 @@ ENV_KELLY_FRACTION="$(get_env_or_dotenv KALSHI_WEATHER_KELLY_FRACTION '0.25')"
 ENV_EDGE_THRESHOLD="$(get_env_or_dotenv KALSHI_WEATHER_EDGE_THRESHOLD '0.12')"
 ENV_MAX_SPREAD="$(get_env_or_dotenv KALSHI_WEATHER_MAX_SPREAD '0.12')"
 
-exec "$PYTHON_BIN" kalshi/weather_arb.py \
+exec "$PYTHON_BIN" -m kalshi.weather_arb \
   --mode "${ENV_MODE}" \
   --max-pages "${ENV_MAX_PAGES}" \
   --max-signals "${ENV_MAX_SIGNALS}" \

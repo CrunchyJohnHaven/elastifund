@@ -26,7 +26,7 @@ from bot.alpaca_first_trade import (  # noqa: E402
     AlpacaFirstTradeSystem,
     send_alpaca_trade_alert,
 )
-from bot.alpaca_client import AlpacaClientError  # noqa: E402
+from bot.alpaca_client import AlpacaClientError, classify_alpaca_api_error  # noqa: E402
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -43,7 +43,18 @@ def run_once(mode: str | None = None) -> tuple[int, dict]:
     try:
         report = system.run_full_cycle()
     except AlpacaClientError as exc:
-        return 1, {"status": "error", "error": str(exc)}
+        classification = classify_alpaca_api_error(exc)
+        report = system._write_execution_report(  # noqa: SLF001 - persist venue failures for the feedback loop
+            payload={
+                "mode": config.mode,
+                "action": "blocked" if classification["status"] == "blocked" else "error",
+                "error": classification["error"],
+            },
+            status=classification["status"],
+            blockers=list(classification["blockers"]),
+            summary=str(classification["summary"]),
+        )
+        return (0 if classification["status"] == "blocked" else 1), report
     return 0, report
 
 

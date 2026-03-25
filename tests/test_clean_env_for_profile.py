@@ -103,7 +103,7 @@ def test_clean_env_helper_strips_runtime_overrides_and_preserves_secrets(tmp_pat
     assert "Paper trading: True" in result.stdout
 
 
-def test_clean_env_helper_defaults_to_live_aggressive(tmp_path: Path) -> None:
+def test_clean_env_helper_defaults_to_shadow_fast_flow(tmp_path: Path) -> None:
     project = _build_temp_project(tmp_path)
     (project / ".env").write_text(
         "\n".join(
@@ -122,5 +122,5 @@ def test_clean_env_helper_defaults_to_live_aggressive(tmp_path: Path) -> None:
     assert "API_KEY=keep-me" in cleaned_env
     assert "PAPER_TRADING" not in cleaned_env
     assert cleaned_env.count("JJ_RUNTIME_PROFILE=") == 1
-    assert cleaned_env.rstrip().endswith("JJ_RUNTIME_PROFILE=live_aggressive")
-    assert "Profile: live_aggressive" in result.stdout
+    assert cleaned_env.rstrip().endswith("JJ_RUNTIME_PROFILE=shadow_fast_flow")
+    assert "Profile: shadow_fast_flow" in result.stdout

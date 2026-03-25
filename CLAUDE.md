@@ -159,10 +159,10 @@ This is standard practice. Quantopian was open-source but nobody published their
 
 **Deploy command (always use this exact form):**
 ```bash
-cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --profile maker_velocity_live --restart --btc5
+cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --profile shadow_fast_flow --restart --btc5
 ```
 
-**Operating context:** This is an autonomous trading experiment with no humans in the loop. Continuous execution. Maximize ARR. Do not ask to rotate keys or add unnecessary safety gates. The principal (John) has explicitly authorized full capital deployment and continuous autonomous operation.
+**Operating context:** This repo is running the proving-ground reset. Until the launch contract is green, `shadow_fast_flow` is the default deploy target and no document should claim that a live profile is authoritative. Do not bypass runtime truth, wallet truth, or launch-contract blockers.
 
 ---
 
@@ -236,8 +236,8 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 - Reconcile wallet PnL vs CSV per-trade PnL discrepancy
 
 ### System Configuration
-**Live trading:** MAKER VELOCITY LIVE — `maker_velocity_live` profile is the active deploy target
-**Live config:** $10/position (main), $5/trade (BTC 5-min; scale to $10 BLOCKED by promotion gate failure), 30 max open positions, uncapped daily loss, 0.25 Kelly, 24h max resolution, 30s scan interval
+**Launch posture:** BLOCKED PENDING TRUTH REPAIR — `shadow_fast_flow` is the active deploy baseline until runtime truth is green
+**Active config posture:** paper/shadow baseline, $5/trade BTC 5-min cap, no manual live overrides, promotion required before any venue graduates out of shadow
 **Execution mode:** 100% Post-Only maker orders (Dispatch #75 pivot)
 **BTC 5-min maker:** Instance 2 (`btc-5min-maker.service`). Local DB: 302 rows, ALL skips, 0 live fills. VPS DB: 553+ rows, signature fix deployed. Skip diagnosis (local): skip_delta_too_large 164 (54%), skip_shadow_only 56 (19%), skip_toxic_order_flow 42 (14%), skip_midpoint_kill_zone 21, skip_price_outside_guardrails 9, skip_bad_book 3. Last local entry: 2026-03-13 18:24 UTC. DISPATCH_100 fixed 4 blockers on VPS but fills still not flowing. Primary remaining issue: delta threshold too tight for current BTC volatility.
 

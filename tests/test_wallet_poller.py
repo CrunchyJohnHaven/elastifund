@@ -14,6 +14,7 @@ from bot.wallet_poller import (
     PollerState,
     WalletSnapshot,
     _iso,
+    _resolve_user_address,
     _write_heartbeat,
     _write_snapshot,
     run_single_poll,
@@ -297,3 +298,12 @@ class TestPollerState:
         state.cycles_completed = 5
         state.consecutive_errors = 2
         assert state.cycles_completed == 5
+        assert state.consecutive_errors == 2
+
+
+def test_resolve_user_address_prefers_poly_data_api_address(monkeypatch) -> None:
+    monkeypatch.setenv("POLY_DATA_API_ADDRESS", "0x123")
+    monkeypatch.setenv("POLY_SAFE_ADDRESS", "0x456")
+    monkeypatch.setenv("POLYMARKET_FUNDER", "0x789")
+
+    assert _resolve_user_address() == "0x123"

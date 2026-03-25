@@ -1,0 +1,19 @@
+{
+  "generated_at": "2026-03-25T13:26:29.326287+00:00",
+  "source": "btc5_autoresearch_probe + window_trades",
+  "probe_generated_at": "2026-03-24T17:06:13.525111+00:00",
+  "active_profile": {
+    "down_max_buy_price": 0.53,
+    "max_abs_delta": 0.01,
+    "name": "current_live_profile",
+    "up_max_buy_price": 0.52
+  },
+  "skip_rate": 0.428571,
+  "fill_retention_ratio": 2.0,
+  "live_fill_count": 11,
+  "avg_order_price_filled": 0.3327,
+  "avg_bid_ask_spread_filled": null,
+  "capital_stage": 1,
+  "deploy_recommendation": "hold",
+  "notes": "avg_bid_ask_spread_filled is the mean (best_ask - best_bid) at order placement time across all filled windows.  A spread > 0.04 indicates thin books; consider reducing trade size."
+}

@@ -63,6 +63,64 @@ def test_select_rollout_decision_allows_bounded_live_stage1() -> None:
     assert decision.shipped_mode == "live_stage1"
 
 
+def test_select_rollout_decision_blocks_baseline_live_permission_without_promotion_green() -> None:
+    decision = select_rollout_decision(
+        {
+            "launch_posture": "clear",
+            "allow_order_submission": True,
+            "paper_trading": False,
+            "rollout_checks": {"baseline_live_permission_consensus": True},
+            "accounting_reconciliation": {"drift_detected": False},
+            "launch_packet": {
+                "launch_verdict": {
+                    "posture": "clear",
+                    "baseline_live_allowed": True,
+                    "stage_upgrade_allowed": False,
+                    "capital_expansion_allowed": False,
+                },
+                "state_permissions": {
+                    "baseline_live_allowed": True,
+                    "stage_upgrade_allowed": False,
+                    "capital_expansion_allowed": False,
+                },
+                "contract": {
+                    "allow_order_submission": True,
+                    "paper_trading": False,
+                    "order_submit_enabled": True,
+                },
+                "submission_contract_consensus": {
+                    "launch_posture_clear": True,
+                    "allow_order_submission": True,
+                    "paper_trading_disabled": True,
+                },
+                "live_order_submission_allowed": True,
+            },
+            "btc_5min_maker": {"intraday_live_summary": {"recent_12_pnl_usd": -3.0}},
+            "btc5_stage_readiness": {
+                "allowed_stage": 0,
+                "can_trade_now": False,
+            },
+            "deployment_confidence": {
+                "allowed_stage": 0,
+                "can_btc5_trade_now": False,
+                "confidence_label": "low",
+                "confirmation_coverage_sufficient": False,
+                "validated_package": {"validated_for_live_stage1": False},
+            },
+            "btc5_selected_package": {
+                "selected_deploy_recommendation": "hold",
+                "selected_package_confidence_label": "low",
+                "validation_live_filled_rows": 2,
+                "generalization_ratio": 0.2,
+            },
+        }
+    )
+
+    assert decision.deploy_mode == "shadow_probe"
+    assert decision.paper_trading is True
+    assert "launch_packet_baseline_live_allowed_but_package_not_green" in decision.rationale
+
+
 def test_select_rollout_decision_falls_back_to_shadow_probe_when_truth_blocks_live() -> None:
     decision = select_rollout_decision(
         {

@@ -23,6 +23,7 @@ Use it when you need to answer:
 6. [qd_thesis_repertoire.md](qd_thesis_repertoire.md)
 7. [temporal_edge_memory.md](temporal_edge_memory.md)
 8. [deployment_blueprint.md](deployment_blueprint.md)
+9. [proving_ground_reset.md](proving_ground_reset.md)
 
 ## Canonical Roles
 
@@ -36,6 +37,7 @@ Use it when you need to answer:
 | [qd_thesis_repertoire.md](qd_thesis_repertoire.md) | Niche preservation and compounding |
 | [temporal_edge_memory.md](temporal_edge_memory.md) | Long-horizon provenance and retrieval |
 | [deployment_blueprint.md](deployment_blueprint.md) | Local twin vs Lightsail split |
+| [proving_ground_reset.md](proving_ground_reset.md) | What is authoritative during the reset |
 
 ## Hard Rules
 
@@ -44,6 +46,7 @@ Use it when you need to answer:
 - The execution layer consumes `PromotionTicket` objects only.
 - Every live decision must be reconstructable from the event tape.
 - Every mutation must survive the intelligence harness before it can change live behavior.
+- The typed runtime-truth and wallet-truth snapshot artifacts are the control-plane truth aliases during the reset.
 
 ## Deployment Order
 

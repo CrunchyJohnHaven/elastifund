@@ -1,0 +1,39 @@
+{
+  "generated_at": "2026-03-25T13:26:29.334631+00:00",
+  "gate_status": "HOLD",
+  "gate_reason": "deploy_recommendation='hold' and risk_status='OK'.  No parameter changes recommended at this time.",
+  "param_changes_recommended": [],
+  "sub_reports": {
+    "volatility_scaling": {
+      "action": "none",
+      "delta_skip_fraction": 0.0027,
+      "proposed_delta": null,
+      "as_of": "2026-03-25T13:26:29.316141+00:00"
+    },
+    "spread_impact": {
+      "fill_count": 11,
+      "avg_order_price": 0.3327,
+      "avg_spread": null,
+      "skip_rate": 0.428571,
+      "as_of": "2026-03-25T13:26:29.326287+00:00"
+    },
+    "skip_threshold": {
+      "total_skips": 373,
+      "recommendation_count": 0,
+      "summary": "0 threshold adjustment(s) recommended from 373 total skips across 8 reason(s).",
+      "as_of": "2026-03-25T13:26:29.328529+00:00"
+    },
+    "risk_limit": {
+      "status": "OK",
+      "exposure_pct": 0.341,
+      "net_pnl_usd": 803.54,
+      "open_count": 6,
+      "as_of": "2026-03-25T13:26:29.332327+00:00"
+    }
+  },
+  "next_steps": [
+    "Hold all parameter changes until deploy_recommendation != 'hold' or risk_status == 'OK'.",
+    "No parameter changes needed \u2014 run fast-loop actions first to generate sub-report data.",
+    "Re-run btc5_param_integration after the next fast-loop cycle to refresh the consolidated view."
+  ]
+}

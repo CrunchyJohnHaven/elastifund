@@ -13,7 +13,7 @@ Run this on the target VPS after the repo and .env are present at:
   /home/ubuntu/polymarket-trading-bot
 
 This script:
-  1. forces live-paper toggle and bankroll defaults in .env
+  1. forces the truth-first shadow baseline and bankroll defaults in .env
   2. sets PYTHONPATH
   3. verifies required keys
   4. runs a single scan cycle
@@ -30,11 +30,13 @@ echo "========================================="
 echo "  JJ VPS Setup — Full Automation"
 echo "========================================="
 
-# ── 1. Fix .env: ensure PAPER_TRADING=false ──
+# ── 1. Fix .env: ensure shadow baseline ──
 echo "[1/6] Fixing .env..."
-# Remove any existing PAPER_TRADING line and set to false
+# Remove legacy launch toggles and force the safe runtime selector.
 sed -i '/^PAPER_TRADING/d' .env
-echo "PAPER_TRADING=false" >> .env
+sed -i '/^ELASTIFUND_AGENT_RUN_MODE/d' .env
+sed -i '/^JJ_RUNTIME_PROFILE/d' .env
+echo "JJ_RUNTIME_PROFILE=shadow_fast_flow" >> .env
 
 # Ensure A-6 shadow is on
 grep -q "ENABLE_A6_SHADOW" .env || echo "ENABLE_A6_SHADOW=true" >> .env
@@ -52,7 +54,7 @@ echo "JJ_MAX_POSITION_USD=2.00" >> .env
 sed -i '/^JJ_MAX_DAILY_LOSS_USD/d' .env
 echo "JJ_MAX_DAILY_LOSS_USD=10" >> .env
 
-echo "  .env updated: PAPER_TRADING=false, bankroll=${INITIAL_BANKROLL_USD}, max_pos=2.00"
+echo "  .env updated: JJ_RUNTIME_PROFILE=shadow_fast_flow, bankroll=${INITIAL_BANKROLL_USD}, max_pos=2.00"
 
 # ── 2. Set PYTHONPATH ──
 echo "[2/6] Setting PYTHONPATH..."
@@ -69,7 +71,7 @@ missing = [k for k in required if not os.getenv(k)]
 if missing:
     print(f'FATAL: Missing keys: {missing}')
     sys.exit(1)
-for k in required + ['PAPER_TRADING', 'JJ_INITIAL_BANKROLL', 'JJ_MAX_POSITION_USD', 'ENABLE_A6_SHADOW']:
+for k in required + ['JJ_RUNTIME_PROFILE', 'JJ_INITIAL_BANKROLL', 'JJ_MAX_POSITION_USD', 'ENABLE_A6_SHADOW']:
     v = os.getenv(k, '')
     print(f'  {k}: {v[:12]}')
 "

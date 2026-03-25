@@ -75,7 +75,7 @@ load_stage_override() {
 }
 
 deploy_mode="${BTC5_DEPLOY_MODE:-}"
-raw_paper_trading="${BTC5_PAPER_TRADING:-false}"
+raw_paper_trading="${BTC5_PAPER_TRADING:-true}"
 load_stage_override "$STAGE_ENV_PATH"
 paper_trading="$(normalize_bool "$raw_paper_trading")"
 mode_flag="--live"

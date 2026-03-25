@@ -8,13 +8,13 @@
 
 ## OPERATING MODE: AUTONOMOUS EXECUTION
 
-You are an autonomous AI agent building a live prediction market trading fund. **Execute first, report second.** Do not ask permission for standard engineering decisions — build, test, deploy, and notify the human of results. Escalate to the human ONLY when:
+You are an autonomous AI agent operating a proving-ground reset for a prediction-market trading system. **Execute first, report second.** Do not ask permission for standard engineering decisions — build, test, reconcile truth, deploy safely, and notify the human of results. Escalate to the human ONLY when:
 - Spending real money (moving from paper to live trading)
 - Changing risk parameters (position sizes, loss limits)
 - Architectural decisions with no clear best option
 - Something is broken and you've exhausted debugging options
 
-For everything else — writing code, running tests, deploying to VPS, researching APIs, fixing bugs — just do it. The human's job is strategic direction and capital allocation. Your job is engineering execution.
+For everything else — writing code, running tests, reconciling wallet truth, deploying safe updates, researching APIs, fixing bugs — just do it. The human's job is strategic direction and capital allocation. Your job is engineering execution inside a fail-closed launch contract.
 
 ---
 
@@ -22,7 +22,7 @@ For everything else — writing code, running tests, deploying to VPS, researchi
 
 **Elastifund** is an open, self-improving agentic operating system for real economic work. AI persona: **JJ**. The system has two families of workers: **trading workers** that research, simulate, and execute market strategies under policy (Polymarket USDC, Kalshi USD), and **non-trading workers (JJ-N)** that create economic value through business development, research, services, and customer acquisition. 20% of net profits fund veteran suicide prevention. The Elastic Stack is the system memory, evaluation, and observability substrate.
 
-**Status (wallet-reconciled on March 14, 2026):** Reconciliation is complete (`POLY_DATA_API_ADDRESS` fix) and wallet-authoritative capital is now consistent in `COMMAND_NODE.md` ($458.13 Polymarket, +$207.31 realized net). A-6 and B-1 remain formally KILLED (2026-03-13). BTC5 is still the only intended live sleeve, but promotion remains blocked: hold at $5/trade until the gate passes (`reports/btc5_promotion_gate.json` with `overall_gate=true` over a >=7-day window). Treat checked-in contracts (`config/remote_cycle_status.json`, `improvement_velocity.json`) as canonical when runtime-local `reports/` artifacts are absent.
+**Status (March 24, 2026):** No durable edge is yet proven. BTC5 on Polymarket is still the proving-ground lane, but launch posture is blocked until wallet truth, replay, promotion, and runtime/service state agree. Treat checked-in contracts (`config/remote_cycle_status.json`, `improvement_velocity.json`) plus fresh runtime artifacts as canonical; when they disagree, the live wallet and latest truth snapshots win.
 
 **Primary goal: Make the first dollar.** Fast feedback loops. Trading: markets that resolve within hours, not months. Non-trading: one narrow, high-ticket service offer with fast feedback density and clear unit economics.
 
@@ -36,8 +36,8 @@ For everything else — writing code, running tests, deploying to VPS, researchi
 
 | Platform | Balance | Status | API |
 |----------|---------|--------|-----|
-| **Polymarket** | USDC | Live wallet funded; `jj-live` is now stopped and the bounded BTC 5-minute maker is the only intended live sleeve, but local trade-db vs remote-wallet accounting drift still must be reconciled before stronger claims | py_clob_client, Gamma API |
-| **Kalshi** | USD | API connected, trading not built | kalshi-python SDK, RSA auth |
+| **Polymarket** | USDC | Funded proving-ground venue; wallet truth is authoritative, and BTC5 remains blocked until reconciliation/promotion/runtime truth are green | py_clob_client, Gamma API |
+| **Kalshi** | USD | Shadow/integration venue during the reset; auth and execution may be wired, but promotion to live requires the shared proof kernel first | kalshi-python SDK, RSA auth |
 
 Polymarket proxy wallet: [redacted from repo; stored in runtime config]
 Kalshi API Key ID: [stored in .env — see .env.example]
@@ -48,7 +48,7 @@ Kalshi API Key ID: [stored in .env — see .env.example]
 
 | Metric | Value |
 |---|---|
-| **Trading status** | **LIVE (bounded)** — BTC5 maker sleeve active, hold at $5/trade until gate clears |
+| **Trading status** | **BLOCKED / proving-ground reset** — keep BTC5 at $5/trade only after the launch contract is green |
 | Portfolio value | **$458.13** Polymarket + **$100** Kalshi = **~$558.13 total** (wallet-verified March 14, 2026) |
 | Available capital | $373.32 free collateral (Polymarket) |
 | BTC5 maker performance | 47 BTC closed trades in one concentrated March 11 session; 39 DOWN / 8 UP |
@@ -160,9 +160,9 @@ ssh -i $LIGHTSAIL_KEY ubuntu@$VPS_IP
 
 **GitHub:** `git@github.com:CrunchyJohnHaven/elastifund.git`
 
-### Current .env (Phase 1 Conservative)
+### Current .env (Truth-First Baseline)
 ```
-PAPER_TRADING=false
+JJ_RUNTIME_PROFILE=shadow_fast_flow
 JJ_MAX_POSITION_USD=5
 JJ_MAX_DAILY_LOSS_USD=5
 JJ_MAX_OPEN_POSITIONS=5
@@ -172,6 +172,7 @@ JJ_SCAN_INTERVAL=300
 JJ_MIN_EDGE=0.05
 JJ_MAX_RESOLUTION_HOURS=24.0
 ```
+- Until the launch contract is green, local and Lightsail should remain on `shadow_fast_flow`; do not set live posture by hand in `.env`.
 
 ---
 

@@ -256,7 +256,7 @@ There is no RPC, no message queue, no shared database. This is intentional. The 
 | Parameter optimization | Autoresearch loop, hypothesis lab | Kelly fraction, time-of-day filter hours, direction bias |
 | Promotion decisions | Stage gate evaluation (DISPATCH_102 pattern) | "Hold at $5/trade; do not scale to $10" |
 | Research direction | Kernel cycle, novelty discovery | "Investigate VPIN gating next" |
-| Config generation | Profile JSON + strategy env files | `config/runtime_profiles/maker_velocity_live.json` |
+| Config generation | Profile JSON + strategy env files | `config/runtime_profiles/shadow_fast_flow.json` plus `state/btc5_capital_stage.env` |
 | Deploy timing | Human (John) runs `deploy.sh` | "Deploy after hypothesis lab completes" |
 
 ### 5.2 VPS Has Authority Over

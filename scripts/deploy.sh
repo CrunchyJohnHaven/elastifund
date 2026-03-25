@@ -7,12 +7,12 @@ usage() {
     cat <<'EOF'
 Usage:
   ./scripts/deploy.sh [user@host]
-  ./scripts/deploy.sh --clean-env --profile live_aggressive --restart
-  ./scripts/deploy.sh --clean-env --profile maker_velocity_live --restart --btc5 --btc5-autoresearch --kalshi --loop
+  ./scripts/deploy.sh --clean-env --profile shadow_fast_flow --restart
+  ./scripts/deploy.sh --clean-env --profile shadow_fast_flow --restart --btc5 --btc5-autoresearch --kalshi --loop
 
 Options:
   --clean-env         Strip runtime override vars from the VPS .env and set JJ_RUNTIME_PROFILE
-  --profile NAME      Runtime profile to write during --clean-env (default: live_aggressive)
+  --profile NAME      Runtime profile to write during --clean-env (default: shadow_fast_flow)
   --restart           Restart jj-live.service after syncing files
   --btc5              Install/restart btc-5min-maker.service on the VPS
   --btc5-autoresearch Install/enable the 5-minute BTC5 autoresearch timer
@@ -61,7 +61,7 @@ ENABLE_STRIKE_DESK=false
 ENABLE_KALSHI=false
 ENABLE_LOOP=false
 ENABLE_MONITOR=false
-PROFILE_NAME="live_aggressive"
+PROFILE_NAME="shadow_fast_flow"
 TARGET_VPS=""
 
 while [ $# -gt 0 ]; do
@@ -171,7 +171,9 @@ SCRIPT_SUPPORT_FILES=(
     "scripts/btc5_monte_carlo.py"
     "scripts/btc5_pnl_monitor.py"
     "scripts/btc5_regime_policy_lab.py"
+    "scripts/report_envelope.py"
     "scripts/run_btc5_autoresearch_cycle.py"
+    "scripts/run_btc5_service.sh"
     "scripts/run_strike_desk.py"
     "scripts/run_kalshi_weather_auto.sh"
     "scripts/run_flywheel_cycle.py"
@@ -181,6 +183,7 @@ SCRIPT_SUPPORT_FILES=(
 DEPLOY_ASSET_FILES=(
     "deploy/jj-live.service"
     "deploy/btc-5min-maker.service"
+    "deploy/wallet-poller.service"
     "deploy/btc5-autoresearch.service"
     "deploy/btc5-autoresearch.timer"
     "deploy/strike-desk.service"
@@ -204,13 +207,14 @@ sync_file() {
     "${SCP_CMD[@]}" -q "$local_path" "$VPS:$BOT_DIR/$relative_path"
 }
 
-capture_remote_service_status() {
-    local target="$PROJECT_DIR/reports/remote_service_status.json"
+capture_service_status() {
+    local target="$1"
+    local service_name="$2"
     local systemctl_state="unknown"
     local detail="unknown"
 
     mkdir -p "$(dirname "$target")"
-    if detail=$("${SSH_CMD[@]}" "$VPS" "systemctl is-active $SERVICE_NAME 2>/dev/null || true" 2>&1); then
+    if detail=$("${SSH_CMD[@]}" "$VPS" "systemctl is-active $service_name 2>/dev/null || true" 2>&1); then
         systemctl_state="$(printf '%s\n' "$detail" | tail -1 | tr -d '\r')"
         detail="$systemctl_state"
     else
@@ -218,7 +222,7 @@ capture_remote_service_status() {
         systemctl_state="unknown"
     fi
 
-    python3 - "$target" "$VPS" "$SERVICE_NAME" "$systemctl_state" "$detail" <<'PY'
+    python3 - "$target" "$VPS" "$service_name" "$systemctl_state" "$detail" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
@@ -248,6 +252,15 @@ payload = {
 target.write_text(json.dumps(payload, indent=2, sort_keys=True))
 print(json.dumps(payload, indent=2, sort_keys=True))
 PY
+}
+
+capture_remote_service_status() {
+    local primary_service="$SERVICE_NAME"
+    if [[ "$ENABLE_BTC5" == "true" ]]; then
+        primary_service="$BTC5_SERVICE_NAME"
+        capture_service_status "$PROJECT_DIR/reports/btc5_remote_service_status.json" "$BTC5_SERVICE_NAME"
+    fi
+    capture_service_status "$PROJECT_DIR/reports/remote_service_status.json" "$primary_service"
 }
 
 refresh_runtime_artifacts() {
@@ -333,7 +346,7 @@ echo "  Removing stale root jj_live.py if present..."
 
 echo
 echo "  Installing Python dependencies on VPS..."
-"${SSH_CMD[@]}" "$VPS" "cd $BOT_DIR && PY_BIN=\$( [ -x venv/bin/python3 ] && echo venv/bin/python3 || [ -x .venv/bin/python3 ] && echo .venv/bin/python3 || echo /usr/bin/python3 ) && \$PY_BIN -m pip install -q anthropic openai duckduckgo-search httpx structlog --break-system-packages 2>&1 | tail -3"
+"${SSH_CMD[@]}" "$VPS" "cd $BOT_DIR && PY_BIN=\$( [ -x venv/bin/python3 ] && echo venv/bin/python3 || [ -x .venv/bin/python3 ] && echo .venv/bin/python3 || echo /usr/bin/python3 ) && \$PY_BIN -m pip install -q anthropic openai duckduckgo-search httpx structlog numpy --break-system-packages 2>&1 | tail -3"
 
 if [[ "$CLEAN_ENV" == "true" ]]; then
     echo
@@ -385,6 +398,8 @@ if [[ "$ENABLE_BTC5" == "true" ]]; then
     echo "  Installing/restarting $BTC5_SERVICE_NAME..."
     "${SSH_CMD[@]}" "$VPS" "cd $BOT_DIR && PY_BIN=\$( [ -x venv/bin/python3 ] && echo venv/bin/python3 || [ -x .venv/bin/python3 ] && echo .venv/bin/python3 || echo /usr/bin/python3 ) && \$PY_BIN -m pip install -q aiohttp websockets python-dotenv --break-system-packages 2>&1 | tail -3"
     "${SSH_CMD[@]}" "$VPS" "sudo install -m 644 $BOT_DIR/deploy/$BTC5_SERVICE_NAME /etc/systemd/system/$BTC5_SERVICE_NAME && sudo systemctl daemon-reload && sudo systemctl enable $BTC5_SERVICE_NAME && sudo systemctl restart $BTC5_SERVICE_NAME && sleep 2 && sudo systemctl is-active $BTC5_SERVICE_NAME && sudo journalctl -u $BTC5_SERVICE_NAME -n 20 --no-pager"
+    echo "  Installing/restarting wallet-poller.service..."
+    "${SSH_CMD[@]}" "$VPS" "sudo install -m 644 $BOT_DIR/deploy/wallet-poller.service /etc/systemd/system/wallet-poller.service && sudo systemctl daemon-reload && sudo systemctl enable wallet-poller.service && sudo systemctl restart wallet-poller.service && for attempt in 1 2 3 4 5; do state=\$(sudo systemctl is-active wallet-poller.service || true); if [ \"\$state\" = active ]; then break; fi; if [ \"\$state\" = failed ]; then break; fi; sleep 2; done && echo wallet-poller.service: \$(sudo systemctl is-active wallet-poller.service || true) && sudo journalctl -u wallet-poller.service -n 20 --no-pager"
 else
     echo
     echo "  Skipping BTC 5-min service setup (--btc5 not set)."
@@ -411,7 +426,7 @@ fi
 if [[ "$ENABLE_KALSHI" == "true" ]]; then
     echo
     echo "  Installing/enabling Kalshi weather trader timer..."
-    "${SSH_CMD[@]}" "$VPS" "cd $BOT_DIR && mkdir -p kalshi && sudo install -m 644 $BOT_DIR/deploy/$KALSHI_SERVICE_NAME /etc/systemd/system/$KALSHI_SERVICE_NAME && sudo install -m 644 $BOT_DIR/deploy/$KALSHI_TIMER_NAME /etc/systemd/system/$KALSHI_TIMER_NAME && sudo systemctl daemon-reload && sudo systemctl enable $KALSHI_TIMER_NAME && sudo systemctl start $KALSHI_TIMER_NAME && echo 'Kalshi timer active:' && sudo systemctl list-timers $KALSHI_TIMER_NAME --no-pager"
+    "${SSH_CMD[@]}" "$VPS" "cd $BOT_DIR && PY_BIN=\$( [ -x venv/bin/python3 ] && echo venv/bin/python3 || [ -x .venv/bin/python3 ] && echo .venv/bin/python3 || echo /usr/bin/python3 ) && \$PY_BIN -m pip install -q kalshi-python requests python-dotenv cryptography --break-system-packages 2>&1 | tail -3 && mkdir -p kalshi && sudo install -m 644 $BOT_DIR/deploy/$KALSHI_SERVICE_NAME /etc/systemd/system/$KALSHI_SERVICE_NAME && sudo install -m 644 $BOT_DIR/deploy/$KALSHI_TIMER_NAME /etc/systemd/system/$KALSHI_TIMER_NAME && sudo systemctl daemon-reload && sudo systemctl enable $KALSHI_TIMER_NAME && sudo systemctl start $KALSHI_TIMER_NAME && echo 'Kalshi timer active:' && sudo systemctl list-timers $KALSHI_TIMER_NAME --no-pager"
 else
     echo
     echo "  Skipping Kalshi weather trader (--kalshi not set)."
@@ -448,8 +463,8 @@ echo "  Deploy complete."
 echo "========================================"
 echo
 echo "Examples:"
-echo "  ./scripts/deploy.sh --clean-env --profile maker_velocity_live --restart --btc5 --btc5-autoresearch --kalshi --loop"
-echo "  ./scripts/deploy.sh --clean-env --profile maker_velocity_live --restart --btc5 --btc5-autoresearch --strike-desk --kalshi --loop"
-echo "  ./scripts/deploy.sh --clean-env --profile live_aggressive --restart"
+echo "  ./scripts/deploy.sh --clean-env --profile shadow_fast_flow --restart --btc5 --btc5-autoresearch --kalshi --loop"
+echo "  ./scripts/deploy.sh --clean-env --profile shadow_fast_flow --restart --btc5 --btc5-autoresearch --strike-desk --kalshi --loop"
+echo "  ./scripts/deploy.sh --clean-env --profile shadow_fast_flow --restart"
 echo "  ./scripts/deploy.sh --clean-env --profile paper_aggressive --restart"
 echo "  ./scripts/deploy.sh"

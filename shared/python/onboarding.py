@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping
 
+from bot.kalshi_auth import load_kalshi_credentials
 from .envfile import is_placeholder_value
 from .identity import generate_agent_id, generate_secret
 from .runtime import utc_now
@@ -30,6 +31,8 @@ class OnboardingAnswers:
     polymarket_pk: str = ""
     kalshi_api_key_id: str = ""
     kalshi_rsa_key_path: str = "kalshi/kalshi_rsa_private.pem"
+    kalshi_rsa_private_key: str = ""
+    kalshi_rsa_private_key_b64: str = ""
     etsy_api_key: str = ""
     etsy_shop_id: str = ""
     nonprofit: str = "veteran-suicide-prevention"
@@ -116,6 +119,8 @@ def build_env_updates(existing_env: Mapping[str, str], answers: OnboardingAnswer
         "POLYMARKET_PK": answers.polymarket_pk or existing_env.get("POLYMARKET_PK", ""),
         "KALSHI_API_KEY_ID": answers.kalshi_api_key_id or existing_env.get("KALSHI_API_KEY_ID", ""),
         "KALSHI_RSA_KEY_PATH": answers.kalshi_rsa_key_path or existing_env.get("KALSHI_RSA_KEY_PATH", ""),
+        "KALSHI_RSA_PRIVATE_KEY": answers.kalshi_rsa_private_key or existing_env.get("KALSHI_RSA_PRIVATE_KEY", ""),
+        "KALSHI_RSA_PRIVATE_KEY_B64": answers.kalshi_rsa_private_key_b64 or existing_env.get("KALSHI_RSA_PRIVATE_KEY_B64", ""),
         "ETSY_API_KEY": answers.etsy_api_key or existing_env.get("ETSY_API_KEY", ""),
         "ETSY_SHOP_ID": answers.etsy_shop_id or existing_env.get("ETSY_SHOP_ID", ""),
     }
@@ -123,6 +128,7 @@ def build_env_updates(existing_env: Mapping[str, str], answers: OnboardingAnswer
 
 
 def build_runtime_manifest(env: Mapping[str, str]) -> dict[str, object]:
+    kalshi_credentials = load_kalshi_credentials(env)
     return {
         "generated_at": utc_now(),
         "agent": {
@@ -150,7 +156,7 @@ def build_runtime_manifest(env: Mapping[str, str]) -> dict[str, object]:
                 "POLYMARKET_FUNDER",
                 "POLYMARKET_PK",
             ),
-            "kalshi_configured": _configured(env, "KALSHI_API_KEY_ID", "KALSHI_RSA_KEY_PATH"),
+            "kalshi_configured": kalshi_credentials.configured,
             "etsy_configured": _configured(env, "ETSY_API_KEY", "ETSY_SHOP_ID"),
             "anthropic_configured": _configured(env, "ANTHROPIC_API_KEY"),
             "openai_configured": _configured(env, "OPENAI_API_KEY"),

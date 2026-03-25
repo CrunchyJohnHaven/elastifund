@@ -46,7 +46,7 @@ Canonical command path rule:
 | Workflow | Canonical command | Script entrypoint |
 |---|---|---|
 | Canonical truth reconciliation | `python3 scripts/canonical_truth_writer.py` | `python3 scripts/canonical_truth_writer.py` |
-| Local twin recurring cycle (includes Alpaca when credentials are present) | `python3 scripts/run_local_twin.py` | `python3 scripts/run_local_twin.py` |
+| Local twin shadow cycle | `python3 scripts/run_local_twin.py` | `python3 scripts/run_local_twin.py` |
 | Kernel cycle shadow | `python3 scripts/run_kernel_cycle.py` | `python3 scripts/run_kernel_cycle.py` |
 | Intelligence harness | `python3 scripts/run_intelligence_harness.py` | `python3 scripts/run_intelligence_harness.py` |
 | Strike desk shadow queue | `python3 scripts/run_strike_desk.py` | `python3 scripts/run_strike_desk.py` |
@@ -60,8 +60,6 @@ Canonical command path rule:
 ## Research And Lane Automation
 
 - `run_*` scripts: lane dispatches and one-shot operators (cross-asset, audits, collectors, autoresearch).
-- Alpaca first-trade lane: `python3 scripts/run_alpaca_crypto_lane.py` to write the candidate artifact and `python3 scripts/run_alpaca_first_trade.py` to run the full candidate -> queue -> execution cycle.
-- `python3 scripts/run_local_twin.py --lane alpaca` runs that same Alpaca lane inside the recurring local control plane; it stays paper unless `ALPACA_TRADING_MODE=live` and `ALPACA_ALLOW_LIVE=true`.
 - `render_*` scripts: artifact/report rendering only.
 - `build_*` scripts: gold sets and benchmark fixtures.
 - `generate_*` scripts: report/brief generation.

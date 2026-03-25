@@ -47,6 +47,35 @@ class AlpacaAPIError(RuntimeError):
 AlpacaClientError = AlpacaAPIError
 
 
+def classify_alpaca_api_error(error: Exception | str) -> dict[str, Any]:
+    """Map venue/API failures to stable control-plane blockers."""
+    message = str(error or "").strip()
+    lowered = message.lower()
+    blockers: list[str] = ["alpaca_api_error"]
+    status = "error"
+    summary = "alpaca first-trade executor hit an Alpaca API error"
+
+    if "crypto orders not allowed for account" in lowered:
+        blockers = ["alpaca_crypto_orders_not_allowed", "alpaca_crypto_not_enabled"]
+        status = "blocked"
+        summary = "alpaca account is not enabled for live crypto orders"
+    elif "insufficient buying power" in lowered or "insufficient balance" in lowered:
+        blockers = ["alpaca_insufficient_buying_power"]
+        status = "blocked"
+        summary = "alpaca rejected the order for insufficient buying power"
+    elif "asset is not active" in lowered or "asset is not tradable" in lowered:
+        blockers = ["alpaca_symbol_not_tradable"]
+        status = "blocked"
+        summary = "alpaca rejected the order because the symbol is not tradable"
+
+    return {
+        "status": status,
+        "blockers": blockers,
+        "summary": summary,
+        "error": message,
+    }
+
+
 @dataclass(frozen=True)
 class AlpacaRESTConfig:
     key_id: str

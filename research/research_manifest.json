@@ -1,5 +1,5 @@
 {
-  "version": "2026-03-11",
+  "version": "2026-03-23",
   "purpose": "Machine-readable index for active versus historical research surfaces.",
   "categories": {
     "active_dispatches": [
@@ -8,7 +8,8 @@
       "research/dispatches/DISPATCH_099_CLAUDE_CODE_btc_truth_surface_sync.md",
       "research/dispatches/DISPATCH_100_BTC5_VELOCITY_PARALLEL_PLAN.md",
       "research/dispatches/DISPATCH_101_DEEP_RESEARCH_INGESTION_20260311.md",
-      "research/dispatches/DISPATCH_102_BTC5_truth_plumbing_and_execution_confidence.md"
+      "research/dispatches/DISPATCH_102_BTC5_truth_plumbing_and_execution_confidence.md",
+      "research/dispatches/DISPATCH_113_HISTORICAL_DATA_PIPELINE_INGESTION.md"
     ],
     "current_assessment": [
       "research/edge_backlog_ranked.md",

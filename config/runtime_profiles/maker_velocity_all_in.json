@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "description": "All-capital maker-velocity track (AGGRESSIVE FAST CRYPTO). Full bankroll envelope, but restricted to sub-1h crypto markets with wallet-flow and LMSR only. Narrative LLM lanes stay off.",
+  "description": "Candidate all-capital maker-velocity track for the proving ground. It stays restricted to sub-1h crypto markets with wallet-flow and LMSR only, and still fails closed behind wallet-flow readiness plus the shared launch contract.",
   "mode": {
-    "execution_mode": "shadow",
+    "execution_mode": "live",
     "paper_trading": false,
     "allow_order_submission": true,
-    "launch_gate": "none"
+    "launch_gate": "wallet_flow_ready"
   },
   "feature_flags": {
     "enable_llm_signals": false,

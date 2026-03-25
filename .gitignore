@@ -137,6 +137,8 @@ polymarket-bot/backtest_output/
 research/dispatches/*
 !research/dispatches/README.md
 !research/dispatches/DISPATCH_097_competitive_inventory_benchmark_blueprint.md
+!research/dispatches/DEEP_RESEARCH_PROMPT_005_simulation_data_pipeline.md
+!research/dispatches/DISPATCH_113_HISTORICAL_DATA_PIPELINE_INGESTION.md
 research/prompts/
 
 # Logs and runtime data

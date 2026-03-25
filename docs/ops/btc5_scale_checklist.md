@@ -1,4 +1,4 @@
-# BTC5 Scale-to-$10 Pre-Deployment Checklist
+# BTC5 Proving-Ground Scale Checklist
 
 **Created:** 2026-03-14
 **Profile:** `config/runtime_profiles/btc5_scale_v1.json`
@@ -13,10 +13,12 @@
 
 ## Configuration Already In Place
 
-The BTC5 maker's capital stage system already defaults to $10/trade at stage 1:
+The BTC5 maker's proving-ground reset now defaults to $5/trade at stage 1:
 - `BTC5_CAPITAL_STAGE=1` (default)
-- `BTC5_STAGE1_MAX_TRADE_USD=10` (default)
-- No config change needed for $10/trade — it's the default stage 1 behavior
+- `BTC5_STAGE1_MAX_TRADE_USD=5` (default during the reset)
+- `BTC5_STAGE2_MAX_TRADE_USD=10`
+- `BTC5_STAGE3_MAX_TRADE_USD=20`
+- Do not widen size beyond stage 1 unless the shared launch contract and stage gate are green
 
 The 2026-03-14 guardrail fixes are in `config/btc5_strategy.env`:
 - `BTC5_MAX_ABS_DELTA=0.0040` (widened from 0.00015)
@@ -26,7 +28,7 @@ The 2026-03-14 guardrail fixes are in `config/btc5_strategy.env`:
 ## Deploy Command
 
 ```bash
-cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --profile maker_velocity_live --restart --btc5
+cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --profile shadow_fast_flow --restart --btc5
 ```
 
 ## Post-Deploy Verification
@@ -57,18 +59,18 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 
 ## Rollback
 
-If fills are consistently losing at $10/trade:
+If fills are consistently losing even at $5/trade:
 ```bash
 # Revert to $5 base with no stage system
 ssh ubuntu@34.244.34.108 "cd /home/ubuntu/polymarket-trading-bot && echo 'BTC5_CAPITAL_STAGE=' >> .env && sudo systemctl restart btc-5min-maker"
 ```
 
-## Scaling Beyond $10
+## Scaling Beyond Stage 1
 
-Stage 2 ($20/trade) unlocks automatically when:
+Stage 2 ($10/trade) unlocks automatically when:
 - 12+ trailing live fills with positive cumulative P&L
 - 40+ trailing live fills with positive cumulative P&L
 - Order fail rate < 25%
 - Fresh probe telemetry within 6 hours
 
-Stage 3 ($50/trade) requires all stage 2 gates PLUS 120+ trailing positive fills.
+Stage 3 ($20/trade) requires all stage 2 gates PLUS 120+ trailing positive fills.

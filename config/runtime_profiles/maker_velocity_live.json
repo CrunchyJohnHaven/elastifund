@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "description": "Live maker-velocity fast-turn deployment. JJ is restricted to sub-1h crypto markets, with wallet-flow and LMSR enabled but the dedicated BTC 5-minute surface reserved for the standalone btc_5min_maker service. $10 per position, uncapped daily loss, 0.25 Kelly, 30 max positions, VPIN defense active, A6/B1 disabled.",
+  "description": "Candidate live maker-velocity fast-turn deployment. JJ is restricted to sub-1h crypto markets, with wallet-flow and LMSR enabled but the dedicated BTC 5-minute surface reserved for the standalone btc_5min_maker service. Live submission remains gated by wallet-flow readiness and the shared launch contract.",
   "mode": {
-    "execution_mode": "shadow",
+    "execution_mode": "live",
     "paper_trading": false,
     "allow_order_submission": true,
-    "launch_gate": "none"
+    "launch_gate": "wallet_flow_ready"
   },
   "feature_flags": {
     "enable_llm_signals": false,

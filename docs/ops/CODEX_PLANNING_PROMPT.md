@@ -13,15 +13,16 @@ Canonical: yes
 
 ## SYSTEM CONTEXT FOR CODEX PLANNING
 
-You are the planning layer for Elastifund, an AI-run prediction market trading fund. Your job is to produce a parallel execution plan split across 6 independent Codex instances. Each instance runs autonomously with zero human intervention.
+You are the planning layer for Elastifund during a proving-ground reset. Your job is to produce a parallel execution plan split across 6 independent Codex instances, but every instance must respect the fail-closed launch contract and treat wallet truth, replay, and promotion artifacts as higher priority than capital deployment.
 
 **Read these files first to discover current state (do not assume — read):**
 
 ```
-CLAUDE.md                        → Operating model, current capital, cycle state
 PROJECT_INSTRUCTIONS.md          → Priority queue, signal architecture, strategy status
 COMMAND_NODE.md                   → Full project context
 docs/REPO_MAP.md                  → Directory ownership and task routing
+reports/runtime_truth_latest.json → Canonical runtime posture and blockers
+reports/launch_packet_latest.json → Canonical launch contract
 research/edge_backlog_ranked.md   → Ranked strategy backlog (131+ tracked)
 FAST_TRADE_EDGE_ANALYSIS.md       → Latest pipeline results
 REPLIT_NEXT_BUILD.md              → Website build spec
@@ -36,9 +37,9 @@ After reading, produce the execution plan below. Each instance gets a self-conta
 
 ---
 
-### INSTANCE #1 — EDGE SCANNER & TRADE DEPLOYMENT
+### INSTANCE #1 — EDGE SCANNER & TRADE TRIAGE
 
-**Objective:** Find the highest-edge, shortest-duration (<24h resolution) opportunities available right now on Polymarket and Kalshi. Deploy capital to the best ones within existing risk parameters.
+**Objective:** Find the highest-edge, shortest-duration (<24h resolution) opportunities available right now, but restrict live recommendations to the BTC5 Polymarket proving ground and keep Kalshi in shadow/integration mode unless the launch contract explicitly turns green.
 
 **You own:** `bot/`, `execution/`, `strategies/`, `signals/`
 **Do not touch:** `docs/`, `research/`, `deploy/`, website files
@@ -46,7 +47,7 @@ After reading, produce the execution plan below. Each instance gets a self-conta
 **Steps:**
 
 1. Read `PROJECT_INSTRUCTIONS.md` Section 3 for current signal architecture and which signals are DEPLOYED vs BUILDING vs GATED.
-2. Read `CLAUDE.md` "Current State" section for exact capital, position limits, daily loss cap, Kelly fraction, and execution mode.
+2. Read `PROJECT_INSTRUCTIONS.md`, `reports/runtime_truth_latest.json`, and `reports/launch_packet_latest.json` for exact posture, capital constraints, and execution mode.
 3. Read `research/edge_backlog_ranked.md` for the full ranked backlog. Identify all strategies tagged as ready-to-deploy or building that target <24h markets.
 4. Read `research/velocity_maker_strategy.md` for the proven velocity edge (72% win rate on <24h, 6007% ARR maker-only).
 5. Pull current Polymarket markets via Gamma API: `GET https://gamma-api.polymarket.com/events?closed=false&limit=100`. Filter for `end_date` within 24 hours of now. Rank by liquidity and spread.
@@ -54,8 +55,8 @@ After reading, produce the execution plan below. Each instance gets a self-conta
 7. Run the A-6 guaranteed-dollar scanner (`bot/constraint_arb_engine.py` → `bot/a6_sum_scanner.py`) against the neg-risk universe. Log any combo where cheapest construction < $0.95.
 8. Run the VPIN/OFI toxicity check (`bot/ws_trade_stream.py` → `bot/vpin_toxicity.py`) on the top 10 most liquid <24h markets. Flag markets with VPIN > 0.7 as toxic — skip them.
 9. For every viable opportunity: compute Kelly size (quarter-Kelly, capped at position limit from config), verify maker-only execution path, verify kill rules pass (`bot/kill_rules.py`).
-10. If `jj-live.service` is STOPPED and you find ≥3 viable <24h opportunities with positive expected value after fees: prepare a restart recommendation with the specific markets, sizes, and expected hold times. Write to `reports/edge_scan_<timestamp>.json`.
-11. If service is RUNNING: feed opportunities directly into the signal pipeline and let the orchestrator (`bot/jj_live.py`) handle execution.
+10. If `jj-live.service` is STOPPED and you find ≥3 viable <24h opportunities with positive expected value after fees: prepare a restart recommendation only if the launch contract is green. Write the specific markets, sizes, and expected hold times to `reports/edge_scan_<timestamp>.json`.
+11. If service is RUNNING: feed opportunities directly into the signal pipeline only when the launch contract is green; otherwise emit a shadow-only recommendation and preserve blocked posture.
 
 **Verification:** `make test && python3 -c "from bot.jj_live import TradingBot; print('import ok')"`
 
@@ -73,7 +74,7 @@ After reading, produce the execution plan below. Each instance gets a self-conta
 **Steps:**
 
 1. Read `REPLIT_NEXT_BUILD.md` for the full build spec, including what the current site does well, what it lacks, and the target architecture.
-2. Read `CLAUDE.md` "Current State" for live capital, cycle number, strategy counts, test counts, dispatch counts — these are the numbers that must be updated on the site.
+2. Read `PROJECT_INSTRUCTIONS.md`, `COMMAND_NODE.md`, and the latest runtime truth artifacts for current capital posture, cycle number, strategy counts, test counts, and dispatch counts.
 3. Read `README.md` for the public-facing metrics that must match the website.
 4. Read `FAST_TRADE_EDGE_ANALYSIS.md` for the latest pipeline results to surface.
 5. Read `research/edge_backlog_ranked.md` for updated strategy counts by status (deployed, building, rejected, etc.).
@@ -86,7 +87,7 @@ After reading, produce the execution plan below. Each instance gets a self-conta
 12. Add a "System Status" indicator showing whether `jj-live.service` is running or paused and why.
 13. Ensure the site footer timestamp updates to now.
 
-**Verification:** Site loads without console errors. All metric values match `CLAUDE.md` current state. No broken links.
+**Verification:** Site loads without console errors. All metric values match `PROJECT_INSTRUCTIONS.md`, `COMMAND_NODE.md`, and the latest runtime truth artifacts. No broken links.
 
 **Handoff artifact:** Commit message listing every metric changed and every section added.
 
@@ -101,7 +102,7 @@ After reading, produce the execution plan below. Each instance gets a self-conta
 
 **Steps:**
 
-1. Read `CLAUDE.md` "Current State" section as the ground truth baseline.
+1. Read `PROJECT_INSTRUCTIONS.md`, `COMMAND_NODE.md`, and the latest runtime truth artifacts as the ground truth baseline.
 2. Read every `reports/*.json` file modified in the last 24 hours to find new results.
 3. Read `FAST_TRADE_EDGE_ANALYSIS.md` for latest pipeline outputs.
 4. Count passing tests: run `make test 2>&1 | tail -5` and `make test-polymarket 2>&1 | tail -5`. Record exact numbers.
@@ -110,7 +111,7 @@ After reading, produce the execution plan below. Each instance gets a self-conta
 7. Update `COMMAND_NODE.md` with: current capital, current cycle, strategy counts, test counts, dispatch counts, service status, last action taken, next action planned.
 8. Update `PROJECT_INSTRUCTIONS.md` Section 1 status paragraph and Section 3 signal status tags (DEPLOYED / BUILDING / GATED / etc.).
 9. Update `README.md` scorecard if any headline numbers changed.
-10. Update `CLAUDE.md` "Current State" section date, cycle, capital, test counts, dispatch counts, and next action.
+10. If `CLAUDE.md` is touched at all, keep it clearly marked as historical context and ensure it does not override the proving-ground reset or runtime truth artifacts.
 11. If Instance #1 produced edge scan results, update `research/edge_backlog_ranked.md` with any new status changes.
 12. Run `make hygiene` to verify doc consistency.
 
@@ -129,14 +130,14 @@ After reading, produce the execution plan below. Each instance gets a self-conta
 
 **Steps:**
 
-1. Read `CLAUDE.md` "Current State" for current VPS status, service state, and deployment config.
+1. Read `PROJECT_INSTRUCTIONS.md`, `reports/runtime_truth_latest.json`, and `reports/launch_packet_latest.json` for current VPS status, service state, and deployment posture.
 2. Read `deploy/` directory for deployment scripts, systemd service files, and environment templates.
 3. Read `.github/workflows/` for CI/CD pipeline definitions.
 4. Run the full test suite locally: `make verify`. Do not deploy if tests fail.
 5. If tests pass: push all committed changes to the VPS via the deployment mechanism defined in `deploy/`.
 6. Verify the deployed code matches the repo HEAD: compare git SHA on VPS vs local.
 7. Check `.env` on VPS has all required keys (list from `.env.example`). Do not create or modify API keys — flag missing ones for human action.
-8. If Instance #1's handoff recommends restarting `jj-live.service`: verify the restart conditions are met (≥3 viable opportunities, all kill rules configured, capital confirmed). If conditions met, prepare the restart command but DO NOT EXECUTE unless current state is already RUNNING. If service is STOPPED, flag as "restart-recommended" in handoff — this is a human escalation per CLAUDE.md rules (spending real money).
+8. If Instance #1's handoff recommends restarting `jj-live.service`: verify the restart conditions are met (≥3 viable opportunities, all kill rules configured, capital confirmed, and the launch contract is green). Do not override blocked or shadow posture by hand.
 9. Verify logging pipeline: ensure `bot/elastic_client.py` can reach Elasticsearch (or gracefully degrades).
 10. Verify systemd service file is current with latest bot arguments and environment.
 11. Run a dry-run cycle if service is STOPPED: `python3 bot/jj_live.py --dry-run --cycles=1` on VPS to confirm runtime health.
@@ -156,7 +157,7 @@ After reading, produce the execution plan below. Each instance gets a self-conta
 
 **Steps:**
 
-1. Read `CLAUDE.md` "Current State" for cycle number, dates, capital, and strategy counts.
+1. Read `PROJECT_INSTRUCTIONS.md`, `COMMAND_NODE.md`, and the latest runtime truth artifacts for cycle number, dates, capital posture, and strategy counts.
 2. Read `research/velocity_maker_strategy.md` for the proven velocity benchmarks (72% win rate, 6007% ARR maker-only on <24h).
 3. Read `nontrading/` directory for non-trading revenue lane status, modules, and any revenue metrics.
 4. Read all `docs/diary/` entries to extract a timeline of: cycle dates, strategies tested, strategies deployed, capital changes, test count growth, dispatch count growth.

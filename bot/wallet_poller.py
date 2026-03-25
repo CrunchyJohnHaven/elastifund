@@ -338,10 +338,15 @@ def show_status(heartbeat_path: Path = DEFAULT_HEARTBEAT_PATH) -> dict[str, Any]
 
 
 def _resolve_user_address() -> str:
-    addr = os.environ.get("POLY_SAFE_ADDRESS") or os.environ.get("POLYMARKET_FUNDER") or ""
+    addr = (
+        os.environ.get("POLY_DATA_API_ADDRESS")
+        or os.environ.get("POLY_SAFE_ADDRESS")
+        or os.environ.get("POLYMARKET_FUNDER")
+        or ""
+    )
     if not addr or addr.startswith("0xYour"):
         raise SystemExit(
-            "POLY_SAFE_ADDRESS or POLYMARKET_FUNDER must be set in .env"
+            "POLY_DATA_API_ADDRESS, POLY_SAFE_ADDRESS, or POLYMARKET_FUNDER must be set in .env"
         )
     return addr.strip()
 

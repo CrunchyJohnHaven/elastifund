@@ -22,6 +22,8 @@ from typing import Any, Iterator, Optional
 
 import requests
 
+from bot.kalshi_auth import load_kalshi_credentials
+
 try:
     from kalshi_python import Configuration as KalshiConfig, KalshiClient
     from kalshi_python.api import MarketsApi, PortfolioApi
@@ -821,16 +823,33 @@ def fetch_nws_snapshot(city_code: str, target_date: Optional[datetime] = None) -
 
 
 def _load_kalshi_key_path() -> Optional[Path]:
-    key_path = os.environ.get("KALSHI_RSA_KEY_PATH", "").strip()
-    candidates = [
-        Path(key_path) if key_path else None,
-        Path("bot/kalshi/kalshi_rsa_private.pem"),
-        Path("kalshi/kalshi_rsa_private.pem"),
-    ]
-    for path in candidates:
-        if path and path.exists():
-            return path
+    credentials = load_kalshi_credentials()
+    if credentials.private_key_path:
+        return Path(credentials.private_key_path)
     return None
+
+
+def _configure_kalshi_client_auth(api_client: Any, *, execute: bool = False) -> bool:
+    credentials = load_kalshi_credentials()
+    if credentials.configured:
+        api_client.api_key_id = credentials.api_key_id
+        api_client.private_key_pem = credentials.private_key_pem
+        return True
+    if execute:
+        raise RuntimeError(
+            f"Missing Kalshi auth for --execute: {', '.join(credentials.missing_fields)}"
+        )
+    return None
+
+
+def _classify_kalshi_order_error(error: Exception) -> tuple[str, str]:
+    message = str(error or "").strip()
+    lowered = message.lower()
+    if "missing kalshi auth" in lowered or "401" in lowered or "403" in lowered:
+        return "kalshi_auth_failed", message
+    if "insufficient" in lowered and ("fund" in lowered or "balance" in lowered or "buying power" in lowered):
+        return "kalshi_insufficient_funds", message
+    return "kalshi_order_submit_failed", message
 
 
 def get_kalshi_client(*, execute: bool = False) -> KalshiSession:
@@ -840,21 +859,9 @@ def get_kalshi_client(*, execute: bool = False) -> KalshiSession:
         logger.warning("kalshi_python is not installed; using public HTTP market scan only")
         return KalshiSession()
 
-    api_key_id = os.environ.get("KALSHI_API_KEY_ID", "").strip()
-    private_key_path = _load_kalshi_key_path()
-
     config = KalshiConfig()
     api_client = KalshiClient(configuration=config)
-    auth_configured = bool(api_key_id and private_key_path)
-    if auth_configured:
-        api_client.set_kalshi_auth(api_key_id, str(private_key_path))
-    elif execute:
-        missing = []
-        if not api_key_id:
-            missing.append("KALSHI_API_KEY_ID")
-        if not private_key_path:
-            missing.append("KALSHI_RSA_KEY_PATH/private key")
-        raise RuntimeError(f"Missing Kalshi auth for --execute: {', '.join(missing)}")
+    auth_configured = bool(_configure_kalshi_client_auth(api_client, execute=execute))
     if not auth_configured:
         logger.warning("Kalshi auth not configured; attempting read-only public market scan")
     return KalshiSession(
@@ -1171,7 +1178,14 @@ def place_order(
     if session.portfolio_api is None:
         raise RuntimeError("kalshi_python is required for live Kalshi orders")
 
-    response = session.portfolio_api.create_order(**payload)
+    try:
+        response = session.portfolio_api.create_order(**payload)
+    except Exception as exc:
+        reason_code, error_message = _classify_kalshi_order_error(exc)
+        payload["status"] = "blocked"
+        payload["reason"] = reason_code
+        payload["error"] = error_message
+        return payload
     order = _field(response, "order")
     return {
         "status": "live",
@@ -1401,8 +1415,8 @@ def run_once(args: argparse.Namespace) -> int:
             execute=args.execute,
             order_client_id=str(order.get("client_order_id", "")).strip() or None,
         )
-        orders_placed += 1
         if execution_result in {"paper", "live"}:
+            orders_placed += 1
             hour_orders_placed += 1
             hour_notional = round(hour_notional + size_usd, 2)
             already_ordered.add((sig.market_ticker, sig.side))

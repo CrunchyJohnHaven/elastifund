@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "description": "LIVE aggressive posture. Thresholds lowered to 0.08/0.03, crypto unlocked to priority 2. LIVE MODE — real orders submitted to CLOB with maker-only execution. Conservative position limits ($5 max, $5 daily loss). Designed for maximum data gathering with real market exposure.",
+  "description": "Candidate live aggressive posture for bounded proving-ground experimentation. Thresholds are lowered to 0.08/0.03 and crypto is unlocked to priority 2, but live submission remains gated by wallet-flow readiness and the shared launch contract.",
   "mode": {
-    "execution_mode": "shadow",
+    "execution_mode": "live",
     "paper_trading": false,
     "allow_order_submission": true,
-    "launch_gate": "none"
+    "launch_gate": "wallet_flow_ready"
   },
   "feature_flags": {
     "enable_llm_signals": true,

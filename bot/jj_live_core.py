@@ -70,6 +70,10 @@ try:
     from bot import jj_live_runtime_settings as _runtime_settings
 except ImportError:
     import jj_live_runtime_settings as _runtime_settings  # type: ignore
+try:
+    from bot.kalshi_auth import load_kalshi_credentials
+except ImportError:
+    from kalshi_auth import load_kalshi_credentials  # type: ignore
 
 # Auto-load .env
 from dotenv import load_dotenv
@@ -3939,10 +3943,7 @@ class JJLive:
         return deduped
 
     def _has_cross_platform_credentials(self) -> bool:
-        api_key_id = os.environ.get("KALSHI_API_KEY_ID", "").strip()
-        if not api_key_id:
-            return False
-        return any(path.exists() for path in self._cross_platform_key_paths())
+        return load_kalshi_credentials().configured
 
     @staticmethod
     def _lane_health_payload(

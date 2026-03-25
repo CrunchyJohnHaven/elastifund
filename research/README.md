@@ -13,6 +13,7 @@ Current active dispatch packet set:
 - `research/dispatches/DISPATCH_100_BTC5_VELOCITY_PARALLEL_PLAN.md`
 - `research/dispatches/DISPATCH_101_DEEP_RESEARCH_INGESTION_20260311.md`
 - `research/dispatches/DISPATCH_102_BTC5_truth_plumbing_and_execution_confidence.md`
+- `research/dispatches/DISPATCH_113_HISTORICAL_DATA_PIPELINE_INGESTION.md`
 
 ## Current Assessment
 
@@ -36,6 +37,7 @@ Canonical assessment and current-state surfaces:
 
 - `research/imports/` holds third-party or external ingest material.
 - `research/imports/deep_research_report_2026-03-23_btc5_probability_model.md` records the March 23 BTC5 probability-model and fill-conditioned maker-execution ingest.
+- `research/imports/deep_research_report_2026-03-23_historical_data_pipeline.md` records the March 23 multi-venue historical-data pipeline ingest for Polymarket, Kalshi, and Alpaca.
 - `research/deep_research_packets/` holds structured handoff/context packets.
 
 ## Unexecuted Prompt Lane

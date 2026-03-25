@@ -20,6 +20,10 @@
 
 set -euo pipefail
 
+print_help() {
+    sed -n '1,20p' "$0" | sed 's/^# \{0,1\}//'
+}
+
 # -------------------------------------------------------------------
 # Resolve repo root (script lives in scripts/, repo root is one up)
 # -------------------------------------------------------------------
@@ -50,6 +54,9 @@ RUN_ONCE=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        -h|--help)
+            print_help
+            exit 0 ;;
         --max-hypotheses)
             MAX_HYPOTHESES="$2"; shift 2 ;;
         --cycle-timeout)

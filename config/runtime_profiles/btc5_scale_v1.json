@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
-  "description": "BTC5 scaled profile — $10/trade at stage 1, $20 at stage 2, $50 at stage 3. Delta widened to 0.0040 per 2026-03-14 guardrail fix. UP+DOWN live. Daily loss capped at $100. Regime skew and probe-after-loss active.",
+  "description": "BTC5 proving-ground scale profile — $5/trade at stage 1, $10 at stage 2, $20 at stage 3. Delta widened to 0.0040 per 2026-03-14 guardrail fix. UP+DOWN remain candidate live directions only when the shared launch contract is green. Regime skew and probe-after-loss stay active.",
   "btc5_env_overrides": {
     "BTC5_PAPER_TRADING": "false",
     "BTC5_CAPITAL_STAGE": "1",
-    "BTC5_MAX_TRADE_USD": "10.00",
-    "BTC5_STAGE1_MAX_TRADE_USD": "10",
-    "BTC5_STAGE2_MAX_TRADE_USD": "20",
-    "BTC5_STAGE3_MAX_TRADE_USD": "50",
+    "BTC5_MAX_TRADE_USD": "5.00",
+    "BTC5_STAGE1_MAX_TRADE_USD": "5",
+    "BTC5_STAGE2_MAX_TRADE_USD": "10",
+    "BTC5_STAGE3_MAX_TRADE_USD": "20",
     "BTC5_BANKROLL_USD": "333",
     "BTC5_RISK_FRACTION": "0.02",
     "BTC5_MAX_ABS_DELTA": "0.0040",

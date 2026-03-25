@@ -472,6 +472,67 @@ except ImportError:
     except ImportError:
         run_combinatorial_promotion_battery = None
 
+# Unified trade ledger — parallel write alongside jj_trades.db
+try:
+    from bot.unified_ledger import UnifiedLedger as _UnifiedLedger, TradeRecord as _TradeRecord
+except ImportError:
+    try:
+        from unified_ledger import UnifiedLedger as _UnifiedLedger, TradeRecord as _TradeRecord  # type: ignore
+    except ImportError:
+        _UnifiedLedger = None
+        _TradeRecord = None
+
+try:
+    _unified_ledger = _UnifiedLedger() if _UnifiedLedger is not None else None
+except Exception as _ul_init_err:
+    _unified_ledger = None
+    # Logger not yet configured at import time; use stderr
+    import sys as _sys
+    print(f"[jj_live] UnifiedLedger init failed (non-fatal): {_ul_init_err}", file=_sys.stderr)
+
+
+def _ul_record(trade_record: dict, order_status: str = "placed", instance_id: str = "jj_live") -> None:
+    """Best-effort parallel write to the unified ledger. Never raises."""
+    if _unified_ledger is None or _TradeRecord is None:
+        return
+    try:
+        import uuid as _uuid
+        trade_id = str(trade_record.get("order_id") or trade_record.get("trade_id") or _uuid.uuid4().hex[:16])
+        rec = _TradeRecord(
+            trade_id=trade_id,
+            instance_id=instance_id,
+            market_id=str(trade_record.get("market_id", "")),
+            token_id=str(trade_record.get("token_id", "")),
+            slug=str(trade_record.get("question", ""))[:200],
+            direction=str(trade_record.get("direction", "")),
+            side=str(trade_record.get("side", "BUY")),
+            order_id=str(trade_record.get("order_id", "")),
+            order_price=float(trade_record.get("entry_price") or trade_record.get("price") or 0.0),
+            order_size=float(trade_record.get("order_size") or trade_record.get("position_size_usd") or 0.0),
+            order_type=str(trade_record.get("order_type", "POST_ONLY")),
+            order_status=order_status,
+            fill_price=float(trade_record.get("fill_price") or trade_record.get("entry_price") or 0.0),
+            fill_size=float(trade_record.get("fill_size") or 0.0),
+            fill_time=str(trade_record.get("fill_time", "")),
+            fill_latency_seconds=float(trade_record.get("latency_seconds") or 0.0),
+            entry_price=float(trade_record.get("entry_price") or trade_record.get("price") or 0.0),
+            realized_pnl=float(trade_record.get("pnl") or 0.0),
+            fees_paid=float(trade_record.get("taker_fee") or 0.0),
+            strategy_name=str(trade_record.get("source_combo") or trade_record.get("source") or trade_record.get("strategy", "")),
+            signal_confidence=float(trade_record.get("confidence") or 0.0),
+            kelly_fraction=float(trade_record.get("kelly_fraction") or 0.0),
+            edge_estimate=float(trade_record.get("edge") or 0.0),
+            paper=bool(trade_record.get("paper", False)),
+        )
+        _unified_ledger.record_trade(rec)
+    except Exception as _e:
+        # Non-fatal: log at WARNING level if logger is available, else swallow
+        try:
+            logging.getLogger("JJ").warning("UnifiedLedger write failed (non-fatal): %s", _e)
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -5215,6 +5276,7 @@ class JJLive:
                 trade_record["order_id"] = paper_order_id
 
                 trade_id = self.db.log_trade(trade_record)
+                _ul_record({**trade_record, "trade_id": trade_id, "order_size": order_size, "paper": True}, order_status="filled")
                 self._record_trade_telemetry(
                     {
                         **trade_record,
@@ -5361,6 +5423,15 @@ class JJLive:
                             order_price=order_price,
                         ),
                     )
+                    _ul_record(
+                        {
+                            **trade_record,
+                            "order_id": order_id,
+                            "order_price": order_price,
+                            "order_size": order_size,
+                        },
+                        order_status="placed",
+                    )
                     self._record_trade_telemetry(
                         {
                             **trade_record,
@@ -5464,6 +5535,16 @@ class JJLive:
             }
         )
         trade_id = self.db.log_trade(trade_record)
+        _ul_record(
+            {
+                **trade_record,
+                "trade_id": trade_id,
+                "fill_price": fill_event.fill_price,
+                "fill_size": fill_event.fill_size,
+                "latency_seconds": fill_event.latency_seconds,
+            },
+            order_status="filled",
+        )
         self._record_trade_telemetry(
             {
                 **trade_record,
@@ -6027,6 +6108,7 @@ class JJLive:
                     order_id = f"paper-sumv-{uuid.uuid4().hex[:8]}"
                     trade_record["order_id"] = order_id
                     trade_id = self.db.log_trade(trade_record)
+                    _ul_record({**trade_record, "trade_id": trade_id, "order_size": shares, "paper": True}, order_status="filled", instance_id="jj_live.sum_violation")
                     self._record_trade_telemetry(
                         {**trade_record, "trade_id": trade_id, "order_size": shares},
                         fill_status="filled",
@@ -6102,6 +6184,7 @@ class JJLive:
 
                     trade_record["order_id"] = order_id
                     trade_id = self.db.log_trade(trade_record)
+                    _ul_record({**trade_record, "trade_id": trade_id, "order_size": shares}, order_status="placed", instance_id="jj_live.sum_violation")
                     self._record_trade_telemetry(
                         {**trade_record, "trade_id": trade_id, "order_size": shares},
                         fill_status="posted",
@@ -6190,6 +6273,7 @@ class JJLive:
                 "source": "a6",
             }
             trade_id = self.db.log_trade(trade_record)
+            _ul_record({**trade_record, "trade_id": trade_id, "entry_price": trade_record.get("price", 0.0)}, order_status="filled", instance_id="jj_live.a6")
             self._record_trade_telemetry(
                 {**trade_record, "trade_id": trade_id},
                 fill_status="filled",

@@ -131,7 +131,7 @@ This section is the current operational truth and should anchor your analysis.
 - The policy lane is judged by the market-model champion rather than legacy ARR-only heuristics.
 - The cycle, frontier, and policy lane now agree on the same best runtime package.
 - The best current market-backed candidate has already been shadow-staged.
-- Baseline BTC5 stage-1 live trading is currently finance-approved: `launch_posture=clear`, `execution_mode=live`, `paper_trading=false`, `allow_order_submission=true`, `finance_gate_pass=true`.
+- Baseline BTC5 stage-1 live trading is not approved until runtime truth, wallet truth, and launch posture all agree. Treat `shadow_fast_flow` / shadow execution as the default unless the latest runtime truth explicitly says otherwise.
 - Local continuous search exists, but the active command-node and BTC5 market mutation budgets are exhausted, so the next queue should wait for fresh live evidence before spending again.
 - ARR and USD/day outcome surfaces exist.
 - The AWS services and timers exist and run the autoresearch stack.

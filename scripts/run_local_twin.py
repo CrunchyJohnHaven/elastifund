@@ -58,6 +58,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from bot.kalshi_auth import load_kalshi_credentials
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOGS_DIR = REPO_ROOT / "logs"
 PYTHON = sys.executable
@@ -246,14 +248,9 @@ def _resolve_alpaca_mode(args: argparse.Namespace) -> tuple[str, list[str], bool
 
 
 def _kalshi_auth_present() -> bool:
-    key_id = _env_value("KALSHI_API_KEY_ID", "")
-    key_path = _env_value("KALSHI_RSA_KEY_PATH", "")
-    resolved_key = Path(key_path).expanduser() if key_path else REPO_ROOT / "bot" / "kalshi" / "kalshi_rsa_private.pem"
-    return (
-        bool(key_id)
-        and not _is_placeholder(key_id)
-        and resolved_key.exists()
-    )
+    merged_env = dict(_repo_env())
+    merged_env.update(os.environ)
+    return load_kalshi_credentials(merged_env).configured
 
 
 def _resolve_kalshi_mode(args: argparse.Namespace) -> tuple[str, list[str], bool]:
@@ -307,6 +304,20 @@ def _resolve_polymarket_mode(args: argparse.Namespace) -> tuple[str, list[str], 
             blockers.extend(str(reason) for reason in decision.rationale if str(reason))
     except Exception as exc:
         blockers.append(f"btc5_rollout_decision_unavailable:{type(exc).__name__}")
+        launch_verdict = dict(launch_packet.get("launch_verdict") or {})
+        launch_contract = dict(launch_packet.get("contract") or {})
+        state_permissions = dict(launch_packet.get("state_permissions") or {})
+        if str(launch_verdict.get("posture") or launch_packet.get("launch_posture") or "").strip().lower() != "clear":
+            blockers.append("launch_posture_blocked")
+        if launch_contract.get("allow_order_submission") is not True:
+            blockers.append("launch_packet_disables_order_submission")
+        if launch_contract.get("paper_trading") is not False:
+            blockers.append("launch_packet_keeps_paper_trading_enabled")
+        if state_permissions.get("baseline_live_allowed") is not True:
+            blockers.append("baseline_live_not_allowed")
+        accounting = dict(remote_cycle_status.get("accounting_reconciliation") or {})
+        if accounting.get("drift_detected"):
+            blockers.append("truth_or_accounting_drift_blockers_present")
     return effective_mode, blockers, True
 
 
@@ -375,6 +386,7 @@ def run_weather(args: argparse.Namespace) -> int:
 def run_alpaca(args: argparse.Namespace) -> int:
     """Alpaca crypto candidate -> queue -> execution lane."""
     mode, blockers, live_requested = _resolve_alpaca_mode(args)
+    execution_path = REPO_ROOT / "reports" / "alpaca_first_trade" / "latest.json"
     if mode != "live" and not _alpaca_explicit_paper_credentials_present():
         blockers = [*blockers, "alpaca_paper_credentials_missing"]
     status_payload = {
@@ -399,11 +411,33 @@ def run_alpaca(args: argparse.Namespace) -> int:
         return 0
     if blockers:
         _log(f"alpaca effective_mode={mode} blockers={','.join(blockers)}")
-    return _run_script(
+    rc = _run_script(
         "scripts/run_alpaca_first_trade.py",
         ["--mode", mode],
         env_overrides={"ALPACA_TRADING_MODE": mode},
     )
+    execution_report = _load_json(execution_path) or {}
+    execution_status = str(execution_report.get("status") or "").strip().lower()
+    execution_blockers = [str(item) for item in (execution_report.get("blockers") or []) if str(item)]
+    execution_summary = str(execution_report.get("summary") or "").strip()
+    execution_payload = execution_report.get("payload") if isinstance(execution_report.get("payload"), dict) else {}
+    execution_error = str(execution_payload.get("error") or "").strip()
+    if "crypto orders not allowed for account" in execution_error.lower():
+        execution_blockers.append("alpaca_crypto_orders_not_allowed")
+    if execution_status:
+        status_payload["last_execution_status"] = execution_status
+    if execution_summary:
+        status_payload["last_execution_summary"] = execution_summary
+    if execution_error:
+        status_payload["last_execution_error"] = execution_error
+    if execution_blockers:
+        status_payload["blockers"] = sorted({*status_payload["blockers"], *execution_blockers})
+    if execution_status == "error":
+        status_payload["feedback_loop_ready"] = False
+    if {"alpaca_crypto_orders_not_allowed", "alpaca_crypto_not_enabled"} & set(execution_blockers):
+        status_payload["feedback_loop_ready"] = False
+    _update_local_live_status(args, "alpaca", status_payload)
+    return rc
 
 
 def run_kalshi(args: argparse.Namespace) -> int:
@@ -429,7 +463,7 @@ def run_kalshi(args: argparse.Namespace) -> int:
     extra_args = ["--mode", mode]
     if mode == "live":
         extra_args.append("--execute")
-    return _run_script(
+    rc = _run_script(
         "kalshi/weather_arb.py",
         extra_args,
         env_overrides={
@@ -437,6 +471,12 @@ def run_kalshi(args: argparse.Namespace) -> int:
             "KALSHI_WEATHER_PAPER_TRADING": "false" if mode == "live" else "true",
         },
     )
+    if rc != 0:
+        status_payload["feedback_loop_ready"] = False
+        status_payload["last_execution_status"] = "error"
+        status_payload["blockers"] = sorted({*status_payload["blockers"], "kalshi_lane_process_failed"})
+        _update_local_live_status(args, "kalshi", status_payload)
+    return rc
 
 
 def run_polymarket(args: argparse.Namespace) -> int:
