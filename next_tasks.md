@@ -2,664 +2,432 @@
 
 ## Status
 
-Elastifund is not in optimization mode. It is in containment mode.
+The containment sprint is done.
 
-The March 25 packet shows a fund-level loss of **-$1,347.84 (-55.2%)** on **$2,441.90** of deposits, with **BTC5 responsible for 95.8% of deployed capital**. The system is not suffering from a normal drawdown. It is suffering from a broken control plane, a broken sizing contract, and a strategy sleeve that was allowed to trade while its edge was unproven.
+Atomic window reservation, the execution-layer cap block, fail-closed defaults, the startup safety log, the filter ledger, the mutation tracker, the single effective env, the health snapshot, the truth bundle, and the JJ/BTC5 ownership boundary all landed in the March 25 P0-P2 sprint. Do not reopen that work unless a live failure proves it is still broken.
 
-The right objective for the next sprint is not “make BTC5 bigger.” It is:
+The next sprint is simpler:
 
-1. **Stop repeatable loss mechanisms.**
-2. **Make one BTC5 control plane authoritative.**
-3. **Prove whether DOWN-only BTC5 has real edge after price and hour filters.**
-4. **Auto-improve only after the loop can safely auto-revert.**
+**run one clean post-fix validation cohort, prove DOWN-only edge fast, or kill BTC5 cleanly.**
 
----
-
-## Current failure mode
-
-### 1. The main loss is structural, not random
-
-- **BTC5 UP is dead.** It lost roughly **-$1,060** on **$1,492** deployed. This sleeve should not be tuned. It should stay dead.
-- **BTC5 DOWN is fragile, not proven.** The packet says it is negative overall, but approximately **+$10.72 ex-March-15 violation**, and specifically positive when entries are capped near **0.48**.
-- **The March 15 oversized windows are the dominant loss event.** The packet attributes roughly **$1,257** of losses to two single-window violations.
-
-### 2. The exact BTC5 cap enforcement hole is in the execution path
-
-The relevant path is:
-
-`jj_live.py` → excludes dedicated BTC5 markets → `btc_5min_maker.py` owns BTC5 execution → `polymarket_clob.py` submits the order.
-
-In `bot/btc_5min_maker.py`, the dangerous sequence is:
-
-1. `_process_window()` checks `self.db.window_exists(window_start_ts)`.
-2. It computes `effective_max_trade_usd` and sizes the trade.
-3. It calls `self.clob.place_post_only_buy(...)`.
-4. **Only after network submission** does it call `_persist(...)`.
-5. `_persist(...)` calls `TradeDB.upsert_window(...)`, which uses `ON CONFLICT(window_start_ts) DO UPDATE`.
-
-That means the window is **not reserved before order submission**.
-
-If two processes, two restarts, or a restart-loop hit the same `window_start_ts`, both can see “window not processed,” both can place live orders, and the DB will later **collapse multiple live orders into one row** because the upsert overwrites by `window_start_ts`.
-
-That is the clearest code-level explanation in this packet for how the wallet can show a huge single-window deployment while the local BTC5 DB still looks much cleaner than reality.
-
-### 3. The configuration chain is fail-open
-
-The BTC5 service loads env in this order:
-
-1. `config/btc5_strategy.env`
-2. `state/btc5_autoresearch.env`
-3. `state/btc5_capital_stage.env`
-4. `.env`
-
-Later files win.
-
-That means runtime truth is file-order dependent, not object-based. The mutation is not a single thing. It is a rumor moving through four env files.
-
-Worse, code defaults are still unsafe in `bot/btc_5min_maker.py` if overlays fail:
-
-- `stage1_max_trade_usd` default: **10**
-- `stage2_max_trade_usd` default: **20**
-- `stage3_max_trade_usd` default: **50**
-- `daily_loss_limit_usd` default: **247**
-- `direction_filter_enabled` default: **false**
-- `hour_filter_enabled` default: **false**
-- `up_live_mode` default: **live_enabled**
-
-So the current system does not fail closed. It fails back to permissive runtime behavior.
-
-### 4. The repo still has split truth surfaces
-
-Today BTC5 truth is split across:
-
-- wallet export / portfolio screenshot
-- `data/btc_5min_maker.db`
-- `jj_state.json`
-- `data/jj_trades.db`
-- runtime truth JSON
-- remote service status JSON
-- stale pipeline markdown
-- env overlays
-- systemd state
-
-That is why the system can be “launch blocked,” “paper false,” “allow order submission true,” and “service running” at the same time.
-
-### 5. The filter system is incomplete economically
-
-The code now logs some counterfactual filter decisions (`hour_filter_status`, `direction_filter_status`), but skip economics are still spread across:
-
-- `order_status`
-- `reason`
-- `decision_reason_tags`
-- filter-specific columns
-
-This is enough to debug by hand. It is not enough to let the bot learn which filters create real P&L.
+That is the whole job.
 
 ---
 
-## BTC5 DOWN fee-adjusted diagnosis
+## What the last sprint actually changed
 
-### Gross edge
+The previous task file was executed in the right spirit. The system now has the right primitives:
 
-The packet already gives the important answer:
+- duplicate-window protection before order submission
+- a hard oversize block before CLOB submission
+- fail-closed defaults for UP, direction mode, and hour filters
+- one generated runtime contract
+- one health surface
+- one mutation state file
+- one truth bundle
 
-- **DOWN overall:** negative.
-- **DOWN ex-March-15 oversized violation:** slightly positive.
-- **DOWN at 0.48 entry:** expected value is positive.
+That means the bottleneck is no longer architecture.
 
-For a binary contract bought at price `p_entry`, expected P&L per share is approximately:
+The bottleneck is **decision-quality evidence**.
 
-`EV/share = win_prob - p_entry`
+And there is one important lesson from how the tasks were executed:
 
-Using the packet’s DOWN win rate of about **52.2%**:
+**the current truth bundle is still too contaminated to judge the post-fix strategy.**
 
-- At **0.48** entry: `0.522 - 0.48 = +0.042/share` → about **+8.75% on notional**.
-- At **0.53** entry: `0.522 - 0.53 = -0.008/share` → about **-1.5% on notional**.
-
-That means **entry price discipline matters more than trade size**.
-
-### Fees
-
-Under the current maker-only design, **maker fee drag is effectively zero**. The live economic floor is not “cover maker fees.” It is:
-
-- **Polymarket minimum order floor:** 5 shares / about **$5 notional**.
-- **Tiny maker rebate:** positive but negligible at small size.
-
-So the practical answer is:
-
-- **Break-even trade size against maker fees:** not meaningful, because maker fees are zero.
-- **Practical minimum viable trade size:** about **$5 notional** because of the exchange minimum.
-
-Conclusion: **fix price and hour selection before touching size.**
+It currently recommends `kill` because it still sees recent UP live fills from pre-fix rows. That is useful as a safety warning, but it is not a valid verdict on the fixed DOWN-only cohort. The next sprint must therefore start by defining a clean validation cohort and refusing to judge BTC5 from mixed pre-fix + post-fix history.
 
 ---
 
-## Target BTC5 control plane
+## Core objective
 
-BTC5 should become a **small bounded subsystem**, not a wandering branch of the larger repo.
+Answer one question with controlled live data:
 
-### Owner boundary
+**Does BTC5 DOWN-only, capped at $5 max trade, 0.48 max buy price, and ET suppression for hours 0, 1, 2, 8, and 9 produce positive net P&L after estimated rebates with zero safety failures?**
 
-- `jj_live.py` should **never** own dedicated BTC5 markets.
-- `btc_5min_maker.py` should be the **only** live owner of BTC5.
-- `scripts/run_btc5_autoresearch_cycle_core.py` should be allowed to propose mutations, but **not** to create runtime ambiguity.
+If yes, keep BTC5 alive at the same size and run a second confirmation cohort.
 
-### Single runtime contract
+If no, kill BTC5 and reallocate the proving-ground lane to Kalshi weather arb.
 
-Create exactly one generated runtime artifact for BTC5:
-
-- `state/btc5_effective.env`
-- `reports/btc5_runtime_contract.json`
-
-These should contain:
-
-- deployed config hash
-- mutation id
-- effective max trade size
-- effective daily loss limit
-- hour suppression set
-- direction mode
-- price caps
-- service state
-- last fill timestamp
-- last 50-fill win rate
-- auto-revert status
-
-The service should load **one** effective env file, not four layered env sources.
+No scaling before that answer exists.
 
 ---
 
-## P0: tasks for the next 24 hours
+## Non-negotiables for this sprint
 
-### P0.1 — Make the BTC5 window lock atomic
-
-**Files**
-- `bot/btc_5min_maker.py`
-- `bot/btc_5min_maker_core.py` only if shared logic is being migrated
-- `bot/fill_tracker.py` only if needed for status handoff
-
-**Change**
-
-Add a `reserve_window(window_start_ts, slug, status='pending')` DB write that occurs **before** any network order submission.
-
-Then change the flow to:
-
-1. try to reserve window
-2. if reservation fails, skip immediately
-3. compute trade
-4. submit order
-5. update reserved row with final order state
-
-**Critical rule:** replace the current “check then submit then upsert” flow.
-
-**Also add a hard assert:** before any network call, if `size_usd > effective_max_trade_usd + 0.01`, skip and alert.
-
-**Why**
-
-This is the highest-value fix in the entire packet. The current `window_exists()` + later `upsert_window()` sequence is the atomicity hole most consistent with the March 15 oversize event.
-
-**Estimate**: 4–6 hours
-
-**Expected dollar impact**: prevents another catastrophic repeat of the observed **~$1,257** multi-window oversize loss mechanism.
+1. **VPS runtime truth wins.** If local artifacts disagree with the VPS DB or VPS runtime contract, the VPS wins.
+2. **The sample must be cohort-based.** Count only post-fix, DOWN-only, live, resolved fills from the active mutation/config hash.
+3. **No new BTC5 mutations during the 50-fill proof window.** The loop is paused while the strategy is being judged.
+4. **No size increases.** Stay at the current $5 cap.
+5. **Any safety failure ends the sample immediately.** That means any UP live attempt, cap breach, config hash mismatch, duplicate-window symptom, or restart-loop.
 
 ---
 
-### P0.2 — Add a second cap check in the order submission layer
+## P0 — First 24 hours
 
-**Files**
-- `bot/polymarket_clob.py`
-- `bot/btc_5min_maker.py`
+### P0.1 — Freeze one clean validation cohort
 
-**Change**
+Create one explicit validation contract before counting a single fill.
 
-Change the BTC5 order call contract from:
+Record these fields in one place:
 
-- `place_post_only_buy(token_id, price, shares)`
+- `post_fix_validation_start_ts`
+- `validation_mutation_id`
+- `validation_config_hash`
+- `validation_profile_name`
+- `validation_effective_max_trade_usd=5`
+- `validation_down_max_buy_price=0.48`
+- `validation_direction_mode=down_only`
+- `validation_up_live_mode=shadow_only`
+- `validation_hour_filter_enabled=true`
+- `validation_suppress_hours_et=0,1,2,8,9`
 
-to something like:
+The 50-fill sample only counts rows that are:
 
-- `place_post_only_buy(token_id, price, shares, max_notional_usd, window_start_ts)`
+- live, not paper
+- direction = `DOWN`
+- resolved
+- `decision_ts >= post_fix_validation_start_ts`
+- tied to `validation_mutation_id`
+- tied to `validation_config_hash`
 
-Then reject any order where:
+Do not judge BTC5 from all-history rows.
 
-`round(price * shares, 2) > max_notional_usd + 0.01`
+### P0.2 — Deploy once, verify once, then start counting
 
-This is belt-and-suspenders protection.
+Use the already-generated effective env and runtime contract. Do not change parameters during deployment.
 
-**Why**
+Immediately after deploy:
 
-Sizing discipline should be enforced at both:
+1. restart the BTC5 service
+2. run `python scripts/render_btc5_effective_env.py`
+3. run `python scripts/render_btc5_truth_bundle.py`
+4. run `python scripts/render_btc5_health_snapshot.py`
+5. run `python scripts/verify_btc5_mutation.py`
 
-- the strategy layer
-- the final execution layer
+The cohort does **not** begin until mutation verification returns `MUTATION_VERIFY_OK`.
 
-If either is wrong, the order still must not go out.
+Interpret `verify_btc5_mutation.py` exactly this way:
 
-**Estimate**: 2–3 hours
+- exit `0` = valid deploy, sample may start
+- exit `1` = invalid deploy, stop and fix the hash mismatch
+- exit `2` = unknown deploy state, do not count fills yet
 
-**Expected dollar impact**: large downside avoided; low upside impact.
+### P0.3 — Use a cohort surface, not the all-history truth bundle, for the verdict
 
----
+Do not rebuild the truth system. Add one narrow cohort view on top of it.
 
-### P0.3 — Kill UP in code defaults, not just env overlays
+Create or generate one report such as:
 
-**Files**
-- `bot/btc_5min_maker.py`
-- `config/btc5_strategy.env`
-- `tests/test_btc_5min_maker*.py`
+- `reports/btc5_validation_cohort_latest.json`
 
-**Change**
+It should answer only the post-fix question and should include:
 
-Make these fail-closed defaults in code:
+- `cohort_start_ts`
+- `mutation_id`
+- `config_hash`
+- `resolved_down_fills`
+- `wins`
+- `losses`
+- `win_rate`
+- `gross_pnl_usd`
+- `estimated_maker_rebate_usd`
+- `net_pnl_after_estimated_rebate_usd`
+- `avg_entry_price`
+- `price_bucket_slice`
+- `hour_slice_et`
+- `fill_rate`
+- `order_failed_rate`
+- `cap_breach_events`
+- `up_live_attempts`
+- `config_hash_mismatch_count`
+- `recommendation`
 
-- `direction_filter_enabled = True`
-- `direction_mode = 'down_only'`
-- `up_live_mode = 'shadow_only'`
+The all-history truth bundle remains the broad safety surface.
+The cohort report becomes the decision surface for this sprint.
 
-Keep the env values aligned:
+### P0.4 — Pass/fail checklist for the deployment itself
 
-- `BTC5_DIRECTION_FILTER_ENABLED=true`
-- `BTC5_DIRECTION_MODE=down_only`
-- `BTC5_UP_LIVE_MODE=shadow_only`
+A valid post-fix deploy must pass all of these before the sample starts:
 
-Add tests that UP live orders cannot be placed even if one env layer disappears.
+- service is active and not restart-looping
+- `verify_btc5_mutation.py` returns OK
+- startup logs show the safe config, not permissive fallbacks
+- health snapshot shows the exact deployed params
+- runtime contract hash matches the mutation state hash
+- UP live attempts after cohort start = 0
+- cap breach events after cohort start = 0
+- no more than one live sequence exists per BTC5 window
+- `pending_reservation` rows do not accumulate past a single active window
 
-**Why**
-
-Right now the code defaults are permissive and rely on overlays to become safe. That is backwards.
-
-**Estimate**: 1–2 hours
-
-**Expected dollar impact**: prevents recurrence of the observed **-$1,060** UP sleeve damage.
-
----
-
-### P0.4 — Lock the hour filter into the live path
-
-**Files**
-- `bot/btc_5min_maker.py`
-- `config/btc5_strategy.env`
-- tests
-
-**Change**
-
-Make the BTC5 maker itself authoritative for hour suppression using America/New_York time:
-
-- suppress ET hours: `0,1,2,8,9`
-- keep counterfactual logging on skipped windows
-
-Do **not** rely on the separate `jj_live.py` time-of-day kill for BTC5.
-
-**Why**
-
-The BTC5 maker already has the cleaner hour filter implementation. The main live loop’s separate time-of-day filter is broader and duplicates logic.
-
-**Estimate**: 1–2 hours
-
-**Expected dollar impact**: medium; likely moves the DOWN sleeve closer to its ex-violation breakeven/positive regime.
-
----
-
-### P0.5 — Tighten the DOWN price cap and fail closed if the overlay is missing
-
-**Files**
-- `config/btc5_strategy.env`
-- `bot/btc_5min_maker.py`
-- deploy verification scripts/tests
-
-**Change**
-
-Set and verify:
-
-- `BTC5_DOWN_MAX_BUY_PRICE=0.48`
-- `BTC5_MIN_BUY_PRICE=0.30` (or keep stricter if validated)
-
-Then add startup logging that prints the actual effective caps and exits non-zero if they differ from the approved mutation contract.
-
-**Why**
-
-The packet’s own economics say 0.48 is the live line between slight edge and no edge.
-
-**Estimate**: 1 hour
-
-**Expected dollar impact**: medium-high; improves expectancy directly.
+If any of these fail, the strategy is not “under test.” It is still broken.
 
 ---
 
-## P1: tasks for the next 72 hours
+## P1 — Days 1 to 7: collect the 50-fill proof sample
 
-### P1.1 — Replace four env layers with one generated effective env
+### P1.1 — Sampling rules
 
-**Files**
-- `deploy/btc-5min-maker.service`
-- `scripts/run_btc5_autoresearch_cycle_core.py`
-- new `scripts/render_btc5_effective_env.py`
-- new `state/btc5_effective.env`
-- new `reports/btc5_runtime_contract.json`
+Count only:
 
-**Change**
+- post-fix cohort rows
+- live rows
+- resolved rows
+- DOWN rows
 
-Generate one authoritative BTC5 env file from:
+Do not count:
 
-- approved base strategy
-- approved mutation
-- approved capital stage
+- paper fills
+- shadow rows
+- pre-fix rows
+- UP rows
+- unresolved rows
+- rows from a different mutation or config hash
 
-Then point the service to **only that file**.
+Checkpoint the sample at:
 
-Remove `.env` as a BTC5 behavior override surface.
+- 10 fills
+- 20 fills
+- 30 fills
+- 50 fills
 
-**Why**
+### P1.2 — Metrics that matter at every checkpoint
 
-Right now mutation application is implicit. That makes rollback and audit weak.
+At each checkpoint, update the cohort report with:
 
-**Estimate**: 5–7 hours
+- resolved fills
+- wins / losses
+- win rate
+- gross P&L
+- estimated maker rebate
+- net P&L after estimated rebate
+- average entry price
+- average trade size
+- price bucket mix: `<0.49`, `0.49`, `0.50`, `0.51+`
+- ET hour mix
+- live fill rate
+- order failure rate
+- partial-fill and cancel counts
+- cap breach count
+- UP live attempt count
+- config hash mismatch count
 
-**Expected dollar impact**: indirect but high; this is the control-plane simplification that prevents future silent misconfiguration.
+Win rate alone is not enough.
 
----
+The strategy is only alive if the **net dollars** are positive under the fixed rules.
 
-### P1.2 — Create one authoritative BTC5 health contract every 30 minutes
+### P1.3 — The only kill rules during the sample
 
-**Files**
-- `bot/health_monitor.py`
-- `scripts/health_check.sh`
-- new `scripts/render_btc5_health_snapshot.py`
-- `reports/btc5_health_latest.json`
+There are two kill classes.
 
-**The health contract must answer exactly five questions**
+#### Safety kill — immediate
 
-1. Is the bot running?
-2. When was the last fill?
-3. What is rolling win rate over the last 50 resolved fills?
-4. What exact parameters are currently deployed?
-5. Does deployed config match the latest approved mutation?
+Kill the sample immediately on any of these:
 
-Also send Telegram only for:
-
-- service down
-- oversize-order attempted
-- config hash mismatch
-- last fill stale beyond threshold
-- auto-revert triggered
-
-**Estimate**: 4–6 hours
-
-**Expected dollar impact**: indirect but high; reduces blind trading.
-
----
-
-### P1.3 — Add mutation verification with auto-revert
-
-**Files**
-- `scripts/run_btc5_autoresearch_cycle_core.py`
-- `bot/auto_promote.py`
-- `bot/promotion_manager.py`
-- new `state/btc5_active_mutation.json`
-
-**Change**
-
-Every promoted BTC5 mutation must:
-
-1. write mutation id + config hash
-2. deploy
-3. wait for N windows / M resolved fills
-4. compare against incumbent
-5. either keep or revert automatically
-
-**Keep criteria**
-
-- no cap breaches
-- no config hash mismatch
-- fill rate not worse than threshold
-- net P&L after estimated rebates not worse than incumbent by a defined margin
-
-**Revert immediately** on:
-
-- oversize order attempt
-- UP live order attempt
+- any UP live attempt
+- any cap breach event
+- any config hash mismatch that survives redeploy verification
 - service restart-loop
-- config hash mismatch
+- evidence of duplicate live orders in one window
 
-**Estimate**: 6–8 hours
+#### Economic kill — at 50 resolved fills
 
-**Expected dollar impact**: medium-high; this is how self-improvement becomes real rather than theatrical.
+If the first **50 resolved DOWN-only cohort fills** still produce **non-positive net P&L after estimated rebates**, kill BTC5.
 
----
+Do not negotiate with that result.
 
-### P1.4 — Normalize filter economics
+### P1.4 — If the first 50 fills are positive
 
-**Files**
-- `bot/btc_5min_maker.py`
-- `data/btc_5min_maker.db` migration
-- new `reports/btc5_filter_economics_latest.json`
+Do **not** scale.
 
-**Change**
+If the first 50-fill cohort is positive and clean, the correct next move is:
 
-Create one structured schema for every skip/trade decision:
+1. keep the same $5 cap
+2. keep DOWN-only
+3. keep the same hour filter
+4. keep the same 0.48 price cap
+5. run a second confirmation cohort of 50 resolved fills
 
-- `filter_name`
-- `filter_state` (allowed / blocked / shadow-only)
-- `counterfactual_trade_size_usd`
-- `counterfactual_entry_price`
-- `counterfactual_direction`
-- `realized_if_taken` (when later resolvable)
-- `estimated_ev_if_taken`
-- `prevented_loss_usd`
-- `opportunity_cost_usd`
-- `net_filter_value_usd`
-
-Then compute keep/soften/kill decisions for filters.
-
-**Why**
-
-You do not find edge by stacking more filters. You find edge by learning which filters actually create money.
-
-**Estimate**: 6–10 hours
-
-**Expected dollar impact**: medium; this is the research engine for BTC5 DOWN.
+The first positive cohort proves survival.
+The second proves repeatability.
 
 ---
 
-## P2: tasks for days 4–14
+## P2 — Filter economics: learn, do not mutate yet
 
-### P2.1 — Make `jj_live.py` and BTC5 ownership explicit and testable
+`reports/btc5_filter_economics_latest.json` now matters, but only after some post-fix data exists.
 
-**Files**
-- `bot/jj_live.py`
-- tests around `is_dedicated_btc5_market()` and execution skip
+Use it to answer exactly these questions:
 
-**Change**
+1. **Did the hour filter save money, or only reduce volume?**
+2. **Did DOWN-only protect capital the way the packet says it should?**
+3. **Is the 0.48 cap the actual source of the remaining edge?**
+4. **Which blocked price buckets were genuinely bad?**
+5. **Which ET hours remain positive after the fixed filters?**
+6. **Is any current filter creating more opportunity cost than prevented loss?**
 
-Codify the rule:
+Decision rules for this sprint:
 
-- `jj_live.py` may scan fast-flow markets
-- `jj_live.py` may not execute dedicated BTC5 windows
-- `btc_5min_maker.py` is sole BTC5 executor
+- keep a filter if `net_filter_value_usd >= 0`
+- keep a filter if it is a hard safety rule even when opportunity cost looks high
+- do **not** relax any filter during the first 50-fill cohort
+- the direction filter is not a candidate for relaxation; UP remains dead
+- only consider a future relaxation after the cohort is complete and only if the blocked sample is large enough to trust
 
-Add tests so this cannot drift.
-
-**Estimate**: 2–3 hours
-
----
-
-### P2.2 — Unify simulation authority or freeze one simulator
-
-**Files**
-- `simulator/engine.py`
-- `simulator/simulator.py`
-- `src/maker_fill_model.py`
-- docs naming the authoritative simulator
-
-**Change**
-
-Pick one simulator as authoritative for BTC5 policy search.
-
-Requirements:
-
-- same calibration contract as live
-- same price-cap logic as live
-- same fill model as live, or explicitly conservative
-- same direction/hour filters as live
-
-Archive or freeze the non-authoritative simulator.
-
-**Estimate**: 8–12 hours
-
-**Expected dollar impact**: indirect but important; prevents the system from optimizing against contradictory worlds.
+The point of filter economics is not to add more filters.
+The point is to learn which existing filters actually create money.
 
 ---
 
-### P2.3 — Build a narrow BTC5 truth bundle for research and investor-safe summaries
+## DOWN-only proof standard
 
-**Files**
-- new `reports/btc5_truth_bundle_latest.json`
-- docs / summary scripts
+BTC5 DOWN-only is only considered provisionally viable if all of these are true:
 
-**Contents**
+1. 50 resolved DOWN-only cohort fills exist
+2. zero safety kills fired during the cohort
+3. mutation hash stayed valid through the cohort
+4. net P&L after estimated rebates is positive
+5. the positive result is not explained by one freak outlier trade
+6. the profitable slice is still concentrated in allowed hours and disciplined entry prices
 
-- wallet-authoritative BTC5 P&L
-- BTC5 DB P&L
-- discrepancy field
-- current mutation id
-- config hash
-- last 50 resolved fills
-- hour / price / direction slice table
-- current recommendation: continue, hold, or kill
+If those are not true, the honest conclusion is that DOWN-only still does not have durable edge under controlled reality.
 
-**Why**
-
-No more hand-built narratives. One file should tell the truth.
-
-**Estimate**: 4–6 hours
+Then BTC5 dies.
 
 ---
 
-## Prioritized task table
+## Kalshi activation plan if BTC5 is killed
 
-| Priority | Task | Files | Est. hours | Expected impact |
-|---|---|---:|---:|---|
-| P0 | Atomic window reservation before order placement | `bot/btc_5min_maker.py`, DB write path | 4–6 | Prevents repeat of catastrophic oversize duplicate-window behavior |
-| P0 | Execution-layer notional cap assert | `bot/polymarket_clob.py`, BTC5 caller | 2–3 | Prevents any oversize order from reaching venue |
-| P0 | UP hard kill in code defaults + tests | `bot/btc_5min_maker.py`, config, tests | 1–2 | Removes the sleeve that already lost ~$1,060 |
-| P0 | TOD filter live enforcement | BTC5 maker + config + tests | 1–2 | Removes documented losing hours |
-| P0 | DOWN price cap = 0.48 with startup verification | config + startup checks | 1 | Enforces the only price band with documented positive EV |
-| P1 | Single generated `btc5_effective.env` | deploy + autoresearch + generated artifact | 5–7 | Removes silent env drift |
-| P1 | 30-minute BTC5 health contract | health monitor + scripts + Telegram | 4–6 | Makes operation inspectable and fail-fast |
-| P1 | Mutation verify / auto-revert | promotion / autoresearch state machine | 6–8 | Turns research into governed self-improvement |
-| P1 | Filter economics ledger | BTC5 DB + reports | 6–10 | Finds real edge faster |
-| P2 | Explicit JJ/BTC5 ownership boundary | `jj_live.py` + tests | 2–3 | Prevents cross-surface drift |
-| P2 | Simulator unification / freeze | simulator modules + docs | 8–12 | Stops optimizing against contradictions |
-| P2 | BTC5 truth bundle | reports + scripts | 4–6 | Gives one summary surface for decisions |
+Kalshi is not the parallel sprint. It is the fallback lane.
 
----
+Trigger it only if BTC5 hits an economic kill or a safety kill.
 
-## What to delete or archive
+### Sequence
 
-Do not start with a repo-wide purge. Start with narrow subtraction.
+1. disable BTC5 live trading
+2. preserve the final BTC5 cohort report and truth bundle
+3. move the proving-ground lane to `bot/kalshi/`
+4. resolve the current Kalshi mode contradiction: `weather arb mode=live` but `paper_trading=true`
+5. deploy Kalshi weather only, not a broad multi-strategy bundle
+6. keep capital tiny at first
+7. create the same basic truth contract for Kalshi before any scaling discussion
 
-### Archive now
+### What Kalshi activation must verify
 
-- any BTC5 docs or profiles still implying UP is live-worthy
-- any docs still implying stage-1 size is above $5
-- any public or internal summary still quoting stale positive fund-level P&L
-- stale `FAST_TRADE_EDGE_ANALYSIS.md` claims as an execution authority
+- auth works
+- balances are real
+- paper/live mode is unambiguous
+- weather markets only
+- first small live cohort is captured in a machine-readable report
 
-### Freeze now
-
-- non-authoritative BTC5 simulator after choosing the winner
-- any BTC5 mutation path that writes directly to multiple env files without generating a single effective contract
-
-### Keep but demote
-
-- broader `jj_live.py` research surfaces
-- non-BTC5 strategy modules
-
-The near-term goal is not deleting half the repo. It is **making BTC5 small enough to reason about**.
+Do not drag BTC5 uncertainty into Kalshi.
+Kill one lane cleanly, then start the next one cleanly.
 
 ---
 
-## Rollout plan
+## Config hash verification workflow
 
-### First 24 hours
+This sprint should treat config-hash verification as mandatory, not optional.
 
-1. Patch atomic window reservation.
-2. Add execution-layer cap assert.
-3. Make UP fail-closed in code.
-4. Turn hour filter and 0.48 DOWN cap into verified startup config.
-5. Deploy.
-6. Watch one full trading session.
+### On every deploy
 
-### First 3 days
+1. generate the effective env and runtime contract
+2. deploy and restart
+3. run `python scripts/verify_btc5_mutation.py`
+4. read the exit code
+5. record the result in the cohort report and the deployment log
 
-1. Generate single effective BTC5 env.
-2. Add 30-minute health contract.
-3. Add mutation id + config hash tracking.
-4. Turn on auto-revert for safety failures only.
-5. Collect first post-fix sample.
+### Interpretation
 
-### First 2 weeks
+- `MUTATION_VERIFY_OK` → valid runtime, sample can continue
+- `MUTATION_VERIFY_FAIL` → runtime is not the intended strategy, sample invalid
+- `MUTATION_VERIFY_UNKNOWN` → missing state or contract file, sample invalid
 
-1. Build filter economics.
-2. Decide whether DOWN-only survives.
-3. If DOWN-only remains negative after the post-fix sample, **kill BTC5 entirely**.
-4. Only then consider reallocating effort to Kalshi weather or structural lanes.
+No fill should count toward the proof window unless the deploy hash is valid.
+
+---
+
+## Autoresearch loop reactivation
+
+Not yet.
+
+The loop should stay out of the live path until the strategy has earned the right to mutate again.
+
+### Required conditions before reactivation
+
+1. one full 50-fill cohort completed
+2. cohort net P&L after estimated rebates is positive
+3. zero safety kills in that cohort
+4. `verify_btc5_mutation.py` passes across normal service restarts
+5. the cohort report is stable and trusted
+6. filter economics has enough data to explain where the edge is coming from
+7. mutation auto-revert is tested deliberately and proven to work
+
+### Rules when it comes back
+
+- one mutation at a time
+- no overlapping verification windows
+- no direct writes to the live base env during an active validation cohort
+- every mutation must produce a new `mutation_id` and `config_hash`
+- every promoted mutation must either pass its verification window or revert automatically
+
+Autoresearch is allowed to propose only after reality says the base lane is worth improving.
 
 ---
 
 ## Acceptance criteria
 
-A task is not done unless all of these are true:
+This sprint is done only when all of these are true:
 
 ### Safety
 
-- No live order can be submitted above `effective_max_trade_usd`.
-- No more than one BTC5 live order sequence can exist per `window_start_ts`.
-- UP orders cannot go live, even if one env overlay is missing.
+- 0 UP live attempts in the post-fix cohort
+- 0 cap breaches in the post-fix cohort
+- 0 duplicate live executions for one BTC5 window
+- service remains stable during the proof window
 
 ### Truth
 
-- One generated BTC5 config hash exists and matches the running service.
-- Health artifact updates every 30 minutes.
-- Health artifact answers the five operator questions.
-
-### Research
-
-- Filter economics report shows value by hour, direction, and price bucket.
-- Mutation id is attached to every post-promotion fill.
-- Auto-revert works on deliberate test mismatch.
+- the active mutation hash matches the runtime contract hash
+- the cohort report is filtered to post-fix rows only
+- the VPS is the authority for what counted
+- health snapshot continues updating during the proof window
 
 ### Trading
 
-- 50 resolved post-fix DOWN-only fills collected with no cap breaches.
-- If net P&L after estimated rebates is still non-positive over that controlled sample, BTC5 is paused or killed.
+- 50 resolved DOWN-only cohort fills are collected
+- the verdict is made on net P&L after estimated rebates
+- if net is non-positive, BTC5 is killed
+- if net is positive, BTC5 remains at $5 and runs a second confirmation cohort
+
+### Research
+
+- filter economics can explain whether the hour and price filters are helping
+- the system knows which slice is making or losing money
+- autoresearch remains paused until the proof gate is passed
 
 ---
 
-## Risks and non-goals
+## Non-goals
 
-### Risks
-
-- The exact March 15 oversize mechanism cannot be proven from this packet alone; the atomicity hole is the strongest code-level explanation, but direct March 15 runtime logs are still missing.
-- DOWN-only may still fail even after price and hour filters. That is acceptable. The system’s job is to discover that fast.
-- Env simplification touches deployment behavior, so rollout must be staged.
-
-### Non-goals
-
-- No new investor narrative.
-- No scaling of size.
-- No broad platform rewrite.
-- No new strategy family until BTC5 is either proven under the fixed control plane or killed.
+- no size increase
+- no new BTC5 direction experiment
+- no investor narrative work
+- no simulator expansion during the proof window
+- no new strategy family unless BTC5 is killed
 
 ---
 
 ## Final instruction
 
-Do not treat this as a research wishlist.
+Do not let the system hide in architecture work.
 
-Treat it as a kill/fix/prove sequence:
+The architecture sprint is over.
 
-1. **Kill the broken behavior.**
-2. **Fix the control plane.**
-3. **Prove the remaining edge.**
-4. **If the edge does not survive controlled reality, kill BTC5 and move on.**
+This sprint is a reality sprint:
+
+1. **define one clean cohort**
+2. **verify the live runtime**
+3. **collect 50 real DOWN-only fills**
+4. **prove edge or kill the lane**
+
+That is the shortest path to truth.
