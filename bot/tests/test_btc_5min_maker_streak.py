@@ -23,6 +23,7 @@ async def test_process_window_uses_shadow_only_for_first_streak_events(
         down_max_buy_price=0.95,
         min_buy_price=0.45,
         tick_size=0.01,
+        up_live_mode="live_enabled",
     )
     bot = BTC5MinMakerBot(cfg)
 

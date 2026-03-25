@@ -669,6 +669,7 @@ async def test_process_window_records_partial_live_fill(monkeypatch: pytest.Monk
         min_buy_price=0.90,
         tick_size=0.01,
         cancel_seconds_before_close=2,
+        up_live_mode="live_enabled",
     )
     bot = BTC5MinMakerBot(cfg)
 
@@ -1183,6 +1184,7 @@ async def test_process_window_uses_less_aggressive_quote_on_weaker_recent_direct
         regime_min_fills_per_direction=5,
         regime_min_pnl_gap_usd=20.0,
         regime_weaker_direction_quote_ticks=0,
+        up_live_mode="live_enabled",
     )
     bot = BTC5MinMakerBot(cfg)
 
@@ -1421,6 +1423,7 @@ async def test_process_window_records_cancelled_unfilled_live_order(
         min_buy_price=0.90,
         tick_size=0.01,
         cancel_seconds_before_close=2,
+        up_live_mode="live_enabled",
     )
     bot = BTC5MinMakerBot(cfg)
 
@@ -1498,6 +1501,7 @@ async def test_process_window_retries_post_only_cross_with_safer_quote(
         cancel_seconds_before_close=2,
         retry_post_only_cross=True,
         retry_post_only_safety_ticks=1,
+        up_live_mode="live_enabled",
     )
     bot = BTC5MinMakerBot(cfg)
 
@@ -1654,6 +1658,7 @@ async def test_process_window_records_order_placement_failure_attribution(
         min_buy_price=0.90,
         tick_size=0.01,
         cancel_seconds_before_close=2,
+        up_live_mode="live_enabled",
     )
     bot = BTC5MinMakerBot(cfg)
 
@@ -1792,6 +1797,7 @@ async def test_process_window_applies_session_guardrail_override(
         tick_size=0.01,
         cancel_seconds_before_close=2,
         session_policy_json='[{"name":"hour_et_09","et_hours":[9],"max_abs_delta":0.0002,"up_max_buy_price":0.48,"down_max_buy_price":0.49}]',
+        up_live_mode="live_enabled",
     )
     bot = BTC5MinMakerBot(cfg)
 
@@ -2001,6 +2007,7 @@ async def test_process_window_enters_probe_mode_after_recent_live_loss(
         probe_quote_ticks=0,
         probe_up_max_buy_price=0.49,
         probe_down_max_buy_price=0.51,
+        up_live_mode="live_enabled",
     )
     bot = BTC5MinMakerBot(cfg)
 
@@ -2119,6 +2126,7 @@ async def test_process_window_uses_probe_mode_after_daily_loss(
         probe_quote_ticks=0,
         probe_up_max_buy_price=0.49,
         probe_down_max_buy_price=0.51,
+        up_live_mode="live_enabled",
     )
     bot = BTC5MinMakerBot(cfg)
 

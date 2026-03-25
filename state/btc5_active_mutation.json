@@ -1,0 +1,22 @@
+{
+  "mutation_id": "baseline_v1",
+  "promoted_at": "2026-03-25T00:00:00+00:00",
+  "config_hash": null,
+  "config_snapshot": {
+    "BTC5_DOWN_MAX_BUY_PRICE": "0.48"
+  },
+  "incumbent_config_hash": null,
+  "verification_status": "pending",
+  "verification_started_at": null,
+  "windows_since_promotion": 0,
+  "fills_since_promotion": 0,
+  "wins_since_promotion": 0,
+  "losses_since_promotion": 0,
+  "cap_breach_count": 0,
+  "up_order_attempt_count": 0,
+  "config_hash_mismatch_count": 0,
+  "auto_revert_triggered": false,
+  "auto_revert_reason": null,
+  "auto_revert_at": null,
+  "notes": "baseline capture"
+}

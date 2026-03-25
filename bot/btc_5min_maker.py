@@ -1279,7 +1279,9 @@ class MakerConfig:
     max_buy_price: float = float(os.environ.get("BTC5_MAX_BUY_PRICE", "0.95"))
     up_max_buy_price: float | None = None
     down_max_buy_price: float | None = None
-    up_live_mode: str = "live_enabled"
+    up_live_mode: str = field(
+        default_factory=lambda: os.environ.get("BTC5_UP_LIVE_MODE", "shadow_only").strip().lower()
+    )  # fail-closed: UP killed after -$1,060 loss (Mar 2026)
     down_live_mode: str = "live_enabled"
     allowed_sides: frozenset[str] = field(init=False, default_factory=frozenset)
     max_contracts_per_order: float | None = None
@@ -1371,12 +1373,18 @@ class MakerConfig:
     cross_asset_signal_max_age_sec: int = int(os.environ.get("BTC5_CROSS_ASSET_SIGNAL_MAX_AGE_SEC", "900"))
     cross_asset_min_confidence: float = float(os.environ.get("BTC5_CROSS_ASSET_MIN_CONFIDENCE", "0.55"))
     cross_asset_edge_boost: float = float(os.environ.get("BTC5_CROSS_ASSET_EDGE_BOOST", "0.15"))
-    hour_filter_enabled: bool = _env_flag("BTC5_HOUR_FILTER_ENABLED", False)
+    hour_filter_enabled: bool = field(
+        default_factory=lambda: _env_flag("BTC5_HOUR_FILTER_ENABLED", True)
+    )  # fail-closed: suppress losing hours 00-02,08-09 ET
     suppress_hours_et: frozenset[int] = field(init=False, default_factory=frozenset)
     boost_hours_et: frozenset[int] = field(init=False, default_factory=frozenset)
-    direction_mode: str = os.environ.get("BTC5_DIRECTION_MODE", "both").strip().lower()
+    direction_mode: str = field(
+        default_factory=lambda: os.environ.get("BTC5_DIRECTION_MODE", "down_only").strip().lower()
+    )  # fail-closed
     down_bias_threshold: float = float(os.environ.get("BTC5_DOWN_BIAS_THRESHOLD", "0.60"))
-    direction_filter_enabled: bool = _env_flag("BTC5_DIRECTION_FILTER_ENABLED", False)
+    direction_filter_enabled: bool = field(
+        default_factory=lambda: _env_flag("BTC5_DIRECTION_FILTER_ENABLED", True)
+    )  # fail-closed
     edge_tracker_cycle_interval: int = int(os.environ.get("BTC5_EDGE_TRACKER_CYCLE_INTERVAL", "100"))
     enable_momentum_persistence: bool = _env_flag("BTC5_ENABLE_MOMENTUM_PERSISTENCE", True)
     momentum_state_path: Path = Path(os.environ.get("BTC5_MOMENTUM_STATE_PATH", "data/momentum_state.json"))
@@ -1444,7 +1452,7 @@ class MakerConfig:
             legacy_json=self.session_overrides_json,
         )
         if self.up_live_mode not in {"live_enabled", "shadow_only"}:
-            self.up_live_mode = "live_enabled"
+            self.up_live_mode = "shadow_only"  # fail-closed: unknown value → safe
         if self.down_live_mode not in {"live_enabled", "shadow_only"}:
             self.down_live_mode = "live_enabled"
         if self.down_mid_bucket_experiment_mode not in {"off", "suppress", "reprice_to_0.49"}:
@@ -1495,9 +1503,9 @@ class MakerConfig:
         self.cross_asset_signal_max_age_sec = max(60, int(self.cross_asset_signal_max_age_sec))
         self.cross_asset_min_confidence = max(0.0, min(1.0, float(self.cross_asset_min_confidence)))
         self.cross_asset_edge_boost = max(0.0, min(1.0, float(self.cross_asset_edge_boost)))
-        # Validate direction_mode
+        # Validate direction_mode — fail-closed to down_only
         if self.direction_mode not in {"both", "down_only", "up_only", "down_bias"}:
-            self.direction_mode = "both"
+            self.direction_mode = "down_only"
         self.down_bias_threshold = max(0.0, min(1.0, float(self.down_bias_threshold)))
         self.edge_tracker_cycle_interval = max(10, int(self.edge_tracker_cycle_interval))
         # Parse allowed_sides from env (default: DOWN-only mode)
@@ -1516,6 +1524,55 @@ class MakerConfig:
         # Ensure entry window bounds are sane
         self.entry_window_start_sec = max(1, int(self.entry_window_start_sec))
         self.entry_window_end_sec = max(0, int(self.entry_window_end_sec))
+        # Startup safety log — surface any permissive config at launch time
+        self._log_startup_safety_config()
+
+    def _log_startup_safety_config(self) -> None:
+        """Log effective safety settings at startup. Warns on any permissive override."""
+        import logging as _logging
+        _safety_log = _logging.getLogger(__name__)
+        _safety_log.info(
+            "BTC5_STARTUP_CONFIG up_live_mode=%s direction_filter_enabled=%s "
+            "direction_mode=%s hour_filter_enabled=%s suppress_hours_et=%s "
+            "down_max_buy_price=%s stage1_max_trade_usd=%s daily_loss_limit_usd=%s",
+            self.up_live_mode,
+            self.direction_filter_enabled,
+            self.direction_mode,
+            self.hour_filter_enabled,
+            sorted(self.suppress_hours_et),
+            self.down_max_buy_price,
+            self.stage1_max_trade_usd,
+            self.daily_loss_limit_usd,
+        )
+        if self.up_live_mode == "live_enabled":
+            _safety_log.warning(
+                "BTC5_SAFETY_WARN up_live_mode=live_enabled — UP direction is active. "
+                "UP lost -$1,060 on $1,492 deployed. Set BTC5_UP_LIVE_MODE=shadow_only to suppress."
+            )
+        if not self.direction_filter_enabled:
+            _safety_log.warning(
+                "BTC5_SAFETY_WARN direction_filter_enabled=False — both directions active. "
+                "Set BTC5_DIRECTION_FILTER_ENABLED=true to enforce DOWN-only mode."
+            )
+        if not self.hour_filter_enabled:
+            _safety_log.warning(
+                "BTC5_SAFETY_WARN hour_filter_enabled=False — all hours active. "
+                "Set BTC5_HOUR_FILTER_ENABLED=true to suppress losing hours 00-02,08-09 ET."
+            )
+        if self.direction_filter_enabled and self.direction_mode == "both":
+            _safety_log.warning(
+                "BTC5_SAFETY_WARN direction_filter_enabled=True but direction_mode=both — "
+                "filter is enabled but not restricting to DOWN-only. "
+                "Set BTC5_DIRECTION_MODE=down_only."
+            )
+        down_cap = self.down_max_buy_price
+        if down_cap is not None and float(down_cap) > 0.48 + 1e-9:
+            _safety_log.warning(
+                "BTC5_SAFETY_WARN down_max_buy_price=%.2f exceeds 0.48. "
+                "EV is negative above 0.48 per Mar 2026 analysis. "
+                "Set BTC5_DOWN_MAX_BUY_PRICE=0.48.",
+                float(down_cap),
+            )
 
     @property
     def effective_max_trade_usd(self) -> float:
@@ -1645,6 +1702,24 @@ class TradeDB:
                 );
                 CREATE INDEX IF NOT EXISTS idx_window_trades_decision_ts
                     ON window_trades(decision_ts);
+                CREATE TABLE IF NOT EXISTS filter_decisions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    window_start_ts INTEGER NOT NULL,
+                    slug TEXT,
+                    recorded_at TEXT NOT NULL,
+                    filter_name TEXT NOT NULL,
+                    filter_state TEXT NOT NULL,
+                    direction TEXT,
+                    counterfactual_entry_price REAL,
+                    counterfactual_direction TEXT,
+                    counterfactual_trade_size_usd REAL,
+                    hour_et INTEGER,
+                    realized_if_taken REAL,
+                    net_filter_value_usd REAL,
+                    notes TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_filter_decisions_window
+                    ON filter_decisions(window_start_ts);
                 CREATE TABLE IF NOT EXISTS rolling_kelly_stats (
                     strategy TEXT PRIMARY KEY,
                     sample_count INTEGER NOT NULL,
@@ -1700,6 +1775,85 @@ class TradeDB:
                 (int(window_start_ts),),
             ).fetchone()
         return row is not None
+
+    def reserve_window(self, window_start_ts: int, slug: str) -> bool:
+        """Atomically reserve a window for processing BEFORE any network order submission.
+
+        Returns True if this process successfully claimed the window (rowcount == 1).
+        Returns False if the window already exists — either already processed or reserved
+        by another process/restart-loop.  The caller MUST skip immediately on False.
+
+        This is the primary defence against the March 15 duplicate-window oversize
+        event where two processes both saw window_exists() == False, both submitted
+        live orders, and the DB later collapsed both into one row via the upsert's
+        ON CONFLICT clause.
+
+        The window row is written with order_status='pending_reservation' before any
+        network call.  The subsequent _persist() / upsert_window() call will UPDATE
+        that row with full order data via the existing ON CONFLICT DO UPDATE clause.
+        """
+        now_iso = datetime.now(timezone.utc).isoformat()
+        try:
+            with self._connect() as conn:
+                cursor = conn.execute(
+                    """
+                    INSERT OR IGNORE INTO window_trades
+                        (window_start_ts, window_end_ts, slug, decision_ts,
+                         order_status, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, 'pending_reservation', ?, ?)
+                    """,
+                    (
+                        int(window_start_ts),
+                        int(window_start_ts) + WINDOW_SECONDS,
+                        str(slug),
+                        int(time.time()),
+                        now_iso,
+                        now_iso,
+                    ),
+                )
+                return cursor.rowcount == 1
+        except Exception:
+            # On any DB error, fail closed — skip the window rather than risk a double order.
+            return False
+
+    def record_filter_decision(
+        self,
+        window_start_ts: int,
+        slug: str,
+        filter_name: str,
+        filter_state: str,
+        direction: str | None,
+        counterfactual_entry_price: float | None,
+        counterfactual_direction: str | None,
+        counterfactual_trade_size_usd: float | None,
+        hour_et: int | None = None,
+        notes: str | None = None,
+    ) -> None:
+        """Record a filter decision for economics tracking."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO filter_decisions
+                    (window_start_ts, slug, recorded_at, filter_name, filter_state,
+                     direction, counterfactual_entry_price, counterfactual_direction,
+                     counterfactual_trade_size_usd, hour_et, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    int(window_start_ts),
+                    str(slug) if slug is not None else None,
+                    now_iso,
+                    str(filter_name),
+                    str(filter_state),
+                    str(direction) if direction is not None else None,
+                    float(counterfactual_entry_price) if counterfactual_entry_price is not None else None,
+                    str(counterfactual_direction) if counterfactual_direction is not None else None,
+                    float(counterfactual_trade_size_usd) if counterfactual_trade_size_usd is not None else None,
+                    int(hour_et) if hour_et is not None else None,
+                    str(notes) if notes is not None else None,
+                ),
+            )
 
     def signal_for_window(self, *, window_start_ts: int) -> dict[str, Any] | None:
         with self._connect() as conn:
@@ -2149,7 +2303,10 @@ class TradeDB:
 
     def latest_decision_ts(self) -> int | None:
         with self._connect() as conn:
-            row = conn.execute("SELECT MAX(decision_ts) AS latest_decision_ts FROM window_trades").fetchone()
+            row = conn.execute(
+                "SELECT MAX(decision_ts) AS latest_decision_ts FROM window_trades"
+                " WHERE order_status != 'pending_reservation'"
+            ).fetchone()
         latest = int(row["latest_decision_ts"]) if row and row["latest_decision_ts"] is not None else None
         return latest if latest and latest > 0 else None
 
@@ -5165,7 +5322,11 @@ class BTC5MinMakerBot:
             boost=self.cfg.boost_hours_et,
         )
 
-        if self.db.window_exists(window_start_ts):
+        # Atomic reservation: write a pending_reservation row BEFORE any network call.
+        # If the row already exists (concurrent process, restart-loop, or already processed),
+        # skip immediately without submitting any order.  This is the fix for the March 15
+        # duplicate-window $994.96 oversize event.
+        if not self.db.reserve_window(window_start_ts, slug):
             return _result({"window_start_ts": window_start_ts, "status": "skip_already_processed"})
 
         # Resolve prior windows first so daily PnL gate uses latest info.
@@ -5566,6 +5727,21 @@ class BTC5MinMakerBot:
                 ),
             }
             _persist(row)
+            try:
+                self.db.record_filter_decision(
+                    window_start_ts=window_start_ts,
+                    slug=slug,
+                    filter_name="hour_filter",
+                    filter_state="blocked",
+                    direction=direction,
+                    counterfactual_entry_price=None,
+                    counterfactual_direction=direction,
+                    counterfactual_trade_size_usd=None,
+                    hour_et=_win_et_hour,
+                    notes=f"hour_et={_win_et_hour:02d} suppressed by BTC5_SUPPRESS_HOURS_ET",
+                )
+            except Exception as _fe:
+                logger.warning("filter_decisions record failed (hour_filter): %s", _fe)
             logger.info(
                 "HOUR FILTER: ET hour %02d suppressed, direction=%s delta=%.6f (counterfactual logged)",
                 _win_et_hour, direction, abs(delta or 0.0),
@@ -5608,6 +5784,21 @@ class BTC5MinMakerBot:
                     ),
                 }
                 _persist(row)
+                try:
+                    self.db.record_filter_decision(
+                        window_start_ts=window_start_ts,
+                        slug=slug,
+                        filter_name="direction_filter",
+                        filter_state="blocked",
+                        direction=direction,
+                        counterfactual_entry_price=None,
+                        counterfactual_direction=direction,
+                        counterfactual_trade_size_usd=None,
+                        hour_et=_win_et_hour,
+                        notes=f"direction_mode={self.cfg.direction_mode} dir_filter={dir_filter}",
+                    )
+                except Exception as _fe:
+                    logger.warning("filter_decisions record failed (direction_filter): %s", _fe)
                 return _result({
                     "window_start_ts": window_start_ts,
                     "status": row["order_status"],
@@ -5651,6 +5842,21 @@ class BTC5MinMakerBot:
                 ),
             }
             _persist(row)
+            try:
+                self.db.record_filter_decision(
+                    window_start_ts=window_start_ts,
+                    slug=slug,
+                    filter_name="up_live_mode",
+                    filter_state="shadow_only",
+                    direction=direction,
+                    counterfactual_entry_price=None,
+                    counterfactual_direction=direction,
+                    counterfactual_trade_size_usd=None,
+                    hour_et=_win_et_hour,
+                    notes="recovery_sprint_up_shadow_only: UP direction shadow-only suppressed",
+                )
+            except Exception as _fe:
+                logger.warning("filter_decisions record failed (up_live_mode): %s", _fe)
             return _result(
                 {
                     "window_start_ts": window_start_ts,
@@ -6558,6 +6764,56 @@ class BTC5MinMakerBot:
             if filled == 0:
                 executed_shares = 0.0
         else:
+            # ── P0.2 HARD CAP ASSERT ─────────────────────────────────────────────────────
+            # Belt-and-suspenders: reject any order whose notional exceeds the effective cap
+            # even if upstream sizing logic already applies limits.  This is the final gate
+            # before a live network call — if it fires, something upstream has already failed
+            # and we must not send the order.
+            _cap_assert_notional = round(order_price * shares, 2)
+            if _cap_assert_notional > effective_max_trade_usd + 0.01:
+                logger.error(
+                    "BTC5_CAP_BREACH_BLOCKED window=%s direction=%s notional=%.2f max=%.2f "
+                    "— order suppressed before network submission",
+                    window_start_ts,
+                    direction,
+                    _cap_assert_notional,
+                    effective_max_trade_usd,
+                )
+                _persist({
+                    "window_start_ts": window_start_ts,
+                    "window_end_ts": window_end_ts,
+                    "slug": slug,
+                    "direction": direction,
+                    "token_id": token_id,
+                    "order_price": order_price,
+                    "trade_size_usd": _cap_assert_notional,
+                    "shares": shares,
+                    "order_status": "cap_breach_blocked",
+                    "reason": (
+                        f"cap_breach_blocked notional={_cap_assert_notional:.2f} "
+                        f"max={effective_max_trade_usd:.2f} direction={direction}"
+                    ),
+                })
+                try:
+                    self.db.record_filter_decision(
+                        window_start_ts=window_start_ts,
+                        slug=slug,
+                        filter_name="cap_breach",
+                        filter_state="blocked",
+                        direction=direction,
+                        counterfactual_entry_price=float(order_price),
+                        counterfactual_direction=direction,
+                        counterfactual_trade_size_usd=float(_cap_assert_notional),
+                        hour_et=_win_et_hour,
+                        notes=(
+                            f"cap_breach_blocked notional={_cap_assert_notional:.2f} "
+                            f"max={effective_max_trade_usd:.2f}"
+                        ),
+                    )
+                except Exception as _fe:
+                    logger.warning("filter_decisions record failed (cap_breach): %s", _fe)
+                return _result({"window_start_ts": window_start_ts, "status": "cap_breach_blocked"})
+            # ─────────────────────────────────────────────────────────────────────────────
             placement = PlacementResult(
                 order_id=None,
                 success=False,

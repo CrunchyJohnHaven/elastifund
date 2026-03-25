@@ -1,0 +1,8 @@
+{
+  "generated_at": "2026-03-25T18:56:58.253999+00:00",
+  "error": "DB not found at /Users/johnbradley/Desktop/Elastifund/jj_trades.db",
+  "total_filter_decisions": 0,
+  "by_filter": {},
+  "db_path_used": "/Users/johnbradley/Desktop/Elastifund/jj_trades.db",
+  "note": "net_filter_value_usd will be populated as windows resolve"
+}

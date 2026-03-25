@@ -1,0 +1,244 @@
+{
+  "generated_at": "2026-03-25T18:58:33.019592+00:00",
+  "mutation_id": "baseline_v1",
+  "config_hash": "8f0b4ac0dd516a1831e021d466a012ac62190d8d5a21978b1140aa2be1e53271",
+  "db_summary": {
+    "total_windows": 385,
+    "total_fills": 12,
+    "total_paper_fills": 0,
+    "total_live_fills": 11,
+    "resolved_fills": 0,
+    "wins": 0,
+    "losses": 0,
+    "win_rate": 0.0,
+    "total_trade_size_usd": 104.0882,
+    "total_pnl_usd_if_resolved": -59.6983
+  },
+  "last_50_resolved": {
+    "win_rate": 0.0,
+    "wins": 0,
+    "losses": 0,
+    "avg_trade_size_usd": 0.0
+  },
+  "direction_slice": {
+    "UP": {
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    "DOWN": {
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    }
+  },
+  "hour_slice_et": [
+    {
+      "hour_et": 0,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 1,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 2,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 3,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 4,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 5,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 6,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 7,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 8,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 9,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 10,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 11,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 12,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 13,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 14,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 15,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 16,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 17,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 18,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 19,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 20,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 21,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 22,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    },
+    {
+      "hour_et": 23,
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "total_usd": 0.0
+    }
+  ],
+  "price_bucket_slice": [
+    {
+      "bucket": "<=0.44",
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0
+    },
+    {
+      "bucket": "0.44-0.46",
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0
+    },
+    {
+      "bucket": "0.46-0.48",
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0
+    },
+    {
+      "bucket": "0.48-0.50",
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0
+    },
+    {
+      "bucket": ">0.50",
+      "fills": 0,
+      "wins": 0,
+      "win_rate": 0.0
+    }
+  ],
+  "cap_breach_events": 0,
+  "pending_reservation_rows": 0,
+  "recommendation": "kill",
+  "recommendation_reason": "UP direction has 5 live fill(s) in the last week. UP is KILLED per system mandate (lost -$1,060 on $1,492 deployed). Halt immediately and audit position limit enforcement.",
+  "db_path_used": "data/btc_5min_maker.db"
+}

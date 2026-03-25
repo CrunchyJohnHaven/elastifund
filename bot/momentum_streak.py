@@ -23,14 +23,28 @@ def detect_streak(db_path: str | Path) -> tuple[str | None, int]:
         return None, 0
 
     try:
-        rows = conn.execute(
-            """
-            SELECT resolved_side
-            FROM window_trades
-            ORDER BY window_start_ts DESC
-            LIMIT 10
-            """
-        ).fetchall()
+        # Exclude pending_reservation rows (inserted by reserve_window before any order is placed)
+        # so they don't interfere with streak detection. Fall back to unfiltered query if the
+        # order_status column does not exist (e.g. in test environments with minimal schemas).
+        try:
+            rows = conn.execute(
+                """
+                SELECT resolved_side
+                FROM window_trades
+                WHERE order_status != 'pending_reservation'
+                ORDER BY window_start_ts DESC
+                LIMIT 10
+                """
+            ).fetchall()
+        except sqlite3.OperationalError:
+            rows = conn.execute(
+                """
+                SELECT resolved_side
+                FROM window_trades
+                ORDER BY window_start_ts DESC
+                LIMIT 10
+                """
+            ).fetchall()
     except sqlite3.Error:
         return None, 0
     finally:
