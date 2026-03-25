@@ -94,7 +94,15 @@ should_remove_key() {
         JJ_CLOB_SIGNATURE_TYPE)
             return 1
             ;;
-        JJ_*|PAPER_TRADING|LIVE_TRADING|ENABLE_*|CLAUDE_MODEL|ELASTIFUND_AGENT_RUN_MODE)
+        ELASTIFUND_AGENT_RUN_MODE)
+            # Preserve the run-mode override when deploying with a live profile so
+            # the runtime truth guard does not fall back to a stale shadow value.
+            if [[ "$PROFILE_NAME" == "maker_velocity_live" ]]; then
+                return 1
+            fi
+            return 0
+            ;;
+        JJ_*|PAPER_TRADING|LIVE_TRADING|ENABLE_*|CLAUDE_MODEL)
             return 0
             ;;
         *)

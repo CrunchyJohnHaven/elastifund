@@ -75,7 +75,13 @@ load_stage_override() {
 }
 
 deploy_mode="${BTC5_DEPLOY_MODE:-}"
-raw_paper_trading="${BTC5_PAPER_TRADING:-true}"
+# Default paper_trading to false when the live profile is active; the stage file
+# or an explicit BTC5_PAPER_TRADING value can still override this below.
+if [[ -z "${BTC5_PAPER_TRADING:-}" && "${JJ_RUNTIME_PROFILE:-}" == "maker_velocity_live" ]]; then
+    raw_paper_trading="false"
+else
+    raw_paper_trading="${BTC5_PAPER_TRADING:-true}"
+fi
 load_stage_override "$STAGE_ENV_PATH"
 paper_trading="$(normalize_bool "$raw_paper_trading")"
 mode_flag="--live"

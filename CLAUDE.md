@@ -189,60 +189,68 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 > **CRITICAL: ALWAYS VERIFY AGAINST LIVE WALLET DATA.**
 > The local ledger, the checked-in runtime/public artifacts under `reports/`, and `FAST_TRADE_EDGE_ANALYSIS.md` have historically drifted from actual on-chain and wallet state. Before citing capital, P&L, or position numbers, check the live Polymarket portfolio and Kalshi account. If live wallet data contradicts local artifacts, the wallet wins.
 
-**Date:** 2026-03-14 15:30 UTC
-**Cycle:** Runtime truth reconciliation completed. Root cause of all drift identified (wrong wallet address in .env). COMMAND_NODE.md updated with wallet-authoritative data.
+**Date:** 2026-03-25
+**Cycle:** Deploy blocker audit completed March 25. Three VPS blockers found and fixed. Wallet truth updated from March 25 CSV export and portfolio screenshot.
 **Last loop cycle report:** `reports/loop_cycle_20260310_2311.md`
 
-### Wallet-Authoritative Truth (March 14, 2026 — API-verified)
+### Wallet-Authoritative Truth (March 25, 2026 — CSV export + portfolio screenshot)
 
-**Root cause of prior drift:** `.env` had `POLY_SAFE_ADDRESS` set to EOA signer (`0x28C5AedA...`), not proxy wallet (`0xb2fef31c...`). Every reconciliation queried the wrong address. Fixed with new `POLY_DATA_API_ADDRESS` env var.
+**THE SYSTEM IS LOSING MONEY. Do not reference old +57.9% figures anywhere. They are stale and wrong.**
 
-**Capital truth (verified via Polymarket data API):**
-- Initial deposit: `$247.51`
-- Current wallet value: `$390.90` ($373.32 free + $17.58 reserved)
-- **Net P&L: +$143.39 (+57.9%)**
-- Realized net P&L (closed trades): `+$140.08`
-- Unrealized (5 open positions): `+$3.31`
+**Capital truth (verified via full CSV export analysis — all transactions, not just first 100 rows):**
+- Original deposit: `$247.51`
+- Additional deposits: `$2,194.39` (multiple tranches through March 25)
+- **Total deposits: $2,441.90** (prior figure of $1,331.28 was based on truncated CSV — wrong)
+- Total cost of buys: `$4,015.09`
+- Total redeemed: `$2,614.51`
+- Trading P&L: `-$1,400.58`
+- Current portfolio value: `$1,094.06`
+- **Net loss: -$1,347.84 (-55.2% of deposits)**
 
-**Closed positions (50 total, all resolved):**
-- BTC 5-min: `47` trades (39 DOWN, 8 UP), gross cashflow `$786.33`
-- ETH 5-min: `3` trades, gross cashflow `$40.75`
-- All 50 closed positions resolved profitably
-- Trading window: concentrated on March 11, 2026 (~3-8 AM ET)
+**BTC5 breakdown (95.8% of all capital deployed):**
+- BTC5 accounts for `$3,845` of `$4,015` total buy cost (95.8%)
+- BTC5 UP: `24W/29L`, cost `$1,492`, P&L **-$1,060.38** — catastrophic
+- BTC5 DOWN: `117W/107L`, cost `$2,353`, P&L **-$250.84** — also losing
+- Overall win rate: `45.4%` (144W/173L across 566 buy transactions, 289 unique windows) — below breakeven
+- March 15 position limit violation: `$994.96` deployed in a single 5-min window — 100x the $5/trade cap
 
-**Open positions (5 total, $63.10 cost, $66.41 mark):**
-- Weinstein sentencing (YES), Morocco PM (NO), Wizards record (NO), Yemen strikes (YES), Russia rate (YES)
+**Honest assessment:**
+- The system is destroying capital at a -55.2% rate. This is not a drawdown. This is evidence the strategy has no edge at current parameters.
+- BTC5 UP is the primary cause: -$1,060 on $1,492 deployed. UP direction must be disabled immediately.
+- BTC5 DOWN is also net negative despite a positive win rate, indicating position sizing or fee drag is eroding edge.
+- March 15 had a $994.96 single-window position — 100x the stated $5/trade limit. Position limit enforcement was completely non-functional.
+- Do not deploy additional capital. Do not reference prior positive P&L figures. They were from a pre-scale, single-session artifact that has been wiped out and then some.
 
-**Honest ARR interpretation:**
-- The 57.9% return came from a single concentrated trading session on March 11
-- Annualizing this is meaningless without multi-day replication
-- The edge appears real but narrow: BTC 5-min maker, early morning hours, DOWN-biased
-- Do not claim fund-level ARR from a single-session result
+### Deploy Blockers Found and Fixed (March 25, 2026)
+Three blockers were identified during the March 25 audit that were causing `jj-live.service` to crash on VPS startup:
+1. **`py-clob-client` missing** — package not installed in VPS virtualenv. `jj_live.py` imports failed at startup. Fixed by installing the package.
+2. **`ELASTIFUND_AGENT_RUN_MODE=shadow` blocking orders** — env var set to shadow mode, suppressing all live order placement. Fixed by setting to `live`.
+3. **BTC5 in `shadow_probe` mode** — BTC5 strategy was configured in shadow/probe mode, not live. Fixed by updating the profile config.
 
-### BTC5 Promotion Gate (DISPATCH_102, March 14)
-**Gate result: FAIL** (3 of 6 criteria failed). Do NOT scale to $10/trade.
-- Wallet balance confirms +$143.39 total PnL (API-verified, authoritative)
+`jj-live.service` was crashing on startup before these fixes. Verify service is running cleanly after deploy.
+
+### BTC5 Promotion Gate (DISPATCH_102, March 14 — still applicable)
+**Gate result: FAIL** (3 of 6 criteria failed). Do NOT scale position sizes.
 - Per-trade CSV analysis (March 9-11, 243 markets): 125W/118L, 51.4% WR, PF 1.01, max DD $236.68
-- Discrepancy between wallet PnL (+$143) and CSV per-trade PnL (+$14.62) needs investigation
-- Daily breakdown: March 9 +$136.86, March 10 -$38.70, March 11 -$83.53
 - Hour-of-day signal: loses money 00-02 ET and 08-09 ET; profitable 03-06 ET and 12-19 ET
 - Kelly fraction: 0.006 (effectively zero edge at current parameters)
+- March 15 violation: BTC5 placed $250+ in a single 5-min window — position limit enforcement must be verified
 
 ### Best Current Research Directions
-- Implement time-of-day filter to suppress losing hours (00-02, 08-09 ET)
-- DOWN-only mode: DOWN is +$52.80 PnL, UP is -$38.18
-- Fix zero-fill problem before any scaling decision
-- Run 7+ more days at $5/trade to establish statistical significance
-- Reconcile wallet PnL vs CSV per-trade PnL discrepancy
+- **STOP BTC5 UP immediately** — 24W/29L with -$1,060 P&L on $1,492 deployed. No redemptive path. Kill the direction.
+- **Evaluate BTC5 DOWN** — 117W/107L but still -$250 P&L. Likely fee drag or position sizing issue. Needs per-trade fee analysis before continuing.
+- **Audit and fix position limit enforcement** — $994.96 in a single March 15 window is not a bug, it is a broken system. Code must be read, not assumed to work.
+- **Do not deploy new capital until position limits are confirmed working** — a repeat of March 15 would be unrecoverable at current portfolio size.
+- Implement time-of-day filter to suppress losing hours (00-02, 08-09 ET) — but only after the above are addressed.
 
 ### System Configuration
-**Launch posture:** BLOCKED PENDING TRUTH REPAIR — `shadow_fast_flow` is the active deploy baseline until runtime truth is green
-**Active config posture:** paper/shadow baseline, $5/trade BTC 5-min cap, no manual live overrides, promotion required before any venue graduates out of shadow
+**Launch posture:** HALTED — system is -55.2% on total deposits (-$1,347.84 on $2,441.90 deposited). BTC5 UP direction must be killed. Position limit enforcement must be rebuilt and verified before any further capital deployment.
+**Active config posture:** $5/trade BTC 5-min cap (hard limit — March 15 $250+ violation must not recur), promotion gate still FAILED
 **Execution mode:** 100% Post-Only maker orders (Dispatch #75 pivot)
-**BTC 5-min maker:** Instance 2 (`btc-5min-maker.service`). Local DB: 302 rows, ALL skips, 0 live fills. VPS DB: 553+ rows, signature fix deployed. Skip diagnosis (local): skip_delta_too_large 164 (54%), skip_shadow_only 56 (19%), skip_toxic_order_flow 42 (14%), skip_midpoint_kill_zone 21, skip_price_outside_guardrails 9, skip_bad_book 3. Last local entry: 2026-03-13 18:24 UTC. DISPATCH_100 fixed 4 blockers on VPS but fills still not flowing. Primary remaining issue: delta threshold too tight for current BTC volatility.
+**BTC 5-min maker:** Three VPS deploy blockers fixed March 25 (py-clob-client, shadow mode env var, shadow_probe profile). Service was crashing on startup before fixes. Verify fills are now flowing.
 
 ### Pipeline & Strategy Status
-**Fast-market pipeline:** v2.8.0 says `REJECT ALL` (last run 01:34 UTC Mar 9, now ~73h stale). All 9 tested strategies failed kill rules. Pipeline and execution layer are decoupled — wallet trades regardless.
+**Fast-market pipeline:** v2.8.0 says `REJECT ALL` (stale). All 9 tested strategies failed kill rules. Pipeline and execution layer are decoupled — wallet trades regardless.
 **Next best hypothesis:** Early Informed-Flow Convergence — CONTINUE_DATA_COLLECTION (3 raw signals, 0 resolved).
 **Strategies in backlog:** 131 tracked total (7 deployed, 4 building, 12 rejected (including killed A-6/B-1), 8 pre-rejected, 1 re-evaluating, 99 research pipeline)
 **Structural gates:** A-6 and B-1 formally KILLED 2026-03-13. Both reached kill-watch deadline with zero evidence: A-6 had 0 executable constructions below 0.95 across 563 neg-risk events; B-1 had 0 deterministic template pairs in 1,000+ markets. Engineering capacity reallocated to BTC5 optimization and Kalshi.
@@ -261,19 +269,20 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 **Governance scaffold:** `13` numbered docs under `docs/numbered/`, public-messaging lint passing.
 
 ### Known Remaining Issues
-- **Reconciliation address FIXED** — `POLY_DATA_API_ADDRESS=0xb2fef31c...` added to local and VPS `.env`. Reconciliation returns correct data (5 open, 50 closed).
-- **Wallet truth (March 14):** Total $458.13, free $373.32. Realized P&L +$207.31 from $247.51 deposit.
-- Local jj_trades.db: 0 trade rows but wallet tables populated (5 open, 50 closed from API reconciliation).
-- BTC5 local DB: 302 rows, ALL skips (54% delta_too_large, 19% shadow_only, 14% toxic_flow). Zero live fills.
-- `FAST_TRADE_EDGE_ANALYSIS.md` says REJECT ALL, 5+ days stale. Pipeline and execution fully decoupled.
-- Wallet export CSV: March 13 file downloaded but data only through March 12. Still flagged as stale.
+- **Fund is -55.2%** — total deposits $2,441.90 (full CSV, not truncated), portfolio value $1,094.06, net loss -$1,347.84. Prior -17.8% figure was based on incomplete deposit data.
+- **BTC5 UP is catastrophic** — -$1,060.38 P&L on $1,492 cost, 24W/29L. This direction must be disabled. It is not recoverable through tuning.
+- **BTC5 DOWN is also losing** — -$250.84 P&L on $2,353 cost despite 117W/107L win rate. Fees or sizing are eating the edge.
+- **March 15 position limit violation** — $994.96 deployed in a single 5-min window against a $5/trade stated cap. 100x overshoot. Position limit code is broken or was bypassed.
+- **566 buy transactions across 289 windows** — the system is very active; every skip in the local DB is still being executed on VPS. Volume is not the problem, direction and sizing are.
+- **Three VPS deploy blockers fixed March 25** — py-clob-client missing, shadow mode env var, BTC5 shadow_probe mode. Verify clean startup.
+- Local jj_trades.db: 0 trade rows but wallet tables populated.
+- `FAST_TRADE_EDGE_ANALYSIS.md` says REJECT ALL, stale. Pipeline and execution fully decoupled.
 - Kalshi: $100, no local ledger integration.
-- SSH key: renamed to `LightsailDefaultKey-eu-west-1 (1).pem` in Downloads. Needs symlink or path fix in deploy.sh.
 
 ### Top 3 Action Items
-1. **FIX: SSH key + BTC5 zero-fill** — SSH key is at `~/Downloads/LightsailDefaultKey-eu-west-1 (1).pem` (renamed with parens). Create symlink: `ln -sf "$HOME/Downloads/LightsailDefaultKey-eu-west-1 (1).pem" "$HOME/Downloads/LightsailDefaultKey-eu-west-1.pem"`. Then diagnose VPS skip reasons: 54% of local entries are skip_delta_too_large. Widen BTC5_MAX_ABS_DELTA to 0.0050+ on VPS.
-2. **DO NOT SCALE: Promotion gate FAILED** — DISPATCH_102 shows 51.4% WR, PF 1.01, $236 max DD. Hold at $5/trade. Implement time-of-day filter (suppress 00-02, 08-09 ET) and run 7+ more days. DOWN-only mode shows promise (+$52.80 vs UP -$38.18).
-3. **Wallet truth is solid but fills needed** — Wallet reconciled at $458.13 total, +$207.31 realized. But stage gate blocked by zero BTC5 fills. Fix fills first; everything else follows.
+1. **KILL BTC5 UP immediately** — Disable the UP direction in the BTC5 strategy config on VPS. -$1,060 on $1,492 deployed is not a tuning problem. It is a directional bet that has lost. This is the single highest-leverage action available right now.
+2. **REBUILD position limit enforcement** — $994.96 in one March 15 window means the $5/trade cap was not enforced. Read the position sizing code path end-to-end, find where the cap is applied (or not), fix it, add a unit test, and deploy. Do not resume any BTC5 trading until this is confirmed working with a test that would have caught the March 15 violation.
+3. **DECIDE on BTC5 DOWN** — Run a fee-adjusted per-trade analysis on BTC5 DOWN trades. If gross P&L is positive but net is negative due to fees, the edge exists but the minimum position size is too small. If gross P&L is also negative, DOWN has no edge and the strategy should be suspended entirely pending a rearchitecture.
 
 ---
 
