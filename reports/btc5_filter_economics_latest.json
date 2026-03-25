@@ -1,8 +1,25 @@
 {
-  "generated_at": "2026-03-25T18:56:58.253999+00:00",
-  "error": "DB not found at /Users/johnbradley/Desktop/Elastifund/jj_trades.db",
+  "generated_at": "2026-03-25T19:08:54.292150+00:00",
   "total_filter_decisions": 0,
-  "by_filter": {},
-  "db_path_used": "/Users/johnbradley/Desktop/Elastifund/jj_trades.db",
+  "by_filter": {
+    "direction_filter": {
+      "total_blocked": 0,
+      "total_counterfactual_usd": 0.0,
+      "avg_blocked_price": 0.0
+    },
+    "hour_filter": {
+      "by_hour_et": []
+    },
+    "up_live_mode": {
+      "total_shadow_only": 0,
+      "total_counterfactual_usd": 0.0
+    },
+    "cap_breach": {
+      "total_blocked": 0,
+      "total_counterfactual_usd": 0.0,
+      "worst_breach_usd": 0.0
+    }
+  },
+  "db_path_used": "/Users/johnbradley/Desktop/Elastifund/data/btc_5min_maker.db",
   "note": "net_filter_value_usd will be populated as windows resolve"
 }
