@@ -163,3 +163,7 @@ state/btc5_row_hash_cache.json
 state/flywheel_stale_state.json
 *.pre_symlink_backup
 exports/
+
+# Console frontend build artifacts
+console/node_modules/
+console/dist/

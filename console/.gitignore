@@ -1,6 +1,8 @@
 node_modules/
 dist/
-.env
-__pycache__/
+server/venv/
+server/__pycache__/
+server/**/__pycache__/
 *.pyc
+.env
 .vite/
