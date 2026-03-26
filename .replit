@@ -1,0 +1,16 @@
+run = "cd console && npm run build && npx serve dist -s -l 3000"
+entrypoint = "console/src/App.tsx"
+
+[nix]
+channel = "stable-24_05"
+
+[env]
+PATH = "/home/runner/${REPL_SLUG}/console/node_modules/.bin:${PATH}"
+
+[deployment]
+run = ["sh", "-c", "cd console && npm run build && npx serve dist -s -l 3000"]
+deploymentTarget = "static"
+
+[[ports]]
+localPort = 3000
+externalPort = 80

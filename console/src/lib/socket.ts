@@ -23,7 +23,10 @@ class JJSocket {
     this._notifyStatus('connecting')
 
     try {
-      this.ws = new WebSocket('ws://localhost:8000/ws/live')
+      const WS_BASE = import.meta.env.VITE_WS_URL ||
+        (window.location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + window.location.host
+      const url = `${WS_BASE}/ws/live`
+      this.ws = new WebSocket(url)
     } catch {
       this._scheduleReconnect()
       return
