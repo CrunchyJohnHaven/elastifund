@@ -207,6 +207,19 @@ def render(check_only: bool = False) -> int:
     OUTPUT_CONTRACT.write_text(json.dumps(contract, indent=2))
     print(f"Wrote {OUTPUT_CONTRACT.relative_to(REPO_ROOT)}")
 
+    # Sync config_hash back to the mutation file so verify_btc5_mutation.py can compare.
+    # This is the only write render_effective_env makes to the mutation state.
+    if MUTATION_FILE.exists():
+        try:
+            mutation_data = json.loads(MUTATION_FILE.read_text())
+            mutation_data["config_hash"] = chash
+            tmp = MUTATION_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(mutation_data, indent=2))
+            tmp.replace(MUTATION_FILE)
+            print(f"Synced config_hash → {MUTATION_FILE.relative_to(REPO_ROOT)}")
+        except Exception as exc:
+            print(f"WARNING: could not sync config_hash to mutation file: {exc}", file=sys.stderr)
+
     print(f"\nConfig hash:  {chash}")
     print(f"Sources used: {', '.join(sources_used) or '(none)'}")
     print(f"Warnings:     {len(warnings)}")

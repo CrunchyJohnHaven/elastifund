@@ -1,8 +1,8 @@
 {
   "cohort_id": "post_fix_v1",
-  "cohort_status": "awaiting_deploy",
-  "cohort_start_ts": null,
-  "cohort_activated_at": null,
+  "cohort_status": "active",
+  "cohort_start_ts": 1774483914,
+  "cohort_activated_at": "2026-03-26T00:11:54+00:00",
   "validation_mutation_id": "baseline_v1",
   "validation_config_hash": "f283562e90cd90669ce91ae08241452ccb6b8ab610f90c700d960f9fd6af7045",
   "validation_profile_name": "shadow_fast_flow",
@@ -11,9 +11,20 @@
   "validation_direction_mode": "down_only",
   "validation_up_live_mode": "shadow_only",
   "validation_hour_filter_enabled": true,
-  "validation_suppress_hours_et": [0, 1, 2, 8, 9],
+  "validation_suppress_hours_et": [
+    0,
+    1,
+    2,
+    8,
+    9
+  ],
   "target_resolved_fills": 50,
-  "checkpoint_fills": [10, 20, 30, 50],
+  "checkpoint_fills": [
+    10,
+    20,
+    30,
+    50
+  ],
   "notes": "Post-fix validation cohort. Activated after verify_btc5_mutation.py returns OK.",
   "safety_kill_triggered": false,
   "safety_kill_reason": null,
