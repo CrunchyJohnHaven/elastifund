@@ -11,7 +11,7 @@ pytest-asyncio
 pytest-cov
 
 # Linting and type checking.
-ruff>=0.11.0
+ruff>=0.15.12
 mypy>=1.6.0
 
 # Make the edge-backlog package importable from the shared repo-root env.
