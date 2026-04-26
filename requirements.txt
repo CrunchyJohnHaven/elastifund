@@ -21,7 +21,7 @@ pydantic-settings
 python-json-logger
 sqlalchemy
 structlog
-uvicorn[standard]>=0.30,<1.0
+uvicorn[standard]>=0.46.0,<1.0
 
 # Research and modeling
 anthropic
