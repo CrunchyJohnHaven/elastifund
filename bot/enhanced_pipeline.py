@@ -186,8 +186,10 @@ def _platt_calibrate(raw: float) -> float:
     import math
     import os
 
-    a = float(os.environ.get("PLATT_A", "0.5914"))
-    b = float(os.environ.get("PLATT_B", "-0.3977"))
+    raw_a = (os.environ.get("PLATT_A") or "").strip()
+    raw_b = (os.environ.get("PLATT_B") or "").strip()
+    a = float(raw_a or "0.5914")
+    b = float(raw_b or "-0.3977")
     try:
         log_odds = math.log(raw / (1.0 - raw))
         return 1.0 / (1.0 + math.exp(-(a * log_odds + b)))

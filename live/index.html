@@ -121,6 +121,216 @@
       <section class="page-section">
         <div class="container">
           <div class="section-header">
+            <div class="section-kicker">Operator flywheel</div>
+            <h2>The self-improvement loop in one glance.</h2>
+            <p class="section-copy">
+              This view treats autoresearch and MiroFish-style exploration as upstream search, then tracks whether the proof chain actually closes into validated learning instead of producing motion without gains.
+            </p>
+          </div>
+
+          <div class="loop-hero">
+            <article class="proof-card loop-spotlight">
+              <div class="proof-card-header">
+                <div>
+                  <div class="panel-kicker">Loop health</div>
+                  <h3><span data-fill="loop_health_label"></span></h3>
+                </div>
+                <span class="tag neutral" data-loop-health-tag><span data-fill="loop_health_tag"></span></span>
+              </div>
+              <p class="card-copy"><span data-fill="loop_health_summary"></span></p>
+              <div class="loop-meter" aria-hidden="true">
+                <div class="loop-meter-track">
+                  <div class="loop-meter-fill" data-loop-health-fill></div>
+                </div>
+                <div class="loop-meter-labels">
+                  <span>stalled</span>
+                  <span>degraded</span>
+                  <span>running</span>
+                </div>
+              </div>
+              <div class="proof-stat-grid">
+                <div class="proof-stat">
+                  <div class="proof-stat-label">Freshness SLA</div>
+                  <div class="proof-stat-value proof-stat-value-small" data-fill="loop_freshness_status"></div>
+                  <div class="proof-stat-note"><span data-fill="loop_staleness_summary"></span></div>
+                </div>
+                <div class="proof-stat">
+                  <div class="proof-stat-label">Primary blocker</div>
+                  <div class="proof-stat-value proof-stat-value-small" data-fill="loop_primary_blocker"></div>
+                  <div class="proof-stat-note"><span data-fill="loop_operator_action"></span></div>
+                </div>
+                <div class="proof-stat">
+                  <div class="proof-stat-label">Learning pressure</div>
+                  <div class="proof-stat-value proof-stat-value-small" data-fill="loop_learning_status"></div>
+                  <div class="proof-stat-note"><span data-fill="loop_learning_summary"></span></div>
+                </div>
+                <div class="proof-stat">
+                  <div class="proof-stat-label">Attribution</div>
+                  <div class="proof-stat-value proof-stat-value-small" data-fill="loop_attribution_status"></div>
+                  <div class="proof-stat-note"><span data-fill="loop_attribution_summary"></span></div>
+                </div>
+              </div>
+            </article>
+
+            <article class="card loop-diagnostic-card">
+              <div class="card-kicker">Search-space signal</div>
+              <h3>Exploration only counts if it closes the proof chain.</h3>
+              <p class="card-copy">
+                <span data-fill="loop_search_summary"></span>
+              </p>
+              <div class="loop-diagnostic-grid">
+                <div class="status-item">
+                  <div class="status-label">Tracked strategies</div>
+                  <div class="status-value" data-fill="strategy_total"></div>
+                  <div class="status-sub"><span data-fill="strategy_distribution"></span></div>
+                </div>
+                <div class="status-item">
+                  <div class="status-label">Dispatch pressure</div>
+                  <div class="status-value" data-fill="dispatch_work_orders"></div>
+                  <div class="status-sub"><span data-fill="avg_dispatches_per_day"></span></div>
+                </div>
+                <div class="status-item">
+                  <div class="status-label">Validation fill growth</div>
+                  <div class="status-value" data-fill="velocity_fill_growth"></div>
+                  <div class="status-sub"><span data-fill="velocity_window_summary"></span></div>
+                </div>
+                <div class="status-item">
+                  <div class="status-label">Execution quality proxy</div>
+                  <div class="status-value" data-fill="loop_execution_status"></div>
+                  <div class="status-sub"><span data-fill="loop_execution_summary"></span></div>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <div class="loop-stage-grid">
+            <article class="loop-stage-card" data-loop-stage="search">
+              <div class="loop-stage-topline">
+                <div>
+                  <div class="loop-stage-label">Search</div>
+                  <h3>Autoresearch + MiroFish</h3>
+                </div>
+                <span class="tag neutral" data-loop-stage-badge="search"><span data-fill="loop_stage_search_status"></span></span>
+              </div>
+              <p class="surface-copy"><span data-fill="loop_stage_search_summary"></span></p>
+            </article>
+
+            <article class="loop-stage-card" data-loop-stage="evidence">
+              <div class="loop-stage-topline">
+                <div>
+                  <div class="loop-stage-label">Evidence</div>
+                  <h3>Fresh data and runtime heartbeat</h3>
+                </div>
+                <span class="tag neutral" data-loop-stage-badge="evidence"><span data-fill="loop_stage_evidence_status"></span></span>
+              </div>
+              <p class="surface-copy"><span data-fill="loop_stage_evidence_summary"></span></p>
+            </article>
+
+            <article class="loop-stage-card" data-loop-stage="gate">
+              <div class="loop-stage-topline">
+                <div>
+                  <div class="loop-stage-label">Gate</div>
+                  <h3>Harness and launch contract</h3>
+                </div>
+                <span class="tag neutral" data-loop-stage-badge="gate"><span data-fill="loop_stage_gate_status"></span></span>
+              </div>
+              <p class="surface-copy"><span data-fill="loop_stage_gate_summary"></span></p>
+            </article>
+
+            <article class="loop-stage-card" data-loop-stage="execution">
+              <div class="loop-stage-topline">
+                <div>
+                  <div class="loop-stage-label">Execution</div>
+                  <h3>Live sleeve and capital velocity</h3>
+                </div>
+                <span class="tag neutral" data-loop-stage-badge="execution"><span data-fill="loop_stage_execution_status"></span></span>
+              </div>
+              <p class="surface-copy"><span data-fill="loop_stage_execution_summary"></span></p>
+            </article>
+
+            <article class="loop-stage-card" data-loop-stage="learning">
+              <div class="loop-stage-topline">
+                <div>
+                  <div class="loop-stage-label">Learning</div>
+                  <h3>Attributed outcomes and updates</h3>
+                </div>
+                <span class="tag neutral" data-loop-stage-badge="learning"><span data-fill="loop_stage_learning_status"></span></span>
+              </div>
+              <p class="surface-copy"><span data-fill="loop_stage_learning_summary"></span></p>
+            </article>
+          </div>
+
+          <div class="loop-visual-grid">
+            <article class="proof-card loop-theater-card">
+              <div class="proof-card-header">
+                <div>
+                  <div class="panel-kicker">System in action</div>
+                  <h3>Continuous loop theater</h3>
+                </div>
+                <span class="tag neutral" data-loop-health-tag><span data-fill="loop_visual_packets"></span></span>
+              </div>
+              <p class="card-copy"><span data-fill="loop_visual_summary"></span></p>
+              <div class="loop-orbit" data-loop-orbit>
+                <div class="loop-orbit-ring loop-orbit-ring-outer"></div>
+                <div class="loop-orbit-ring loop-orbit-ring-inner"></div>
+
+                <div class="loop-orbit-node node-search" data-loop-orbit-node="search">
+                  <div class="loop-orbit-node-label">Search</div>
+                  <div class="loop-orbit-node-title">Autoresearch</div>
+                  <span class="tag neutral" data-loop-orbit-badge="search"><span data-fill="loop_stage_search_status"></span></span>
+                </div>
+
+                <div class="loop-orbit-node node-evidence" data-loop-orbit-node="evidence">
+                  <div class="loop-orbit-node-label">Evidence</div>
+                  <div class="loop-orbit-node-title">Fresh truth</div>
+                  <span class="tag neutral" data-loop-orbit-badge="evidence"><span data-fill="loop_stage_evidence_status"></span></span>
+                </div>
+
+                <div class="loop-orbit-node node-gate" data-loop-orbit-node="gate">
+                  <div class="loop-orbit-node-label">Gate</div>
+                  <div class="loop-orbit-node-title">Harness</div>
+                  <span class="tag neutral" data-loop-orbit-badge="gate"><span data-fill="loop_stage_gate_status"></span></span>
+                </div>
+
+                <div class="loop-orbit-node node-execution" data-loop-orbit-node="execution">
+                  <div class="loop-orbit-node-label">Execution</div>
+                  <div class="loop-orbit-node-title">Live sleeve</div>
+                  <span class="tag neutral" data-loop-orbit-badge="execution"><span data-fill="loop_stage_execution_status"></span></span>
+                </div>
+
+                <div class="loop-orbit-node node-learning" data-loop-orbit-node="learning">
+                  <div class="loop-orbit-node-label">Learning</div>
+                  <div class="loop-orbit-node-title">Attribution</div>
+                  <span class="tag neutral" data-loop-orbit-badge="learning"><span data-fill="loop_stage_learning_status"></span></span>
+                </div>
+
+                <div class="loop-orbit-core">
+                  <div class="loop-orbit-core-kicker">Current state</div>
+                  <div class="loop-orbit-core-value" data-fill="loop_health_label"></div>
+                  <div class="loop-orbit-core-note"><span data-fill="loop_core_note"></span></div>
+                </div>
+
+                <div class="loop-particles" data-loop-particles></div>
+              </div>
+            </article>
+
+            <article class="card loop-trend-card">
+              <div class="card-kicker">Improvement trace</div>
+              <h3>Forecast path vs proof density</h3>
+              <p class="card-copy"><span data-fill="loop_trend_summary"></span></p>
+              <div class="loop-trend-chart" data-loop-trend-chart></div>
+              <div class="loop-trend-axis">
+                <span data-fill="loop_trend_start_label"></span>
+                <span data-fill="loop_trend_end_label"></span>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="container">
+          <div class="section-header">
             <div class="section-kicker">Artifact ledger</div>
             <h2>What the public site is allowed to trust.</h2>
           </div>

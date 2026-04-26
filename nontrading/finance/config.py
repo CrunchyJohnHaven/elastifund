@@ -119,6 +119,10 @@ class FinanceSettings:
     def action_queue_path(self) -> Path:
         return self.reports_dir / "action_queue.json"
 
+    @property
+    def model_budget_plan_path(self) -> Path:
+        return self.reports_dir / "model_budget_plan.json"
+
     def with_workspace(self, workspace_root: str | Path) -> "FinanceSettings":
         return FinanceSettings(
             db_path=self.db_path,

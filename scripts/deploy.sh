@@ -346,7 +346,7 @@ echo "  Removing stale root jj_live.py if present..."
 
 echo
 echo "  Installing Python dependencies on VPS..."
-"${SSH_CMD[@]}" "$VPS" "cd $BOT_DIR && PY_BIN=\$( [ -x venv/bin/python3 ] && echo venv/bin/python3 || [ -x .venv/bin/python3 ] && echo .venv/bin/python3 || echo /usr/bin/python3 ) && \$PY_BIN -m pip install -q anthropic openai duckduckgo-search httpx structlog numpy py-clob-client --break-system-packages 2>&1 | tail -3"
+"${SSH_CMD[@]}" "$VPS" "cd $BOT_DIR && PY_BIN=\$( [ -x venv/bin/python3 ] && echo venv/bin/python3 || [ -x .venv/bin/python3 ] && echo .venv/bin/python3 || echo /usr/bin/python3 ) && \$PY_BIN -m pip install -q anthropic openai duckduckgo-search httpx structlog numpy py-clob-client python-dotenv aiohttp websockets --break-system-packages 2>&1 | tail -3"
 
 if [[ "$CLEAN_ENV" == "true" ]]; then
     echo

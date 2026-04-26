@@ -19,6 +19,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+HYPOTHESIS_LAB_DEFAULT_MAX_ABS_DELTA = 0.00015
+
 from scripts.btc5_monte_carlo import (  # noqa: E402
     DEFAULT_ARCHIVE_GLOB,
     DEFAULT_DOWN_MAX,
@@ -148,9 +150,10 @@ def _merged_strategy_env(base_env: Path, override_env: Path) -> dict[str, str]:
 
 
 def _profile_from_env(name: str, env: dict[str, str]) -> GuardrailProfile:
+    env_max_abs_delta = _safe_float(env.get("BTC5_MAX_ABS_DELTA"), HYPOTHESIS_LAB_DEFAULT_MAX_ABS_DELTA)
     return GuardrailProfile(
         name=name,
-        max_abs_delta=_safe_float(env.get("BTC5_MAX_ABS_DELTA"), DEFAULT_MAX_ABS_DELTA),
+        max_abs_delta=min(env_max_abs_delta, HYPOTHESIS_LAB_DEFAULT_MAX_ABS_DELTA),
         up_max_buy_price=_safe_float(env.get("BTC5_UP_MAX_BUY_PRICE"), DEFAULT_UP_MAX),
         down_max_buy_price=_safe_float(env.get("BTC5_DOWN_MAX_BUY_PRICE"), DEFAULT_DOWN_MAX),
         note="loaded from strategy env",

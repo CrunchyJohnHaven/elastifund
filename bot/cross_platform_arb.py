@@ -496,13 +496,20 @@ def _load_kalshi_markets_from_cache(*, max_age_seconds: float) -> tuple[list[Mar
         except ValueError:
             generated_at = None
 
-    age_seconds = None
+    age_candidates: list[float] = []
     if generated_at is not None:
         if generated_at.tzinfo is None:
             generated_at = generated_at.replace(tzinfo=timezone.utc)
-        age_seconds = max(0.0, (datetime.now(timezone.utc) - generated_at).total_seconds())
-        if age_seconds > max_age_seconds:
-            return [], age_seconds
+        age_candidates.append(max(0.0, (datetime.now(timezone.utc) - generated_at).total_seconds()))
+    try:
+        mtime_age = max(0.0, time.time() - KALSHI_MARKET_CACHE_FILE.stat().st_mtime)
+        age_candidates.append(mtime_age)
+    except OSError:
+        pass
+
+    age_seconds = min(age_candidates) if age_candidates else None
+    if age_seconds is not None and age_seconds > max_age_seconds:
+        return [], age_seconds
 
     listings: list[MarketListing] = []
     for item in payload.get("markets", []):

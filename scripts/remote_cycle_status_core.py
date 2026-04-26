@@ -5957,18 +5957,20 @@ def _refresh_stage_readiness_with_wallet_truth(
         stage_readiness[key] = [
             item
             for item in list(stage_readiness.get(key) or [])
-            if str(item) != "wallet_export_stale"
+            if str(item) not in {"wallet_export_stale", "wallet_export_missing"}
         ]
 
     reasons = [
         str(reason)
         for reason in list(stage_readiness.get("reasons") or [])
         if "Wallet export truth is stale" not in str(reason)
+        and "Wallet export truth is missing" not in str(reason)
     ]
     trade_now_reasons = [
         str(reason)
         for reason in list(stage_readiness.get("trade_now_reasons") or [])
         if "Wallet export truth is stale" not in str(reason)
+        and "Wallet export truth is missing" not in str(reason)
     ]
     refresh_reason = (
         f"Wallet export truth refreshed from {wallet_source_artifact} ({wallet_source_age_hours:.2f}h old)."

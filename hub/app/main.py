@@ -5,6 +5,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from hub.app.agent_api import router as agent_router
@@ -13,6 +14,7 @@ from hub.app.config import get_settings
 from hub.app.elasticsearch_security import ElasticsearchSecurityClient
 from hub.app.flywheel_api import router as flywheel_router
 from hub.app.nontrading_api import router as nontrading_router
+from hub.app.operator_api import router as operator_router
 from hub.app.registry import HubRegistry
 from shared.python.elastifund_shared.topology import (
     ELASTIFUND_KNOWLEDGE_SHARING_TIERS,
@@ -33,10 +35,18 @@ app = FastAPI(
     version="0.1.0",
     summary="Gateway for the Elastifund hub-and-spoke platform scaffold.",
 )
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(benchmark_router)
 app.include_router(agent_router)
 app.include_router(flywheel_router)
 app.include_router(nontrading_router)
+app.include_router(operator_router)
 
 
 class ApiKeyCreateRequest(BaseModel):

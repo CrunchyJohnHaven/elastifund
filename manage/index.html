@@ -3,28 +3,32 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Elastifund / Manage | Public-safe operator surface stub</title>
-  <meta name="description" content="Public-safe preview of the operator surface for run ledgers, approval queues, deployment checks, and change review.">
+  <title>Elastifund / Manage | Operator command console</title>
+  <meta name="description" content="Dark operator console for Elastifund: watch the self-improvement loop, steer stage priority, queue directives, and export a structured feedback packet.">
   <link rel="stylesheet" href="/site.css">
+  <link rel="stylesheet" href="/manage-console.css">
   <script src="/site.js" defer></script>
+  <script src="/manage-console.js?v=20260327-training" defer></script>
 </head>
 <body data-page="manage">
-  <div class="page-wrap">
-    <header class="site-header">
+  <div class="page-wrap manage-shell">
+    <header class="site-header manage-header">
       <div class="container header-inner">
         <a class="brand" href="/">
           <span class="brand-mark"></span>
           <span class="brand-text">
             <span class="brand-name">Elastifund</span>
-            <span class="brand-subtitle">Operator surface preview</span>
+            <span class="brand-subtitle">Operator command console</span>
           </span>
         </a>
         <nav class="header-nav" aria-label="Primary">
           <a class="nav-link" data-page="home" href="/">Home</a>
-          <a class="nav-link" data-page="elastic" href="/elastic/">Elastic</a>
+          <a class="nav-link" data-page="live" href="/live/">Live</a>
+          <a class="nav-link" data-page="manage" href="/manage/">Manage</a>
           <a class="nav-link" data-page="develop" href="/develop/">Develop</a>
-          <a class="nav-link" data-page="trading" href="/leaderboards/trading/">Trading</a>
-          <a class="nav-link" data-page="worker" href="/leaderboards/worker/">Worker</a>
+          <a class="nav-link" data-page="elastic" href="/elastic/">Elastic</a>
+          <a class="nav-link" data-page="leaderboards" href="/leaderboards/">Leaderboards</a>
+          <a class="nav-link" data-page="roadmap" href="/roadmap/">Roadmap</a>
         </nav>
         <div class="header-actions">
           <span class="status-pill" data-role="status-pill">runtime syncing</span>
@@ -33,121 +37,259 @@
       </div>
     </header>
 
-    <main>
-      <section class="route-hero">
-        <div class="container route-hero-grid">
-          <div>
-            <span class="eyebrow">Manage</span>
-            <h1>A public-safe preview of the operator surface, not the private control plane itself.</h1>
-            <p class="route-copy">
-              The real `/manage` surface should answer four questions fast: what your instance ran, what it changed, what is waiting for approval, and what is blocked. This public stub shows the jobs that surface will own without pretending it is an authenticated dashboard yet.
-            </p>
-            <div class="cta-row">
-              <a class="button button-primary" href="/develop/">Follow the contributor path</a>
-              <a class="button button-secondary" href="/#status">Read the homepage status board</a>
-            </div>
-          </div>
-          <aside class="status-panel">
-            <div class="status-panel-header">
+    <main class="manage-main">
+      <section class="manage-command-deck">
+        <div class="manage-console-grid">
+          <aside class="manage-panel manage-panel-left">
+            <div class="manage-panel-head">
               <div>
-                <div class="panel-kicker">Current operator facts</div>
-                <h3>What the public surface can say today</h3>
+                <div class="manage-kicker">Operator</div>
+                <div class="manage-panel-title">Command</div>
               </div>
-              <span class="tag warn"><span data-fill="launch_posture"></span></span>
+              <span class="manage-chip neutral" data-manage-fill="directive_count">0 directives</span>
             </div>
-            <dl class="info-list">
-              <div class="info-row">
-                <dt>Service state</dt>
-                <dd><span data-fill="service_surface"></span></dd>
+
+            <div class="manage-telemetry-strip">
+              <div class="manage-telemetry-block">
+                <div class="manage-telemetry-label">Loop</div>
+                <div class="manage-telemetry-value" data-manage-fill="loop_health_label">Unknown</div>
               </div>
-              <div class="info-row">
-                <dt>Launch blockers</dt>
-                <dd><span data-fill="launch_reasons"></span></dd>
+              <div class="manage-telemetry-block">
+                <div class="manage-telemetry-label">Focus</div>
+                <div class="manage-telemetry-value" data-manage-fill="focus_stage_label">Gate</div>
               </div>
-              <div class="info-row">
-                <dt>Deploy blocker</dt>
-                <dd><span data-fill="deploy_blocker"></span></dd>
+              <div class="manage-telemetry-block">
+                <div class="manage-telemetry-label">Mode</div>
+                <div class="manage-telemetry-value" data-manage-fill="guidance_mode_label">Repair</div>
               </div>
-              <div class="info-row">
-                <dt>Next action</dt>
-                <dd><span data-fill="next_action"></span></dd>
+              <div class="manage-telemetry-block">
+                <div class="manage-telemetry-label">Freshness</div>
+                <div class="manage-telemetry-value" data-manage-fill="freshness_short">Aging</div>
               </div>
-            </dl>
+            </div>
+
+            <div class="manage-panel-section">
+              <div class="manage-section-label">Command line</div>
+              <div class="manage-console-input-wrap">
+                <label class="sr-only" for="manage-command-input">Operator command</label>
+                <input
+                  id="manage-command-input"
+                  class="manage-command-input"
+                  type="text"
+                  placeholder="/mode repair   /focus gate   /queue Fix launch truth before promotion"
+                  autocomplete="off"
+                >
+                <button class="manage-command-button" data-manage-action="execute-command">Execute</button>
+              </div>
+              <div class="manage-command-hints">
+                <span>`/mode exploit|repair|explore|observe|gate`</span>
+                <span>`/focus search|evidence|gate|execution|learning`</span>
+                <span>`/queue <note>`</span>
+                <span>`/clear`</span>
+              </div>
+            </div>
+
+            <div class="manage-panel-section">
+              <div class="manage-section-label">Mode presets</div>
+              <div class="manage-chip-row">
+                <button class="manage-chip-button" data-manage-mode="repair">Repair Truth</button>
+                <button class="manage-chip-button" data-manage-mode="gate">Tighten Gate</button>
+                <button class="manage-chip-button" data-manage-mode="exploit">Exploit Edge</button>
+                <button class="manage-chip-button" data-manage-mode="explore">Increase Exploration</button>
+                <button class="manage-chip-button" data-manage-mode="observe">Increase Observability</button>
+              </div>
+            </div>
+
+            <div class="manage-panel-section">
+              <div class="manage-section-label">Runtime levers</div>
+              <div class="manage-lever-grid">
+                <label class="manage-field">
+                  <span class="manage-field-label">Profile</span>
+                  <input class="manage-field-input" type="text" data-manage-control="profile" value="shadow_fast_flow">
+                </label>
+                <label class="manage-field">
+                  <span class="manage-field-label">YES threshold</span>
+                  <input class="manage-field-input" type="number" step="0.01" min="0" max="1" data-manage-control="yes_threshold">
+                </label>
+                <label class="manage-field">
+                  <span class="manage-field-label">NO threshold</span>
+                  <input class="manage-field-input" type="number" step="0.01" min="0" max="1" data-manage-control="no_threshold">
+                </label>
+                <label class="manage-field">
+                  <span class="manage-field-label">Max resolution hrs</span>
+                  <input class="manage-field-input" type="number" step="0.5" min="0.5" max="168" data-manage-control="max_resolution_hours">
+                </label>
+                <label class="manage-field">
+                  <span class="manage-field-label">Hourly budget USD</span>
+                  <input class="manage-field-input" type="number" step="1" min="0" max="500" data-manage-control="hourly_notional_budget_usd">
+                </label>
+                <label class="manage-field">
+                  <span class="manage-field-label">Per-trade cap USD</span>
+                  <input class="manage-field-input" type="number" step="1" min="1" max="500" data-manage-control="per_trade_cap_usd">
+                </label>
+              </div>
+              <div class="manage-toggle-row">
+                <label class="manage-toggle">
+                  <input type="checkbox" data-manage-control="enable_polymarket">
+                  <span>Polymarket venue</span>
+                </label>
+                <label class="manage-toggle">
+                  <input type="checkbox" data-manage-control="enable_kalshi">
+                  <span>Kalshi venue</span>
+                </label>
+              </div>
+              <div class="manage-packet-actions">
+                <button class="manage-chip-button" data-manage-action="apply-controls">Apply runtime controls</button>
+                <button class="manage-chip-button" data-manage-action="push-guidance">Push guidance packet</button>
+              </div>
+              <p class="manage-subcopy" data-manage-fill="operator_api_status">Hub API offline. Local queue only.</p>
+              <p class="manage-subcopy" data-manage-fill="last_ack_label">No control ack yet.</p>
+            </div>
+
+            <div class="manage-panel-section">
+              <div class="manage-section-label">Directive queue</div>
+              <div class="manage-log" data-manage-directive-log></div>
+            </div>
+
+            <div class="manage-panel-section">
+              <div class="manage-section-label">Loop heartbeat</div>
+              <div class="manage-log" data-manage-jobs></div>
+            </div>
+          </aside>
+
+          <section class="manage-panel manage-panel-center">
+            <div class="manage-panel-head">
+              <div>
+                <div class="manage-kicker">Simulation Board</div>
+                <div class="manage-panel-title">Live frontier</div>
+              </div>
+              <span class="manage-chip" data-manage-fill="system_packet_count">0 feeds</span>
+            </div>
+
+            <section class="manage-viz-card manage-viz-card-simulations">
+              <div class="manage-viz-head">
+                <div class="manage-section-label">Live simulations</div>
+                <div class="manage-viz-note" data-manage-fill="simulation_summary">Waiting for research lanes.</div>
+              </div>
+              <div class="manage-simulation-grid">
+                <div class="manage-simulation-lanes" data-manage-simulation-lanes></div>
+                <div class="manage-simulation-findings" data-manage-simulation-findings></div>
+              </div>
+            </section>
+
+            <div class="manage-overview-grid" data-manage-overview></div>
+
+            <div class="manage-visual-grid">
+              <section class="manage-viz-card manage-viz-card-trade-tape">
+                <div class="manage-viz-head">
+                  <div class="manage-section-label">Latest trading tape</div>
+                  <div class="manage-viz-note" data-manage-fill="trade_tape_summary">Waiting for local trading rows.</div>
+                </div>
+                <div class="manage-rank-table" data-manage-trade-tape></div>
+              </section>
+
+              <section class="manage-viz-card manage-viz-card-frontier">
+                <div class="manage-viz-head">
+                  <div class="manage-section-label">Monte Carlo frontier</div>
+                  <div class="manage-viz-note" data-manage-fill="frontier_summary">Waiting for frontier snapshot.</div>
+                </div>
+                <div class="manage-frontier-chart" data-manage-frontier-chart></div>
+                <div class="manage-frontier-legend" data-manage-frontier-legend></div>
+              </div>
+
+              <section class="manage-viz-card">
+                <div class="manage-viz-head">
+                  <div class="manage-section-label">Candidate ledger</div>
+                  <div class="manage-viz-note" data-manage-fill="candidate_summary">No candidate summary yet.</div>
+                </div>
+                <div class="manage-rank-table" data-manage-candidate-table></div>
+              </section>
+
+              <section class="manage-viz-card">
+                <div class="manage-viz-head">
+                  <div class="manage-section-label">Policy frontier</div>
+                  <div class="manage-viz-note" data-manage-fill="policy_summary">No policy frontier yet.</div>
+                </div>
+                <div class="manage-policy-chart" data-manage-policy-chart></div>
+              </section>
+
+              <section class="manage-viz-card">
+                <div class="manage-viz-head">
+                  <div class="manage-section-label">Execution flow</div>
+                  <div class="manage-viz-note" data-manage-fill="flow_summary">No flow metrics yet.</div>
+                </div>
+                <div class="manage-flow-grid" data-manage-flow-metrics></div>
+              </section>
+
+              <section class="manage-viz-card">
+                <div class="manage-viz-head">
+                  <div class="manage-section-label">Cohort + PnL</div>
+                  <div class="manage-viz-note" data-manage-fill="cohort_summary">No cohort snapshot yet.</div>
+                </div>
+                <div class="manage-cohort-grid" data-manage-cohort-panel></div>
+              </section>
+
+              <section class="manage-viz-card manage-viz-card-trend">
+                <div class="manage-viz-head">
+                  <div class="manage-section-label">Forecast trace</div>
+                  <div class="manage-viz-note" data-manage-fill="trend_summary">No checked-in forecast trace published yet.</div>
+                </div>
+                <div class="manage-trend-chart" data-manage-trend-chart></div>
+                <div class="manage-trend-axis">
+                  <span data-manage-fill="trend_start_label"></span>
+                  <span data-manage-fill="trend_end_label"></span>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <aside class="manage-panel manage-panel-right">
+            <div class="manage-panel-head">
+              <div>
+                <div class="manage-kicker">Operator Actions</div>
+                <div class="manage-panel-title">Blockers</div>
+              </div>
+              <span class="manage-chip warn" data-manage-fill="priority_label">Priority</span>
+            </div>
+
+            <div class="manage-panel-section">
+              <div class="manage-section-label">Active blockers</div>
+              <div class="manage-action-list" data-manage-actions></div>
+            </div>
+
+            <div class="manage-panel-section">
+              <div class="manage-section-label">Live control-plane feed</div>
+              <div class="manage-packet-actions">
+                <button class="manage-chip-button" data-manage-run-job="health">Run health</button>
+                <button class="manage-chip-button" data-manage-run-job="cohort">Run cohort</button>
+                <button class="manage-chip-button" data-manage-run-job="filters">Run filters</button>
+                <button class="manage-chip-button" data-manage-run-job="autoresearch">Run autoresearch</button>
+                <button class="manage-chip-button" data-manage-run-job="hypothesis_lab">Run hypothesis lab</button>
+                <button class="manage-chip-button" data-manage-run-job="policy_frontier">Run policy frontier</button>
+                <button class="manage-chip-button" data-manage-run-job="monte_carlo">Run Monte Carlo</button>
+                <button class="manage-chip-button" data-manage-run-job="simulation_lab">Run simulation lab</button>
+              </div>
+              <div class="manage-watch-list" data-manage-events></div>
+            </div>
+
+            <div class="manage-panel-section">
+              <div class="manage-section-label">Watchpoints</div>
+              <div class="manage-watch-list" data-manage-watchpoints></div>
+            </div>
+
+            <div class="manage-panel-section">
+              <div class="manage-section-label">Feedback packet</div>
+              <div class="manage-packet-actions">
+                <button class="manage-chip-button" data-manage-action="copy-packet">Copy JSON</button>
+                <button class="manage-chip-button" data-manage-action="download-packet">Download</button>
+                <button class="manage-chip-button danger" data-manage-action="clear-directives">Clear directives</button>
+              </div>
+              <pre class="manage-packet-preview" data-manage-packet-preview></pre>
+            </div>
           </aside>
         </div>
       </section>
-
-      <section class="page-section">
-        <div class="container">
-          <div class="section-header">
-            <div class="section-kicker">Planned panes</div>
-            <h2>What the operator surface is supposed to make legible.</h2>
-          </div>
-          <div class="surface-grid">
-            <article class="surface-card">
-              <div class="tag good">Run ledger</div>
-              <h3>What ran, when, and with which evidence artifacts.</h3>
-              <p class="surface-copy">Every pass should write a small, reviewable record instead of leaving operators to reconstruct reality from shell history.</p>
-            </article>
-            <article class="surface-card">
-              <div class="tag good">Approval queue</div>
-              <h3>What needs a human before it can move.</h3>
-              <p class="surface-copy">Capital transitions, outbound commercial actions, and ambiguous deploy choices stay above the loop.</p>
-            </article>
-            <article class="surface-card">
-              <div class="tag good">Deployment state</div>
-              <h3>Bundle validation, service posture, and drift.</h3>
-              <p class="surface-copy">The surface should make it obvious when a service is active, when launch is still blocked, and which bundle checks are failing.</p>
-            </article>
-            <article class="surface-card">
-              <div class="tag good">Change review</div>
-              <h3>What improved, what regressed, and what remains unverified.</h3>
-              <p class="surface-copy">The point is not activity. The point is to keep validated improvements legible enough to trust.</p>
-            </article>
-          </div>
-        </div>
-      </section>
-
-      <section class="page-section">
-        <div class="container split-grid">
-          <article class="card">
-            <div class="card-kicker">Current public-safe summary</div>
-            <h3>Trading runtime</h3>
-            <p class="card-copy"><span data-fill="current_system_arr"></span>, <span data-fill="live_trades"></span> live trades after <span data-fill="runtime_cycles"></span> cycles, and the latest fast-market verdict still says <span data-fill="fast_verdict"></span>.</p>
-          </article>
-          <article class="card">
-            <div class="card-kicker">Current public-safe summary</div>
-            <h3>Worker runtime</h3>
-            <p class="card-copy">JJ-N is still a Phase 0 surface. The public worker board remains definition-first because honest metrics matter more than pretending the revenue loop already exists.</p>
-          </article>
-        </div>
-      </section>
     </main>
-
-    <footer class="footer">
-      <div class="container">
-        <div class="footer-panel">
-          <div>
-            <div class="footer-kicker">Manage route</div>
-            <h3>Make operations legible before you make them automatic.</h3>
-            <p class="footer-meta">Runtime snapshot generated <span data-fill="generated_utc"></span>. Current service posture: <span data-fill="service_surface"></span>.</p>
-          </div>
-          <div class="footer-links">
-            <a href="/">Home</a>
-            <a href="/leaderboards/">Leaderboards</a>
-            <a href="/elastic/">Elastic</a>
-            <a href="/develop/">Develop</a>
-            <a href="/diary/">Diary</a>
-            <a href="/roadmap/">Roadmap</a>
-            <a href="/docs/">Docs</a>
-          </div>
-          <div class="footer-meta">
-            <div>Public-safe stub only.</div>
-            <div>&copy; <span data-fill="year"></span> Elastifund.</div>
-          </div>
-        </div>
-      </div>
-    </footer>
   </div>
 </body>
 </html>

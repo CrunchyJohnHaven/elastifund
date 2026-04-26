@@ -1,26 +1,28 @@
 {
-  "generated_at": "2026-03-25T13:26:29.328529+00:00",
-  "total_skips": 373,
+  "generated_at": "2026-03-26T03:35:47.692477+00:00",
+  "total_skips": 659,
   "skip_distribution": {
-    "skip_price_outside_guardrails": 169,
+    "skip_price_outside_guardrails": 289,
     "skip_probe_confirmation_mismatch": 140,
+    "skip_bad_book": 85,
+    "skip_delta_too_small": 58,
+    "skip_direction_mode_suppressed": 40,
     "skip_adaptive_direction_suppressed": 23,
-    "skip_bad_book": 19,
     "skip_probe_confirmation_pending": 14,
-    "skip_delta_too_small": 5,
-    "skip_size_too_small": 2,
-    "skip_delta_too_large": 1
+    "skip_size_too_small": 8,
+    "skip_delta_too_large": 2
   },
   "skip_fractions": {
-    "skip_price_outside_guardrails": 0.4531,
-    "skip_probe_confirmation_mismatch": 0.3753,
-    "skip_adaptive_direction_suppressed": 0.0617,
-    "skip_bad_book": 0.0509,
-    "skip_probe_confirmation_pending": 0.0375,
-    "skip_delta_too_small": 0.0134,
-    "skip_size_too_small": 0.0054,
-    "skip_delta_too_large": 0.0027
+    "skip_price_outside_guardrails": 0.4385,
+    "skip_probe_confirmation_mismatch": 0.2124,
+    "skip_bad_book": 0.129,
+    "skip_delta_too_small": 0.088,
+    "skip_direction_mode_suppressed": 0.0607,
+    "skip_adaptive_direction_suppressed": 0.0349,
+    "skip_probe_confirmation_pending": 0.0212,
+    "skip_size_too_small": 0.0121,
+    "skip_delta_too_large": 0.003
   },
   "recommendations": [],
-  "summary": "0 threshold adjustment(s) recommended from 373 total skips across 8 reason(s)."
+  "summary": "0 threshold adjustment(s) recommended from 659 total skips across 9 reason(s)."
 }

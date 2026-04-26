@@ -74,6 +74,9 @@ Set a real `DASHBOARD_TOKEN` before using the dashboard anywhere outside a local
 | `GET` | `/api/v1/runs` | planned or completed benchmark runs |
 | `GET` | `/api/v1/runs/{run_id}/artifacts` | published artifact pointers |
 | `GET` | `/api/v1/paper-status` | current paper-run state by system |
+| `GET` | `/api/v1/operator/console` | current operator-console state, effective runtime profile, and latest guidance/control acks |
+| `POST` | `/api/v1/operator/guidance` | persist an operator guidance packet from `/manage/` |
+| `POST` | `/api/v1/operator/runtime-controls` | apply bounded runtime control changes via the existing operator-action contract |
 
 ### Polymarket Dashboard
 
@@ -102,6 +105,19 @@ curl http://localhost:8000/v1/topology
 curl http://localhost:8001/health
 curl -H "Authorization: Bearer $DASHBOARD_TOKEN" http://localhost:8001/status
 ```
+
+## Local Manage Console
+
+Run the operator console locally as one app, one port:
+
+```bash
+python3 scripts/run_manage_console_local.py --port 8130
+```
+
+Then open:
+
+- `http://127.0.0.1:8130/manage/`
+- `http://127.0.0.1:8130/api/v1/operator/console`
 
 ## Known Gaps
 

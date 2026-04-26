@@ -20,16 +20,16 @@
     "enable_a6_embedded_shadow_scanner": false
   },
   "risk_limits": {
-    "max_position_usd": 10.0,
-    "max_daily_loss_usd": 390.0,
-    "max_exposure_pct": 0.95,
-    "kelly_fraction": 0.25,
-    "max_kelly_fraction": 0.50,
+    "max_position_usd": 5.0,
+    "max_daily_loss_usd": 15.0,
+    "max_exposure_pct": 0.10,
+    "kelly_fraction": 0.02,
+    "max_kelly_fraction": 0.05,
     "scan_interval_seconds": 30,
-    "max_open_positions": 30,
-    "min_edge": 0.03,
-    "initial_bankroll": 390.0,
-    "hourly_notional_budget_usd": 390.0
+    "max_open_positions": 5,
+    "min_edge": 0.05,
+    "initial_bankroll": 1047.0,
+    "hourly_notional_budget_usd": 25.0
   },
   "market_filters": {
     "max_resolution_hours": 1.0,

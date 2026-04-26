@@ -2578,6 +2578,14 @@ class JJState:
     def has_position(self, market_id: str) -> bool:
         return market_id in self.state["open_positions"]
 
+    def open_notional_for_market(self, market_id: str, direction: str | None = None) -> float:
+        position = self.state.get("open_positions", {}).get(str(market_id))
+        if not isinstance(position, dict):
+            return 0.0
+        if direction is not None and str(position.get("direction") or "").strip() != str(direction).strip():
+            return 0.0
+        return round(_safe_float(position.get("size_usd"), 0.0), 6)
+
     def upsert_linked_legs(self, attempt_id: str, payload: dict) -> None:
         record = dict(payload)
         record.setdefault("attempt_id", str(attempt_id))

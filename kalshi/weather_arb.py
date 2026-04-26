@@ -721,15 +721,15 @@ def _adaptive_temp_std(target_date: date, city_code: str, base_std: float = 3.0)
       2-3 days:                    ~3.5°F
       4+ days:                     use base_std as-is
     """
-    now_utc = datetime.now(timezone.utc)
-    today_utc = now_utc.date()
-    horizon_days = (target_date - today_utc).days
+    now_local = datetime.now().astimezone()
+    today_local = now_local.date()
+    horizon_days = (target_date - today_local).days
     if horizon_days < 0:
         return max(1.0, base_std)
     if horizon_days == 0:
         # Same-day: estimate hours until typical max temp (~20:00 UTC for US East, ~22:00 for US West).
         # Use 21:00 UTC as rough midpoint for "peak temp hour" across US cities.
-        hours_until_peak = max(0.0, 21.0 - now_utc.hour - now_utc.minute / 60.0)
+        hours_until_peak = max(0.0, 21.0 - now_local.hour - now_local.minute / 60.0)
         if hours_until_peak <= 2.0:
             return 1.0  # Temperature nearly locked in.
         if hours_until_peak <= 6.0:

@@ -609,6 +609,7 @@ PM_HOURLY_NOTIONAL_CAP_USD = 50.0
 PM_CAMPAIGN_MAX_RESOLUTION_HOURS = 24.0
 PM_CAMPAIGN_WINDOW_SECONDS = 3600
 PM_CAMPAIGN_DECISION_LOG_PATH = Path("reports/pm_campaign_decisions.jsonl")
+BTC5_DIRECTIONAL_LIVE_FROZEN = True
 
 
 def _float_env(name: str, default: str) -> float:
@@ -702,6 +703,7 @@ def _reload_runtime_settings(*, persist: bool = False) -> RuntimeProfileBundle:
     global PM_CAMPAIGN_MAX_RESOLUTION_HOURS
     global PM_CAMPAIGN_WINDOW_SECONDS
     global PM_CAMPAIGN_DECISION_LOG_PATH
+    global BTC5_DIRECTIONAL_LIVE_FROZEN
 
     bundle = activate_runtime_profile_env(persist=persist)
     RUNTIME_PROFILE = bundle
@@ -1439,23 +1441,23 @@ def apply_llm_market_filters(
     category = classify_market_category(question)
     if is_dedicated_btc5_market(question, slug=slug):
         return False, "btc5_dedicated", category, resolution_hours
+
+    # SAFETY: When the velocity gate is active, unknown resolution is an
+    # absolute gate checked before category priority.  A market with no
+    # parseable end date must never be allowed regardless of its category.
+    normalized_resolution = resolution_hours
+    if MAX_RESOLUTION_HOURS > 0 and normalized_resolution is None:
+        logger.info(
+            "Velocity gate: rejecting %s — no parseable resolution_hours (category=%s)",
+            question[:60], category,
+        )
+        return False, "unknown_resolution", category, None
+
     if CATEGORY_PRIORITY.get(category, 2) < MIN_CATEGORY_PRIORITY:
         return False, "category", category, resolution_hours
 
-    normalized_resolution = resolution_hours
     if MAX_RESOLUTION_HOURS > 0:
-        if normalized_resolution is None:
-            # SAFETY: Markets without parseable end dates are rejected when a
-            # velocity gate is active.  The old 24h fallback let multi-month
-            # markets (Morocco Dec 2026, Russia April) slip through because
-            # their end dates were unparseable.  Better to miss a fast market
-            # than to lock capital in a 9-month position.
-            logger.info(
-                "Velocity gate: rejecting %s — no parseable resolution_hours (category=%s)",
-                question[:60], category,
-            )
-            return False, "unknown_resolution", category, None
-        if normalized_resolution > MAX_RESOLUTION_HOURS:
+        if normalized_resolution is not None and normalized_resolution > MAX_RESOLUTION_HOURS:
             return False, "velocity", category, normalized_resolution
 
     return True, "ok", category, normalized_resolution
@@ -2945,6 +2947,14 @@ class JJState:
 
     def has_position(self, market_id: str) -> bool:
         return market_id in self.state["open_positions"]
+
+    def open_notional_for_market(self, market_id: str, direction: str | None = None) -> float:
+        position = self.state.get("open_positions", {}).get(str(market_id))
+        if not isinstance(position, dict):
+            return 0.0
+        if direction is not None and str(position.get("direction") or "").strip() != str(direction).strip():
+            return 0.0
+        return round(_safe_float(position.get("size_usd"), 0.0), 6)
 
     def upsert_linked_legs(self, attempt_id: str, payload: dict) -> None:
         record = dict(payload)
@@ -4945,10 +4955,11 @@ class JJLive:
         size_usd: float,
     ) -> None:
         """Best-effort feed to promotion manager and daily truth tracker."""
-        if self.promotion_manager is not None:
+        promotion_manager = getattr(self, "promotion_manager", None)
+        if promotion_manager is not None:
             try:
                 # Ensure strategy is registered before recording fills
-                pm = self.promotion_manager
+                pm = promotion_manager
                 if pm.get_strategy(strategy_id) is None:
                     pm.register_strategy(strategy_id)
                 # At fill time we don't know won/pnl — record as neutral fill
@@ -4959,9 +4970,10 @@ class JJLive:
                 )
             except Exception:
                 pass  # promotion tracking is best-effort
-        if self.daily_truth is not None:
+        daily_truth = getattr(self, "daily_truth", None)
+        if daily_truth is not None:
             try:
-                self.daily_truth.record_fill(
+                daily_truth.record_fill(
                     strategy=strategy_id,
                     pnl=pnl,
                 )
@@ -5792,7 +5804,7 @@ class JJLive:
         Returns a summary dict with orders placed, signals found, etc.
         """
         result = {"enabled": False, "signals": 0, "packets": 0, "orders": 0, "errors": []}
-        if self.strike_desk is None or not self._strike_desk_enabled:
+        if getattr(self, "strike_desk", None) is None or not getattr(self, "_strike_desk_enabled", False):
             return result
         result["enabled"] = True
 
@@ -6183,35 +6195,35 @@ class JJLive:
                         continue
 
                     trade_record["order_id"] = order_id
-                    trade_id = self.db.log_trade(trade_record)
-                    _ul_record({**trade_record, "trade_id": trade_id, "order_size": shares}, order_status="placed", instance_id="jj_live.sum_violation")
+                    order_metadata = {
+                        "trade_record": dict(trade_record),
+                        "signal_context": {
+                            "edge": leg_signal.get("edge", 0.0),
+                            "market_price": leg_signal.get("market_price", order_price),
+                            "direction": leg_signal.get("direction", direction),
+                        },
+                    }
+                    _ul_record({**trade_record, "order_size": shares}, order_status="placed", instance_id="jj_live.sum_violation")
                     self._record_trade_telemetry(
-                        {**trade_record, "trade_id": trade_id, "order_size": shares},
+                        {**trade_record, "order_size": shares},
                         fill_status="posted",
                         execution_stage="live_sum_violation",
                     )
-                    self.multi_sim.simulate_trade(leg_signal, trade_id)
-                    self.state.record_trade(
-                        market_id=market_id,
-                        question=leg_signal["question"],
-                        direction=direction,
-                        price=price,
-                        size_usd=size_usd,
-                        edge=leg_signal["edge"],
-                        confidence=leg_signal["confidence"],
-                        order_id=order_id,
-                        source=trade_record.get("source", ""),
-                        source_combo=trade_record.get("source_combo", ""),
-                        source_components=trade_record.get("source_components", []),
-                        source_count=int(_safe_float(trade_record.get("source_count", 0), 0)),
-                        signal_sources=list(trade_record.get("signal_sources") or []),
-                        signal_metadata=dict(trade_record.get("signal_metadata") or {}),
-                    )
-                    self._feed_proof_to_capital(
-                        strategy_id=str(trade_record.get("source_combo", trade_record.get("source", "sum_violation"))),
-                        pnl=0.0,
-                        size_usd=size_usd,
-                    )
+                    if self.fill_tracker is not None:
+                        self.fill_tracker.record_order(
+                            order_id=order_id,
+                            market_id=market_id,
+                            token_id=token_id,
+                            question=leg_signal["question"],
+                            category=category,
+                            side=BUY,
+                            direction=direction,
+                            price=order_price,
+                            size=shares,
+                            size_usd=size_usd,
+                            order_type="maker",
+                            metadata=order_metadata,
+                        )
                     basket_successes += 1
                     orders_placed += 1
                 except Exception as e:
@@ -7897,9 +7909,10 @@ class JJLive:
         # 3. EXECUTE TRADES
         # --- Time-of-day kill switch (data-driven: suppress losing ET hours) ---
         _KILL_HOURS_ET = frozenset({22, 23, 0, 1, 2, 3, 9, 10, 11})
+        _tod_kill_enabled = os.environ.get("JJ_TOD_KILL_ENABLED", "true").lower() not in ("false", "0", "no")
         _now_utc = datetime.now(timezone.utc)
         _et_hour = (_now_utc.hour - 4) % 24  # approximate UTC -> ET
-        if _et_hour in _KILL_HOURS_ET:
+        if _tod_kill_enabled and _et_hour in _KILL_HOURS_ET:
             logger.info(
                 "TIME-OF-DAY KILL: ET hour %02d:00 is in loss cluster %s — skipping all %d signals",
                 _et_hour, sorted(_KILL_HOURS_ET), len(signals),
@@ -7983,7 +7996,7 @@ class JJLive:
                 continue
 
             # --- BTC5 directional freeze (env-lever, DISPATCH_102) ---
-            if BTC5_DIRECTIONAL_LIVE_FROZEN:
+            if _bool_env("JJ_BTC5_DIRECTIONAL_LIVE_FROZEN", True):
                 _q_lower = str(signal.get("question", "")).lower()
                 _src_lower = str(signal.get("source_combo", signal.get("source", ""))).lower()
                 if "btc5" in _src_lower or "btc" in _q_lower:
@@ -7997,9 +8010,10 @@ class JJLive:
                         continue
 
             # --- Replay gate: block naked one-sided BTC short-window trades ---
+            _btc_replay_gate_enabled = os.environ.get("JJ_BTC_REPLAY_GATE_ENABLED", "true").lower() not in ("false", "0", "no")
             _q_replay = str(signal.get("question", ""))
             _q_replay_lower = _q_replay.lower()
-            if ("bitcoin up or down" in _q_replay_lower or "btc" in _q_replay_lower):
+            if _btc_replay_gate_enabled and ("bitcoin up or down" in _q_replay_lower or "btc" in _q_replay_lower):
                 _res_h_replay = float(signal.get("resolution_hours", 999))
                 if _res_h_replay <= 0.5:
                     _dir = str(signal.get("direction", ""))
@@ -8165,10 +8179,11 @@ class JJLive:
                 continue
 
             # --- Structural gate: block naked one-sided BTC short-window trades ---
+            _btc5_frozen = _bool_env("JJ_BTC5_DIRECTIONAL_LIVE_FROZEN", True)
             _q = str(signal.get("question", "")).lower()
             _is_btc_short = ("bitcoin up or down" in _q or "btc up or down" in _q) and \
                 float(signal.get("resolution_hours", 99)) <= 0.5
-            if _is_btc_short and BTC5_DIRECTIONAL_LIVE_FROZEN:
+            if _is_btc_short and _btc5_frozen:
                 _has_pair = bool(signal.get("linked_packets")) or bool(signal.get("dual_sided"))
                 if not _has_pair:
                     logger.info(

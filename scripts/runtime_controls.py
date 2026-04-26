@@ -306,46 +306,69 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def parse_runtime_overrides_env(path: Path) -> dict[str, str]:
+    return _parse_overrides_env(path)
+
+
+def apply_runtime_control_args(args: argparse.Namespace, argv: list[str] | None = None) -> dict[str, Any]:
+    reports_dir = Path(args.reports_dir)
+    overrides_path = (
+        Path(args.overrides_path) if args.overrides_path else reports_dir / DEFAULT_OVERRIDES_ENV_PATH.name
+    )
+    effective_path = Path(args.effective_path) if args.effective_path else reports_dir / DEFAULT_EFFECTIVE_PATH.name
+    action_dir = Path(args.action_dir) if args.action_dir else reports_dir / DEFAULT_ACTION_DIR.name
+
+    current_overrides = _parse_overrides_env(overrides_path)
+    updates = _build_env_updates(args, current_overrides)
+
+    before_bundle = load_runtime_profile(env={"JJ_RUNTIME_PROFILE": args.profile, **current_overrides})
+
+    merged_overrides = dict(current_overrides)
+    merged_overrides.update(updates)
+    merged_env = {"JJ_RUNTIME_PROFILE": args.profile, **merged_overrides}
+    after_bundle = load_runtime_profile(env=merged_env)
+
+    command_line = " ".join(shlex.quote(token) for token in (argv or []))
+    action_payload = _build_action_payload(
+        args=args,
+        command_line=command_line,
+        before_bundle=before_bundle,
+        after_bundle=after_bundle,
+        updates=updates,
+    )
+
+    _write_env_overrides(overrides_path, merged_overrides)
+    write_effective_runtime_profile(after_bundle, output_path=effective_path)
+    action_path = _write_action_artifact(
+        action_dir=action_dir,
+        action_prefix=args.action_prefix,
+        payload=action_payload,
+    )
+
+    return {
+        "effective_profile": str(effective_path),
+        "operator_action": str(action_path),
+        "action_payload": action_payload,
+        "effective_scope": action_payload.get("effective_scope", {}),
+        "selected_profile": after_bundle.selected_profile,
+        "overrides_path": str(overrides_path),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     try:
         parser = _build_parser()
         args = parser.parse_args(argv)
-
-        reports_dir = Path(args.reports_dir)
-        overrides_path = (
-            Path(args.overrides_path) if args.overrides_path else reports_dir / DEFAULT_OVERRIDES_ENV_PATH.name
+        result = apply_runtime_control_args(args, argv)
+        print(
+            json.dumps(
+                {
+                    "effective_profile": result["effective_profile"],
+                    "operator_action": result["operator_action"],
+                },
+                sort_keys=True,
+            )
         )
-        effective_path = Path(args.effective_path) if args.effective_path else reports_dir / DEFAULT_EFFECTIVE_PATH.name
-        action_dir = Path(args.action_dir) if args.action_dir else reports_dir / DEFAULT_ACTION_DIR.name
-
-        current_overrides = _parse_overrides_env(overrides_path)
-        updates = _build_env_updates(args, current_overrides)
-
-        before_bundle = load_runtime_profile(env={"JJ_RUNTIME_PROFILE": args.profile, **current_overrides})
-
-        merged_overrides = dict(current_overrides)
-        merged_overrides.update(updates)
-        merged_env = {"JJ_RUNTIME_PROFILE": args.profile, **merged_overrides}
-        after_bundle = load_runtime_profile(env=merged_env)
-
-        command_line = " ".join(shlex.quote(token) for token in (argv or []))
-        action_payload = _build_action_payload(
-            args=args,
-            command_line=command_line,
-            before_bundle=before_bundle,
-            after_bundle=after_bundle,
-            updates=updates,
-        )
-
-        _write_env_overrides(overrides_path, merged_overrides)
-        write_effective_runtime_profile(after_bundle, output_path=effective_path)
-        action_path = _write_action_artifact(
-            action_dir=action_dir,
-            action_prefix=args.action_prefix,
-            payload=action_payload,
-        )
-
-        print(json.dumps({"effective_profile": str(effective_path), "operator_action": str(action_path)}, sort_keys=True))
         return 0
     except RuntimeControlError as exc:
         print(str(exc), file=sys.stderr)

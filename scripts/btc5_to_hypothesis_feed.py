@@ -31,6 +31,34 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def _resolve_trade_table(conn: sqlite3.Connection) -> tuple[str, dict[str, str]] | tuple[None, None]:
+    """Support both legacy `trades` and newer `window_trades` schemas."""
+    table_rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ).fetchall()
+    table_names = {str(row[0]) for row in table_rows}
+
+    if "window_trades" in table_names:
+        return "window_trades", {
+            "skip_reason": "order_status",
+            "filled_where": "filled = 1 AND pnl_usd IS NOT NULL",
+            "time_expr": "created_at",
+            "pnl_expr": "pnl_usd",
+            "direction_expr": "direction",
+            "skip_where": "order_status IS NOT NULL AND order_status LIKE 'skip_%'",
+        }
+    if "trades" in table_names:
+        return "trades", {
+            "skip_reason": "skip_reason",
+            "filled_where": "fill_time IS NOT NULL AND pnl IS NOT NULL",
+            "time_expr": "fill_time",
+            "pnl_expr": "pnl",
+            "direction_expr": "direction",
+            "skip_where": "skip_reason IS NOT NULL AND skip_reason LIKE 'skip_%'",
+        }
+    return None, None
+
+
 def parse_env_file(path: str) -> dict:
     """Parse a KEY=VALUE env file, ignoring comments and blank lines."""
     result = {}
@@ -80,11 +108,15 @@ def extract_skip_distribution(db_path: str) -> dict:
         return {}
     try:
         conn = sqlite3.connect(db_path)
+        table_name, columns = _resolve_trade_table(conn)
+        if not table_name or not columns:
+            conn.close()
+            return {}
         rows = conn.execute(
-            "SELECT order_status, COUNT(*) as cnt "
-            "FROM window_trades "
-            "WHERE order_status IS NOT NULL AND order_status LIKE 'skip_%' "
-            "GROUP BY order_status ORDER BY cnt DESC"
+            f"SELECT {columns['skip_reason']}, COUNT(*) as cnt "
+            f"FROM {table_name} "
+            f"WHERE {columns['skip_where']} "
+            f"GROUP BY {columns['skip_reason']} ORDER BY cnt DESC"
         ).fetchall()
         conn.close()
         return {row[0]: row[1] for row in rows}
@@ -100,14 +132,17 @@ def extract_hour_performance(db_path: str) -> dict:
         return {}
     try:
         conn = sqlite3.connect(db_path)
-        # Attempt to get hour-level aggregation from filled trades
+        table_name, columns = _resolve_trade_table(conn)
+        if not table_name or not columns:
+            conn.close()
+            return {}
         rows = conn.execute(
-            "SELECT CAST(strftime('%H', created_at) AS INTEGER) as hour_utc, "
+            f"SELECT CAST(strftime('%H', {columns['time_expr']}) AS INTEGER) as hour_utc, "
             "COUNT(*) as cnt, "
-            "SUM(CASE WHEN pnl_usd > 0 THEN 1 ELSE 0 END) as wins, "
-            "SUM(pnl_usd) as total_pnl "
-            "FROM window_trades "
-            "WHERE filled = 1 AND pnl_usd IS NOT NULL "
+            f"SUM(CASE WHEN {columns['pnl_expr']} > 0 THEN 1 ELSE 0 END) as wins, "
+            f"SUM({columns['pnl_expr']}) as total_pnl "
+            f"FROM {table_name} "
+            f"WHERE {columns['filled_where']} "
             "GROUP BY hour_utc ORDER BY hour_utc"
         ).fetchall()
         conn.close()
@@ -133,13 +168,18 @@ def extract_direction_bias(db_path: str) -> dict:
         return {}
     try:
         conn = sqlite3.connect(db_path)
+        table_name, columns = _resolve_trade_table(conn)
+        if not table_name or not columns:
+            conn.close()
+            return {}
         rows = conn.execute(
-            "SELECT direction, COUNT(*) as cnt, "
-            "SUM(CASE WHEN pnl_usd > 0 THEN 1 ELSE 0 END) as wins, "
-            "SUM(pnl_usd) as total_pnl "
-            "FROM window_trades "
-            "WHERE filled = 1 AND direction IS NOT NULL AND pnl_usd IS NOT NULL "
-            "GROUP BY direction"
+            f"SELECT {columns['direction_expr']}, COUNT(*) as cnt, "
+            f"SUM(CASE WHEN {columns['pnl_expr']} > 0 THEN 1 ELSE 0 END) as wins, "
+            f"SUM({columns['pnl_expr']}) as total_pnl "
+            f"FROM {table_name} "
+            f"WHERE {columns['filled_where']} "
+            f"AND {columns['direction_expr']} IS NOT NULL "
+            f"GROUP BY {columns['direction_expr']}"
         ).fetchall()
         conn.close()
         result = {}
@@ -313,6 +353,12 @@ def build_feedback(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source": "btc5_autoresearch",
         "current_probe": {
+            "hypothesis_id": probe.get("hypothesis_id", "unknown"),
+            "status": probe.get("status", "unknown"),
+            "direction_bias": probe.get("direction_bias", "unknown"),
+            "parameters": probe.get("parameters", {}),
+            "evidence_fills": probe.get("evidence_fills", 0),
+            "evidence_grade": probe.get("evidence_grade", "unknown"),
             "decision_action": decision.get("action", "unknown"),
             "decision_reason": decision.get("reason", "unknown"),
             "deploy_recommendation": probe.get("deploy_recommendation", "unknown"),

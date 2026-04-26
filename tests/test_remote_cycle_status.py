@@ -3026,7 +3026,7 @@ def test_bridge_pull_only_captures_service_snapshot_before_status(tmp_path: Path
                 "with log.open('a') as fh:",
                 "    fh.write('ssh ' + ' '.join(sys.argv[1:]) + '\\n')",
                 "command = sys.argv[-1]",
-                "if 'systemctl is-active btc-5min-maker.service' in command:",
+                "if 'systemctl is-active jj-live.service' in command:",
                 "    print('inactive')",
                 "elif 'jj_state.json' in command:",
                 "    print('  Bankroll: configured in .env')",

@@ -2,27 +2,27 @@
   "arr_estimate": {
     "combined_current_pct": null,
     "combined_current_usd": 0.0,
-    "combined_next_target_pct": -6481918.2867,
+    "combined_next_target_pct": -6513267.8328,
     "combined_next_target_usd": 0.0,
     "methodology": "combined_current_pct remains fund-level realized ARR for backward compatibility. Use headline/scoreboard for the BTC5 sleeve run-rate and selected forecast.",
     "non_trading_current_pct": 0.0,
     "non_trading_current_usd": 0.0,
     "non_trading_status": "Not part of this public BTC5 metrics surface.",
     "trading_backtest_reference_methodology": "Selected BTC5 forecast continuation ARR from the freshest public forecast artifact.",
-    "trading_backtest_reference_pct": -5176619.8262,
-    "trading_next_target_confidence": "high",
-    "trading_next_target_pct": -6481918.2867,
+    "trading_backtest_reference_pct": 0.0,
+    "trading_next_target_confidence": "low",
+    "trading_next_target_pct": -6513267.8328,
     "trading_next_target_usd": 0.0,
     "trading_realized_pct": null,
     "trading_realized_usd": 0.0
   },
   "btc5_daily_pnl": {
-    "et_day_fill_count": 5,
-    "et_day_net_after_estimated_rebate_usd": -49.3752,
-    "et_day_realized_pnl_usd": -49.4989,
-    "rolling_24h_fill_count": 5,
-    "rolling_24h_net_after_estimated_rebate_usd": -49.3752,
-    "rolling_24h_realized_pnl_usd": -49.4989,
+    "et_day_fill_count": 0,
+    "et_day_net_after_estimated_rebate_usd": 0.0,
+    "et_day_realized_pnl_usd": 0.0,
+    "rolling_24h_fill_count": 0,
+    "rolling_24h_net_after_estimated_rebate_usd": 0.0,
+    "rolling_24h_realized_pnl_usd": 0.0,
     "source": "reports/runtime_truth_latest.json.btc5_daily_pnl"
   },
   "chart_series": {
@@ -91,89 +91,91 @@
         "timestamp": "2026-03-10T16:29:22.606038+00:00"
       },
       {
-        "active_forecast_arr_pct": -6481918.2867,
-        "best_forecast_arr_pct": -5176619.8262,
-        "live_filled_rows": 6,
-        "source_artifact": "reports/btc5_autoresearch/latest.json",
-        "timestamp": "2026-03-24T17:06:13.525111+00:00"
+        "active_forecast_arr_pct": -6638810.8189,
+        "best_forecast_arr_pct": 0.0,
+        "live_filled_rows": 0,
+        "source_artifact": "reports/btc5_autoresearch_current_probe/latest.json",
+        "timestamp": "2026-03-26T23:44:23.671109+00:00"
       }
     ]
   },
   "confidence": {
     "fund_realized_arr_blocked": false,
-    "label": "high",
+    "label": "low",
     "reasons": [
-      "validation_live_filled_rows=22",
-      "generalization_ratio=8.9061"
+      "validation_live_filled_rows=0",
+      "generalization_ratio=0.0000",
+      "insufficient_validation_or_generalization"
     ],
-    "sample_size_annotation": "167 live fills in the realized sleeve window; 22 validation live-filled rows in the selected forecast; 378 observed BTC5 windows in the selected forecast artifact"
+    "sample_size_annotation": "47 live fills in the realized sleeve window; 0 validation live-filled rows in the selected forecast; 881 observed BTC5 windows in the selected forecast artifact"
   },
   "contribution_flywheel": {
-    "commits_total_after_instance": 246,
+    "commits_total_after_instance": 256,
     "dispatch_markdown_files": 119,
     "dispatch_work_orders": 36,
     "project_age_days": 0
   },
-  "generated_at": "2026-03-24T17:38:35.227170+00:00",
+  "generated_at": "2026-03-27T00:47:49.043888+00:00",
   "headline": {
-    "active_forecast_arr_pct": -6481918.2867,
-    "best_package_forecast_arr_pct": -5176619.8262,
+    "active_forecast_arr_pct": -6513267.8328,
+    "best_package_forecast_arr_pct": 0.0,
     "btc5_live_filled_pnl_usd_total": -91.4405,
     "btc5_live_filled_rows_total": 31,
     "deploy_recommendation": "hold",
-    "forecast_confidence_label": "high",
+    "forecast_confidence_label": "low",
     "fund_realized_arr_claim_reason": "fund_realized_arr_claim_unblocked",
     "fund_realized_arr_claim_status": "unblocked",
-    "generated_at": "2026-03-24T17:38:35.227170+00:00",
-    "p05_forecast_arr_pct": -11248557.6689,
+    "generated_at": "2026-03-27T00:47:49.043888+00:00",
+    "p05_forecast_arr_pct": 0.0,
     "public_forecast_source_artifact": "reports/btc5_autoresearch/latest.json",
-    "realized_btc5_sleeve_run_rate_pct": 1116.8665,
-    "summary": "BTC5 live sleeve has 31 live-filled rows and $-91.44 live-filled PnL (today $0.00, flat). Fund-level realized ARR is unblocked. Selected public forecast is hold / high confidence from reports/btc5_autoresearch/latest.json.",
+    "realized_btc5_sleeve_run_rate_pct": 27500.9257,
+    "summary": "BTC5 live sleeve has 31 live-filled rows and $-91.44 live-filled PnL (today $0.00, flat). Fund-level realized ARR is unblocked. Selected public forecast is hold / low confidence from reports/btc5_autoresearch/latest.json.",
     "title": "Based on latest BTC5 live trading data"
   },
   "polymarket_tie_out": {
-    "after_midnight_et_net_trading_cash_flow_usd": -0.854702,
-    "btc5_et_day_realized_pnl_usd": -49.4989,
-    "btc5_rolling_24h_realized_pnl_usd": -49.4989,
+    "after_midnight_et_net_trading_cash_flow_usd": -5.1161,
+    "btc5_et_day_realized_pnl_usd": 0.0,
+    "btc5_rolling_24h_realized_pnl_usd": 0.0,
     "closed_positions": 50,
     "free_collateral_usd": 1047.34983,
     "live_orders": 1,
-    "open_positions": 6,
-    "portfolio_total_usd": 1104.4978,
+    "open_positions": 5,
+    "portfolio_total_usd": 1108.8165,
     "reporting_precedence": "wallet_export",
     "reporting_precedence_reason": "wallet_export_fresh_and_at_least_as_recent_as_btc5_probe",
     "reserved_order_usd": 7.98,
-    "selected_wallet_reporting_freshness": "aging",
-    "selected_wallet_reporting_source": "/Users/johnbradley/Downloads/Polymarket-History-2026-03-24.csv",
-    "wallet_export_age_hours": 5.5172,
-    "wallet_export_candidate_conflict_status": "conflict",
-    "wallet_export_freshness_label": "aging",
-    "wallet_export_source_artifact": "/Users/johnbradley/Downloads/Polymarket-History-2026-03-24.csv"
+    "selected_wallet_reporting_freshness": "fresh",
+    "selected_wallet_reporting_source": "data/Polymarket-History-generated.csv",
+    "wallet_export_age_hours": 0.0,
+    "wallet_export_candidate_conflict_status": "consistent",
+    "wallet_export_freshness_label": "fresh",
+    "wallet_export_source_artifact": "data/Polymarket-History-generated.csv"
   },
   "runtime_summary": {
     "closed_trades": 50,
     "cycles_completed": 295,
     "launch_posture": "clear",
     "service_status": "running",
-    "total_trades": 56,
-    "verification_summary": "INFO     JJ:jj_live_core.py:6367 Skipped 1 low-edge-category markets (sports/crypto); INFO     JJ:jj_live_core.py:6369 Skipped 2 dedicated BTC5 markets owned by btc_5min_maker; INFO     JJ:jj_live_core.py:6369 Skipped 1 dedicated BTC5 markets owned by btc_5min_maker; 50 failed, 1961 passed, 5 warnings in 464.00s (0:07:44)"
+    "total_trades": 55,
+    "verification_summary": "0 failed, 4670 passed, 1 skipped in 83.46s (make test)"
   },
   "schema_version": "3.0.0",
   "scoreboard": {
-    "active_forecast_arr_pct": -6481918.2867,
+    "active_forecast_arr_pct": -6513267.8328,
     "active_package": "current_live_profile",
     "baseline_live_filled_rows": 11,
-    "baseline_window_rows": 378,
+    "baseline_window_rows": 881,
     "best_package": "active_profile",
-    "best_package_forecast_arr_pct": -5176619.8262,
+    "best_package_forecast_arr_pct": 0.0,
     "btc5_live_filled_pnl_usd_total": -91.4405,
     "btc5_live_filled_rows_total": 31,
     "deploy_recommendation": "hold",
-    "forecast_arr_delta_pct": 1305298.4605,
-    "forecast_confidence_label": "high",
+    "forecast_arr_delta_pct": 6513267.8328,
+    "forecast_confidence_label": "low",
     "forecast_confidence_reasons": [
-      "validation_live_filled_rows=22",
-      "generalization_ratio=8.9061"
+      "validation_live_filled_rows=0",
+      "generalization_ratio=0.0000",
+      "insufficient_validation_or_generalization"
     ],
     "fund_realized_arr_claim_reason": "fund_realized_arr_claim_unblocked",
     "fund_realized_arr_claim_status": "unblocked",
@@ -192,34 +194,34 @@
       "win_rate_today": null
     },
     "metric_name": "BTC5 public performance scoreboard",
-    "p05_forecast_arr_pct": -11248557.6689,
+    "p05_forecast_arr_pct": 0.0,
     "public_forecast_source_artifact": "reports/btc5_autoresearch/latest.json",
-    "realized_btc5_sleeve_run_rate_pct": 1116.8665,
-    "realized_btc5_sleeve_window_hours": 341.5489,
+    "realized_btc5_sleeve_run_rate_pct": 27500.9257,
+    "realized_btc5_sleeve_window_hours": 315.2244,
     "realized_btc5_sleeve_window_label": "trailing_12_live_fills",
-    "realized_btc5_sleeve_window_live_fills": 167,
-    "realized_btc5_sleeve_window_pnl_usd": 40.2287,
-    "sample_size_annotation": "167 live fills in the realized sleeve window; 22 validation live-filled rows in the selected forecast; 378 observed BTC5 windows in the selected forecast artifact",
-    "validation_live_filled_rows": 22
+    "realized_btc5_sleeve_window_live_fills": 47,
+    "realized_btc5_sleeve_window_pnl_usd": 798.4471,
+    "sample_size_annotation": "47 live fills in the realized sleeve window; 0 validation live-filled rows in the selected forecast; 881 observed BTC5 windows in the selected forecast artifact",
+    "validation_live_filled_rows": 0
   },
   "source_artifacts": [
     {
-      "generated_at": "2026-03-24T17:38:35.227170+00:00",
+      "generated_at": "2026-03-27T00:47:49.043888+00:00",
       "path": "reports/public_runtime_snapshot.json",
       "source_class": "runtime_public_snapshot"
     },
     {
-      "generated_at": "2026-03-24T17:38:35.227170+00:00",
+      "generated_at": "2026-03-27T00:47:49.043888+00:00",
       "path": "reports/runtime_truth_latest.json",
       "source_class": "runtime_truth"
     },
     {
-      "generated_at": "2026-03-24T17:38:28.465986+00:00",
+      "generated_at": "2026-03-27T00:47:40.055479+00:00",
       "path": "reports/remote_cycle_status.json",
       "source_class": "remote_cycle_status"
     },
     {
-      "generated_at": "2026-03-13T18:16:58.258558+00:00",
+      "generated_at": "2026-03-26T03:37:43.862554+00:00",
       "path": "reports/root_test_status.json",
       "source_class": "root_test_status"
     },
@@ -234,14 +236,14 @@
       "source_class": "btc5_window_rows"
     },
     {
-      "confidence_label": "high",
-      "generated_at": "2026-03-24T17:06:13.525111+00:00",
-      "path": "reports/btc5_autoresearch/latest.json",
+      "confidence_label": "low",
+      "generated_at": "2026-03-26T23:42:14.608835+00:00",
+      "path": "/Users/johnbradley/Desktop/Elastifund/reports/btc5_autoresearch/latest.json",
       "source_class": "forecast_latest"
     },
     {
       "confidence_label": "low",
-      "generated_at": "2026-03-24T17:06:13.525111+00:00",
+      "generated_at": "2026-03-26T23:44:23.671109+00:00",
       "path": "reports/btc5_autoresearch_current_probe/latest.json",
       "source_class": "forecast_current_probe"
     },
@@ -261,17 +263,17 @@
     "selected_public_forecast": "reports/btc5_autoresearch/latest.json"
   },
   "timebound_velocity": {
-    "confidence_label": "high",
+    "confidence_label": "low",
     "cycles_in_window": 14,
-    "forecast_arr_gain_pct": 1305298.4605,
-    "forecast_arr_gain_pct_per_day": 87416.3114,
+    "forecast_arr_gain_pct": 6638810.8189,
+    "forecast_arr_gain_pct_per_day": 385787.0688,
     "metric_name": "BTC5 public forecast velocity",
-    "source_artifact": "reports/btc5_autoresearch/latest.json",
+    "source_artifact": "reports/btc5_autoresearch_current_probe/latest.json",
     "source_class": "forecast_loop_history",
-    "validation_fill_growth": 6,
-    "validation_fill_growth_per_day": 0.4018,
-    "window_ended_at": "2026-03-24T17:06:13.525111+00:00",
-    "window_hours": 358.3675,
+    "validation_fill_growth": 0,
+    "validation_fill_growth_per_day": 0.0,
+    "window_ended_at": "2026-03-26T23:44:23.671109+00:00",
+    "window_hours": 413.0036,
     "window_started_at": "2026-03-09T18:44:10.604794+00:00"
   },
   "trading_agent": {
@@ -279,16 +281,16 @@
     "btc5_live_filled_rows": 31,
     "closed_trades": 50,
     "cycles_completed": 295,
-    "deployed_capital_usd": 92.3817,
+    "deployed_capital_usd": 80.6832,
     "launch_posture": "clear",
     "service_status": "running",
-    "total_trades": 56,
-    "tracked_capital_usd": 350.0,
+    "total_trades": 55,
+    "tracked_capital_usd": 250.0,
     "wallet_count": 35,
     "wallet_flow_ready": true
   },
   "velocity_metrics": {
-    "commits_total_after_instance": 246,
+    "commits_total_after_instance": 256,
     "dispatch_markdown_files": 119,
     "dispatch_work_orders": 36,
     "project_age_days": 0

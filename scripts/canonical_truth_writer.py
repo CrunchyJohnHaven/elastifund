@@ -50,6 +50,7 @@ INITIAL_DEPOSIT_USD = 247.51  # Canonical from CLAUDE.md; override via --initial
 CANONICAL_TRUTH_PATH = REPO_ROOT / "reports" / "canonical_operator_truth.json"
 WALLET_TRUTH_SNAPSHOT_PATH = REPO_ROOT / "reports" / "wallet_truth_snapshot_latest.json"
 ACCOUNT_CSV_PATH = REPO_ROOT / "data" / "finance_imports" / "account_polymarket.csv"
+GENERATED_HISTORY_CSV_PATH = REPO_ROOT / "data" / "Polymarket-History-generated.csv"
 RUNTIME_TRUTH_PATH = REPO_ROOT / "reports" / "runtime_truth_latest.json"
 FINANCE_PATH = REPO_ROOT / "reports" / "finance" / "latest.json"
 BTC5_STAGE_ENV_PATH = REPO_ROOT / "state" / "btc5_capital_stage.env"
@@ -187,6 +188,107 @@ def compute_closed_pnl(closed: list[dict]) -> float:
     return round(total, 4)
 
 
+def _history_row_timestamp(row: dict[str, Any], *, default_ts: str) -> str:
+    for key in ("timestamp", "updatedAt", "createdAt", "endDate"):
+        value = row.get(key)
+        if value in (None, ""):
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return default_ts
+
+
+def _history_row_market_name(row: dict[str, Any]) -> str:
+    for key in ("title", "question", "slug", "eventSlug", "conditionId"):
+        value = str(row.get(key) or "").strip()
+        if value:
+            return value
+    return "unknown-market"
+
+
+def _write_generated_history_csv(
+    *,
+    positions: list[dict[str, Any]],
+    closed: list[dict[str, Any]],
+    runtime_truth: dict[str, Any],
+    output_path: Path = GENERATED_HISTORY_CSV_PATH,
+) -> Path:
+    snapshot_ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    open_cost, open_mark = compute_open_pnl(positions)
+    closed_pnl = compute_closed_pnl(closed)
+    remote_wallet = _extract_remote_wallet_counts(runtime_truth)
+    remote_total_value = _safe_float(remote_wallet.get("total_wallet_value_usd"))
+    wallet_value_usd = round(remote_total_value or (INITIAL_DEPOSIT_USD + closed_pnl + (open_mark - open_cost)), 4)
+    open_notional_usd = round(open_mark, 4)
+
+    fieldnames = [
+        "timestamp",
+        "marketName",
+        "action",
+        "status",
+        "usdcAmount",
+        "cashflow_usd",
+        "realized_pnl_usd",
+        "open_buy_notional_usd",
+        "portfolio_equity_usd",
+        "open_notional_usd",
+        "conditionId",
+        "asset",
+        "outcome",
+        "source",
+    ]
+
+    rows: list[dict[str, Any]] = []
+    for row in positions:
+        initial_value = round(_safe_float(row.get("initialValue"), 0.0), 6)
+        rows.append(
+            {
+                "timestamp": _history_row_timestamp(row, default_ts=snapshot_ts),
+                "marketName": _history_row_market_name(row),
+                "action": "buy",
+                "status": "open",
+                "usdcAmount": initial_value,
+                "cashflow_usd": round(_safe_float(row.get("cashPnl"), 0.0), 6),
+                "realized_pnl_usd": round(_safe_float(row.get("realizedPnl"), 0.0), 6),
+                "open_buy_notional_usd": initial_value,
+                "portfolio_equity_usd": wallet_value_usd,
+                "open_notional_usd": open_notional_usd,
+                "conditionId": str(row.get("conditionId") or ""),
+                "asset": str(row.get("asset") or ""),
+                "outcome": str(row.get("outcome") or ""),
+                "source": "generated_api_snapshot_open",
+            }
+        )
+    for row in closed:
+        realized_pnl = round(_safe_float(row.get("realizedPnl"), 0.0), 6)
+        rows.append(
+            {
+                "timestamp": _history_row_timestamp(row, default_ts=snapshot_ts),
+                "marketName": _history_row_market_name(row),
+                "action": "redeem",
+                "status": "closed",
+                "usdcAmount": realized_pnl,
+                "cashflow_usd": realized_pnl,
+                "realized_pnl_usd": realized_pnl,
+                "open_buy_notional_usd": 0.0,
+                "portfolio_equity_usd": wallet_value_usd,
+                "open_notional_usd": open_notional_usd,
+                "conditionId": str(row.get("conditionId") or ""),
+                "asset": str(row.get("asset") or ""),
+                "outcome": str(row.get("outcome") or ""),
+                "source": "generated_api_snapshot_closed",
+            }
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    return output_path
+
+
 # ---------------------------------------------------------------------------
 # Local artifact readers
 # ---------------------------------------------------------------------------
@@ -234,6 +336,10 @@ def _latest_csv_export() -> str | None:
         name = p.name.lower()
         if "polymarket" in name or "history" in name:
             candidates.append(p.name)
+    for p in (REPO_ROOT / "data").glob("Polymarket-History*.csv"):
+        candidates.append(str(p.relative_to(REPO_ROOT)))
+    for p in (REPO_ROOT / "reports").glob("Polymarket-History*.csv"):
+        candidates.append(str(p.relative_to(REPO_ROOT)))
     # Also check repo root for dated exports
     for p in REPO_ROOT.glob("Polymarket-History-*.csv"):
         candidates.append(p.name)
@@ -553,6 +659,16 @@ def main(argv: list[str] | None = None) -> int:
 
     runtime_truth = _load_json_file(RUNTIME_TRUTH_PATH)
     finance_gate = _load_json_file(FINANCE_PATH)
+
+    generated_history_path = _write_generated_history_csv(
+        positions=positions,
+        closed=closed,
+        runtime_truth=runtime_truth,
+    )
+    print(
+        f"[{_ts()}] [canonical-truth] generated wallet export"
+        f" {generated_history_path.relative_to(REPO_ROOT)}"
+    )
 
     rt_age = _runtime_truth_age_seconds(runtime_truth)
     if rt_age is not None:

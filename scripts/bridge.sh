@@ -124,7 +124,7 @@ pull_remote_data() {
 
 capture_remote_service_status() {
     mkdir -p "$(dirname "$REMOTE_SERVICE_STATUS")"
-    local service_name="btc-5min-maker.service"
+    local service_name="jj-live.service"
     echo "[SERVICE] Capturing ${service_name} status..."
 
     local systemctl_state="unknown"
@@ -146,7 +146,7 @@ from pathlib import Path
 
 target = Path(sys.argv[1])
 host = sys.argv[2]
-service_name = (sys.argv[3] or "btc-5min-maker.service").strip()
+service_name = (sys.argv[3] or "jj-live.service").strip()
 systemctl_state = (sys.argv[4] or "unknown").strip()
 detail = (sys.argv[5] or "unknown").strip()
 
@@ -294,7 +294,7 @@ do_sync() {
 
     # ── Restart bot if code changed ──
     if $PUSH_CODE && $push_changed; then
-        local service_name="btc-5min-maker.service"
+        local service_name="jj-live.service"
         echo "[RESTART] Restarting ${service_name} (code changed)..."
         $SSH_CMD "$VPS_HOST" "sudo systemctl restart ${service_name} && sleep 3 && sudo systemctl is-active ${service_name}" 2>&1
     elif $PUSH_CODE; then

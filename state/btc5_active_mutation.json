@@ -1,7 +1,7 @@
 {
   "mutation_id": "baseline_v1",
   "promoted_at": "2026-03-25T00:00:00+00:00",
-  "config_hash": "f283562e90cd90669ce91ae08241452ccb6b8ab610f90c700d960f9fd6af7045",
+  "config_hash": "d4974daae18af2776265d404f7cbc003c972830f5f82b088de7d7fa1e9bb471d",
   "config_snapshot": {
     "BTC5_DOWN_MAX_BUY_PRICE": "0.48"
   },

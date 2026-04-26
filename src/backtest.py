@@ -605,7 +605,7 @@ def walk_forward_model_competition(
         ("Tree baseline", tree_probs),
         ("Monte Carlo GBM", mc_gbm_probs),
         ("MC regime-switching", mc_regime_probs),
-        ("Historical resample", bootstrap_probs),
+        ("Bootstrap ensemble", bootstrap_probs),
         ("XGBoost", xgb_probs),
     ]
 

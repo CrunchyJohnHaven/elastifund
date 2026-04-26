@@ -56,6 +56,25 @@ class FeatureEngineer:
         return btc_prices[lo:hi]
 
     @staticmethod
+    def _sampled_series(
+        ts: int,
+        btc_ts: list[int],
+        btc_prices: list[float],
+        window_sec: int,
+        step_sec: int,
+    ) -> list[float]:
+        """Return evenly-stepped price samples within [ts - window_sec, ts]."""
+        start = ts - window_sec
+        result: list[float] = []
+        cursor = start
+        while cursor <= ts:
+            idx = bisect.bisect_right(btc_ts, cursor) - 1
+            if idx >= 0:
+                result.append(btc_prices[idx])
+            cursor += step_sec
+        return result
+
+    @staticmethod
     def _realized_vol(series: list[float]) -> float:
         if len(series) < 3:
             return 0.0
@@ -86,6 +105,70 @@ class FeatureEngineer:
         if high <= low:
             return 0.5
         return (value - low) / (high - low)
+
+    @staticmethod
+    def _ema(series: list[float], period: int) -> float:
+        if not series:
+            return 0.0
+        if period <= 1:
+            return float(series[-1])
+        alpha = 2.0 / (period + 1.0)
+        ema = float(series[0])
+        for value in series[1:]:
+            ema = (alpha * float(value)) + ((1.0 - alpha) * ema)
+        return ema
+
+    @staticmethod
+    def _rsi(series: list[float], period: int = 14) -> float:
+        if len(series) < 2:
+            return 50.0
+        deltas = [float(series[idx]) - float(series[idx - 1]) for idx in range(1, len(series))]
+        window = deltas[-max(1, period):]
+        gains = [delta for delta in window if delta > 0.0]
+        losses = [-delta for delta in window if delta < 0.0]
+        avg_gain = sum(gains) / max(1, len(window))
+        avg_loss = sum(losses) / max(1, len(window))
+        if avg_loss <= 1e-12:
+            return 100.0 if avg_gain > 0.0 else 50.0
+        rs = avg_gain / avg_loss
+        return 100.0 - (100.0 / (1.0 + rs))
+
+    @classmethod
+    def _macd(
+        cls,
+        series: list[float],
+        fast_period: int = 12,
+        slow_period: int = 26,
+        signal_period: int = 9,
+    ) -> tuple[float, float, float]:
+        if not series:
+            return 0.0, 0.0, 0.0
+        macd_series: list[float] = []
+        for idx in range(len(series)):
+            window = series[: idx + 1]
+            fast = cls._ema(window, fast_period)
+            slow = cls._ema(window, slow_period)
+            macd_series.append(fast - slow)
+        macd_line = macd_series[-1]
+        signal_line = cls._ema(macd_series, signal_period)
+        histogram = macd_line - signal_line
+        return macd_line, signal_line, histogram
+
+    @staticmethod
+    def _bollinger(series: list[float], period: int = 20, num_std: float = 2.0) -> tuple[float, float]:
+        if not series:
+            return 0.0, 0.0
+        window = [float(value) for value in series[-max(1, period):]]
+        mean = statistics.fmean(window)
+        std = statistics.pstdev(window) if len(window) > 1 else 0.0
+        if std <= 1e-12:
+            return 0.0, 0.0
+        current = float(window[-1])
+        upper = mean + (num_std * std)
+        lower = mean - (num_std * std)
+        bandwidth = (upper - lower) / mean if mean else 0.0
+        z_score = (current - mean) / std
+        return z_score, bandwidth
 
     def build_feature_bundle(self, lookback_hours: int = 72) -> FeatureBundle:
         with self._connect() as conn:

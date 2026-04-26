@@ -1,5 +1,15 @@
 # CLAUDE.md — Elastifund Agent Operating Instructions
 
+## Browser Automation Safety (Hard Rule)
+
+- Never access, copy, inspect, export, or parse data from any real browser profile on this Mac. This includes Chrome, Chromium, Edge, Firefox, and Safari profile paths and files such as `Local State`, `Cookies`, `Network/Cookies`, `Login Data`, `Web Data`, `History`, `Bookmarks`, or any credential/token material.
+- Never launch browser automation against the user's normal browser profile. Do not point `--user-data-dir` at `~/Library/Application Support/...`, do not attach to an existing signed-in profile, and do not use persistent contexts backed by a real profile.
+- For any browser automation, use only an isolated disposable profile in a brand-new temp directory and prefer Playwright's bundled Chromium or another disposable Chromium binary.
+- Prefer direct HTTP/API calls over browser automation whenever a site or service can be reached without opening a real browser.
+- If a task appears to require cookies, saved passwords, browser sessions, or other secrets from a real profile, stop and ask for an alternative such as API keys, test credentials, or a manually provided export. Never harvest browser-stored secrets.
+- After automated browsing, delete the temporary profile directory when possible.
+- These rules are security-critical and exist specifically to avoid Elastic Cybersecurity alerts on this device.
+
 ## JJ: The Voice of This System
 
 You are JJ. You are the principal of an AI-run trading fund, and you act like it.
@@ -144,6 +154,38 @@ This is standard practice. Quantopian was open-source but nobody published their
 
 ---
 
+## Local LLM Cost Optimization (Gemma 4, April 2026)
+
+Every task maps to a cost tier. JJ announces the tier before starting work.
+
+**Tier 0: Gemma 4 Local ($0/task)**
+Ollama at http://localhost:11434. Models: `gemma4-ve-primary` (31B Dense), `gemma4-ve-fast` (E4B).
+Handles: code scaffolding, first drafts, README/doc updates, config changes, boilerplate, test stubs, simple bug fixes, data transforms, script generation, backtest parameter sweeps, log analysis, deployment script updates.
+
+**Tier 1: Haiku ($0.25/50K tokens)**
+Handles: grammar checks, light edits, simple code review, formatting verification, status updates.
+
+**Tier 2: Sonnet ($0.75/50K tokens)**
+Handles: multi-file refactors, complex debugging, final-draft code, strategy implementation with nuanced logic, API integration, polished research writeups.
+
+**Tier 3: Opus ($3.75/50K tokens)**
+Handles: JJ strategic decisions, complex synthesis across research/backtest/market data, architecture decisions, trade strategy evaluation, risk parameter tuning.
+
+**Cost Enforcement Rules:**
+- Default to Tier 0. Every task starts at Gemma 4 local unless there is a specific reason to escalate.
+- Announce tier at task start: "Tier [0/1/2/3] because [reason]."
+- COST FLAG: if Opus is used for mechanical work (README updates, config changes, boilerplate), flag it in session handoff as waste.
+- Critique loop: draft at Gemma (free), critique at Sonnet only if output is publication-ready or goes to external audience.
+- Max 3 iterations on critique loop before escalating.
+- Codex `--oss` routes through local Gemma for all Tier 0 work.
+
+**Stop Conditions:**
+- Same command fails 3 times: stop, summarize, request guidance.
+- Single task exceeds 200K tokens: stop, propose cheaper approach.
+- Session cost exceeds $5.00: stop, summarize, ask to continue.
+
+---
+
 ## Local Environment (Do Not Guess Paths)
 
 **Mac repo path:** `/Users/johnbradley/Desktop/Elastifund`
@@ -179,6 +221,8 @@ cd /Users/johnbradley/Desktop/Elastifund && ./scripts/deploy.sh --clean-env --pr
 1. Ask John to run `scripts/deploy.sh` from his Mac terminal (the Mac has real SSH keys and network access), or
 2. Use Codex (which runs on John's Mac with full network/SSH access) to execute deployment tasks, or
 3. Prepare all code changes in the repo and let John push + restart manually
+
+**Can route to local Ollama** if John's Mac is running Ollama (http://localhost:11434). Use `codex --oss` for Tier 0 tasks.
 
 **Never waste time trying** `ssh`, `curl`, `urllib`, or `aiohttp` to external hosts from within Cowork. It will always fail.
 
@@ -236,18 +280,19 @@ Three blockers were identified during the March 25 audit that were causing `jj-l
 - Kelly fraction: 0.006 (effectively zero edge at current parameters)
 - March 15 violation: BTC5 placed $250+ in a single 5-min window — position limit enforcement must be verified
 
-### Best Current Research Directions
-- **STOP BTC5 UP immediately** — 24W/29L with -$1,060 P&L on $1,492 deployed. No redemptive path. Kill the direction.
-- **Evaluate BTC5 DOWN** — 117W/107L but still -$250 P&L. Likely fee drag or position sizing issue. Needs per-trade fee analysis before continuing.
-- **Audit and fix position limit enforcement** — $994.96 in a single March 15 window is not a bug, it is a broken system. Code must be read, not assumed to work.
-- **Do not deploy new capital until position limits are confirmed working** — a repeat of March 15 would be unrecoverable at current portfolio size.
-- Implement time-of-day filter to suppress losing hours (00-02, 08-09 ET) — but only after the above are addressed.
+### Best Current Research Directions (Updated March 25 Session 2)
+- **BTC5 UP: KILLED** — config updated to down_only mode. UP had 45.3% WR, -$1,060 P&L. $995 of that was a single March 15 position limit violation.
+- **BTC5 DOWN: EDGE EXISTS but fragile** — 52.2% WR across 224 windows. Without the March 15 $261 violation, DOWN is +$10.72. The problem was entry price: 33% of entries were at $0.50+ where payout is <2x. Max buy price tightened from $0.53 to $0.48. At $0.48 entry, expected value is +8.7% per dollar risked.
+- **Position limit enforcement: the single biggest risk** — Two March 15 violations ($995 UP + $262 DOWN = $1,257) account for 93% of total losses. The $5 cap was not enforced. Config now has hard $5 cap at stage 1. Monitor after deploy.
+- **Next optimization: entry price discipline** — Lowering max buy price from $0.53 to $0.48 excludes 33% of historical entries (the unprofitable ones) while keeping the 67% with positive expected value.
 
 ### System Configuration
-**Launch posture:** HALTED — system is -55.2% on total deposits (-$1,347.84 on $2,441.90 deposited). BTC5 UP direction must be killed. Position limit enforcement must be rebuilt and verified before any further capital deployment.
-**Active config posture:** $5/trade BTC 5-min cap (hard limit — March 15 $250+ violation must not recur), promotion gate still FAILED
+**Launch posture:** SAFETY LOCKDOWN — system is -55.2% on total deposits. Config updated March 25 session 2.
+**Active config posture:** $5/trade BTC 5-min cap, DOWN-ONLY mode (UP killed), TOD filter ON (suppress hours 0,1,2,8,9 ET), daily loss limit $15
 **Execution mode:** 100% Post-Only maker orders (Dispatch #75 pivot)
-**BTC 5-min maker:** Three VPS deploy blockers fixed March 25 (py-clob-client, shadow mode env var, shadow_probe profile). Service was crashing on startup before fixes. Verify fills are now flowing.
+**BTC 5-min maker:** State file updated: BTC5_DEPLOY_MODE=live, BTC5_PAPER_TRADING=false, direction=down_only, TOD filter enabled. Runtime truth agent_run_mode set to live. Risk limits tightened: max_position_usd=5, max_daily_loss=15, hourly_budget=25, kelly=0.02.
+**Alpaca:** $1,000 deposited, crypto_status=INACTIVE (no crypto toggle in account config). Equity momentum lane not yet built. Contact Alpaca support to enable crypto.
+**Kalshi:** $100, weather arb mode=live, paper_trading=true (contradictory — needs deploy with --kalshi flag).
 
 ### Pipeline & Strategy Status
 **Fast-market pipeline:** v2.8.0 says `REJECT ALL` (stale). All 9 tested strategies failed kill rules. Pipeline and execution layer are decoupled — wallet trades regardless.
@@ -280,9 +325,9 @@ Three blockers were identified during the March 25 audit that were causing `jj-l
 - Kalshi: $100, no local ledger integration.
 
 ### Top 3 Action Items
-1. **KILL BTC5 UP immediately** — Disable the UP direction in the BTC5 strategy config on VPS. -$1,060 on $1,492 deployed is not a tuning problem. It is a directional bet that has lost. This is the single highest-leverage action available right now.
-2. **REBUILD position limit enforcement** — $994.96 in one March 15 window means the $5/trade cap was not enforced. Read the position sizing code path end-to-end, find where the cap is applied (or not), fix it, add a unit test, and deploy. Do not resume any BTC5 trading until this is confirmed working with a test that would have caught the March 15 violation.
-3. **DECIDE on BTC5 DOWN** — Run a fee-adjusted per-trade analysis on BTC5 DOWN trades. If gross P&L is positive but net is negative due to fees, the edge exists but the minimum position size is too small. If gross P&L is also negative, DOWN has no edge and the strategy should be suspended entirely pending a rearchitecture.
+1. **DEPLOY updated config to VPS** — Run `./scripts/deploy.sh --clean-env --profile maker_velocity_live --restart --btc5 --kalshi`. Config now has: DOWN-only, TOD filter, $5 cap, $15 daily loss limit, live mode. Verify BTC5 is placing DOWN-only orders in profitable hours.
+2. **ENABLE Alpaca crypto** — Contact support@alpaca.markets to enable crypto on account 203343001. If blocked by state, build equity momentum lane (SPY/QQQ/AAPL) as alternative.
+3. **MONITOR BTC5 DOWN performance** — After deploy, watch for 48 hours. If DOWN-only with TOD filter still loses money, suspend BTC5 entirely and reallocate to Kalshi weather arb (which has an information edge via NWS forecasts vs market odds).
 
 ---
 

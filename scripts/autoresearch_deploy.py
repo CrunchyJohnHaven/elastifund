@@ -206,8 +206,22 @@ def _replay_with_hypothesis(hypothesis_params: dict) -> dict | None:
     return _run_replay(config)
 
 
-def _validate_params(params: dict, *, hypothesis_id: str = "unknown") -> tuple[dict, list[dict]]:
-    """Apply hard bounds to hypothesis params and collect guardrail events."""
+def _validate_params(
+    params: dict,
+    *,
+    hypothesis_id: str = "unknown",
+    hard_bounds: dict[str, dict[str, float]] | None = None,
+) -> tuple[dict, list[dict]]:
+    """Apply hard bounds to hypothesis params and collect guardrail events.
+
+    ``hard_bounds`` defaults to ``DEFAULT_HARD_BOUNDS`` so that unit tests
+    exercise the compile-time safety rails rather than any runtime overrides
+    that may be present in ``config/autoresearch_overrides.json``.  Call sites
+    inside the live deploy loop pass ``HARD_BOUNDS`` explicitly to incorporate
+    operator-provided overrides.
+    """
+    if hard_bounds is None:
+        hard_bounds = DEFAULT_HARD_BOUNDS
     safe: dict = {}
     guardrail_events: list[dict] = []
     for k, v in params.items():
@@ -243,7 +257,7 @@ def _validate_params(params: dict, *, hypothesis_id: str = "unknown") -> tuple[d
                 }
             )
             continue
-        bounds = HARD_BOUNDS.get(k, {})
+        bounds = hard_bounds.get(k, {})
         if "min" in bounds and fv < float(bounds["min"]):
             guardrail_events.append(
                 {
@@ -372,7 +386,7 @@ def run() -> None:
         if not params:
             continue
         h_id = h.get("hypothesis_id", "unknown")
-        safe_params, guardrail_events = _validate_params(params, hypothesis_id=h_id)
+        safe_params, guardrail_events = _validate_params(params, hypothesis_id=h_id, hard_bounds=HARD_BOUNDS)
         if guardrail_events:
             cycle_guardrail_events.extend(guardrail_events)
             for event in guardrail_events:
@@ -467,6 +481,7 @@ def _deploy_without_replay(hypotheses: list, log: dict) -> None:
     params, guardrail_events = _validate_params(
         best_h.get("params", {}),
         hypothesis_id=str(best_h.get("hypothesis_id", "unknown")),
+        hard_bounds=HARD_BOUNDS,
     )
     for event in guardrail_events:
         print(f"[deploy] guardrail: {event}")

@@ -40,13 +40,22 @@ make test-polymarket
 
 Use one owner per path at a time.
 
-| Lane | Best fit | Typical ownership |
-|---|---|---|
-| Focused implementation, bug fixing, test repair | Codex | `bot/`, `execution/`, `strategies/`, `signals/`, `nontrading/`, isolated code patches |
-| Repo reconnaissance, broad synthesis, doc orchestration | Claude Code | `docs/`, `research/`, `deploy/`, cross-cutting summaries, rollout briefs |
-| Shared verification | either | `make hygiene`, `make test`, `make test-polymarket` |
+| Lane | Best fit | Typical ownership | Tier 0 routing |
+|---|---|---|---|
+| Focused implementation, bug fixing, test repair | Codex | `bot/`, `execution/`, `strategies/`, `signals/`, `nontrading/`, isolated code patches | `codex --oss` for Tier 0 tasks |
+| Repo reconnaissance, broad synthesis, doc orchestration | Claude Code | `docs/`, `research/`, `deploy/`, cross-cutting summaries, rollout briefs | Use local Gemma for READMEs, boilerplate, first drafts |
+| Shared verification | either | `make hygiene`, `make test`, `make test-polymarket` | — |
 
 If two agents need the same file, stop parallelizing. Path ownership beats merge cleanup.
+
+## Local LLM Routing (Gemma 4)
+
+Default to Gemma 4 local (Tier 0, $0) for all mechanical work. Ollama at http://localhost:11434.
+- `gemma4-ve-primary`: code scaffolding, strategy boilerplate, doc updates, log parsing
+- `gemma4-ve-fast`: quick lookups, simple formatting, regex generation
+- Use `codex --oss` to route Codex through local Gemma
+- Escalate to cloud models only when Gemma output quality is insufficient
+- Announce tier before starting any task
 
 ## Repo Rules
 

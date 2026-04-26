@@ -14,6 +14,7 @@ from typing import Any
 from nontrading.finance.action_queue import FinanceActionQueue
 from nontrading.finance.allocator import build_allocation_plan
 from nontrading.finance.config import FinanceSettings
+from nontrading.finance.model_budget import build_model_budget_plan
 from nontrading.finance.executor import FinanceExecutionError, FinanceExecutor
 from nontrading.finance.models import (
     FinanceAccount,
@@ -434,6 +435,22 @@ def run_allocate(store: FinanceStore, settings: FinanceSettings, queue: FinanceA
         latest.get("baseline_live_trading_pass"),
     )
     settings.latest_report_path.write_text(json.dumps(latest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    runtime_truth = load_json(settings.workspace_root / "reports" / "runtime_truth_latest.json") or {}
+    model_budget_plan, model_budget_actions = build_model_budget_plan(
+        finance_latest=latest,
+        action_queue=queue.build_report(),
+        runtime_truth=runtime_truth,
+    )
+    settings.model_budget_plan_path.write_text(json.dumps(model_budget_plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    queue.sync_actions(
+        [
+            FinanceAction(
+                **{key: value for key, value in action.items() if key in FinanceAction.__dataclass_fields__}
+            )
+            for action in model_budget_actions
+        ]
+    )
+    settings.action_queue_path.write_text(json.dumps(queue.build_report(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return plan
 
 

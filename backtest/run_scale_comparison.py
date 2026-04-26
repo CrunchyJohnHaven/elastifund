@@ -425,6 +425,9 @@ def load_or_build_wallet_flow_archive(db_path: str, archive_path: Path | None = 
         try:
             payload = json.loads(archive_path.read_text())
             if _validate_wallet_flow_archive(payload):
+                missing_requirements = [str(item) for item in payload.get("missing_requirements") or []]
+                if any(item.startswith("feature_bundle_unavailable:") for item in missing_requirements):
+                    return _build_wallet_flow_replay_archive(db_path), "rebuilt"
                 return payload, "loaded"
         except json.JSONDecodeError:
             LOGGER.warning("wallet-flow archive exists but is invalid JSON: %s", archive_path)
@@ -1001,6 +1004,9 @@ def _build_audit_capital_support(
     confirmation_lift_avg_pnl_usd = capital_support.get("confirmation_lift_avg_pnl_usd")
     confirmation_lift_win_rate = capital_support.get("confirmation_lift_win_rate")
     confirmation_contradiction_penalty = capital_support.get("confirmation_contradiction_penalty")
+    confirmation_coverage_label = capital_support.get("confirmation_coverage_label")
+    confirmation_strength_label = capital_support.get("confirmation_strength_label")
+    confirmation_strength_score = capital_support.get("confirmation_strength_score")
     confirmation_blocking_checks = [
         str(check) for check in capital_support.get("confirmation_blocking_checks") or []
     ]
@@ -1069,6 +1075,9 @@ def _build_audit_capital_support(
         "confirmation_lift_avg_pnl_usd": confirmation_lift_avg_pnl_usd,
         "confirmation_lift_win_rate": confirmation_lift_win_rate,
         "confirmation_contradiction_penalty": confirmation_contradiction_penalty,
+        "confirmation_coverage_label": confirmation_coverage_label,
+        "confirmation_strength_label": confirmation_strength_label,
+        "confirmation_strength_score": confirmation_strength_score,
         "confirmation_blocking_checks": confirmation_blocking_checks,
         "blocking_checks": _dedupe_preserve_order(blocking_checks),
         "reasons": reasons,
@@ -1130,11 +1139,20 @@ def _build_shadow_size_recommendation(
         }
 
     size_sweeps = capacity_profile.get("size_sweeps") or []
+    shadow_assessments = capacity_profile.get("shadow_trade_size_assessments") or []
     target_size = round(float(trade_size_usd), 4)
     sweep = next(
         (
             item
             for item in size_sweeps
+            if round(_safe_float(item.get("trade_size_usd"), 0.0), 4) == target_size
+        ),
+        None,
+    )
+    shadow_assessment = next(
+        (
+            item
+            for item in shadow_assessments
             if round(_safe_float(item.get("trade_size_usd"), 0.0), 4) == target_size
         ),
         None,
@@ -1161,10 +1179,29 @@ def _build_shadow_size_recommendation(
         ],
         "expected_fill_retention_ratio": sweep.get("expected_fill_retention_ratio"),
         "expected_profit_probability": sweep.get("expected_profit_probability"),
-        "expected_loss_hit_probability": sweep.get("expected_loss_hit_probability"),
+        "expected_loss_hit_probability": (
+            sweep.get("expected_loss_hit_probability")
+            if sweep.get("expected_loss_hit_probability") is not None
+            else sweep.get("expected_loss_limit_hit_probability")
+        ),
         "expected_median_arr_pct": sweep.get("expected_median_arr_pct"),
         "expected_p05_arr_pct": sweep.get("expected_p05_arr_pct"),
         "expected_p95_max_drawdown_usd": sweep.get("expected_p95_max_drawdown_usd"),
+        "expected_order_failed_probability": (
+            sweep.get("expected_order_failed_probability")
+            if sweep.get("expected_order_failed_probability") is not None
+            else (shadow_assessment or {}).get("expected_order_failed_probability")
+        ),
+        "expected_post_only_retry_failure_rate": (
+            sweep.get("expected_post_only_retry_failure_rate")
+            if sweep.get("expected_post_only_retry_failure_rate") is not None
+            else (shadow_assessment or {}).get("expected_post_only_retry_failure_rate")
+        ),
+        "blocking_domain_labels": (shadow_assessment or {}).get("blocking_categories") or [],
+        "blocking_checks": (shadow_assessment or {}).get("blocking_reasons") or [],
+        "evidence_required": (shadow_assessment or {}).get("evidence_required") or [],
+        "evidence_verdict": (shadow_assessment or {}).get("evidence_verdict"),
+        "decision_status": (shadow_assessment or {}).get("status"),
     }
 
 
@@ -1591,10 +1628,9 @@ def _build_stage_readiness(
         and probe_summary.get("trailing_12_live_filled_net_positive")
         and order_failed_rate_recent_40 < 0.25
     )
+    wallet_reconciliation_ready = bool(wallet_fresh and btc_closed_markets > 0 and btc_open_markets == 0)
     ready_for_stage_1 = bool(
-        wallet_fresh
-        and btc_closed_markets > 0
-        and btc_open_markets == 0
+        wallet_reconciliation_ready
         and deploy_recommendation == "promote"
         and confidence_label == "high"
         and stage_1_probe_ready
@@ -1619,7 +1655,7 @@ def _build_stage_readiness(
         blocking_checks.append("wallet_export_missing_closed_btc_markets")
     elif btc_open_markets != 0:
         blocking_checks.append("wallet_export_btc_open_markets_not_zero")
-    if ready_for_stage_1:
+    if wallet_reconciliation_ready:
         reasons.append("Wallet export shows the BTC sleeve fully closed with no remaining BTC open exposure.")
     else:
         blocking_checks.append("stage_1_wallet_reconciliation_not_ready")
@@ -1883,6 +1919,12 @@ def _build_btc5_venue_entry(
             capacity_source_label=capacity_source_label,
             source_artifacts=shadow_source_artifacts,
         ),
+        "next_300_shadow": _build_shadow_size_recommendation(
+            trade_size_usd=300.0,
+            capacity_profile=capacity_profile,
+            capacity_source_label=capacity_source_label,
+            source_artifacts=shadow_source_artifacts,
+        ),
     }
     confirmation_support = {
         "status": audit_support.get("confirmation_support_status"),
@@ -1900,7 +1942,18 @@ def _build_btc5_venue_entry(
         "lift_win_rate": audit_support.get("confirmation_lift_win_rate"),
         "contradiction_penalty": audit_support.get("confirmation_contradiction_penalty"),
         "blocking_checks": audit_support.get("confirmation_blocking_checks") or [],
+        "coverage_label": str(audit_support.get("confirmation_coverage_label") or "unknown"),
+        "strength_label": str(audit_support.get("confirmation_strength_label") or "unknown"),
+        "strength_score": audit_support.get("confirmation_strength_score"),
     }
+    confirmation_coverage_ratio = _safe_float(confirmation_support.get("coverage_ratio"), 0.0)
+    if confirmation_support.get("status") == "ready" and confirmation_support.get("coverage_label") == "unknown":
+        if confirmation_coverage_ratio >= 0.75:
+            confirmation_support["coverage_label"] = "strong"
+        elif confirmation_coverage_ratio > 0.4:
+            confirmation_support["coverage_label"] = "moderate"
+        else:
+            confirmation_support["coverage_label"] = "weak"
 
     reasons: list[str] = []
     blocking_checks: list[str] = []
@@ -2012,10 +2065,26 @@ def _build_btc5_venue_entry(
             25.0,
         )
 
+    entry_confidence_label = "high" if live_scale_ready else "low"
+    if live_scale_ready and confirmation_support.get("status") == "ready":
+        if (
+            confirmation_support.get("coverage_label") == "weak"
+            or confirmation_support.get("strength_label") == "weak"
+        ):
+            entry_confidence_label = "medium"
+
+    capital_confidence = {
+        "label": entry_confidence_label,
+        "coverage_label": confirmation_support.get("coverage_label"),
+        "strength_label": confirmation_support.get("strength_label"),
+        "strength_score": confirmation_support.get("strength_score"),
+        "status": confirmation_support.get("status"),
+    }
+
     return {
         "venue": "polymarket",
         "lane": "btc5",
-        "confidence_label": "high" if live_scale_ready else "low",
+        "confidence_label": entry_confidence_label,
         "deployment_readiness": capital_status,
         "freshness_hours": freshness_hours,
         "sample_size_summary": {
@@ -2031,6 +2100,7 @@ def _build_btc5_venue_entry(
         "stage_readiness": stage_readiness,
         "audit_support": audit_support,
         "confirmation_support": confirmation_support,
+        "capital_confidence": capital_confidence,
         "recommended_amount_usd": 1000 if live_scale_ready else 0,
         "basis_window_fills": trailing_window_live_fills,
         "basis_window_pnl_usd": round(trailing_window_pnl_usd, 4),
@@ -2305,6 +2375,14 @@ def _build_capital_allocation_recommendation(
         "reasons": ["No $200 BTC5 shadow-size recommendation is available yet."],
         "source_artifacts": [str(btc5_autoresearch_path)],
     }
+    next_300_shadow = shadow_recommendations.get("next_300_shadow") or {
+        "status": "hold",
+        "trade_size_usd": 300.0,
+        "shadow_only": True,
+        "blocking_checks": ["capacity_stress_summary_missing"],
+        "reasons": ["No $300 BTC5 shadow-size recommendation is available yet."],
+        "source_artifacts": [str(btc5_autoresearch_path)],
+    }
 
     overall_recommendation = "hold_full_1000"
     if next_1000.get("status") == "ready_scale":
@@ -2316,7 +2394,11 @@ def _build_capital_allocation_recommendation(
             overall_recommendation = "btc5_stage3_capital_add"
     elif next_100.get("status") == "ready_test_tranche":
         overall_recommendation = "btc5_test_tranche_only"
-    elif next_100_shadow.get("status") == "shadow_only" or next_200_shadow.get("status") == "shadow_only":
+    elif (
+        next_100_shadow.get("status") == "shadow_only"
+        or next_200_shadow.get("status") == "shadow_only"
+        or next_300_shadow.get("status") == "shadow_only"
+    ):
         overall_recommendation = "btc5_shadow_only"
 
     return {
@@ -2326,6 +2408,7 @@ def _build_capital_allocation_recommendation(
         "next_1000_usd": next_1000,
         "next_100_shadow": next_100_shadow,
         "next_200_shadow": next_200_shadow,
+        "next_300_shadow": next_300_shadow,
         "kalshi_weather_status": kalshi_entry.get("capital_status") if kalshi_entry else "hold",
         "stage_readiness": stage_readiness,
     }
@@ -2386,6 +2469,7 @@ def _attach_venue_scoreboard(
     report["next_1000_usd"] = recommendation.get("next_1000_usd")
     report["next_100_shadow"] = recommendation.get("next_100_shadow")
     report["next_200_shadow"] = recommendation.get("next_200_shadow")
+    report["next_300_shadow"] = recommendation.get("next_300_shadow")
     return report
 
 
@@ -2582,6 +2666,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         next_1000 = capital_allocation.get("next_1000_usd") or {}
         next_100_shadow = capital_allocation.get("next_100_shadow") or {}
         next_200_shadow = capital_allocation.get("next_200_shadow") or {}
+        next_300_shadow = capital_allocation.get("next_300_shadow") or {}
         lines.append(
             "- Where should the next $100 go? "
             + (
@@ -2619,12 +2704,32 @@ def render_markdown(report: dict[str, Any]) -> str:
         )
         for reason in next_100_shadow.get("reasons") or []:
             lines.append(f"  - {reason}")
+        if next_100_shadow.get("expected_order_failed_probability") is not None:
+            lines.append(
+                "  - Ladder metrics: "
+                + f"order-failed {_safe_float(next_100_shadow.get('expected_order_failed_probability'), 0.0):.2%}, "
+                + f"retry fail {_safe_float(next_100_shadow.get('expected_post_only_retry_failure_rate'), 0.0):.2%}, "
+                + f"loss hit {_safe_float(next_100_shadow.get('expected_loss_hit_probability'), 0.0):.2%}."
+            )
         lines.append(
             "- What should stay shadow-only at $200 trade size? "
             + ("BTC5 shadow sizing." if next_200_shadow.get("status") == "shadow_only" else "hold.")
         )
         for reason in next_200_shadow.get("reasons") or []:
             lines.append(f"  - {reason}")
+        lines.append(
+            "- What should stay shadow-only at $300 trade size? "
+            + ("BTC5 shadow sizing." if next_300_shadow.get("status") == "shadow_only" else "hold.")
+        )
+        for reason in next_300_shadow.get("reasons") or []:
+            lines.append(f"  - {reason}")
+        if next_300_shadow.get("expected_order_failed_probability") is not None:
+            lines.append(
+                "  - Ladder metrics: "
+                + f"order-failed {_safe_float(next_300_shadow.get('expected_order_failed_probability'), 0.0):.2%}, "
+                + f"retry fail {_safe_float(next_300_shadow.get('expected_post_only_retry_failure_rate'), 0.0):.2%}, "
+                + f"loss hit {_safe_float(next_300_shadow.get('expected_loss_hit_probability'), 0.0):.2%}."
+            )
         lines.append("")
     lines.append(f"- Generated: {report['generated_at']}")
     lines.append(f"- Repo truth date: {report['as_of_date']}")

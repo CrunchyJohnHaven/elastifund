@@ -42,6 +42,7 @@ from flywheel.kibana_pack import (
     build_phase6_dashboard_pack,
     write_phase6_dashboard_pack,
 )
+from flywheel.naming_guard import run_cycle_packet_naming_check
 from flywheel.resilience import HubControlPlane, simulate_federated_round
 from flywheel.runner import build_scorecard_from_db, load_payload, run_cycle
 from orchestration.store import DEFAULT_DB_PATH as DEFAULT_ALLOCATOR_DB_PATH
@@ -560,10 +561,17 @@ def _command_payload(command):
     }
 
 
+def cmd_flywheel_naming_check(_args):
+    result = run_cycle_packet_naming_check()
+    print(json.dumps(result, indent=2, sort_keys=True))
+    if not result.get("ok", False):
+        raise SystemExit(1)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="data_layer",
-        description="Quant data layer CLI",
+        description="Control-plane persistence CLI",
     )
     sub = parser.add_subparsers(dest="command")
 
@@ -903,6 +911,10 @@ def main(argv=None):
         default=str(DEFAULT_PHASE6_OUTPUT_DIR),
         help="Directory where the Phase 6 pack should be written",
     )
+    sub.add_parser(
+        "flywheel-naming-check",
+        help="Enforce canonical flywheel cycle-packet naming guardrails",
+    )
 
     args = parser.parse_args(argv)
     if args.command is None:
@@ -938,6 +950,7 @@ def main(argv=None):
         "flywheel-agent-ack": cmd_flywheel_agent_ack,
         "flywheel-simulate-federation": cmd_flywheel_simulate_federation,
         "flywheel-kibana-pack": cmd_flywheel_kibana_pack,
+        "flywheel-naming-check": cmd_flywheel_naming_check,
     }
     handlers[args.command](args)
 

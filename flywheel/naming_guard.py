@@ -17,6 +17,8 @@ _ALLOWED_PAYLOAD_FUNCTIONS = {
     "write_payload",
     "build_payload_from_config",
     "load_payload",
+    "run_cycle",
+    "run_from_config",
 }
 
 

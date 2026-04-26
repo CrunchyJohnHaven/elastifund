@@ -58,9 +58,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from bot.kalshi_auth import load_kalshi_credentials
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
 LOGS_DIR = REPO_ROOT / "logs"
 PYTHON = sys.executable
 LOCAL_LIVE_VENUES = {"alpaca", "kalshi", "polymarket"}
@@ -365,7 +368,7 @@ def _run_script(
 
 def run_btc5(args: argparse.Namespace) -> int:
     """BTC5 local improvement search in shadow mode (no live orders)."""
-    return _run_script(
+    search_rc = _run_script(
         "scripts/run_btc5_local_improvement_search.py",
         ["--lanes", "market,command_node", "--repo-root", str(REPO_ROOT)],
         env_overrides={
@@ -373,6 +376,14 @@ def run_btc5(args: argparse.Namespace) -> int:
             "BTC5_PAPER_TRADING": "true",
         },
     )
+    micro_rc = _run_script(
+        "scripts/run_btc5_micro_edge_paper_search.py",
+        env_overrides={
+            "BTC5_DEPLOY_MODE": "shadow",
+            "BTC5_PAPER_TRADING": "true",
+        },
+    )
+    return search_rc if search_rc != 0 else micro_rc
 
 
 def run_weather(args: argparse.Namespace) -> int:

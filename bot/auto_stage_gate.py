@@ -38,7 +38,7 @@ DEFAULT_ASSET_DB_PATHS: dict[str, Path] = {
 }
 
 DEFAULT_ASSET_ENV_PATHS: dict[str, Path] = {
-    "btc": Path("config/btc5_strategy.env"),
+    "btc": Path("state/btc5_capital_stage.env"),
     "eth": Path("config/eth5_strategy.env"),
     "sol": Path("config/sol5_strategy.env"),
     "bnb": Path("config/bnb5_strategy.env"),
@@ -256,7 +256,7 @@ def _read_asset_fill_metrics(asset: str, db_path: Path) -> dict[str, Any]:
             """
             SELECT
                 COALESCE(CAST(decision_ts AS INTEGER), 0) AS decision_ts,
-                rowid,
+                rowid AS rowid,
                 CAST(COALESCE(pnl_usd, 0) AS REAL) AS pnl_usd,
                 won
             FROM window_trades

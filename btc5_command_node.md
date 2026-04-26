@@ -76,7 +76,7 @@ The task suite, scorer, chart renderer, and append-only results ledger are froze
     },
     {
       "task_id": "overnight_closeout_lane_artifact",
-      "objective": "Execute BTC5 command-node frontier artifacts with explicit no_better_candidate and overnight closeout truth with no_better_candidate; suite-specific champion lineage; machine-readable frontier; overnight closeout truth while preserving the frozen command_node_btc5_v4 benchmark contract.",
+      "objective": "Execute BTC5 command-node frontier artifacts while preserving the frozen command_node_btc5_v4 benchmark contract.",
       "owner_model": "Codex GPT-5 Extra High",
       "read_first": [
         "reports/autoresearch/command_node/latest.json",
@@ -118,7 +118,6 @@ The task suite, scorer, chart renderer, and append-only results ledger are froze
         "verify no_better_candidate",
         "verify command-node chart",
         "verify suite-specific champion",
-        "verify latest summary",
         "verify overnight closeout"
       ],
       "checklist": [
@@ -128,12 +127,12 @@ The task suite, scorer, chart renderer, and append-only results ledger are froze
         "Karpathy-style command-node chart remains unchanged",
         "Overnight closeout surfaces no_better_candidate without inventing a keep"
       ],
-      "notes": "Use machine-truth lane artifacts first, keep one owner per path, and preserve no_better_candidate; suite-specific champion lineage; machine-readable frontier; overnight closeout truth. Mutation strategy: targeted_task_repair. Recent failure focus: none."
+      "notes": "Use machine-truth lane artifacts first and keep one owner per path. Mutation strategy: targeted_task_repair. Recent failure focus: none."
     },
     {
       "task_id": "vps_burnin_supervised_lane_run",
-      "objective": "Execute BTC5 follow-on handoff for AWS mutation-loop burn-in readiness with exact mutation-cycle entrypoints with mutation loops; proposer plus evaluator activity; explicit no_better_candidate; mutation-cycle entrypoints while preserving the frozen command_node_btc5_v4 benchmark contract.",
-      "owner_model": "Claude Code | Sonnet 4.5",
+      "objective": "Execute BTC5 follow-on handoff for AWS burn-in readiness while preserving the frozen command_node_btc5_v4 benchmark contract.",
+      "owner_model": "Codex GPT-5 Extra High",
       "read_first": [
         "deploy/btc5-command-node-autoresearch.service",
         "deploy/btc5-market-model-autoresearch.service",
@@ -182,7 +181,7 @@ The task suite, scorer, chart renderer, and append-only results ledger are froze
         "Handoff names the exact artifact paths the burn-in must refresh",
         "Handoff names the exact command-node and market mutation-cycle entrypoints"
       ],
-      "notes": "Use machine-truth lane artifacts first, keep one owner per path, and preserve mutation loops; proposer plus evaluator activity; explicit no_better_candidate; mutation-cycle entrypoints. Mutation strategy: targeted_task_repair. Recent failure focus: none."
+      "notes": "Use machine-truth lane artifacts first and keep one owner per path. Mutation strategy: targeted_task_repair. Recent failure focus: none."
     }
   ]
 }

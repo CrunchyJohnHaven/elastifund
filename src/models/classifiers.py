@@ -29,10 +29,17 @@ class _MatrixBuilder:
 class LogisticClassifier:
     """Logistic classifier with sklearn or gradient-descent fallback."""
 
-    def __init__(self, feature_names: list[str], learning_rate: float = 0.05, epochs: int = 250):
+    def __init__(
+        self,
+        feature_names: list[str],
+        learning_rate: float = 0.05,
+        epochs: int = 250,
+        random_state: int | None = None,
+    ):
         self.builder = _MatrixBuilder(feature_names)
         self.learning_rate = learning_rate
         self.epochs = epochs
+        self.random_state = random_state
         self.weights: list[float] = [0.0] * (len(feature_names) + 1)
         self._model: Any | None = None
 
@@ -47,7 +54,7 @@ class LogisticClassifier:
             return
 
         if LogisticRegression is not None:
-            model = LogisticRegression(max_iter=500)
+            model = LogisticRegression(max_iter=500, random_state=self.random_state)
             model.fit(x, labels)
             self._model = model
             return
@@ -83,8 +90,9 @@ class LogisticClassifier:
 class TreeClassifier:
     """Tree baseline with sklearn RF fallback to decision stump."""
 
-    def __init__(self, feature_names: list[str]):
+    def __init__(self, feature_names: list[str], random_state: int | None = None):
         self.builder = _MatrixBuilder(feature_names)
+        self.random_state = random_state
         self._model: Any | None = None
         self._feature_idx = 0
         self._threshold = 0.0
@@ -97,7 +105,11 @@ class TreeClassifier:
             return
 
         if RandomForestClassifier is not None:
-            model = RandomForestClassifier(n_estimators=100, random_state=42, min_samples_leaf=5)
+            model = RandomForestClassifier(
+                n_estimators=100,
+                random_state=self.random_state if self.random_state is not None else 42,
+                min_samples_leaf=5,
+            )
             model.fit(x, labels)
             self._model = model
             return
@@ -139,9 +151,10 @@ class TreeClassifier:
 class GradientBoostClassifier:
     """XGBoost wrapper with tree fallback."""
 
-    def __init__(self, feature_names: list[str]):
+    def __init__(self, feature_names: list[str], random_state: int | None = None):
         self.builder = _MatrixBuilder(feature_names)
-        self._tree_fallback = TreeClassifier(feature_names)
+        self.random_state = random_state
+        self._tree_fallback = TreeClassifier(feature_names, random_state=random_state)
         self._model: Any | None = None
 
     def fit(self, rows: list[dict[str, float]], labels: list[int]) -> None:
@@ -157,7 +170,7 @@ class GradientBoostClassifier:
                 colsample_bytree=0.9,
                 objective="binary:logistic",
                 eval_metric="logloss",
-                random_state=42,
+                random_state=self.random_state if self.random_state is not None else 42,
                 n_jobs=1,
             )
             model.fit(x, labels)

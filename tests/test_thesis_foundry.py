@@ -143,6 +143,7 @@ class TestBuildThesisCandidates:
     def test_no_files(self, tmp_path: Path):
         result = build_thesis_candidates(
             weather_shadow_path=tmp_path / "missing.json",
+            alpaca_lane_path=tmp_path / "missing3.json",
             btc5_autoresearch_path=tmp_path / "missing2.json",
             now=_NOW,
         )
@@ -167,6 +168,7 @@ class TestBuildThesisCandidates:
 
         result = build_thesis_candidates(
             weather_shadow_path=wp,
+            alpaca_lane_path=tmp_path / "missing_alpaca.json",
             btc5_autoresearch_path=bp,
             now=_NOW,
         )
@@ -191,6 +193,7 @@ class TestBuildThesisCandidates:
         try:
             result = build_thesis_candidates(
                 weather_shadow_path=wp,
+                alpaca_lane_path=tmp_path / "missing_alpaca.json",
                 btc5_autoresearch_path=tmp_path / "missing.json",
                 now=_NOW,
             )

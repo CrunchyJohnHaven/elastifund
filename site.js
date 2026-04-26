@@ -135,6 +135,21 @@ function formatUtc(value) {
   return date.toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
 }
 
+function formatShortUtc(value) {
+  if (!value) return 'Mar 9 20:03 UTC';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Mar 9 20:03 UTC';
+  const formatted = new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'UTC'
+  }).format(date);
+  return `${formatted} UTC`;
+}
+
 function formatHours(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return '0.0';
@@ -289,6 +304,46 @@ function buildFreshness(timestamp) {
   return { label: `stale ${(ageHours / 24).toFixed(1)}d`, className: 'is-stale' };
 }
 
+function minutesSince(timestamp) {
+  if (!timestamp) return Number.POSITIVE_INFINITY;
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return Number.POSITIVE_INFINITY;
+  return Math.max(0, Math.round((Date.now() - date.getTime()) / 60000));
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function toneFromFreshnessClass(className) {
+  if (className === 'is-fresh') return 'good';
+  if (className === 'is-stale') return 'bad';
+  return 'warn';
+}
+
+function describeSlaStatus(ageMinutes, slaMinutes) {
+  if (!Number.isFinite(ageMinutes)) {
+    return { label: 'freshness unknown', tone: 'bad' };
+  }
+  if (ageMinutes <= slaMinutes) {
+    return { label: `within ${formatNumber(slaMinutes, 0)}m SLA`, tone: 'good' };
+  }
+  if (ageMinutes <= slaMinutes * 3) {
+    return { label: `outside ${formatNumber(slaMinutes, 0)}m SLA`, tone: 'warn' };
+  }
+  return { label: `stale vs ${formatNumber(slaMinutes, 0)}m SLA`, tone: 'bad' };
+}
+
+function describeLoopHealth(score) {
+  if (score >= 75) {
+    return { label: 'Running with usable signal', tone: 'good' };
+  }
+  if (score >= 45) {
+    return { label: 'Degraded but observable', tone: 'warn' };
+  }
+  return { label: 'Stalled or failing closed', tone: 'bad' };
+}
+
 function shorten(text, maxLength = 140) {
   const value = String(text || '').trim();
   if (value.length <= maxLength) return value;
@@ -398,6 +453,17 @@ function setFreshnessBadge(key, freshness) {
   });
 }
 
+function setToneClass(elements, tone, baseClass = 'neutral') {
+  elements.forEach(element => {
+    element.classList.remove('good', 'warn', 'bad', 'neutral', 'is-good', 'is-warn', 'is-bad');
+    if (element.classList.contains('tag')) {
+      element.classList.add(tone || baseClass);
+    } else {
+      element.classList.add(`is-${tone || 'warn'}`);
+    }
+  });
+}
+
 function setCommonValues(data) {
   const values = {
     cycle_label: data.cycleLabel,
@@ -491,11 +557,44 @@ function setCommonValues(data) {
     deploy_recommendation: data.deployRecommendationLabel,
     velocity_window_hours: formatHours(data.velocityWindowHours),
     velocity_cycles: formatNumber(data.velocityCycles, 0),
+    velocity_window_summary: data.velocityWindowHours > 0
+      ? `${formatNumber(data.velocityCycles, 0)} cycles over ${formatHours(data.velocityWindowHours)}h`
+      : 'no current forecast window published',
     velocity_gain: data.velocityGainCompact,
     velocity_gain_exact: data.velocityGainExact,
     velocity_per_day: data.velocityPerDayCompact,
     velocity_fill_growth: `+${formatNumber(data.velocityFillGrowth, 0)} validation fills`,
     velocity_confidence: data.velocityConfidenceLabel,
+    loop_health_label: data.loopHealthLabel,
+    loop_health_tag: data.loopHealthTag,
+    loop_health_summary: data.loopHealthSummary,
+    loop_freshness_status: data.loopFreshnessStatus,
+    loop_staleness_summary: data.loopStalenessSummary,
+    loop_primary_blocker: data.loopPrimaryBlocker,
+    loop_operator_action: data.loopOperatorAction,
+    loop_learning_status: data.loopLearningStatus,
+    loop_learning_summary: data.loopLearningSummary,
+    loop_attribution_status: data.loopAttributionStatus,
+    loop_attribution_summary: data.loopAttributionSummary,
+    loop_search_summary: data.loopSearchSummary,
+    loop_execution_status: data.loopExecutionStatus,
+    loop_execution_summary: data.loopExecutionSummary,
+    loop_visual_packets: data.loopVisualPackets,
+    loop_visual_summary: data.loopVisualSummary,
+    loop_core_note: data.loopCoreNote,
+    loop_trend_summary: data.loopTrendSummary,
+    loop_trend_start_label: data.loopTrendStartLabel,
+    loop_trend_end_label: data.loopTrendEndLabel,
+    loop_stage_search_status: data.loopStages.search.label,
+    loop_stage_search_summary: data.loopStages.search.summary,
+    loop_stage_evidence_status: data.loopStages.evidence.label,
+    loop_stage_evidence_summary: data.loopStages.evidence.summary,
+    loop_stage_gate_status: data.loopStages.gate.label,
+    loop_stage_gate_summary: data.loopStages.gate.summary,
+    loop_stage_execution_status: data.loopStages.execution.label,
+    loop_stage_execution_summary: data.loopStages.execution.summary,
+    loop_stage_learning_status: data.loopStages.learning.label,
+    loop_stage_learning_summary: data.loopStages.learning.summary,
     wallet_open_positions: formatNumber(data.walletOpenPositions, 0),
     wallet_closed_positions: formatNumber(data.walletClosedPositions, 0),
     wallet_realized_pnl: formatUsd(data.walletRealizedPnlUsd),
@@ -681,6 +780,101 @@ function applyElasticEnhancements(data) {
   }
 }
 
+function applyLiveEnhancements(data) {
+  if (document.body?.dataset?.page !== 'live') {
+    return;
+  }
+
+  setToneClass(Array.from(document.querySelectorAll('[data-loop-health-tag]')), data.loopHealthTone);
+
+  document.querySelectorAll('[data-loop-health-fill]').forEach(element => {
+    element.style.width = `${clamp(data.loopHealthScore, 0, 100)}%`;
+    element.classList.remove('is-good', 'is-warn', 'is-bad');
+    element.classList.add(`is-${data.loopHealthTone}`);
+  });
+
+  Object.entries(data.loopStages).forEach(([stage, stageData]) => {
+    setToneClass(Array.from(document.querySelectorAll(`[data-loop-stage-badge="${stage}"]`)), stageData.tone);
+    setToneClass(Array.from(document.querySelectorAll(`[data-loop-orbit-badge="${stage}"]`)), stageData.tone);
+    document.querySelectorAll(`[data-loop-stage="${stage}"]`).forEach(element => {
+      element.classList.remove('is-good', 'is-warn', 'is-bad');
+      element.classList.add(`is-${stageData.tone}`);
+    });
+    document.querySelectorAll(`[data-loop-orbit-node="${stage}"]`).forEach(element => {
+      element.classList.remove('is-good', 'is-warn', 'is-bad');
+      element.classList.add(`is-${stageData.tone}`);
+    });
+  });
+
+  const particleHost = document.querySelector('[data-loop-particles]');
+  if (particleHost) {
+    particleHost.innerHTML = '';
+    data.loopParticleTones.forEach((tone, index) => {
+      const particle = createNode('div', `loop-particle is-${tone}`);
+      particle.style.setProperty('--duration', `${12 + (index % 4) * 2}s`);
+      particle.style.setProperty('--delay', `${(index * -1.2).toFixed(1)}s`);
+      particle.style.setProperty('--start', `${index * (360 / Math.max(data.loopParticleTones.length, 1))}deg`);
+      particle.style.setProperty('--size', `${10 + (index % 3) * 2}px`);
+      particle.appendChild(createNode('span', 'loop-particle-dot'));
+      particleHost.appendChild(particle);
+    });
+  }
+
+  const trendHost = document.querySelector('[data-loop-trend-chart]');
+  if (trendHost) {
+    const series = Array.isArray(data.loopTrendSeries) ? data.loopTrendSeries : [];
+    if (!series.length) {
+      trendHost.innerHTML = '<div class="tiny">No checked-in forecast trace published yet.</div>';
+    } else {
+      const width = 560;
+      const height = 220;
+      const padding = 22;
+      const values = series.flatMap(point => [point.active, point.best]);
+      const minValue = Math.min(...values);
+      const maxValue = Math.max(...values);
+      const valueSpan = Math.max(1, maxValue - minValue);
+      const xStep = series.length > 1 ? (width - padding * 2) / (series.length - 1) : 0;
+      const xForIndex = index => padding + xStep * index;
+      const yForValue = value => height - padding - (((value - minValue) / valueSpan) * (height - padding * 2));
+      const pathFor = key => series.map((point, index) => `${index === 0 ? 'M' : 'L'} ${xForIndex(index).toFixed(2)} ${yForValue(point[key]).toFixed(2)}`).join(' ');
+      const maxFills = Math.max(1, ...series.map(point => point.fills));
+      const bars = series.map((point, index) => {
+        const barHeight = (point.fills / maxFills) * 42;
+        const x = xForIndex(index) - 8;
+        const y = height - padding - barHeight;
+        return `<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="16" height="${barHeight.toFixed(2)}" rx="6"></rect>`;
+      }).join('');
+      const points = series.map((point, index) => {
+        const cx = xForIndex(index).toFixed(2);
+        return `<circle cx="${cx}" cy="${yForValue(point.active).toFixed(2)}" r="3.8"></circle>`;
+      }).join('');
+
+      trendHost.innerHTML = `
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Forecast trend trace">
+          <defs>
+            <linearGradient id="activeForecastGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#0b8f8b"></stop>
+              <stop offset="100%" stop-color="#1e7a46"></stop>
+            </linearGradient>
+            <linearGradient id="bestForecastGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#b65b1d"></stop>
+              <stop offset="100%" stop-color="#b26d00"></stop>
+            </linearGradient>
+          </defs>
+          <g class="trend-grid">
+            <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}"></line>
+            <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${height - padding}"></line>
+          </g>
+          <g class="trend-bars">${bars}</g>
+          <path class="trend-line best" d="${pathFor('best')}"></path>
+          <path class="trend-line active" d="${pathFor('active')}"></path>
+          <g class="trend-points">${points}</g>
+        </svg>
+      `;
+    }
+  }
+}
+
 function setStatusPill(data) {
   const pill = document.querySelector('[data-role="status-pill"]');
   if (!pill) return;
@@ -792,6 +986,14 @@ async function loadSiteData() {
   const jjnFunnel = pick(jjn, ['funnel'], {});
   const jjnActivation = pick(jjn, ['activation'], {});
   const jjnOffer = pick(jjn, ['offer'], {});
+  const forecastTrendSeries = Array.isArray(pick(velocity, ['chart_series.forecast_arr_trend'], []))
+    ? pick(velocity, ['chart_series.forecast_arr_trend'], []).map(point => ({
+      timestamp: point.timestamp,
+      active: normalizeNumber(point.active_forecast_arr_pct, 0),
+      best: normalizeNumber(point.best_forecast_arr_pct, 0),
+      fills: normalizeNumber(point.live_filled_rows, 0)
+    }))
+    : [];
 
   const strategyCatalog = {
     total: normalizeNumber(pick(velocity, ['trading_agent.strategies_total'], DEFAULTS.strategyCatalog.total), DEFAULTS.strategyCatalog.total),
@@ -809,6 +1011,7 @@ async function loadSiteData() {
   const serviceStatus = String(pick(service, ['status'], pick(detail, ['service_state'], 'stopped'))).toLowerCase();
   const serviceActive = ['running', 'active'].includes(serviceStatus);
   const serviceStateLabel = serviceStatus || 'stopped';
+  const serviceCheckedAt = pick(service, ['checked_at'], generatedAt);
   const btc5LiveFilledRows = normalizeNumber(
     pick(scoreboard, ['btc5_live_filled_rows_total'], pick(maker, ['live_filled_rows'], pick(runtime, ['btc5_live_filled_rows'], 0))),
     0
@@ -837,6 +1040,9 @@ async function loadSiteData() {
   const forecastDeltaPct = normalizeNumber(pick(scoreboard, ['forecast_arr_delta_pct'], 0), 0);
   const velocityGainPct = normalizeNumber(pick(timeboundVelocity, ['forecast_arr_gain_pct'], forecastDeltaPct), forecastDeltaPct);
   const velocityPerDayPct = normalizeNumber(pick(timeboundVelocity, ['forecast_arr_gain_pct_per_day'], 0), 0);
+  const velocityWindowHours = normalizeNumber(pick(timeboundVelocity, ['window_hours'], 0), 0);
+  const velocityCycles = normalizeNumber(pick(timeboundVelocity, ['cycles_in_window'], 0), 0);
+  const velocityFillGrowth = normalizeNumber(pick(timeboundVelocity, ['validation_fill_growth'], 0), 0);
   const dispatchWorkOrders = normalizeNumber(pick(contributionFlywheel, ['dispatch_work_orders'], DEFAULTS.dispatchWorkOrders), DEFAULTS.dispatchWorkOrders);
   const researchFiles = normalizeNumber(pick(contributionFlywheel, ['dispatch_markdown_files'], DEFAULTS.researchFiles), DEFAULTS.researchFiles);
   const commitCount = normalizeNumber(pick(contributionFlywheel, ['commits_total_after_instance'], DEFAULTS.commitCount), DEFAULTS.commitCount);
@@ -856,6 +1062,182 @@ async function loadSiteData() {
     pick(runtime, ['polymarket_closed_positions'], pick(wallet, ['closed_positions_count'], 0)),
     0
   );
+  const snapshotFreshness = buildFreshness(generatedAt);
+  const serviceFreshness = buildFreshness(serviceCheckedAt);
+  const btc5CheckedAt = pick(maker, ['checked_at'], pick(maker, ['latest_live_filled_at'], generatedAt));
+  const btc5LatestFillAt = pick(maker, ['latest_live_filled_at'], pick(runtime, ['btc5_checked_at'], generatedAt));
+  const btc5Freshness = buildFreshness(btc5CheckedAt);
+  const forecastCheckedAt = pick(forecastArtifact, ['generated_at'], pick(timeboundVelocity, ['window_ended_at'], generatedAt));
+  const forecastFreshness = buildFreshness(forecastCheckedAt);
+  const jjnGeneratedAt = pick(jjn, ['generated_at'], generatedAt);
+  const jjnFreshness = buildFreshness(jjnGeneratedAt);
+  const freshnessSlaMinutes = normalizeNumber(pick(remoteCycleStatus, ['pull_policy.freshness_sla_minutes'], 45), 45);
+  const serviceAgeMinutes = minutesSince(serviceCheckedAt);
+  const snapshotAgeMinutes = minutesSince(generatedAt);
+  const btc5AgeMinutes = minutesSince(btc5LatestFillAt);
+  const forecastAgeMinutes = minutesSince(forecastCheckedAt);
+  const rootTestAgeMinutes = minutesSince(pick(rootTestStatus, ['checked_at'], generatedAt));
+  const freshnessSlaStatus = describeSlaStatus(Math.max(serviceAgeMinutes, snapshotAgeMinutes), freshnessSlaMinutes);
+  const verificationFailedCount = verificationParsed.failed || 0;
+  const primaryBlocker = launchReasons[0]
+    || (verificationFailedCount ? `${verificationFailedCount} failing root tests` : null)
+    || (!serviceActive ? 'service stopped' : null)
+    || (forecastFreshness.className === 'is-stale' ? 'forecast artifact stale' : null)
+    || 'no blocking condition published';
+
+  let loopHealthScore = 100;
+  if (!serviceActive) loopHealthScore -= 35;
+  if (snapshotAgeMinutes > freshnessSlaMinutes) loopHealthScore -= 12;
+  if (serviceAgeMinutes > freshnessSlaMinutes) loopHealthScore -= 12;
+  if (launchBlocked) loopHealthScore -= 24;
+  if (verificationFailedCount > 0) loopHealthScore -= 14;
+  if (forecastFreshness.className === 'is-stale') loopHealthScore -= 8;
+  if (btc5LiveFilledRows <= 0) loopHealthScore -= 10;
+  if (velocityFillGrowth <= 0) loopHealthScore -= 7;
+  if (btc5WindowPnlUsd < 0) loopHealthScore -= 6;
+  loopHealthScore = clamp(loopHealthScore, 0, 100);
+  const loopHealth = describeLoopHealth(loopHealthScore);
+
+  const loopLearningState = (() => {
+    if (walletClosedPositions <= 0 && btc5LiveFilledRows <= 0) {
+      return {
+        label: 'no outcome loop',
+        tone: 'bad',
+        summary: 'Search may be active, but there are no closed positions or live-filled rows feeding the learning side yet.'
+      };
+    }
+    if (velocityFillGrowth > 0 && btc5WindowPnlUsd >= 0 && !launchBlocked) {
+      return {
+        label: 'compounding',
+        tone: 'good',
+        summary: `${formatNumber(walletClosedPositions, 0)} closed positions, ${formatNumber(btc5LiveFilledRows, 0)} live-filled rows, and ${formatNumber(velocityFillGrowth, 0)} new validation fills are feeding the next cycle.`
+      };
+    }
+    return {
+      label: 'mixed evidence',
+      tone: 'warn',
+      summary: `${formatNumber(walletClosedPositions, 0)} closed positions and ${formatNumber(btc5LiveFilledRows, 0)} live-filled rows exist, but validation fill growth is flat and sleeve PnL is ${formatUsd(btc5LiveFilledPnlUsd)}.`
+    };
+  })();
+
+  const loopAttributionState = (() => {
+    if (walletClosedPositions >= 20 && launchBlocked) {
+      return {
+        label: 'partial but blocked',
+        tone: 'warn',
+        summary: `Sleeve-level attribution exists across ${formatNumber(walletClosedPositions, 0)} closed positions, but fund-level claims stay blocked until reconciliation and launch truth line up.`
+      };
+    }
+    if (walletClosedPositions >= 20) {
+      return {
+        label: 'strong',
+        tone: 'good',
+        summary: `Closed-position coverage is deep enough to attribute live behavior to the BTC5 sleeve without leaning on blended fund claims.`
+      };
+    }
+    if (walletClosedPositions > 0) {
+      return {
+        label: 'thin',
+        tone: 'warn',
+        summary: `Some attribution exists, but the closed-trade base is still shallow enough that the learning loop can overreact to noise.`
+      };
+    }
+    return {
+      label: 'missing',
+      tone: 'bad',
+      summary: 'No durable attribution surface is available yet, so any perceived gains would be too easy to overstate.'
+    };
+  })();
+
+  const loopExecutionState = (() => {
+    if (!serviceActive) {
+      return {
+        label: 'offline',
+        tone: 'bad',
+        summary: 'The runtime is not running, so the loop cannot collect fresh evidence or execution outcomes.'
+      };
+    }
+    if (btc5LiveFilledRows <= 0) {
+      return {
+        label: 'no live sleeve proof',
+        tone: 'bad',
+        summary: 'The service is up, but there are no BTC5 live-filled rows on the board yet.'
+      };
+    }
+    if (btc5AgeMinutes > 720) {
+      return {
+        label: 'quiet sleeve',
+        tone: 'warn',
+        summary: `${formatNumber(btc5LiveFilledRows, 0)} live-filled rows exist, but the last fill is ${btc5Freshness.label} and the sleeve is not producing fresh execution evidence right now.`
+      };
+    }
+    return {
+      label: 'active',
+      tone: 'good',
+      summary: `${formatNumber(btc5LiveFilledRows, 0)} live-filled rows and a ${btc5Freshness.label} fill cadence show the sleeve is still feeding execution evidence.`
+    };
+  })();
+
+  const loopStages = {
+    search: {
+      label: dispatchWorkOrders > 0 || strategyCatalog.pipeline > 0 ? 'running' : 'thin',
+      tone: dispatchWorkOrders > 0 || strategyCatalog.pipeline > 0 ? 'good' : 'warn',
+      summary: `${formatNumber(strategyCatalog.total, 0)} tracked strategies, ${formatNumber(dispatchWorkOrders, 0)} active work-orders, and ${formatNumber(researchFiles, 0)} dispatch files are feeding the search side of the loop.`
+    },
+    evidence: {
+      label: !serviceActive ? 'down' : freshnessSlaStatus.tone === 'good' ? 'fresh' : freshnessSlaStatus.tone === 'warn' ? 'aging' : 'stale',
+      tone: !serviceActive ? 'bad' : freshnessSlaStatus.tone,
+      summary: `Snapshot ${snapshotFreshness.label}, service ${serviceFreshness.label}, BTC5 ${btc5Freshness.label}, forecast ${forecastFreshness.label}. Freshness SLA is ${formatNumber(freshnessSlaMinutes, 0)} minutes.`
+    },
+    gate: {
+      label: !launchBlocked && verificationFailedCount === 0 ? 'clear' : launchBlocked ? 'blocked' : 'warning',
+      tone: !launchBlocked && verificationFailedCount === 0 ? 'good' : launchBlocked ? 'bad' : 'warn',
+      summary: launchBlocked
+        ? `Launch is blocked by ${summarizeList(launchReasons, 2)}. Verification currently shows ${verificationFailedCount} failing tests.`
+        : verificationFailedCount
+          ? `Launch is clear, but ${verificationFailedCount} failing root tests still make promotion unsafe.`
+          : 'Harness posture is clear enough that fresh evidence could promote without hidden control-plane drift.'
+    },
+    execution: {
+      label: loopExecutionState.label,
+      tone: loopExecutionState.tone,
+      summary: `${loopExecutionState.summary} Window proof: ${formatNumber(btc5WindowLiveFills, 0)} fills over ${formatHours(btc5WindowHours)}h with ${formatUsd(btc5WindowPnlUsd)} sleeve PnL.`
+    },
+    learning: {
+      label: loopLearningState.label,
+      tone: loopLearningState.tone,
+      summary: `${loopLearningState.summary} Attribution is ${loopAttributionState.label}, and the latest forecast window shows ${formatNumber(velocityFillGrowth, 0)} new validation fills across ${formatNumber(velocityCycles, 0)} cycles.`
+    }
+  };
+  loopStages.search.summary = `${formatNumber(strategyCatalog.total, 0)} tracked strategies, ${formatNumber(dispatchWorkOrders, 0)} active work-orders, ${formatNumber(researchFiles, 0)} dispatch files, and ${formatNumber(velocityCycles, 0)} recent forecast cycles keep the upstream search busy. The bottleneck is downstream proof, not idea generation.`;
+
+  const loopHealthSummary = [
+    serviceActive ? 'Runtime heartbeat is present.' : 'Runtime heartbeat is absent.',
+    launchBlocked ? `Launch remains blocked by ${summarizeList(launchReasons, 2)}.` : 'Launch contract is clear.',
+    verificationFailedCount ? `${formatNumber(verificationFailedCount, 0)} root test failures are still open.` : 'Root verification is green.',
+    velocityFillGrowth > 0 ? `Validation fill growth is +${formatNumber(velocityFillGrowth, 0)}.` : 'Validation fill growth is flat.'
+  ].join(' ');
+  const loopParticleCount = clamp(
+    Math.round(dispatchWorkOrders / 9) + Math.round(strategyCatalog.deployed / 3) + Math.min(velocityCycles, 5),
+    5,
+    13
+  );
+  const loopParticleTones = Array.from({ length: loopParticleCount }, (_, index) => {
+    const tones = [
+      loopStages.search.tone,
+      loopStages.evidence.tone,
+      loopStages.gate.tone,
+      loopStages.execution.tone,
+      loopStages.learning.tone
+    ];
+    return tones[index % tones.length];
+  });
+  const trendStart = forecastTrendSeries[0] || null;
+  const trendEnd = forecastTrendSeries[forecastTrendSeries.length - 1] || null;
+  const loopVisualSummary = `Packets orbiting the ring represent active hypotheses and proof work moving through search, evidence, gate, execution, and learning. Count scales with current work-orders, deployed lanes, and recent forecast cycles.`;
+  const loopTrendSummary = forecastTrendSeries.length
+    ? `${formatNumber(forecastTrendSeries.length, 0)} checked-in forecast checkpoints span ${formatHours(velocityWindowHours)}h. The active package moved from ${formatCompactPercentOrLabel(trendStart?.active)} to ${formatCompactPercentOrLabel(trendEnd?.active)} while live-fill bars stayed ${Math.max(...forecastTrendSeries.map(point => point.fills), 0) > 0 ? 'thin' : 'flat at zero'} in the public forecast loop.`
+    : 'No checked-in forecast trend is published yet.';
 
   return {
     cycleLabel,
@@ -868,7 +1250,7 @@ async function loadSiteData() {
     walletStatus: 'ready',
     serviceActive,
     serviceStateLabel,
-    serviceCheckedAt: pick(service, ['checked_at'], generatedAt),
+    serviceCheckedAt,
     serviceDriftNote: serviceActive
       ? 'The broader runtime is running, but public claims still need the launch gates.'
       : 'The broader runtime is stopped while the dedicated BTC5 sleeve remains the public proof surface.',
@@ -926,7 +1308,7 @@ async function loadSiteData() {
     fundClaimReasonShort: shorten(fundClaimReason, 132),
     btc5LiveFilledPnlUsd,
     btc5LiveFilledRows,
-    btc5LatestFillAt: pick(maker, ['latest_live_filled_at'], pick(runtime, ['btc5_checked_at'], generatedAt)),
+    btc5LatestFillAt,
     btc5SourceLabel: humanizeSource(pick(maker, ['source'], pick(runtime, ['btc5_source'], 'remote_sqlite_probe'))),
     btc5DbPath: pick(maker, ['db_path'], pick(runtime, ['btc5_db_path'], 'reports/tmp_remote_btc_5min_maker.db')),
     btc5BestBucket: bestPriceBucket,
@@ -949,13 +1331,38 @@ async function loadSiteData() {
     forecastConfidenceReasons: (pick(scoreboard, ['forecast_confidence_reasons'], pick(confidence, ['reasons'], [])) || []).join('; '),
     forecastSourcePath,
     deployRecommendationLabel: titleCase(pick(scoreboard, ['deploy_recommendation'], 'promote')),
-    velocityWindowHours: normalizeNumber(pick(timeboundVelocity, ['window_hours'], 0), 0),
-    velocityCycles: normalizeNumber(pick(timeboundVelocity, ['cycles_in_window'], 0), 0),
+    velocityWindowHours,
+    velocityCycles,
     velocityGainCompact: formatCompactPercentOrLabel(velocityGainPct),
     velocityGainExact: formatPercentOrLabel(velocityGainPct),
     velocityPerDayCompact: formatCompactPercentOrLabel(velocityPerDayPct),
     velocityFillGrowth: normalizeNumber(pick(timeboundVelocity, ['validation_fill_growth'], 0), 0),
     velocityConfidenceLabel: titleCase(pick(timeboundVelocity, ['confidence_label'], pick(scoreboard, ['forecast_confidence_label'], 'high'))),
+    loopHealthScore,
+    loopHealthTone: loopHealth.tone,
+    loopHealthLabel: loopHealth.label,
+    loopHealthTag: `${formatNumber(loopHealthScore, 0)}/100`,
+    loopHealthSummary,
+    loopFreshnessStatus: freshnessSlaStatus.label,
+    loopStalenessSummary: `snapshot ${snapshotFreshness.label}; BTC5 ${btc5Freshness.label}; forecast ${forecastFreshness.label}; tests ${buildFreshness(pick(rootTestStatus, ['checked_at'], generatedAt)).label}`,
+    loopPrimaryBlocker: titleCase(primaryBlocker),
+    loopOperatorAction: shorten(pick(launch, ['next_operator_action'], 'Keep the proof surface current and repair the launch contract before trusting new gains.'), 132),
+    loopLearningStatus: titleCase(loopLearningState.label),
+    loopLearningSummary: loopLearningState.summary,
+    loopAttributionStatus: titleCase(loopAttributionState.label),
+    loopAttributionSummary: loopAttributionState.summary,
+    loopSearchSummary: loopStages.search.summary,
+    loopExecutionStatus: titleCase(loopExecutionState.label),
+    loopExecutionSummary: loopExecutionState.summary,
+    loopVisualPackets: `${formatNumber(loopParticleCount, 0)} packets`,
+    loopVisualSummary,
+    loopCoreNote: `${titleCase(loopStages.search.label)} search / ${titleCase(loopStages.gate.label)} gate / ${titleCase(loopStages.learning.label)} learning`,
+    loopTrendSummary,
+    loopTrendStartLabel: trendStart ? formatShortUtc(trendStart.timestamp) : 'no start',
+    loopTrendEndLabel: trendEnd ? formatShortUtc(trendEnd.timestamp) : 'no end',
+    loopTrendSeries: forecastTrendSeries,
+    loopParticleTones,
+    loopStages,
     walletOpenPositions: normalizeNumber(pick(runtime, ['polymarket_open_positions'], pick(wallet, ['open_positions_count'], 0)), 0),
     walletClosedPositions,
     walletRealizedPnlUsd: normalizeNumber(
@@ -1012,10 +1419,10 @@ async function loadSiteData() {
       elasticEmployeePathDevelop,
       elasticEmployeePathContribute
     ].join(' / '),
-    snapshotFreshness: buildFreshness(generatedAt),
-    btc5Freshness: buildFreshness(pick(maker, ['checked_at'], pick(maker, ['latest_live_filled_at'], generatedAt))),
-    forecastFreshness: buildFreshness(pick(forecastArtifact, ['generated_at'], pick(timeboundVelocity, ['window_ended_at'], generatedAt))),
-    jjnFreshness: buildFreshness(pick(jjn, ['generated_at'], generatedAt))
+    snapshotFreshness,
+    btc5Freshness,
+    forecastFreshness,
+    jjnFreshness
   };
 }
 
@@ -1024,6 +1431,7 @@ async function initSite() {
   const data = await loadSiteData();
   setCommonValues(data);
   setStatusPill(data);
+  applyLiveEnhancements(data);
   applyElasticEnhancements(data);
 }
 

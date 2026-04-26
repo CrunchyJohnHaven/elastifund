@@ -177,6 +177,11 @@ def _git_metadata() -> dict[str, Any]:
     return {"sha": sha, "dirty": dirty}
 
 
+def _model_stem(name: str | None) -> str:
+    head = str(name or "empirical_backoff_v1").strip()
+    return head.split("__", 1)[0] or "empirical_backoff_v1"
+
+
 def _load_remote_cache_rows(path: str | Path) -> list[dict[str, Any]]:
     cache_path = Path(path)
     if not cache_path.exists():
@@ -707,7 +712,7 @@ def run_benchmark(
         "mutable_surface": manifest["mutable_surface"],
         "mutable_surface_sha256": sha256_file(candidate_file),
         "candidate_contract_version": int(getattr(candidate_module, "CANDIDATE_CONTRACT_VERSION", 1)),
-        "candidate_model_name": str(getattr(candidate_module, "MODEL_NAME", candidate_file.stem)),
+        "candidate_model_name": _model_stem(str(getattr(candidate_module, "MODEL_NAME", candidate_file.stem))),
         "candidate_model_version": int(getattr(candidate_module, "MODEL_VERSION", 1)),
         "git": _git_metadata(),
         "objective": manifest["objective"],

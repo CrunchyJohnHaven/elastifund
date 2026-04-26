@@ -1271,6 +1271,13 @@ def main() -> int:
         elif not safety_gates.get("all_green"):
             decision_reason = "non_posture_safety_interlocks_not_green"
 
+        if launch_posture == "clear" and actionable_candidate and not safety_gates.get("all_green"):
+            keep = False
+            status = "discard"
+            promotion_state = None
+            decision_reason = "non_posture_safety_interlocks_not_green"
+            champion_record = dict(champion)
+
     champion_payload = {
         "updated_at": generated_at,
         "champion": champion_record,
