@@ -15,7 +15,7 @@ alembic
 asyncpg
 elastic-apm
 elasticsearch>=8.0.0
-fastapi>=0.111,<1.0
+fastapi>=0.136.1,<1.0
 greenlet
 pydantic-settings
 python-json-logger
